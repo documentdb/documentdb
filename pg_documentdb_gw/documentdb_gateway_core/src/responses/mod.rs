@@ -63,9 +63,20 @@ impl Response {
 
     #[must_use]
     pub fn ok() -> Self {
-        Self::Raw(RawResponse(rawdoc! {
+        Self::Raw(RawResponse::new(rawdoc! {
             "ok":OK_SUCCEEDED,
         }))
+    }
+
+    /// Returns `true` if this response was produced by a write operation
+    /// whose `PostgreSQL` UDF signalled failure (`p_success = false`) and
+    /// the BSON contains `writeErrors`.
+    #[must_use]
+    pub const fn has_write_errors(&self) -> bool {
+        match self {
+            Self::Raw(raw) => raw.has_write_errors(),
+            Self::Pg(_) => false,
+        }
     }
 }
 
@@ -79,7 +90,10 @@ mod tests {
     fn raw_response_byte_len_matches_bson_bytes() {
         // An empty BSON document is exactly 5 bytes: 4-byte i32 size + 1 null terminator.
         let empty = rawdoc! {};
-        assert_eq!(Response::Raw(RawResponse(empty)).response_byte_len(), 5);
+        assert_eq!(
+            Response::Raw(RawResponse::new(empty)).response_byte_len(),
+            5
+        );
 
         // { "ok": 1.0 } = 4 (size) + [1 (type 0x01 double) + 3 ("ok\0") + 8 (f64)] + 1 (null) = 17
         let ok_response = Response::ok();
@@ -95,7 +109,7 @@ mod tests {
             .to_writer(&mut re_encoded)
             .expect("re-encoding should succeed");
         assert_eq!(
-            Response::Raw(RawResponse(doc)).response_byte_len(),
+            Response::Raw(RawResponse::new(doc)).response_byte_len(),
             re_encoded.len()
         );
     }

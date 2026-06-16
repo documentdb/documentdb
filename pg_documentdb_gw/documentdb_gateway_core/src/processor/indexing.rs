@@ -223,9 +223,9 @@ pub async fn process_drop_indexes(
     response.insert("ok", i32::from(is_response_ok));
 
     if is_response_ok {
-        Ok(Response::Raw(RawResponse(RawDocumentBuf::from_document(
-            &response,
-        )?)))
+        Ok(Response::Raw(RawResponse::new(
+            RawDocumentBuf::from_document(&response)?,
+        )))
     } else {
         let error_message = response.get_str("errmsg").map_err(|e| {
             DocumentDBError::internal_error(pg_returned_invalid_response_message(e))

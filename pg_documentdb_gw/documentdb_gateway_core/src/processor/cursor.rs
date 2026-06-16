@@ -130,7 +130,7 @@ pub async fn process_kill_cursors(
         missing_cursor_buf.push(cursor);
     }
 
-    Ok(Response::Raw(RawResponse(rawdoc! {
+    Ok(Response::Raw(RawResponse::new(rawdoc! {
         "ok":OK_SUCCEEDED,
         "cursorsKilled": removed_cursor_buf,
         "cursorsNotFound": missing_cursor_buf,

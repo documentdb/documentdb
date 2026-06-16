@@ -327,7 +327,7 @@ async fn run_explain(
 
             explain.append("ok", OK_SUCCEEDED);
 
-            Ok(Response::Raw(RawResponse(explain)))
+            Ok(Response::Raw(RawResponse::new(explain)))
         }
         None => Err(DocumentDBError::internal_error(
             "PG returned no rows in response".to_owned(),

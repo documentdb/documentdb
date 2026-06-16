@@ -69,7 +69,7 @@ pub async fn process_drop_database(
             .await?;
     }
 
-    Ok(Response::Raw(RawResponse(rawdoc! {
+    Ok(Response::Raw(RawResponse::new(rawdoc! {
         "ok": OK_SUCCEEDED,
         "dropped": db,
     })))
@@ -113,7 +113,7 @@ pub async fn process_drop_collection(
             .await?;
     }
 
-    Ok(Response::Raw(RawResponse(rawdoc! {
+    Ok(Response::Raw(RawResponse::new(rawdoc! {
         "ok": OK_SUCCEEDED,
         "dropped": coll,
     })))

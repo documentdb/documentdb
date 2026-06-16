@@ -82,5 +82,5 @@ pub fn process(
         );
     }
 
-    Ok(Response::Raw(RawResponse(response_doc)))
+    Ok(Response::Raw(RawResponse::new(response_doc)))
 }

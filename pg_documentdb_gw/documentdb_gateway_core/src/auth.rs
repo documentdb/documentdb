@@ -315,7 +315,7 @@ async fn handle_auth_request(
         )),
         RequestType::Logout => {
             connection_context.auth_state = AuthState::new();
-            Ok(Some(Response::Raw(RawResponse(rawdoc! {
+            Ok(Some(Response::Raw(RawResponse::new(rawdoc! {
                 "ok": OK_SUCCEEDED,
             }))))
         }
@@ -399,7 +399,7 @@ async fn handle_scram(
         bytes: response.as_bytes().to_vec(),
     };
 
-    Ok(Response::Raw(RawResponse(rawdoc! {
+    Ok(Response::Raw(RawResponse::new(rawdoc! {
         "payload": binary_response,
         "ok": OK_SUCCEEDED,
         "conversationId": 1,
@@ -558,7 +558,7 @@ async fn handle_oidc_token_authentication(
         .auth_state
         .initialize_expiry_timer(seconds_until_expiry, connection_activity_id_as_str)?;
 
-    Ok(Response::Raw(RawResponse(rawdoc! {
+    Ok(Response::Raw(RawResponse::new(rawdoc! {
         "payload": payload,
         "ok": OK_SUCCEEDED,
         "conversationId": 1,
@@ -748,7 +748,7 @@ async fn handle_sasl_continue(
         // This will create a Principal from the username and user_oid and store it in auth_state
         connection_context.auth_state.update_principal();
 
-        Ok(Response::Raw(RawResponse(rawdoc! {
+        Ok(Response::Raw(RawResponse::new(rawdoc! {
             "payload": payload,
             "ok": OK_SUCCEEDED,
             "conversationId": 1,

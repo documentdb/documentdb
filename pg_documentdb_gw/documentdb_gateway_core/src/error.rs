@@ -22,6 +22,21 @@ use crate::responses::{postgres_sqlstate_to_i32, CustomPgDbError};
 documentdb_error_code_enum!();
 documentdb_extensive_log_postgres_errors!();
 
+impl ErrorCode {
+    /// Returns the HTTP status code for this error code.
+    #[must_use]
+    pub const fn http_status_code(self) -> u16 {
+        match self {
+            Self::AuthenticationFailed => 401,
+            Self::Unauthorized => 403,
+            Self::InternalError => 500,
+            Self::ExceededTimeLimit => 408,
+            Self::DuplicateKey => 409,
+            _ => 400,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, strum_macros::AsRefStr, strum_macros::Display)]
 pub enum ErrorKind {
     Io,
@@ -57,14 +72,7 @@ impl DocumentDBError {
     /// Returns the HTTP status code corresponding to this error's error code.
     #[must_use]
     pub const fn http_status_code(&self) -> u16 {
-        match self.0.error_code {
-            ErrorCode::AuthenticationFailed => 401,
-            ErrorCode::Unauthorized => 403,
-            ErrorCode::InternalError => 500,
-            ErrorCode::ExceededTimeLimit => 408,
-            ErrorCode::DuplicateKey => 409,
-            _ => 400,
-        }
+        self.0.error_code.http_status_code()
     }
 
     /// Returns the sub-status code derived from the underlying `PostgreSQL`

@@ -22,14 +22,14 @@ use crate::{
 };
 
 pub fn ok_response() -> Response {
-    Response::Raw(RawResponse(rawdoc! {
+    Response::Raw(RawResponse::new(rawdoc! {
         "ok": OK_SUCCEEDED
     }))
 }
 
 pub fn process_build_info(dynamic_config: &Arc<dyn DynamicConfiguration>) -> Response {
     let version = dynamic_config.server_version();
-    Response::Raw(RawResponse(rawdoc! {
+    Response::Raw(RawResponse::new(rawdoc! {
         "version": version.as_str(),
         "versionArray": version.as_bson_array(),
         "bits": 64,
@@ -39,14 +39,14 @@ pub fn process_build_info(dynamic_config: &Arc<dyn DynamicConfiguration>) -> Res
 }
 
 pub fn process_get_cmd_line_opts() -> Response {
-    Response::Raw(RawResponse(rawdoc! {
+    Response::Raw(RawResponse::new(rawdoc! {
         "argv": [],
         "ok":OK_SUCCEEDED,
     }))
 }
 
 pub fn process_is_db_grid(context: &ConnectionContext) -> Response {
-    Response::Raw(RawResponse(rawdoc! {
+    Response::Raw(RawResponse::new(rawdoc! {
         "isdbgrid":1.0,
         "hostname":context.service_context.setup_configuration().node_host_name(),
         "ok":OK_SUCCEEDED,
@@ -72,7 +72,7 @@ pub fn process_get_rw_concern(request_context: &RequestContext<'_>) -> Result<Re
         ));
     }
 
-    Ok(Response::Raw(RawResponse(rawdoc! {
+    Ok(Response::Raw(RawResponse::new(rawdoc! {
         "defaultReadConcern": {
             "level":"majority",
         },
@@ -87,7 +87,7 @@ pub fn process_get_rw_concern(request_context: &RequestContext<'_>) -> Result<Re
 }
 
 pub fn process_get_log() -> Response {
-    Response::Raw(RawResponse(rawdoc! {
+    Response::Raw(RawResponse::new(rawdoc! {
         "log":[],
         "totalLinesWritten":0,
         "ok":OK_SUCCEEDED,
@@ -95,7 +95,7 @@ pub fn process_get_log() -> Response {
 }
 
 pub fn process_connection_status() -> Response {
-    Response::Raw(RawResponse(rawdoc! {
+    Response::Raw(RawResponse::new(rawdoc! {
         "authInfo": {
             "authenticatedUsers": [],
             "authenticatedUserRoles": [],
@@ -122,7 +122,7 @@ fn local_time() -> Result<u32> {
 }
 
 pub fn process_host_info() -> Result<Response> {
-    Ok(Response::Raw(RawResponse(rawdoc! {
+    Ok(Response::Raw(RawResponse::new(rawdoc! {
         "system": {
             "currentTime": bson::Timestamp{ time: local_time()?, increment: 0},
             "memSizeMB": 0,
@@ -139,14 +139,14 @@ pub fn process_host_info() -> Result<Response> {
 }
 
 pub fn process_prepare_transaction() -> Result<Response> {
-    Ok(Response::Raw(RawResponse(rawdoc! {
+    Ok(Response::Raw(RawResponse::new(rawdoc! {
         "prepareTimestamp":  bson::Timestamp{ time: local_time()?, increment: 0 },
         "ok": OK_SUCCEEDED,
     })))
 }
 
 pub fn process_whats_my_uri() -> Response {
-    Response::Raw(RawResponse(rawdoc! {
+    Response::Raw(RawResponse::new(rawdoc! {
         "ok": OK_SUCCEEDED,
     }))
 }
@@ -676,7 +676,7 @@ pub fn list_commands() -> Response {
         commands_doc.append(command.command_name, doc);
     }
 
-    Response::Raw(RawResponse(rawdoc! {
+    Response::Raw(RawResponse::new(rawdoc! {
         "commands": commands_doc,
         "ok": OK_SUCCEEDED,
     }))

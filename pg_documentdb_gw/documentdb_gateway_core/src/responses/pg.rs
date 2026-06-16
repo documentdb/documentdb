@@ -654,7 +654,28 @@ impl PgResponse {
         }
     }
 
-    /// If 'writeErrors' is present, it transforms each error by potentially mapping them to the known `DocumentDB` error codes.
+    /// Reads the `p_success` flag from column 1 of the first row.
+    ///
+    /// Returns `true` (success) when the row has only one column, matching
+    /// queries that do not return `p_success`.  Returns an error when the
+    /// response is empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the response is empty or the column cannot be read.
+    pub fn write_success(&self) -> Result<bool> {
+        let row = self.first()?;
+        if row.len() > 1 {
+            row.try_get(1).map_err(Into::into)
+        } else {
+            Ok(true)
+        }
+    }
+
+    /// If the `PostgreSQL` UDF signals failure via `p_success` (column 1) and
+    /// `writeErrors` is present, transforms each error by mapping to known
+    /// error codes.  When `p_success` is `true` the response is returned
+    /// without inspecting `writeErrors`.
     ///
     /// # Errors
     ///
@@ -664,19 +685,23 @@ impl PgResponse {
         connection_context: &ConnectionContext,
         activity_id: &str,
     ) -> Result<Response> {
-        if let Ok(Some(_)) = self.as_raw_document()?.get("writeErrors") {
-            // TODO: Conceivably faster without conversion to document
-            let mut response = Document::try_from(self.as_raw_document()?)?;
-            let write_errors = response.get_array_mut("writeErrors").map_err(|e| {
-                DocumentDBError::internal_error(pg_returned_invalid_response_message(e))
-            })?;
+        let success = self.write_success()?;
 
-            for value in write_errors {
-                transform_error(connection_context, value, activity_id)?;
+        if !success {
+            if let Ok(Some(_)) = self.as_raw_document()?.get("writeErrors") {
+                let mut response = Document::try_from(self.as_raw_document()?)?;
+                let write_errors = response.get_array_mut("writeErrors").map_err(|e| {
+                    DocumentDBError::internal_error(pg_returned_invalid_response_message(e))
+                })?;
+
+                for value in write_errors {
+                    transform_error(connection_context, value, activity_id)?;
+                }
+                let raw = RawDocumentBuf::from_document(&response)?;
+                return Ok(Response::Raw(RawResponse::new(raw).with_write_errors()));
             }
-            let raw = RawDocumentBuf::from_document(&response)?;
-            return Ok(Response::Raw(RawResponse(raw)));
         }
+
         Ok(Response::Pg(self))
     }
 }
