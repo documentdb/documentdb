@@ -1,0 +1,1 @@
+Logical query operators combine boolean expressions using logical operations.

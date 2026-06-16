@@ -1,0 +1,1 @@
+Evaluation query operators are used to evaluate expressions and perform dynamic operations.

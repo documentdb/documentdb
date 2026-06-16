@@ -1,0 +1,1 @@
+Bitwise query operators are used to query and filter based on bitwise operations.

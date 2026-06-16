@@ -1,0 +1,1 @@
+Window operators perform calculations across a set of documents in a specified window.

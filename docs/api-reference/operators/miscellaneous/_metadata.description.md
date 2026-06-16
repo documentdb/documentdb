@@ -1,0 +1,1 @@
+Miscellaneous operators include various utility and helper operators that don't fit into other categories.

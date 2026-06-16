@@ -1,0 +1,1 @@
+Miscellaneous query operators include various utility and helper operators for querying that don't fit into other categories.

@@ -1,0 +1,1 @@
+Set expression operators perform operations on sets and arrays treated as sets.

@@ -1,0 +1,1 @@
+Projection operators are used to select and transform fields in documents.

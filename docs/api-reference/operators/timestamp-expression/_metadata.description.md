@@ -1,0 +1,1 @@
+Timestamp expression operators perform operations on timestamp values.

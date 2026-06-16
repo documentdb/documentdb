@@ -1,0 +1,1 @@
+Array expression operators perform operations on arrays and array elements.

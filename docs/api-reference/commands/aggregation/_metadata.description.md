@@ -1,0 +1,1 @@
+Aggregation commands process data records and return computed results. They group values from multiple documents, perform operations on the grouped data, and return a single result. Common aggregation tasks include calculating averages, sums, and counts.

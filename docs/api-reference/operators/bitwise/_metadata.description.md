@@ -1,0 +1,1 @@
+Bitwise operators perform operations on the binary representation of numbers.

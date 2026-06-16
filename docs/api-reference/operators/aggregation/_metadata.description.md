@@ -1,0 +1,1 @@
+Aggregation operators are used to perform operations on grouped data in aggregation pipelines.

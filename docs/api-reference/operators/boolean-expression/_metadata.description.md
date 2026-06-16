@@ -1,0 +1,1 @@
+Boolean expression operators perform logical operations and evaluate boolean conditions.

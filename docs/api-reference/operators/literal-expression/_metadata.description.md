@@ -1,0 +1,1 @@
+Literal expression operators are used to represent literal values in aggregation expressions.

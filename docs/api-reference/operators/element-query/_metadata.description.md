@@ -1,0 +1,1 @@
+Element query operators are used to query document elements based on their existence and type.

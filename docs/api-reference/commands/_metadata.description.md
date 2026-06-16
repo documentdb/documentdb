@@ -1,0 +1,1 @@
+MongoDB Query Language (MQL) commands are direct instructions for managing and interacting with your database server. They are essential for performing administrative tasks, optimizing performance, and maintaining security.

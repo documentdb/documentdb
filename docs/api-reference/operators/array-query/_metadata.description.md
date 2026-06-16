@@ -1,0 +1,1 @@
+Array query operators are used to query and filter array elements.

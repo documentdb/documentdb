@@ -1,0 +1,1 @@
+Comparison query operators are used to compare values and create boolean expressions.

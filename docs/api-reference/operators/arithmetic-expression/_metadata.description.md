@@ -1,0 +1,1 @@
+Arithmetic expression operators perform mathematical operations on numeric values.

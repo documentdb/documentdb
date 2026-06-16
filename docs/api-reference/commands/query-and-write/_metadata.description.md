@@ -1,0 +1,1 @@
+Query and write commands allow you to retrieve, insert, update, and delete documents in your DocumentDB collections. These operations are fundamental for interacting with your data, enabling you to perform CRUD (Create, Read, Update, Delete) tasks efficiently.

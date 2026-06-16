@@ -1,0 +1,1 @@
+Geospatial operators perform operations on geographic data and spatial relationships.

@@ -1,0 +1,1 @@
+Accumulator operators are used in aggregation pipelines to perform calculations on grouped data.
