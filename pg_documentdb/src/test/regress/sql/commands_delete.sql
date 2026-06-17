@@ -443,3 +443,64 @@ rollback;
 select documentdb_api.drop_collection('db', 'plan_collision_test');
 
 select documentdb_api.drop_collection('db','removeme');
+
+-- delete 'limit' only accepts the integer 0 or 1
+select 1 from documentdb_api.insert_one('db', 'del_limit', '{"_id":1,"r":"keep"}');
+select 1 from documentdb_api.insert_one('db', 'del_limit', '{"_id":2,"r":"rm"}');
+select 1 from documentdb_api.insert_one('db', 'del_limit', '{"_id":3,"r":"rm"}');
+select 1 from documentdb_api.insert_one('db', 'del_limit', '{"_id":4,"r":"rm"}');
+
+-- limit 1 deletes one
+begin;
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":1}]}');
+select count(*) from documentdb_api.collection('db', 'del_limit');
+rollback;
+
+-- limit 0 deletes all matches
+begin;
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":0}]}');
+select count(*) from documentdb_api.collection('db', 'del_limit');
+rollback;
+
+-- whole-number doubles are accepted
+begin;
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":1.0}]}');
+select count(*) from documentdb_api.collection('db', 'del_limit');
+rollback;
+begin;
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":0.0}]}');
+select count(*) from documentdb_api.collection('db', 'del_limit');
+rollback;
+
+-- fractional limits are rejected
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":0.5}]}');
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":0.9}]}');
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":1.5}]}');
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":-0.5}]}');
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":2.5}]}');
+select count(*) from documentdb_api.collection('db', 'del_limit');
+
+-- decimal128 limit: 1 deletes one, fractional/out-of-range rejected
+begin;
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":{"$numberDecimal":"1"}}]}');
+select count(*) from documentdb_api.collection('db', 'del_limit');
+rollback;
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":{"$numberDecimal":"0.5"}}]}');
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":{"$numberDecimal":"2"}}]}');
+
+-- NaN/Infinity limits are rejected
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":{"$numberDouble":"NaN"}}]}');
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":{"$numberDouble":"Infinity"}}]}');
+select count(*) from documentdb_api.collection('db', 'del_limit');
+
+-- out-of-range whole numbers are rejected
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":2}]}');
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":-1}]}');
+
+-- non-numeric limit is treated as 0
+begin;
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":"x"}]}');
+select count(*) from documentdb_api.collection('db', 'del_limit');
+rollback;
+
+select documentdb_api.drop_collection('db', 'del_limit');

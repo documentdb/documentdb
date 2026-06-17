@@ -18,6 +18,7 @@
 #include "utils/builtins.h"
 
 #include "io/bson_core.h"
+#include "io/bsonvalue_utils.h"
 #include "aggregation/bson_project.h"
 #include "aggregation/bson_query.h"
 #include "collation/collation.h"
@@ -511,14 +512,23 @@ BuildDeletionSpec(bson_iter_t *deletionIter, const bson_value_t *variableSpec)
 		}
 		else if (strcmp(field, "limit") == 0)
 		{
-			if (!BSON_ITER_HOLDS_NUMBER(deletionIter))
+			const bson_value_t *limitValue = bson_iter_value(deletionIter);
+			if (!BsonTypeIsNumber(limitValue->value_type))
 			{
 				/* we treats arbitrary types as valid limit 0 */
 				limit = 0;
 			}
 			else
 			{
-				limit = bson_iter_as_int64(deletionIter);
+				/* reject non-integral values instead of truncating them */
+				if (!IsBsonValueFixedInteger(limitValue))
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+									errmsg("BSON field 'delete.deletes.limit' must"
+										   " be the integer 0 or 1.")));
+				}
+
+				limit = BsonValueAsInt64(limitValue);
 				if (limit != 0 && limit != 1)
 				{
 					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),

@@ -1142,3 +1142,161 @@ select documentdb_api.drop_collection('db','removeme');
  t
 (1 row)
 
+-- delete 'limit' only accepts the integer 0 or 1
+select 1 from documentdb_api.insert_one('db', 'del_limit', '{"_id":1,"r":"keep"}');
+NOTICE:  creating collection
+ ?column? 
+----------
+        1
+(1 row)
+
+select 1 from documentdb_api.insert_one('db', 'del_limit', '{"_id":2,"r":"rm"}');
+ ?column? 
+----------
+        1
+(1 row)
+
+select 1 from documentdb_api.insert_one('db', 'del_limit', '{"_id":3,"r":"rm"}');
+ ?column? 
+----------
+        1
+(1 row)
+
+select 1 from documentdb_api.insert_one('db', 'del_limit', '{"_id":4,"r":"rm"}');
+ ?column? 
+----------
+        1
+(1 row)
+
+-- limit 1 deletes one
+begin;
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":1}]}');
+                                         delete                                         
+----------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select count(*) from documentdb_api.collection('db', 'del_limit');
+ count 
+-------
+     3
+(1 row)
+
+rollback;
+-- limit 0 deletes all matches
+begin;
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":0}]}');
+                                         delete                                         
+----------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""3"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select count(*) from documentdb_api.collection('db', 'del_limit');
+ count 
+-------
+     1
+(1 row)
+
+rollback;
+-- whole-number doubles are accepted
+begin;
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":1.0}]}');
+                                         delete                                         
+----------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select count(*) from documentdb_api.collection('db', 'del_limit');
+ count 
+-------
+     3
+(1 row)
+
+rollback;
+begin;
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":0.0}]}');
+                                         delete                                         
+----------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""3"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select count(*) from documentdb_api.collection('db', 'del_limit');
+ count 
+-------
+     1
+(1 row)
+
+rollback;
+-- fractional limits are rejected
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":0.5}]}');
+ERROR:  BSON field 'delete.deletes.limit' must be the integer 0 or 1.
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":0.9}]}');
+ERROR:  BSON field 'delete.deletes.limit' must be the integer 0 or 1.
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":1.5}]}');
+ERROR:  BSON field 'delete.deletes.limit' must be the integer 0 or 1.
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":-0.5}]}');
+ERROR:  BSON field 'delete.deletes.limit' must be the integer 0 or 1.
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":2.5}]}');
+ERROR:  BSON field 'delete.deletes.limit' must be the integer 0 or 1.
+select count(*) from documentdb_api.collection('db', 'del_limit');
+ count 
+-------
+     4
+(1 row)
+
+-- decimal128 limit: 1 deletes one, fractional/out-of-range rejected
+begin;
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":{"$numberDecimal":"1"}}]}');
+                                         delete                                         
+----------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select count(*) from documentdb_api.collection('db', 'del_limit');
+ count 
+-------
+     3
+(1 row)
+
+rollback;
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":{"$numberDecimal":"0.5"}}]}');
+ERROR:  BSON field 'delete.deletes.limit' must be the integer 0 or 1.
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":{"$numberDecimal":"2"}}]}');
+ERROR:  The limit field in delete objects must be 0 or 1. Got 2
+-- NaN/Infinity limits are rejected
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":{"$numberDouble":"NaN"}}]}');
+ERROR:  BSON field 'delete.deletes.limit' must be the integer 0 or 1.
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":{"$numberDouble":"Infinity"}}]}');
+ERROR:  BSON field 'delete.deletes.limit' must be the integer 0 or 1.
+select count(*) from documentdb_api.collection('db', 'del_limit');
+ count 
+-------
+     4
+(1 row)
+
+-- out-of-range whole numbers are rejected
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":2}]}');
+ERROR:  The limit field in delete objects must be 0 or 1. Got 2
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":-1}]}');
+ERROR:  The limit field in delete objects must be 0 or 1. Got -1
+-- non-numeric limit is treated as 0
+begin;
+select documentdb_api.delete('db', '{"delete":"del_limit", "deletes":[{"q":{"r":"rm"},"limit":"x"}]}');
+                                         delete                                         
+----------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""3"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select count(*) from documentdb_api.collection('db', 'del_limit');
+ count 
+-------
+     1
+(1 row)
+
+rollback;
+select documentdb_api.drop_collection('db', 'del_limit');
+ drop_collection 
+-----------------
+ t
+(1 row)
+

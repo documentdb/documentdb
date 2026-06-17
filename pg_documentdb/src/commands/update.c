@@ -1006,15 +1006,19 @@ BuildUpdateSpec(bson_iter_t *updateIter, const bson_value_t *variableSpec)
 		}
 		else if (strcmp(field, "multi") == 0)
 		{
-			EnsureTopLevelFieldType("update.updates.multi", updateIter, BSON_TYPE_BOOL);
-
-			isMulti = bson_iter_bool(updateIter);
+			if (EnsureTopLevelFieldTypeNullOkUndefinedOK("update.updates.multi",
+														 updateIter, BSON_TYPE_BOOL))
+			{
+				isMulti = bson_iter_bool(updateIter);
+			}
 		}
 		else if (strcmp(field, "upsert") == 0)
 		{
-			EnsureTopLevelFieldType("update.updates.upsert", updateIter, BSON_TYPE_BOOL);
-
-			isUpsert = bson_iter_bool(updateIter);
+			if (EnsureTopLevelFieldTypeNullOkUndefinedOK("update.updates.upsert",
+														 updateIter, BSON_TYPE_BOOL))
+			{
+				isUpsert = bson_iter_bool(updateIter);
+			}
 		}
 		else if (strcmp(field, "arrayFilters") == 0)
 		{
