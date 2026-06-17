@@ -118,6 +118,9 @@ pub struct ExplainPlan {
     #[serde(rename = "Page Size")]
     pub page_size: Option<i64>,
 
+    #[serde(rename = "Sample Size")]
+    pub sample_size: Option<i64>,
+
     #[serde(rename = "Plan Rows")]
     pub plan_rows: Option<serde_json::value::Number>,
 

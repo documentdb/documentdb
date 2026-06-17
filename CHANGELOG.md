@@ -9,6 +9,7 @@
 * Fix schema validation propagation and ensure correct caching of the parsed validator across calls. *[Bugfix]*
 * Fix `$sample` TABLESAMPLE optimization not being applied on sharded collections when preceded by an empty filter. Guarded by `enableSampleScanFixOnSharded` feature flag *[Bugfix]*
 * Schema Validation: enabled by default.
+* Reservoir sampling CustomScan for `$sample` after filter stages, replacing `ORDER BY random() LIMIT K` with O(N) single pass sampling. Guarded by `enableDollarSampleReservoirScan` feature flag *[Perf]*
 
 ### documentdb v0.113-0 (Unreleased) ###
 * Add `EnableSortPushToAccumulator` GUC to control pushing sort order into accumulator in `$sortGroup` stage *[Perf]*

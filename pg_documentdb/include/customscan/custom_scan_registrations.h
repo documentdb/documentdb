@@ -16,5 +16,6 @@ void RegisterQueryScanNodes(void);
 void RegisterExplainScanNodes(void);
 void RegisterDynamicCursorScanNodes(void);
 void RegisterDistinctScanNodes(void);
+void RegisterReservoirSampleScanNodes(void);
 
 #endif

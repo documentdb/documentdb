@@ -379,6 +379,10 @@ bool EnableObjectIdFuncExprConversion = DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVER
 #define DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED true
 bool EnableSampleScanFixOnSharded = DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED;
 
+/* Added in v114, enabled in v114, remove after v117 */
+#define DEFAULT_ENABLE_DOLLAR_SAMPLE_RESERVOIR_SCAN true
+bool EnableDollarSampleReservoirScan = DEFAULT_ENABLE_DOLLAR_SAMPLE_RESERVOIR_SCAN;
+
 /*
  * SECTION: Let support feature flags
  */
@@ -1332,6 +1336,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableArrayFilterLogicalOperators,
 		DEFAULT_ENABLE_ARRAY_FILTER_LOGICAL_OPERATORS,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableDollarSampleReservoirScan", newGucPrefix),
+		gettext_noop(
+			"Whether to use reservoir sampling for $sample instead of ORDER BY random()."),
+		NULL,
+		&EnableDollarSampleReservoirScan,
+		DEFAULT_ENABLE_DOLLAR_SAMPLE_RESERVOIR_SCAN,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

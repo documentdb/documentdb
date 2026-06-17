@@ -30,4 +30,6 @@ void AddExplainCustomScanWrapper(PlannerInfo *root, RelOptInfo *rel,
 
 void AddDistinctCustomScanWrapper(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte);
 
+void AddReservoirSampleCustomPath(RelOptInfo *rel, FuncExpr *sampleExpr);
+
 #endif

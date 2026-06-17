@@ -66,6 +66,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '
 -- SHARDED COLLECTION TESTS WITH FIX DISABLED (regression)
 
 SET documentdb.enableSampleScanFixOnSharded TO off;
+SET documentdb.enableDollarSampleReservoirScan TO off;
 
 -- Empty $match + $sample on sharded collection (no TABLESAMPLE without fix)
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 3 } } ] }');
@@ -77,3 +78,4 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": {} }, { "$match": {} }, { "$sample": { "size": 3 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
 
 RESET documentdb.enableSampleScanFixOnSharded;
+RESET documentdb.enableDollarSampleReservoirScan;

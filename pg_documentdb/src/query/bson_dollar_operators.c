@@ -1365,11 +1365,21 @@ bson_dollar_range(PG_FUNCTION_ARGS)
 	if (rangeState.params.isFullScan || rangeState.params.isElemMatch ||
 		rangeState.params.isMinIndexKey || rangeState.params.isMaxIndexKey)
 	{
-		/* if the range is a full scan, we don't need to traverse the document
-		 * similarly for $elemMatch this range query is only used on the index
-		 * so we bypass the runtime recheck and let the runtime filter handle it.
+		/* These quals don't need runtime document traversal:
+		 * - isFullScan/isElemMatch: index-only quals, runtime filter handles recheck
+		 * - isMinIndexKey/isMaxIndexKey: synthetic bounds for index scans
 		 */
 		PG_RETURN_BOOL(true);
+	}
+
+	if (rangeState.params.isSample)
+	{
+		/* The sample marker is a planner only signal that must be consumed
+		 * during planning. If it reaches runtime evaluation, the planner
+		 * did not strip it and query results would be incorrect. */
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg("$sample reservoir marker must not be evaluated "
+							   "at runtime")));
 	}
 
 	bson_iter_t documentIterator;

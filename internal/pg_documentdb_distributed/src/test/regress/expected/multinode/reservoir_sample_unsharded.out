@@ -1,0 +1,156 @@
+SET citus.next_shard_id TO 71000;
+SET documentdb.next_collection_id TO 7100;
+SET documentdb.next_collection_index_id TO 7100;
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal,public;
+-- Create unsharded collection and insert data
+SELECT documentdb_api.create_collection('rsampledb', 'sample_node1');
+NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.insert_one('rsampledb', 'sample_node1', '{"_id": 1, "category": "A", "value": 10}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('rsampledb', 'sample_node1', '{"_id": 2, "category": "A", "value": 20}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('rsampledb', 'sample_node1', '{"_id": 3, "category": "B", "value": 30}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('rsampledb', 'sample_node1', '{"_id": 4, "category": "B", "value": 40}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('rsampledb', 'sample_node1', '{"_id": 5, "category": "A", "value": 50}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('rsampledb', 'sample_node1', '{"_id": 6, "category": "A", "value": 60}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('rsampledb', 'sample_node1', '{"_id": 7, "category": "B", "value": 70}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('rsampledb', 'sample_node1', '{"_id": 8, "category": "B", "value": 80}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('rsampledb', 'sample_node1', '{"_id": 9, "category": "A", "value": 90}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('rsampledb', 'sample_node1', '{"_id": 10, "category": "A", "value": 100}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Place collection on the worker node and force remote execution
+SELECT documentdb_distributed_test_helpers.place_collection_on_node('rsampledb', 'sample_node1', 1);
+ place_collection_on_node 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SET citus.enable_local_execution TO off;
+-- ============================================================
+-- Multinode unsharded: reservoir sampling runs on the worker
+-- ============================================================
+-- $match + $sample: sample all 10 rows (deterministic output)
+SELECT document FROM bson_aggregation_pipeline('rsampledb', '{ "aggregate": "sample_node1", "pipeline": [ { "$match": { "_id": { "$gte": 1 } } }, { "$sample": { "size": 10 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
+              document               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "6" } }
+ { "_id" : { "$numberInt" : "7" } }
+ { "_id" : { "$numberInt" : "8" } }
+ { "_id" : { "$numberInt" : "9" } }
+ { "_id" : { "$numberInt" : "10" } }
+(10 rows)
+
+-- $match narrowing + $sample: filter to 6 rows (category=A), sample all 6
+SELECT document FROM bson_aggregation_pipeline('rsampledb', '{ "aggregate": "sample_node1", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 6 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
+              document               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "6" } }
+ { "_id" : { "$numberInt" : "9" } }
+ { "_id" : { "$numberInt" : "10" } }
+(6 rows)
+
+-- $sample size larger than collection: returns all 10 rows
+SELECT document FROM bson_aggregation_pipeline('rsampledb', '{ "aggregate": "sample_node1", "pipeline": [ { "$match": { "_id": { "$gte": 1 } } }, { "$sample": { "size": 100 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
+              document               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "6" } }
+ { "_id" : { "$numberInt" : "7" } }
+ { "_id" : { "$numberInt" : "8" } }
+ { "_id" : { "$numberInt" : "9" } }
+ { "_id" : { "$numberInt" : "10" } }
+(10 rows)
+
+-- $match + $sample + $sort: verify ordering works
+SELECT document FROM bson_aggregation_pipeline('rsampledb', '{ "aggregate": "sample_node1", "pipeline": [ { "$match": { "_id": { "$gte": 1 } } }, { "$sample": { "size": 10 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
+              document               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "6" } }
+ { "_id" : { "$numberInt" : "7" } }
+ { "_id" : { "$numberInt" : "8" } }
+ { "_id" : { "$numberInt" : "9" } }
+ { "_id" : { "$numberInt" : "10" } }
+(10 rows)
+
+-- ============================================================
+-- natts = 0: when the outer query does not reference the document column,
+-- the custom scan target list is NIL and the slot has 0 attributes.
+-- This verifies ExecForceStoreHeapTuple handles natts=0 correctly.
+-- ============================================================
+-- $count stage produces a count without referencing document data
+SELECT document FROM bson_aggregation_pipeline('rsampledb', '{ "aggregate": "sample_node1", "pipeline": [ { "$match": { "_id": { "$gte": 1 } } }, { "$sample": { "size": 10 } }, { "$count": "total" } ] }');
+               document                
+---------------------------------------------------------------------
+ { "total" : { "$numberInt" : "10" } }
+(1 row)
+
+RESET citus.enable_local_execution;

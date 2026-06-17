@@ -47,6 +47,7 @@
 #include "customscan/bson_custom_query_scan.h"
 #include "opclass/bson_text_gin.h"
 #include "aggregation/bson_aggregation_pipeline.h"
+#include "aggregation/bson_query_common.h"
 #include "utils/query_utils.h"
 #include "api_hooks.h"
 #include "query/bson_compare.h"
@@ -139,6 +140,7 @@ extern bool EnableExtendedIndexes;
 extern bool EnableDynamicCursors;
 extern bool EnableDistinctCustomScan;
 extern bool EnableGroupByDistinctScan;
+extern bool EnableDollarSampleReservoirScan;
 
 planner_hook_type ExtensionPreviousPlannerHook = NULL;
 set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook = NULL;
@@ -439,6 +441,7 @@ ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		.hasStreamingContinuationScan = false,
 		.hasDynamicStreamingContinuationScan = false,
 		.primaryKeyLookupPath = NULL,
+		.reservoirSampleExpr = NULL,
 		.inputData = {
 			.collectionId = collectionId,
 			.isShardQuery = isShardQuery,
@@ -571,6 +574,12 @@ ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 				supportFuncs->addExtendedQueryScanFunc(root, rel, rti, rte, amContext);
 			}
 		}
+	}
+
+	/* Wrap paths with ReservoirSample CustomPath (must happen after all path transforms) */
+	if (EnableDollarSampleReservoirScan && indexContext.reservoirSampleExpr != NULL)
+	{
+		AddReservoirSampleCustomPath(rel, indexContext.reservoirSampleExpr);
 	}
 
 	if (EnableExtendedExplainPlans)

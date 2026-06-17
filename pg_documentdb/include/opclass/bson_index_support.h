@@ -70,6 +70,9 @@ typedef struct ReplaceExtensionFunctionContext
 	/* Whether or not the index paths already has a primary key lookup */
 	IndexPath *primaryKeyLookupPath;
 
+	/* FuncExpr for the reservoir sampling marker, or NULL if absent */
+	FuncExpr *reservoirSampleExpr;
+
 	/* The input data context for the call */
 	ReplaceFunctionContextInput inputData;
 

@@ -1,0 +1,1106 @@
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal,documentdb_test_helpers;
+SET documentdb.next_collection_id TO 25712000;
+SET documentdb.next_collection_index_id TO 25712000;
+-- Insert test data (20 documents for meaningful sampling)
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 1, "category" : "A", "value" : 10 }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 2, "category" : "B", "value" : 20 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 3, "category" : "A", "value" : 30 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 4, "category" : "B", "value" : 40 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 5, "category" : "A", "value" : 50 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 6, "category" : "C", "value" : 60 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 7, "category" : "C", "value" : 70 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 8, "category" : "A", "value" : 80 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 9, "category" : "B", "value" : 90 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 10, "category" : "C", "value" : 100 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 11, "category" : "A", "value" : 110 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 12, "category" : "B", "value" : 120 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 13, "category" : "C", "value" : 130 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 14, "category" : "A", "value" : 140 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 15, "category" : "B", "value" : 150 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 16, "category" : "C", "value" : 160 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 17, "category" : "A", "value" : 170 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 18, "category" : "B", "value" : 180 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 19, "category" : "C", "value" : 190 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','reservoirTest',' { "_id" : 20, "category" : "A", "value" : 200 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- =============================================================================
+-- BASELINE TESTS (Reservoir Sampling DISABLED - default ORDER BY random() LIMIT)
+-- =============================================================================
+SET documentdb.enableDollarSampleReservoirScan TO off;
+-- Plan: $sample alone - should show Limit + Sort(random()) over TABLESAMPLE
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$sample": { "size": 3 } } ] }');
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Limit
+   Output: document, (random())
+   ->  Sort
+         Output: document, (random())
+         Sort Key: (random())
+         ->  Sample Scan on documentdb_data.documents_25712001 collection
+               Output: document, random()
+               Sampling: system_rows ('3'::bigint)
+(8 rows)
+
+-- Plan: $match + $sample + $project + $sort (typical Spark partitioner shape)
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 3 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
+                                                                                                                                                                                              QUERY PLAN                                                                                                                                                                                              
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Output: (bson_dollar_project(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(bson_dollar_project(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(bson_dollar_project(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Subquery Scan on agg_stage_2
+         Output: bson_dollar_project(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_orderby(bson_dollar_project(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  Limit
+               Output: collection.document, (random())
+               ->  Sort
+                     Output: collection.document, (random())
+                     Sort Key: (random())
+                     ->  Bitmap Heap Scan on documentdb_data.documents_25712001 collection
+                           Output: collection.document, random()
+                           Recheck Cond: (collection.shard_key_value = '25712001'::bigint)
+                           Filter: (collection.document @= '{ "category" : "A" }'::bson)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '25712001'::bigint)
+(16 rows)
+
+-- Plan: empty $match + $sample
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 5 } } ] }');
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Limit
+   Output: document, (random())
+   ->  Sort
+         Output: document, (random())
+         Sort Key: (random())
+         ->  Sample Scan on documentdb_data.documents_25712001 collection
+               Output: document, random()
+               Sampling: system_rows ('5'::bigint)
+(8 rows)
+
+-- Plan: $sample + $match (filter after sampling)
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$sample": { "size": 10 } }, { "$match": { "value": { "$gt": 100 } } } ] }');
+                                       QUERY PLAN                                        
+-----------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_1
+   Output: agg_stage_1.document
+   Filter: (agg_stage_1.document #> '{ "value" : { "$numberInt" : "100" } }'::bsonquery)
+   ->  Limit
+         Output: collection.document, (random())
+         ->  Sort
+               Output: collection.document, (random())
+               Sort Key: (random())
+               ->  Sample Scan on documentdb_data.documents_25712001 collection
+                     Output: collection.document, random()
+                     Sampling: system_rows ('10'::bigint)
+(11 rows)
+
+RESET documentdb.enableDollarSampleReservoirScan;
+-- =============================================================================
+-- RESERVOIR SAMPLING ENABLED TESTS (CustomScan ReservoirSample)
+-- These tests run with the default (ON) setting.
+-- =============================================================================
+-- Plan: $sample alone - uses TABLESAMPLE path (no filter = efficient already), no ReservoirSample needed
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$sample": { "size": 3 } } ] }');
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Limit
+   Output: document, (random())
+   ->  Sort
+         Output: document, (random())
+         Sort Key: (random())
+         ->  Sample Scan on documentdb_data.documents_25712001 collection
+               Output: document, random()
+               Sampling: system_rows ('3'::bigint)
+(8 rows)
+
+-- Plan: $match + $sample + $project + $sort - ReservoirSample wraps the filtered base scan
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 3 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
+                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                             
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Output: (bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Custom Scan (DocumentDBApiReservoirSample)
+         Output: bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_orderby(bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         Sample Size: 3
+         ->  Bitmap Heap Scan on documentdb_data.documents_25712001 collection
+               Output: collection.document
+               Recheck Cond: (collection.shard_key_value = '25712001'::bigint)
+               Filter: (collection.document @= '{ "category" : "A" }'::bson)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '25712001'::bigint)
+(12 rows)
+
+-- Plan: empty $match + $sample - empty $match doesn't add filters, uses TABLESAMPLE path
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 5 } } ] }');
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Limit
+   Output: document, (random())
+   ->  Sort
+         Output: document, (random())
+         Sort Key: (random())
+         ->  Sample Scan on documentdb_data.documents_25712001 collection
+               Output: document, random()
+               Sampling: system_rows ('5'::bigint)
+(8 rows)
+
+-- Plan: $sample + $project (no sort) - uses TABLESAMPLE path (no filter)
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$sample": { "size": 4 } }, { "$project": { "_id": 1, "value": 1 } } ] }');
+                                                                                                QUERY PLAN                                                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_1
+   Output: bson_dollar_project(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Limit
+         Output: collection.document, (random())
+         ->  Sort
+               Output: collection.document, (random())
+               Sort Key: (random())
+               ->  Sample Scan on documentdb_data.documents_25712001 collection
+                     Output: collection.document, random()
+                     Sampling: system_rows ('4'::bigint)
+(10 rows)
+
+-- Plan: $sample + downstream $match (filter after sampling) - uses TABLESAMPLE path (filter is after $sample)
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$sample": { "size": 10 } }, { "$match": { "value": { "$gt": 100 } } } ] }');
+                                       QUERY PLAN                                        
+-----------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_1
+   Output: agg_stage_1.document
+   Filter: (agg_stage_1.document #> '{ "value" : { "$numberInt" : "100" } }'::bsonquery)
+   ->  Limit
+         Output: collection.document, (random())
+         ->  Sort
+               Output: collection.document, (random())
+               Sort Key: (random())
+               ->  Sample Scan on documentdb_data.documents_25712001 collection
+                     Output: collection.document, random()
+                     Sampling: system_rows ('10'::bigint)
+(11 rows)
+
+-- Plan: $sample with size 0 (edge case)
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$sample": { "size": 0 } } ] }');
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Limit
+   Output: document, (random())
+   ->  Sort
+         Output: document, (random())
+         Sort Key: (random())
+         ->  Sample Scan on documentdb_data.documents_25712001 collection
+               Output: document, random()
+               Sampling: system_rows ('0'::bigint)
+(8 rows)
+
+-- Plan: $match on _id + $sample - verifies bson_dollar_range marker qual is stripped from IndexScan filter
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "_id": { "$gt": 1, "$lte": 15 } } }, { "$sample": { "size": 3 } } ] }');
+                                                                                                                                                                                      QUERY PLAN                                                                                                                                                                                      
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 3
+   ->  Index Scan using _id_ on documentdb_data.documents_25712001 collection
+         Output: document
+         Index Cond: ((collection.shard_key_value = '25712001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "1" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberInt" : "15" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+(6 rows)
+
+-- Execution: $match + $sample (size >= matched) + $sort returns all matched docs deterministically
+SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 20 } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+              document               
+-------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "8" } }
+ { "_id" : { "$numberInt" : "11" } }
+ { "_id" : { "$numberInt" : "14" } }
+ { "_id" : { "$numberInt" : "17" } }
+ { "_id" : { "$numberInt" : "20" } }
+(8 rows)
+
+-- Execution: $sample with size larger than collection (returns all docs sorted deterministically)
+SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$sample": { "size": 100 } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+              document               
+-------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "6" } }
+ { "_id" : { "$numberInt" : "7" } }
+ { "_id" : { "$numberInt" : "8" } }
+ { "_id" : { "$numberInt" : "9" } }
+ { "_id" : { "$numberInt" : "10" } }
+ { "_id" : { "$numberInt" : "11" } }
+ { "_id" : { "$numberInt" : "12" } }
+ { "_id" : { "$numberInt" : "13" } }
+ { "_id" : { "$numberInt" : "14" } }
+ { "_id" : { "$numberInt" : "15" } }
+ { "_id" : { "$numberInt" : "16" } }
+ { "_id" : { "$numberInt" : "17" } }
+ { "_id" : { "$numberInt" : "18" } }
+ { "_id" : { "$numberInt" : "19" } }
+ { "_id" : { "$numberInt" : "20" } }
+(20 rows)
+
+-- EXPLAIN ANALYZE: verify reservoir scan executes and reports correct row count
+-- Use count to verify EXPLAIN ANALYZE produces output (plan details are non-deterministic across runs)
+SELECT count(*) > 0 AS has_plan FROM (
+  SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 3 } } ], "cursor": {} }') $$)
+) q;
+ has_plan 
+----------
+ t
+(1 row)
+
+-- =============================================================================
+-- EDGE CASES WITH RESERVOIR SAMPLING
+-- =============================================================================
+-- Empty collection
+SELECT documentdb_api.create_collection('reservoirdb', 'emptyCollection');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+-- Plan: $sample on empty collection — no $match means no reservoir, uses TABLESAMPLE path
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "emptyCollection", "pipeline": [ { "$sample": { "size": 5 } } ] }');
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Limit
+   Output: document, (random())
+   ->  Sort
+         Output: document, (random())
+         Sort Key: (random())
+         ->  Sample Scan on documentdb_data.documents_25712002 collection
+               Output: document, random()
+               Sampling: system_rows ('5'::bigint)
+(8 rows)
+
+-- Execution: $sample on empty collection returns no rows
+SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "emptyCollection", "pipeline": [ { "$sample": { "size": 5 } } ] }');
+ document 
+----------
+(0 rows)
+
+-- $match + $sample with size 0 exercises the reservoir path returning no rows
+SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 0 } } ] }');
+ document 
+----------
+(0 rows)
+
+-- Single document collection
+SELECT documentdb_api.insert_one('reservoirdb','singleDoc',' { "_id" : 1, "x" : 42 }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- $sample with size 1 on single-doc collection returns the one document
+SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "singleDoc", "pipeline": [ { "$sample": { "size": 1 } } ] }');
+                             document                              
+-------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "x" : { "$numberInt" : "42" } }
+(1 row)
+
+-- =============================================================================
+-- SHARDED COLLECTION WITH RESERVOIR SAMPLING
+-- =============================================================================
+SELECT documentdb_api.insert_one('reservoirdb','shardedSample',' { "_id" : 1, "key" : "a", "val" : 1 }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','shardedSample',' { "_id" : 2, "key" : "b", "val" : 2 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','shardedSample',' { "_id" : 3, "key" : "c", "val" : 3 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','shardedSample',' { "_id" : 4, "key" : "d", "val" : 4 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','shardedSample',' { "_id" : 5, "key" : "e", "val" : 5 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','shardedSample',' { "_id" : 6, "key" : "f", "val" : 6 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','shardedSample',' { "_id" : 7, "key" : "g", "val" : 7 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','shardedSample',' { "_id" : 8, "key" : "h", "val" : 8 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','shardedSample',' { "_id" : 9, "key" : "i", "val" : 9 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','shardedSample',' { "_id" : 10, "key" : "j", "val" : 10 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('reservoirdb','shardedSample', '{"key":"hashed"}', false);
+ shard_collection 
+------------------
+ 
+(1 row)
+
+-- Plan: $sample on sharded collection (no reservoir — falls back to TABLESAMPLE or ORDER BY random())
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "shardedSample", "pipeline": [ { "$sample": { "size": 3 } } ] }');
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Limit
+   Output: document, (random())
+   ->  Sort
+         Output: document, (random())
+         Sort Key: (random())
+         ->  Sample Scan on documentdb_data.documents_25712004 collection
+               Output: document, random()
+               Sampling: system_rows ('3'::bigint)
+(8 rows)
+
+-- Plan: $match + $sample on sharded (no reservoir — falls back to ORDER BY random())
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "shardedSample", "pipeline": [ { "$match": { "val": { "$gt": 3 } } }, { "$sample": { "size": 2 } } ] }');
+                                        QUERY PLAN                                         
+-------------------------------------------------------------------------------------------
+ Limit
+   Output: document, (random())
+   ->  Sort
+         Output: document, (random())
+         Sort Key: (random())
+         ->  Seq Scan on documentdb_data.documents_25712004 collection
+               Output: document, random()
+               Filter: (collection.document @> '{ "val" : { "$numberInt" : "3" } }'::bson)
+(8 rows)
+
+-- Plan: $sample + $project + $sort on sharded (no reservoir)
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "shardedSample", "pipeline": [ { "$sample": { "size": 4 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
+                                                                                                                                                                                              QUERY PLAN                                                                                                                                                                                              
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Output: (bson_dollar_project(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(bson_dollar_project(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(bson_dollar_project(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Subquery Scan on agg_stage_1
+         Output: bson_dollar_project(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_orderby(bson_dollar_project(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  Limit
+               Output: collection.document, (random())
+               ->  Sort
+                     Output: collection.document, (random())
+                     Sort Key: (random())
+                     ->  Sample Scan on documentdb_data.documents_25712004 collection
+                           Output: collection.document, random()
+                           Sampling: system_rows ('4'::bigint)
+(13 rows)
+
+-- Execution: $sample (size >= collection) + $sort on sharded returns all docs deterministically
+SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "shardedSample", "pipeline": [ { "$sample": { "size": 100 } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+              document               
+-------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "5" } }
+ { "_id" : { "$numberInt" : "6" } }
+ { "_id" : { "$numberInt" : "7" } }
+ { "_id" : { "$numberInt" : "8" } }
+ { "_id" : { "$numberInt" : "9" } }
+ { "_id" : { "$numberInt" : "10" } }
+(10 rows)
+
+-- =============================================================================
+-- TOGGLING GUC MID-SESSION
+-- =============================================================================
+-- Disable reservoir, verify fallback to Limit+Sort(random()) for $match + $sample
+SET documentdb.enableDollarSampleReservoirScan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 3 } } ] }');
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
+ Limit
+   Output: document, (random())
+   ->  Sort
+         Output: document, (random())
+         Sort Key: (random())
+         ->  Bitmap Heap Scan on documentdb_data.documents_25712001 collection
+               Output: document, random()
+               Recheck Cond: (collection.shard_key_value = '25712001'::bigint)
+               Filter: (collection.document @= '{ "category" : "A" }'::bson)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '25712001'::bigint)
+(11 rows)
+
+-- Re-enable reservoir (back to default), verify CustomScan returns for $match + $sample
+SET documentdb.enableDollarSampleReservoirScan TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 3 } } ] }');
+                                 QUERY PLAN                                  
+-----------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 3
+   ->  Bitmap Heap Scan on documentdb_data.documents_25712001 collection
+         Output: document
+         Recheck Cond: (collection.shard_key_value = '25712001'::bigint)
+         Filter: (collection.document @= '{ "category" : "A" }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (collection.shard_key_value = '25712001'::bigint)
+(9 rows)
+
+-- =============================================================================
+-- ALTERNATE INDEX PATH TESTS (wildcard, single-field, compound, sparse, partial)
+-- Verify reservoir sampling works correctly with various index types.
+-- =============================================================================
+-- Create a wildcard index on reservoirTest to enable RUM-based scans
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{ "createIndexes": "reservoirTest", "indexes": [ { "key": { "$**": 1 }, "name": "wildcard_all" } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Disable sequential scans to force the planner to use indexes
+SET enable_seqscan TO off;
+SET documentdb.forceUseIndexIfAvailable TO on;
+-- Plan: $match on non-_id field + $sample with wildcard index - ReservoirSample wraps RUM scan
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "value": { "$gt": 50 } } }, { "$sample": { "size": 3 } } ] }');
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 3
+   ->  Index Scan using wildcard_all on documentdb_data.documents_25712001 collection
+         Output: document
+         Index Cond: (collection.document @> '{ "value" : { "$numberInt" : "50" } }'::bson)
+(6 rows)
+
+-- Plan: $match on category (string equality) + $sample with wildcard index
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 2 } } ] }');
+                                      QUERY PLAN                                      
+--------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 2
+   ->  Index Scan using wildcard_all on documentdb_data.documents_25712001 collection
+         Output: document
+         Index Cond: (collection.document @= '{ "category" : "A" }'::bson)
+(6 rows)
+
+-- Execution: $match + $sample with wildcard index, verify correct count
+SELECT count(*) FROM (
+  SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "value": { "$gt": 100 } } }, { "$sample": { "size": 3 } } ] }')
+) q;
+ count 
+-------
+     3
+(1 row)
+
+-- Execution: $match + $sample (size >= matched) + $sort with wildcard index returns all matched docs
+SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "value": { "$gt": 150 } } }, { "$sample": { "size": 100 } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+              document               
+-------------------------------------
+ { "_id" : { "$numberInt" : "16" } }
+ { "_id" : { "$numberInt" : "17" } }
+ { "_id" : { "$numberInt" : "18" } }
+ { "_id" : { "$numberInt" : "19" } }
+ { "_id" : { "$numberInt" : "20" } }
+(5 rows)
+
+-- Extended explain: $match + $sample with wildcard index shows indexName and no leaked marker qual
+SET documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 2 } } ], "cursor": {} }') $$);
+                                        run_explain_and_trim                                        
+----------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: reservoirdb.reservoirTest
+   indexName: wildcard_all
+   indexKey: {"$**": 1}
+   isMultiKey: false
+   indexBounds: ["category": [ { "category": "A" } ,  { "category": "A" } ]]
+   ->  Custom Scan (DocumentDBApiReservoirSample) (actual rows=2 loops=1)
+         Sample Size: 2
+         ->  Index Scan using wildcard_all on documents_25712001 collection (actual rows=8 loops=1)
+               Index Cond: (document @= '{ "category" : "A" }'::bson)
+(10 rows)
+
+RESET documentdb.enableExtendedExplainPlans;
+-- Single-field index on "value"
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{ "createIndexes": "reservoirTest", "indexes": [ { "key": { "value": 1 }, "name": "value_asc" } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Plan: $match on value range uses single-field index with reservoir
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "value": { "$gte": 50, "$lte": 150 } } }, { "$sample": { "size": 3 } } ] }');
+                                                                                 QUERY PLAN                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 3
+   ->  Index Scan using value_asc on documentdb_data.documents_25712001 collection
+         Output: document
+         Index Cond: ((collection.document @>= '{ "value" : { "$numberInt" : "50" } }'::bson) AND (collection.document @<= '{ "value" : { "$numberInt" : "150" } }'::bson))
+(6 rows)
+
+-- Execution: verify correct count with single-field index
+SELECT count(*) FROM (
+  SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "value": { "$gte": 50, "$lte": 150 } } }, { "$sample": { "size": 3 } } ] }')
+) q;
+ count 
+-------
+     3
+(1 row)
+
+-- Compound index on "category" + "value"
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{ "createIndexes": "reservoirTest", "indexes": [ { "key": { "category": 1, "value": -1 }, "name": "category_value_compound" } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Plan: $match on compound prefix uses compound index with reservoir
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A", "value": { "$gt": 50 } } }, { "$sample": { "size": 2 } } ] }');
+                                                                       QUERY PLAN                                                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 2
+   ->  Index Scan using category_value_compound on documentdb_data.documents_25712001 collection
+         Output: document
+         Index Cond: ((collection.document @= '{ "category" : "A" }'::bson) AND (collection.document @> '{ "value" : { "$numberInt" : "50" } }'::bson))
+(6 rows)
+
+-- Execution: compound index match + sample returns correct count
+SELECT count(*) FROM (
+  SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A", "value": { "$gt": 50 } } }, { "$sample": { "size": 2 } } ] }')
+) q;
+ count 
+-------
+     2
+(1 row)
+
+-- Execution: compound index match + sample + sort (verify deterministic result)
+SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A", "value": { "$gt": 50 } } }, { "$sample": { "size": 100 } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+              document               
+-------------------------------------
+ { "_id" : { "$numberInt" : "8" } }
+ { "_id" : { "$numberInt" : "11" } }
+ { "_id" : { "$numberInt" : "14" } }
+ { "_id" : { "$numberInt" : "17" } }
+ { "_id" : { "$numberInt" : "20" } }
+(5 rows)
+
+-- Sparse index on optional "tag" field (none of the docs have "tag", so match returns 0)
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{ "createIndexes": "reservoirTest", "indexes": [ { "key": { "tag": 1 }, "name": "tag_sparse", "sparse": true } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "4" }, "numIndexesAfter" : { "$numberInt" : "5" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Execution: match on sparse-indexed field with no matching docs
+SELECT count(*) FROM (
+  SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "tag": "x" } }, { "$sample": { "size": 5 } } ] }')
+) q;
+ count 
+-------
+     0
+(1 row)
+
+-- Partial filter expression index: only indexes docs where value > 100
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{ "createIndexes": "reservoirTest", "indexes": [ { "key": { "category": 1 }, "name": "category_high_value", "partialFilterExpression": { "value": { "$gt": 100 } } } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "5" }, "numIndexesAfter" : { "$numberInt" : "6" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Plan: $match satisfies partial filter expression - should use partial index
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A", "value": { "$gt": 100 } } }, { "$sample": { "size": 2 } } ] }');
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 2
+   ->  Index Scan using category_high_value on documentdb_data.documents_25712001 collection
+         Output: document
+         Index Cond: (collection.document @= '{ "category" : "A" }'::bson)
+(6 rows)
+
+-- Execution: partial filter index match + sample + sort (deterministic)
+SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A", "value": { "$gt": 100 } } }, { "$sample": { "size": 100 } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+              document               
+-------------------------------------
+ { "_id" : { "$numberInt" : "11" } }
+ { "_id" : { "$numberInt" : "14" } }
+ { "_id" : { "$numberInt" : "17" } }
+ { "_id" : { "$numberInt" : "20" } }
+(4 rows)
+
+-- Execution: $match does NOT satisfy partial filter (value > 50 is wider than index's value > 100)
+-- Planner should still produce correct results (uses a different index since seqscan is off)
+SELECT count(*) FROM (
+  SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "B", "value": { "$gt": 50 } } }, { "$sample": { "size": 10 } } ] }')
+) q;
+ count 
+-------
+     4
+(1 row)
+
+-- Plan: $match exactly matches partial filter predicate boundary
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "C", "value": { "$gt": 100 } } }, { "$sample": { "size": 3 } } ] }');
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 3
+   ->  Index Scan using category_high_value on documentdb_data.documents_25712001 collection
+         Output: document
+         Index Cond: (collection.document @= '{ "category" : "C" }'::bson)
+(6 rows)
+
+-- Execution: partial filter match for category C
+SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "C", "value": { "$gt": 100 } } }, { "$sample": { "size": 100 } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+              document               
+-------------------------------------
+ { "_id" : { "$numberInt" : "13" } }
+ { "_id" : { "$numberInt" : "16" } }
+ { "_id" : { "$numberInt" : "19" } }
+(3 rows)
+
+RESET enable_seqscan;
+RESET documentdb.forceUseIndexIfAvailable;
+-- =============================================================================
+-- ERROR: Sample size exceeds maximum reservoir capacity
+-- =============================================================================
+-- Should error when sample size exceeds MaxAllocSize / sizeof(HeapTuple)
+SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 200000000 } } ] }');
+ERROR:  $sample size 200000000 exceeds maximum reservoir capacity
+-- Should error when sample size exceeds INT32_MAX (2 billion)
+SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 2200000000 } } ] }');
+ERROR:  $sample size 2200000000 exceeds maximum supported value
+-- =============================================================================
+-- $lookup + $sample TESTS
+-- =============================================================================
+-- Setup: create a second collection for $lookup
+SELECT documentdb_api.insert_one('reservoirdb','lookupTarget',' { "_id" : 1, "ref" : "A", "info" : "first" }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','lookupTarget',' { "_id" : 2, "ref" : "B", "info" : "second" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','lookupTarget',' { "_id" : 3, "ref" : "A", "info" : "third" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','lookupTarget',' { "_id" : 4, "ref" : "C", "info" : "fourth" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('reservoirdb','lookupTarget',' { "_id" : 5, "ref" : "A", "info" : "fifth" }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Uncorrelated $lookup with $sample on the right collection (pipeline form)
+-- The inner $sample alone uses TABLESAMPLE (no $match → $sample pattern)
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "_id": { "$lte": 3 } } }, { "$lookup": { "from": "lookupTarget", "pipeline": [ { "$sample": { "size": 2 } } ], "as": "sampled" } } ] }');
+                                                                                                                  QUERY PLAN                                                                                                                   
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   Output: bson_dollar_merge_documents(collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'sampled'::text), '{ "sampled" : [  ] }'::bson)), true)
+   ->  Seq Scan on documentdb_data.documents_25712001 collection
+         Output: collection.shard_key_value, collection.object_id, collection.document
+         Filter: ((collection.document @<= '{ "_id" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+   ->  Aggregate
+         Output: COALESCE(bson_array_agg(collection_0_1.document, 'sampled'::text), '{ "sampled" : [  ] }'::bson)
+         ->  Limit
+               Output: collection_0_1.document, (random())
+               ->  Sort
+                     Output: collection_0_1.document, (random())
+                     Sort Key: (random())
+                     ->  Sample Scan on documentdb_data.documents_25712005 collection_0_1
+                           Output: collection_0_1.document, random()
+                           Sampling: system_rows ('2'::bigint)
+(15 rows)
+
+-- Uncorrelated $lookup with $match + $sample on the right collection
+-- The inner pipeline has $match → $sample, so it should use ReservoirSample
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "_id": { "$lte": 3 } } }, { "$lookup": { "from": "lookupTarget", "pipeline": [ { "$match": { "ref": "A" } }, { "$sample": { "size": 2 } } ], "as": "sampled" } } ] }');
+                                                                                                                  QUERY PLAN                                                                                                                   
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   Output: bson_dollar_merge_documents(collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'sampled'::text), '{ "sampled" : [  ] }'::bson)), true)
+   ->  Seq Scan on documentdb_data.documents_25712001 collection
+         Output: collection.shard_key_value, collection.object_id, collection.document
+         Filter: ((collection.document @<= '{ "_id" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+   ->  Aggregate
+         Output: COALESCE(bson_array_agg(collection_0_1.document, 'sampled'::text), '{ "sampled" : [  ] }'::bson)
+         ->  Custom Scan (DocumentDBApiReservoirSample)
+               Output: collection_0_1.document
+               Sample Size: 2
+               ->  Bitmap Heap Scan on documentdb_data.documents_25712005 collection_0_1
+                     Output: collection_0_1.document
+                     Recheck Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
+                     Filter: (collection_0_1.document @= '{ "ref" : "A" }'::bson)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
+(16 rows)
+
+-- Correlated $lookup with $sample on the right collection
+-- The inner pipeline has a correlation ($match on $$category), so it should
+-- NOT use the reservoir custom scan (uses standard TABLESAMPLE path instead)
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "_id": { "$lte": 2 } } }, { "$lookup": { "from": "lookupTarget", "let": { "category": "$category" }, "pipeline": [ { "$match": { "$expr": { "$eq": [ "$ref", "$$category" ] } } }, { "$sample": { "size": 1 } } ], "as": "sampled" } } ] }');
+                                                                                                                                                QUERY PLAN                                                                                                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on lookup_non_inlined_stage_1
+   Output: bson_dollar_merge_documents(lookup_non_inlined_stage_1."left", (SubPlan 1), true)
+   ->  Nested Loop
+         Output: collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'sampled'::text), '{ "sampled" : [  ] }'::bson)), NULL::bson
+         ->  Seq Scan on documentdb_data.documents_25712001 collection
+               Output: collection.shard_key_value, collection.object_id, collection.document
+               Filter: ((collection.document @<= '{ "_id" : { "$numberInt" : "2" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberInt" : "2" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+         ->  Aggregate
+               Output: COALESCE(bson_array_agg(collection_0_1.document, 'sampled'::text), '{ "sampled" : [  ] }'::bson)
+               ->  Bitmap Heap Scan on documentdb_data.documents_25712005 collection_0_1
+                     Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+                     Recheck Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
+                     Filter: bson_dollar_expr(collection_0_1.document, '{ "" : { "$eq" : [ "$ref", "$$category" ] } }'::bson, bson_dollar_lookup_expression_eval_merge(collection.document, '{ "category" : "$category" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
+   SubPlan 1
+     ->  Aggregate
+           Output: COALESCE(bson_array_agg(lookup_subpipeline_substage_0.lookup_unwind, 'sampled'::text), '{ "sampled" : [  ] }'::bson)
+           ->  Limit
+                 Output: lookup_subpipeline_substage_0.lookup_unwind, (random())
+                 ->  Sort
+                       Output: lookup_subpipeline_substage_0.lookup_unwind, (random())
+                       Sort Key: (random())
+                       ->  Function Scan on documentdb_api_catalog.bson_lookup_unwind lookup_subpipeline_substage_0
+                             Output: lookup_subpipeline_substage_0.lookup_unwind, random()
+                             Function Call: bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'sampled'::text)
+(26 rows)
+
+-- $match + $unwind + $sample — unwind before sample means reservoir is NOT used
+-- because sample is not directly after $match (unwind injects new tuples)
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$unwind": "$category" }, { "$sample": { "size": 2 } } ] }');
+                                               QUERY PLAN                                                
+---------------------------------------------------------------------------------------------------------
+ Limit
+   Output: agg_stage_2.document, (random())
+   ->  Sort
+         Output: agg_stage_2.document, (random())
+         Sort Key: (random())
+         ->  Subquery Scan on agg_stage_2
+               Output: agg_stage_2.document, random()
+               ->  ProjectSet
+                     Output: bson_dollar_unwind(collection.document, '$category'::text)
+                     ->  Seq Scan on documentdb_data.documents_25712001 collection
+                           Output: collection.shard_key_value, collection.object_id, collection.document
+                           Filter: (collection.document @= '{ "category" : "A" }'::bson)
+(12 rows)
+
+-- =============================================================================
+-- $skip + $sample TESTS
+-- =============================================================================
+-- $match + $skip + $sample — skip before sample means reservoir is NOT used
+-- because $skip changes the result set that $sample operates on
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "_id": { "$gte": 1 } } }, { "$skip": 2 }, { "$sample": { "size": 3 } } ] }');
+                                                                                                                           QUERY PLAN                                                                                                                           
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   Output: agg_stage_2.document, (random())
+   ->  Sort
+         Output: agg_stage_2.document, (random())
+         Sort Key: (random())
+         ->  Subquery Scan on agg_stage_2
+               Output: agg_stage_2.document, random()
+               ->  Limit
+                     Output: collection.document
+                     ->  Seq Scan on documentdb_data.documents_25712001 collection
+                           Output: collection.document
+                           Filter: ((collection.document @>= '{ "_id" : { "$numberInt" : "1" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberInt" : "1" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+(12 rows)
+
+-- =============================================================================
+-- $unwind + $sample TESTS
+-- =============================================================================
+-- $match + $unwind + $sample — reservoir is NOT used because $unwind
+-- produces new tuples above the base relation scan
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "_id": { "$gte": 1 } } }, { "$unwind": "$category" }, { "$sample": { "size": 2 } } ] }');
+                                                                                                                           QUERY PLAN                                                                                                                           
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   Output: agg_stage_2.document, (random())
+   ->  Sort
+         Output: agg_stage_2.document, (random())
+         Sort Key: (random())
+         ->  Subquery Scan on agg_stage_2
+               Output: agg_stage_2.document, random()
+               ->  ProjectSet
+                     Output: bson_dollar_unwind(collection.document, '$category'::text)
+                     ->  Seq Scan on documentdb_data.documents_25712001 collection
+                           Output: collection.shard_key_value, collection.object_id, collection.document
+                           Filter: ((collection.document @>= '{ "_id" : { "$numberInt" : "1" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberInt" : "1" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+(12 rows)
+
+-- =============================================================================
+-- $lookup inner + $sample TESTS
+-- =============================================================================
+-- Uncorrelated $lookup with $match + $sample in inner pipeline
+-- The inner pipeline targets a base relation with $match → $sample,
+-- so it should use ReservoirSample in the subplan
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "_id": { "$lte": 3 } } }, { "$lookup": { "from": "lookupTarget", "pipeline": [ { "$match": { "ref": "A" } }, { "$sample": { "size": 2 } } ], "as": "sampled" } } ] }');
+                                                                                                                  QUERY PLAN                                                                                                                   
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   Output: bson_dollar_merge_documents(collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'sampled'::text), '{ "sampled" : [  ] }'::bson)), true)
+   ->  Seq Scan on documentdb_data.documents_25712001 collection
+         Output: collection.shard_key_value, collection.object_id, collection.document
+         Filter: ((collection.document @<= '{ "_id" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+   ->  Aggregate
+         Output: COALESCE(bson_array_agg(collection_0_1.document, 'sampled'::text), '{ "sampled" : [  ] }'::bson)
+         ->  Custom Scan (DocumentDBApiReservoirSample)
+               Output: collection_0_1.document
+               Sample Size: 2
+               ->  Bitmap Heap Scan on documentdb_data.documents_25712005 collection_0_1
+                     Output: collection_0_1.document
+                     Recheck Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
+                     Filter: (collection_0_1.document @= '{ "ref" : "A" }'::bson)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
+(16 rows)
+
+-- Correlated $lookup with $match + $sample in inner pipeline
+-- Correlation ($$category) prevents reservoir optimization
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "_id": { "$lte": 2 } } }, { "$lookup": { "from": "lookupTarget", "let": { "category": "$category" }, "pipeline": [ { "$match": { "$expr": { "$eq": [ "$ref", "$$category" ] } } }, { "$sample": { "size": 1 } } ], "as": "sampled" } } ] }');
+                                                                                                                                                QUERY PLAN                                                                                                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on lookup_non_inlined_stage_1
+   Output: bson_dollar_merge_documents(lookup_non_inlined_stage_1."left", (SubPlan 1), true)
+   ->  Nested Loop
+         Output: collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'sampled'::text), '{ "sampled" : [  ] }'::bson)), NULL::bson
+         ->  Seq Scan on documentdb_data.documents_25712001 collection
+               Output: collection.shard_key_value, collection.object_id, collection.document
+               Filter: ((collection.document @<= '{ "_id" : { "$numberInt" : "2" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberInt" : "2" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+         ->  Aggregate
+               Output: COALESCE(bson_array_agg(collection_0_1.document, 'sampled'::text), '{ "sampled" : [  ] }'::bson)
+               ->  Bitmap Heap Scan on documentdb_data.documents_25712005 collection_0_1
+                     Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+                     Recheck Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
+                     Filter: bson_dollar_expr(collection_0_1.document, '{ "" : { "$eq" : [ "$ref", "$$category" ] } }'::bson, bson_dollar_lookup_expression_eval_merge(collection.document, '{ "category" : "$category" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
+   SubPlan 1
+     ->  Aggregate
+           Output: COALESCE(bson_array_agg(lookup_subpipeline_substage_0.lookup_unwind, 'sampled'::text), '{ "sampled" : [  ] }'::bson)
+           ->  Limit
+                 Output: lookup_subpipeline_substage_0.lookup_unwind, (random())
+                 ->  Sort
+                       Output: lookup_subpipeline_substage_0.lookup_unwind, (random())
+                       Sort Key: (random())
+                       ->  Function Scan on documentdb_api_catalog.bson_lookup_unwind lookup_subpipeline_substage_0
+                             Output: lookup_subpipeline_substage_0.lookup_unwind, random()
+                             Function Call: bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'sampled'::text)
+(26 rows)
+
+-- =============================================================================
+-- $project + $sort + $sample TESTS
+-- =============================================================================
+-- $project + $sort + $sample — reservoir IS used because $sample still operates
+-- on the base relation scan. The project is folded into the ReservoirSample
+-- output target list, and the sort is applied above.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$project": { "_id": 1, "category": 1 } }, { "$sort": { "category": 1 } }, { "$sample": { "size": 2 } } ] }');
+                                                                                                                                                                                                                         QUERY PLAN                                                                                                                                                                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Output: (bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "category" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "category" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "category" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "category" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "category" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Custom Scan (DocumentDBApiReservoirSample)
+         Output: bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "category" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_orderby(bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "category" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "category" : { "$numberInt" : "1" } }'::bson)
+         Sample Size: 2
+         ->  Seq Scan on documentdb_data.documents_25712001 collection
+               Output: document
+(8 rows)
+
+-- $match + $sample + $project — verify where the project node is placed
+-- relative to the ReservoirSample custom scan
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 3 } }, { "$project": { "_id": 1, "value": 1 } } ] }');
+                                                                                               QUERY PLAN                                                                                                
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Sample Size: 3
+   ->  Seq Scan on documentdb_data.documents_25712001 collection
+         Output: collection.document
+         Filter: (collection.document @= '{ "category" : "A" }'::bson)
+(6 rows)
+
+-- $match + $project + $sample — project before sample; reservoir is used
+-- and the project is folded into the ReservoirSample output target list
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$project": { "_id": 1, "value": 1 } }, { "$sample": { "size": 3 } } ] }');
+                                                                                          QUERY PLAN                                                                                          
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Sample Size: 3
+   ->  Seq Scan on documentdb_data.documents_25712001 collection
+         Output: document
+         Filter: (collection.document @= '{ "category" : "A" }'::bson)
+(6 rows)
+
+-- =============================================================================
+-- natts = 0: when the outer query does not reference the document column,
+-- the custom scan target list is NIL and the slot has 0 attributes.
+-- This verifies ExecForceStoreHeapTuple handles natts=0 correctly.
+-- =============================================================================
+-- $count stage produces a count without referencing document data
+SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "_id": { "$gte": 1 } } }, { "$sample": { "size": 5 } }, { "$count": "total" } ] }');
+               document               
+--------------------------------------
+ { "total" : { "$numberInt" : "5" } }
+(1 row)
+
+-- =============================================================================
+-- CLEANUP
+-- =============================================================================
+RESET documentdb.enableDollarSampleReservoirScan;

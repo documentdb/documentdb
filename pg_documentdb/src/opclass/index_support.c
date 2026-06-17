@@ -1022,6 +1022,11 @@ CheckRestrictionPathNodeForIndexOperation(Expr *currentExpr,
 		{
 			context->hasDynamicStreamingContinuationScan = true;
 		}
+		else if (funcExpr->funcid == BsonRangeMatchFunctionId() &&
+				 IsBsonRangeArgsForReservoirSample(funcExpr->args))
+		{
+			context->reservoirSampleExpr = funcExpr;
+		}
 		else
 		{
 			const MongoQueryOperator *operator =
@@ -4620,6 +4625,20 @@ TrimIndexRestrictInfoForBtreePath(PlannerInfo *root, IndexPath *indexPath,
 			continue;
 		}
 
+		/* Trim the reservoir sample marker qual if present. */
+		if (IsA(rinfo->clause, FuncExpr))
+		{
+			FuncExpr *funcExpr = (FuncExpr *) rinfo->clause;
+			if (funcExpr->funcid == BsonRangeMatchFunctionId())
+			{
+				if (IsBsonRangeArgsForReservoirSample(funcExpr->args))
+				{
+					restrictInfosToRemove = lappend(restrictInfosToRemove, rinfo);
+					continue;
+				}
+			}
+		}
+
 		if (!IsA(rinfo->clause, OpExpr))
 		{
 			hasOtherClauses = true;
@@ -4952,6 +4971,15 @@ ProcessRestrictionInfoAndRewriteFuncExpr(Expr *clause,
 			{
 				/* Trim these */
 				return NULL;
+			}
+
+			if (trimClauses && funcExpr->funcid == BsonRangeMatchFunctionId())
+			{
+				/* Trim the reservoir sample marker qual if present. */
+				if (IsBsonRangeArgsForReservoirSample(funcExpr->args))
+				{
+					return NULL;
+				}
 			}
 
 			if (funcExpr->funcid == BsonFullScanFunctionOid())

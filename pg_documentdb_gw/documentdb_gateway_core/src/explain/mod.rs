@@ -986,6 +986,7 @@ fn get_stage_from_plan(
                     }
                     "DocumentDBApiExplainQueryScan" => ("ExplainWrapper".to_owned(), None),
                     "DocumentDBApiDistinctQueryScan" => ("DISTINCT_SCAN".to_owned(), None),
+                    "DocumentDBApiReservoirSample" => ("SAMPLESORT".to_owned(), None),
                     scan_type if query_catalog.scan_types().contains(&scan_type.to_owned()) => {
                         ("FETCH".to_owned(), None)
                     }
@@ -1226,6 +1227,17 @@ fn classify_stages(
         return None;
     }
 
+    // When SAMPLESORT comes from DocumentDBApiReservoirSample CustomScan, treat it as
+    // terminal so it stays inside $cursor. On single-node the ExplainWrapper already
+    // collapses it, but on multi-node the ExplainWrapper is on the coordinator and gets
+    // stripped during Citus subplan substitution, exposing SAMPLESORT at the top level.
+    if stage_name == "SAMPLESORT"
+        && plan.custom_plan_provider.as_deref() == Some("DocumentDBApiReservoirSample")
+    {
+        processed_stages.push(("$cursor".to_owned(), plan, stage_name, None));
+        return None;
+    }
+
     // if this is a Lookup JOIN then we automatically treat it as terminal.
     // all nested stages get placed under this one.
     // also let it parent under the root $lookup projection.
@@ -1418,6 +1430,12 @@ fn query_planner(
             if let Some(page_size) = plan.page_size {
                 if page_size > 0 {
                     doc.append("pageSize", smallest_from_i64(page_size));
+                }
+            }
+
+            if let Some(sample_size) = plan.sample_size {
+                if sample_size > 0 {
+                    doc.append("sampleSize", smallest_from_i64(sample_size));
                 }
             }
 

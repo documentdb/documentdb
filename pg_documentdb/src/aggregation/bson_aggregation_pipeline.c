@@ -10,6 +10,7 @@
 
 #include <postgres.h>
 #include <float.h>
+#include <math.h>
 #include <fmgr.h>
 #include <miscadmin.h>
 #include <optimizer/optimizer.h>
@@ -93,6 +94,7 @@ extern bool EnableSortGroupStage;
 extern bool EnableSortPushToAccumulatorWithPrefix;
 extern bool EnableSampleScanFixOnSharded;
 extern bool EnableDistinctIndexPushdown;
+extern bool EnableDollarSampleReservoirScan;
 
 /* GUC to config tdigest compression */
 extern int TdigestCompressionAccuracy;
@@ -9006,7 +9008,7 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 
 	double sizeDouble = BsonValueAsDouble(&sizeValue);
 
-	if (sizeDouble < 0)
+	if (sizeDouble < 0 || isnan(sizeDouble) || isinf(sizeDouble))
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28747),
 						errmsg(
@@ -9049,6 +9051,61 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 
 			rte->tablesample = tablesample_sys_rows;
 		}
+	}
+	else if (EnableDollarSampleReservoirScan && rte->rtekind == RTE_RELATION &&
+			 context->mongoCollection != NULL &&
+			 context->mongoCollection->shardKey == NULL)
+	{
+		/*
+		 * When reservoir sampling is enabled, the target is a base relation,
+		 * and the collection is NOT sharded, emit a bson_dollar_range qual
+		 * with a "sample" parameter. The set_rel_pathlist_hook detects this
+		 * and wraps the scan paths with a ReservoirSample CustomPath that
+		 * uses PostgreSQL's built-in reservoir sampling algorithm.
+		 * Sharded collections are excluded for now.
+		 *
+		 * TODO: Handle reservoir sampling for upper paths as well (e.g.,
+		 * $unwind followed by $sample should still use reservoir instead of
+		 * the order-by-random() fallback).
+		 */
+
+		if (sizeDouble >= (double) PG_INT64_MAX)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28747),
+							errmsg(
+								"The size parameter provided to $sample must be a valid numeric value")));
+		}
+
+		pgbson_writer writer;
+		PgbsonWriterInit(&writer);
+		pgbson_writer rangeWriter;
+		PgbsonWriterStartDocument(&writer, "", 0, &rangeWriter);
+		PgbsonWriterAppendInt64(&rangeWriter, "sample", 6, (int64) sizeDouble);
+		PgbsonWriterEndDocument(&writer, &rangeWriter);
+
+		Const *bsonConst = makeConst(BsonTypeId(), -1, InvalidOid, -1,
+									 PointerGetDatum(PgbsonWriterGetPgbson(&writer)),
+									 false, false);
+		List *args = list_make2(MakeSimpleDocumentVar(), (Node *) bsonConst);
+		FuncExpr *sampleQual = makeFuncExpr(BsonRangeMatchFunctionId(),
+											BOOLOID, args, InvalidOid, InvalidOid,
+											COERCE_EXPLICIT_CALL);
+
+		if (query->jointree->quals != NULL)
+		{
+			List *quals = lappend(
+				make_ands_implicit((Expr *) query->jointree->quals),
+				sampleQual);
+			query->jointree->quals = (Node *) make_ands_explicit(quals);
+		}
+		else
+		{
+			query->jointree->quals = (Node *) sampleQual;
+		}
+
+		/* Next stage must be wrapped in a subquery */
+		context->requiresSubQuery = true;
+		return query;
 	}
 
 	/* Add an order by Random(), Limit N */

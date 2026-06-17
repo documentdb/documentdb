@@ -130,20 +130,18 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '
 
 -- Non-empty $match + $sample (filter constrains input, TABLESAMPLE not expected)
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": { "product": "p1" } }, { "$sample": { "size": 2 } }, { "$project": { "_id": 1 } }, { "$sort": { "_id": 1 } } ] }');
-                                                                                                                    QUERY PLAN                                                                                                                    
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                   QUERY PLAN                                                                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Sort Key: (bson_orderby(bson_dollar_project(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   ->  Subquery Scan on agg_stage_2
-         ->  Limit
-               ->  Sort
-                     Sort Key: (random())
-                     ->  Bitmap Heap Scan on documents_25711001 collection
-                           Recheck Cond: (shard_key_value = '25711001'::bigint)
-                           Filter: (document @= '{ "product" : "p1" }'::bson)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (shard_key_value = '25711001'::bigint)
-(11 rows)
+   Sort Key: (bson_orderby(bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Custom Scan (DocumentDBApiReservoirSample)
+         Sample Size: 2
+         ->  Bitmap Heap Scan on documents_25711001 collection
+               Recheck Cond: (shard_key_value = '25711001'::bigint)
+               Filter: (document @= '{ "product" : "p1" }'::bson)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (shard_key_value = '25711001'::bigint)
+(9 rows)
 
 -- $sample + $match (filter applied after sampling, TABLESAMPLE expected)
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": 5 } }, { "$match": { "unitPrice": { "$gt": 4 } } } ] }');
@@ -258,6 +256,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '
 
 -- SHARDED COLLECTION TESTS WITH FIX DISABLED (regression)
 SET documentdb.enableSampleScanFixOnSharded TO off;
+SET documentdb.enableDollarSampleReservoirScan TO off;
 -- Empty $match + $sample on sharded collection (no TABLESAMPLE without fix)
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 3 } } ] }');
                       QUERY PLAN                       
@@ -295,3 +294,4 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '
 (7 rows)
 
 RESET documentdb.enableSampleScanFixOnSharded;
+RESET documentdb.enableDollarSampleReservoirScan;

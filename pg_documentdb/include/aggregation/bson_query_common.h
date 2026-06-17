@@ -34,6 +34,11 @@ typedef struct DollarRangeParams
 	bool isMinIndexKey;
 	bool isMaxIndexKey;
 	bson_value_t minOrMaxIndexKey;
+
+	/* Reservoir sampling: when true, the range signals the planner to wrap
+	 * scan paths with a reservoir sampling CustomScan. */
+	bool isSample;
+	int64_t sampleSize;
 } DollarRangeParams;
 
 DollarRangeParams * ParseQueryDollarRange(pgbsonelement *filterElement);
@@ -41,6 +46,7 @@ DollarRangeParams * ParseQueryDollarRange(pgbsonelement *filterElement);
 bool IsBsonRangeArgsForFullScan(List *args);
 bool IsBsonRangeArgsForFullScanOrElemMatch(List *args);
 bool TryGetRangeParamsForRangeArgs(List *args, DollarRangeParams *params);
+bool IsBsonRangeArgsForReservoirSample(List *args);
 void InitializeQueryDollarRange(const bson_value_t *rangeValue,
 								DollarRangeParams *params);
 
