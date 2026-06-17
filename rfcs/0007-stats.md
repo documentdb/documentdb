@@ -295,7 +295,7 @@ Contributors adding new statistics must consider the impact on frequently execut
 
 3. **Memory budget**: Shared-memory-backed stats should declare their memory footprint in the PR description. Prefer fixed-size allocations (bounded by `MaxBackends` or a compile-time constant).
 
-4. **Validation**: PRs adding a new statistic should include a before/after benchmark demonstrating negligible throughput regression with the stat enabled.
+4. **Validation**: PRs adding a new statistic should include a before/after benchmark demonstrating negligible throughput regression with the stat enabled. The [micro-benchmarks](https://github.com/documentdb/micro-benchmarks) framework is recommended for this purpose.
 
 ### Contributor Checklist: How to add a new statistic
 
