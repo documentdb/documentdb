@@ -53,6 +53,7 @@ This RFC establishes that baseline for DocumentDB. It defines **how** statistics
 - This RFC does **not** design or implement any specific statistics.
 - This RFC does **not** replace or modify existing PostgreSQL statistics.
 - This RFC does **not** address using statistics for query planning or optimization. The focus is solely on exposability and monitoring.
+- This RFC does **not** cover statistics exposed through the MongoDB wire protocol (e.g., `collStats`, `dbStats`). Those follow MongoDB API compatibility conventions. This RFC covers only **extension-defined statistics** consumed via SQL by operators and monitoring tools.
 
 ---
 
@@ -283,6 +284,18 @@ Each new statistic added under this RFC should include:
 ### Migration Path
 
 This RFC is purely additive and applies only to **new** statistics. Pre-existing statistics in DocumentDB are not retroactively required to follow these conventions; they may be migrated opportunistically when touched. No user-visible upgrade or rollback steps are required by this RFC itself.
+
+### Performance Considerations
+
+Contributors adding new statistics must consider the impact on frequently executed code paths (e.g., per-query, per-operation):
+
+1. **Collection overhead**: Use lock-free mechanisms (atomic increments, per-backend buffers) for counters updated in the query execution path. Never hold a lock to update a statistic.
+
+2. **GUC as a kill switch**: When `documentdb.track_<scope>` is `false`, collection must stop entirely — not just hide output. Zero overhead when disabled.
+
+3. **Memory budget**: Shared-memory-backed stats should declare their memory footprint in the PR description. Prefer fixed-size allocations (bounded by `MaxBackends` or a compile-time constant).
+
+4. **Validation**: PRs adding a new statistic should include a before/after benchmark demonstrating negligible throughput regression with the stat enabled.
 
 ### Contributor Checklist: How to add a new statistic
 
