@@ -422,7 +422,11 @@ SELECT __API_CATALOG_SCHEMA__.documentdb_stat_reset_io();  -- ERROR: permission 
 
 Open a companion PR against `https://github.com/documentdb/documentdb.github.io` adding an entry to `/articles/postgresql/stats.md` covering: description, column definitions with units, example query and output, related GUC (`documentdb.track_io`), and the reset function.
 
-#### 8. Justify any deviations
+#### 8. Validate performance
+
+Run a before/after benchmark demonstrating negligible throughput regression with the stat enabled. Ensure collection uses lock-free mechanisms and the GUC fully disables collection (zero overhead when off). See "Performance Considerations" for details.
+
+#### 9. Justify any deviations
 
 If your statistic deviates from the canonical permission or path conventions, explain why in the PR description so reviewers can evaluate it explicitly.
 
