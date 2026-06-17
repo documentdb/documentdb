@@ -328,15 +328,6 @@ bool EnableUseForeignKeyLookupInline = DEFAULT_USE_FOREIGN_KEY_LOOKUP_INLINE;
 #define DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE true
 bool EnableAddToSetAggregationRewrite = DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE;
 
-/* Added in v109, enabled in v109, Remove after v112*/
-#define DEFAULT_ENABLE_ID_INDEX_PUSHDOWN_FOR_QUERY_OP true
-bool EnableIdIndexPushdownForQueryOp =
-	DEFAULT_ENABLE_ID_INDEX_PUSHDOWN_FOR_QUERY_OP;
-
-/* Added in v110, enabled in v110, remove after v112 */
-#define DEFAULT_INLINE_CHANGESTREAM_MATCH_STAGES true
-bool InlineChangeStreamMatchStage = DEFAULT_INLINE_CHANGESTREAM_MATCH_STAGES;
-
 /* Added in v110, enabled in v110, unknown stabilization removal time */
 #define DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS true
 bool RemoveMatchNamespaceFilters = DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS;
@@ -1072,14 +1063,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enableIdIndexPushdownForQueryOp", newGucPrefix),
-		gettext_noop(
-			"Whether to enable index push down for _id index."),
-		NULL, &EnableIdIndexPushdownForQueryOp,
-		DEFAULT_ENABLE_ID_INDEX_PUSHDOWN_FOR_QUERY_OP,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enableUseForeignKeyLookupInline", newGucPrefix),
 		gettext_noop(
 			"Whether to use foreign key for lookup inline method."),
@@ -1101,14 +1084,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable the new addToSet aggregation implementation that prevents crashes with the new delayed portal feature."),
 		NULL, &EnableAddToSetAggregationRewrite,
 		DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.inlineChangeStreamMatchStage", newGucPrefix),
-		gettext_noop(
-			"Determines whether to inline $match aggregation stage with  $changestreams"),
-		NULL, &InlineChangeStreamMatchStage,
-		DEFAULT_INLINE_CHANGESTREAM_MATCH_STAGES,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

@@ -572,15 +572,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397 WHER
 -- 9. with collation 
 EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, 'en-u-ks-level1');
 
--- explain plan should show seq scan without delete pushdown
-SET LOCAL documentdb.enableIdIndexPushdownForQueryOp to OFF;
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE document @@ '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}';
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$in" : [1,2,3,4,5,6,7,8,9,10]}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$eq" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : 10}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lt" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$gte" : 10}}', NULL, NULL::text);
-EXPLAIN (COSTS OFF, VERBOSE ON) DELETE FROM  documentdb_data.documents_6397_639103 WHERE documentdb_api_internal.bson_query_match(document, '{"_id" : {"$lte" : 10}}', NULL, NULL::text);
 ROLLBACK;
 
 select 1 from documentdb_api.insert_one('db', 'removeme', '{"a":1,"_id":1}');

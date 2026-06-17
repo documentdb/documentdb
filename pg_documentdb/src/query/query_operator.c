@@ -141,7 +141,6 @@ typedef struct MatchNamespaceFiltersContext
 } MatchNamespaceFiltersContext;
 
 extern bool EnableDollarInToScalarArrayOpExprConversion;
-extern bool EnableIdIndexPushdownForQueryOp;
 extern bool EnableObjectIdFuncExprConversion;
 
 /* --------------------------------------------------------- */
@@ -186,10 +185,6 @@ static Expr * ExpandExprForDollarAll(const char *path,
 									 bson_iter_t *operatorDocIterator,
 									 BsonQueryOperatorContext *context,
 									 const MongoQueryOperator *operator);
-static MongoCollection * GetCollectionByDocumentVarLegacy(Expr *documentExpr,
-														  Query *currentQuery,
-														  Index *collectionVarno,
-														  ParamListInfo boundParams);
 static MongoCollection * GetCollectionByDocumentVar(Expr *documentExpr,
 													Query *currentQuery,
 													Index *collectionVarno,
@@ -1668,30 +1663,19 @@ ExpandBsonQueryOperator(OpExpr *queryOpExpr, Node *queryNode,
 		Index collectionVarno;
 		MongoCollection *collection = NULL;
 		bool isCollectionBasedRTE = false;
-		if (EnableIdIndexPushdownForQueryOp)
-		{
-			/* if query is on a collection, get the collection metadata */
-			collection = GetCollectionByDocumentVar(context.documentExpr,
-													currentQuery,
-													&collectionVarno, boundParams,
-													&isCollectionBasedRTE);
-		}
-		else
-		{
-			/* if query is on a collection, get the collection metadata */
-			collection = GetCollectionByDocumentVarLegacy(context.documentExpr,
-														  currentQuery,
-														  &collectionVarno,
-														  boundParams);
-		}
+
+		/* if query is on a collection, get the collection metadata */
+		collection = GetCollectionByDocumentVar(context.documentExpr,
+												currentQuery,
+												&collectionVarno, boundParams,
+												&isCollectionBasedRTE);
 
 		if (collection != NULL)
 		{
 			bool hasShardKeyFilters = false;
 
-			/* TODO: Remove this condition once the GUC is deprecated, as shard key constant filters can always be appended for non-sharded collections */
 			/* For collection-based RTE on unsharded collections, shard_key_value is already appended, so skip here */
-			if ((EnableIdIndexPushdownForQueryOp && !isCollectionBasedRTE) ||
+			if (!isCollectionBasedRTE ||
 				collection->shardKey != NULL)
 			{
 				/* Retrieve the shard_key_value filter applicable to the specified collection */
@@ -3808,41 +3792,6 @@ CreateShardKeyFiltersForQuery(const bson_value_t *queryDocument, pgbson *shardKe
 	return ComputeShardKeyExprForQueryValue(shardKeyBson, collectionId, queryDocument,
 											collectionVarno,
 											isShardKeyValueCollationAware);
-}
-
-
-/*
- * GetCollectionByDocumentVarLegacy finds the collection referenced by
- * documentExpr if it contains a single Var, or NULL if it not a single Var,
- * or the FROM clause entry is not a ApiSchema.collection call.
- */
-static MongoCollection *
-GetCollectionByDocumentVarLegacy(Expr *documentExpr,
-								 Query *currentQuery,
-								 Index *collectionVarno,
-								 ParamListInfo boundParams)
-{
-	List *documentVars = pull_var_clause((Node *) documentExpr, 0);
-	if (list_length(documentVars) != 1)
-	{
-		return NULL;
-	}
-
-	Var *documentVar = linitial(documentVars);
-
-	/* find the FROM ApiSchema.collection(...) clause to which document refers */
-	RangeTblEntry *rte = rt_fetch(documentVar->varno, currentQuery->rtable);
-	if (!IsResolvableDocumentDbCollectionBasedRTE(rte, boundParams))
-	{
-		return NULL;
-	}
-
-	if (collectionVarno != NULL)
-	{
-		*collectionVarno = documentVar->varno;
-	}
-
-	return GetCollectionForRTE(rte, boundParams);
 }
 
 

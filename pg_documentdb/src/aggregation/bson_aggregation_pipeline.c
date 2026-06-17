@@ -86,7 +86,6 @@ extern bool FailOnNonEmptyGroupCountArg;
 extern bool FailOnGroupIdDuplicate;
 extern bool EnableGroupSubqueryElimination;
 extern bool ForceGroupSubqueryElimination;
-extern bool InlineChangeStreamMatchStage;
 extern bool RemoveMatchNamespaceFilters;
 extern bool EnableOrderByIndexTerm;
 extern bool EnableGroupByCompoundIdIndexPushdown;
@@ -9802,8 +9801,7 @@ TryOptimizeAggregationPipelines(List **aggregationStages,
 
 			case Stage_ChangeStream:
 			{
-				if (InlineChangeStreamMatchStage &&
-					IsPipelineStageFollowedByOtherStage(Stage_ChangeStream, Stage_Match,
+				if (IsPipelineStageFollowedByOtherStage(Stage_ChangeStream, Stage_Match,
 														currentIndex, stagesList))
 				{
 					/* Inline $match stage collection filters */
