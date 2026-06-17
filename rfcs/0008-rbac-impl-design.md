@@ -423,3 +423,320 @@ Custom roles will follow the exact same pattern as built-in roles, as they role 
 
 Inheriting roles will be implemented using Postgres’ inheritance, by granting dependent role to the new role. When deleting a role the system will first look for any DocumentDb roles that inherit from it, remove it from the DocumentDb roles document, and then revoking the role from the one that depends on it.
 
+# OSSDocDB RBAC - Per Command Breakdown
+
+## Requirements
+
+* All DocumentDb tables exist within DocumentDB specific Postgres schemas, that we can identify at runtime. 
+* All DocumentDb Postgres users are given a token role to identify them, the **DocumentDbUser** role.
+* A DocumentDB service admin role exists with high level privileges, called **DocumentDbServiceAdmin**, operations that require higher level privileges can be executed as the **DocumentDbServiceAdmin**, either through a UDF configured with a security definer, or by the UDF code directly switching the user internally (through C function).
+
+## Spec
+
+DocumentDb privileges are enforced through a combination of traditional Postgres roles, and custom authentication at the object access level setup by the extension. The extension adds extra authorization requirements to commands operate within a DocumentDb schema, that are being run by users that have the **DocumentDbUser** role. Actions by any other user will only be authorized by traditional Postgres roles.
+
+DocumentDb roles, assigned to users are modeled as Postgres roles attached to the user which have a corresponding entry in an internal role table mapping the role to the DocumentDb privilege actions. In cases where the available Postgres privileges are less granular than the DocumentDb equivalent, the Postgres role may allow for more privileges and the extension will enforce the scoped down privilege.
+
+DocumentDb metadata tables use row level access control to limit what values the **DocumentDbUser** can see (e.g. limit what collections can be seen when running $listCollections), but can only be written to through a UDF which uses the **DocumentDbServiceAdmin** role. This is done to ensure a **DocumentDbUser** cannot corrupt any metadata in the database.
+
+
+### Select / Insert / Delete Privileges 
+
+In the initial design, standard Postgres privileges are used to gate the users access to select, insert, and delete within the DocumentDb database. Whenever a table is created the extension must lookup any DocumentDb roles that should have access to the new collection, and do a grant. 
+
+An alternative option is to give the **DocumentDbUser** role full privileges on all the collection in the DocumentDb schemas, and have a lower level object access hook validate access to the tables based only on the DocumentDb privileges. (see: https://github.com/postgres/postgres/blob/master/contrib/sepgsql/hooks.c). This could be used to enforce access through name matching, rather than per-table grants.
+
+
+## Metadata Table Access
+
+There are 4 tables of metadata that map data between Postgres structors and DocumentDB concepts, these tables are: 
+
+* collections
+* collection_indexes
+* users
+* roles
+
+For **DocumentDbUser** users, these tables will have row level privileges, which check which rows can be seen based on the associated DocumentDB permissions. All **DocumentDbUser** users will have the Postgres read privilege for these tables, but some of the data can be limited by row level controls. The row level controls will not apply to other Postgres users.
+
+The **DocumentDbUser** does not have write access to these collections. All writes will be done by docdb_api.* operations, that operate as **DocumentDbServiceAdmin**, this is done to ensure a user cannot corrupt the metadata.
+
+### collections
+
+To read a row, the Postgres user must have either the `listCollection` privilege for that collection or database, or have read access to that collection.
+
+
+### collection_indexes
+
+To read a row the user must have the `listIndexes` privilege, or read privileges on the collection associated with the index.
+
+### users
+
+To read a row the **DocumentDbUser** must have the `viewUser` privilege or, the row is for their own user.
+
+### roles
+
+To read a row the **DocumentDbUser** must have the `viewRole` privilege, or have been granted the role.
+
+## Enforcing Consistent Visibility For A Collection That Doesn’t Exist
+
+When doing a read operation on a collection MongoDB properly checks the required authorization based in the collection name, and will return an error even if the collection does not exist. This prevents a user without access from being able to determine if there is a collection.
+
+The extension code that deals with nonexistent tables will need to be aware of these rules when returning results.
+
+## Per-Command Break Down
+
+[`aggregate`](https://www.mongodb.com/docs/manual/reference/command/aggregate/#mongodb-dbcommand-dbcmd.aggregate)
+
+* Aggregate command is a combination of stages, that usually act on data loaded from a collection, these can be handled by the standard Postgres read privilege.
+* A few of the stages require special handling, such as $listCollections, these stages are also represented as commands below, and the UDF that generates some of the data may need to be run as **DocumentDbServiceAdmin**
+* $lookup allows for a join, which is also a table read, which can be processed by standard Postgres read privilege
+* $out allows writing to a collection, and will be processed as a collection creation, to be run as **DocumentDbServiceAdmin**
+
+[`count`](https://www.mongodb.com/docs/manual/reference/command/count/#mongodb-dbcommand-dbcmd.count)
+
+* Count is deprecated command, modern drivers handle this with an aggregate, the count command still exists. This command runs on a collection and requires the `read` privilege, which can be verified by Postgres.
+
+[`distinct`](https://www.mongodb.com/docs/manual/reference/command/distinct/#mongodb-dbcommand-dbcmd.distinct)
+
+* Distinct runs on a collection and requires the `read` privilege, which can be verified by Postgres.
+
+[`bulkWrite`](https://www.mongodb.com/docs/manual/reference/command/bulkWrite/#mongodb-dbcommand-dbcmd.bulkWrite)
+
+* A combination of insert/update/delete operations, all can be handed by Postgres privileges, except implicit collection creation, see `create`
+
+[`delete`](https://www.mongodb.com/docs/manual/reference/command/delete/#mongodb-dbcommand-dbcmd.delete)
+
+* Delete on a single collection, can be handed by Postgres privileges
+
+[`find`](https://www.mongodb.com/docs/manual/reference/command/find/#mongodb-dbcommand-dbcmd.find)
+
+* Find on a single collection, can be handed by Postgres privileges.
+
+[`findAndModify`](https://www.mongodb.com/docs/manual/reference/command/findAndModify/#mongodb-dbcommand-dbcmd.findAndModify)
+
+* Find and overwrite on a single collection, can be handed by Postgres privileges, except implicit collection creation, see `create`
+
+[`insert`](https://www.mongodb.com/docs/manual/reference/command/insert/#mongodb-dbcommand-dbcmd.insert)
+
+* Inserts a new document it a collection, can be handed by Postgres privileges, except implicit collection creation, see `create`
+
+[`update`](https://www.mongodb.com/docs/manual/reference/command/update/#mongodb-dbcommand-dbcmd.update)
+
+* Updates a new document it a collection, can be handed by Postgres privileges, except implicit collection creation, see `create`
+
+Query Plan Cache Commands ([`planCacheClear`](https://www.mongodb.com/docs/manual/reference/command/planCacheClear/#mongodb-dbcommand-dbcmd.planCacheClear), [`planCacheClearFilters`](https://www.mongodb.com/docs/manual/reference/command/planCacheClearFilters/#mongodb-dbcommand-dbcmd.planCacheClearFilters), [`planCacheListFilters`](https://www.mongodb.com/docs/manual/reference/command/planCacheListFilters/#mongodb-dbcommand-dbcmd.planCacheListFilters), [`planCacheSetFilter`](https://www.mongodb.com/docs/manual/reference/command/planCacheSetFilter/#mongodb-dbcommand-dbcmd.planCacheSetFilter))
+
+* N/A
+
+Authentication Commands ([`authenticate`](https://www.mongodb.com/docs/manual/reference/command/authenticate/#mongodb-dbcommand-dbcmd.authenticate), [`logout`](https://www.mongodb.com/docs/manual/reference/command/logout/#mongodb-dbcommand-dbcmd.logout))
+
+* N/A
+
+User Management Commands - Write Commands ([`createUser`](https://www.mongodb.com/docs/manual/reference/command/createUser/#mongodb-dbcommand-dbcmd.createUser), [`dropAllUsersFromDatabase`](https://www.mongodb.com/docs/manual/reference/command/dropAllUsersFromDatabase/#mongodb-dbcommand-dbcmd.dropAllUsersFromDatabase), [`dropUser`](https://www.mongodb.com/docs/manual/reference/command/dropUser/#mongodb-dbcommand-dbcmd.dropUser), [`grantRolesToUser`](https://www.mongodb.com/docs/manual/reference/command/grantRolesToUser/#mongodb-dbcommand-dbcmd.grantRolesToUser), [`revokeRolesFromUser`](https://www.mongodb.com/docs/manual/reference/command/revokeRolesFromUser/#mongodb-dbcommand-dbcmd.revokeRolesFromUser), [`updateUser`](https://www.mongodb.com/docs/manual/reference/command/updateUser/#mongodb-dbcommand-dbcmd.updateUser))
+
+* These commands need to be run through docdb_api.* operations, and are validated in the method, then executed as **DocumentDbServiceAdmin**. These operations need to manipulate Postgres roles, and DocumentDB metadata tables.
+* The createUser command always adds the **DocumentDbUser** role to the newly created user
+* All the user modification commands only work on users with the **DocumentDbUser** role.
+
+[`usersInfo`](https://www.mongodb.com/docs/manual/reference/command/usersInfo/#mongodb-dbcommand-dbcmd.usersInfo)
+
+* This can be made up from information in the docdb_users and docdb_roles table that the user has access to. 
+
+Role Management Commands - Write Commands ([`createRole`](https://www.mongodb.com/docs/manual/reference/command/createRole/#mongodb-dbcommand-dbcmd.createRole), [`dropRole`](https://www.mongodb.com/docs/manual/reference/command/dropRole/#mongodb-dbcommand-dbcmd.dropRole), [`dropAllRolesFromDatabase`](https://www.mongodb.com/docs/manual/reference/command/dropAllRolesFromDatabase/#mongodb-dbcommand-dbcmd.dropAllRolesFromDatabase), [`grantPrivilegesToRole`](https://www.mongodb.com/docs/manual/reference/command/grantPrivilegesToRole/#mongodb-dbcommand-dbcmd.grantPrivilegesToRole), [`grantRolesToRole`](https://www.mongodb.com/docs/manual/reference/command/grantRolesToRole/#mongodb-dbcommand-dbcmd.grantRolesToRole), [`invalidateUserCache`](https://www.mongodb.com/docs/manual/reference/command/invalidateUserCache/#mongodb-dbcommand-dbcmd.invalidateUserCache), [`revokePrivilegesFromRole`](https://www.mongodb.com/docs/manual/reference/command/revokePrivilegesFromRole/#mongodb-dbcommand-dbcmd.revokePrivilegesFromRole), [`revokeRolesFromRole`](https://www.mongodb.com/docs/manual/reference/command/revokeRolesFromRole/#mongodb-dbcommand-dbcmd.revokeRolesFromRole), [`updateRole`](https://www.mongodb.com/docs/manual/reference/command/updateRole/#mongodb-dbcommand-dbcmd.updateRole))
+
+* These commands need to be run through docdb_api.* operations, and are validated in the method, then executed as **DocumentDbServiceAdmin**. These operations need to manipulate Postgres roles, and DocumentDB metadata tables
+
+[`rolesInfo`](https://www.mongodb.com/docs/manual/reference/command/rolesInfo/#mongodb-dbcommand-dbcmd.rolesInfo)
+
+* This can be made up from information in the docdb_users and docdb_roles table that the user has access to. 
+
+[`abortTransaction`](https://www.mongodb.com/docs/manual/reference/command/abortTransaction/#mongodb-dbcommand-dbcmd.abortTransaction)
+
+* Can only be run within a users session.
+
+[`commitTransaction`](https://www.mongodb.com/docs/manual/reference/command/commitTransaction/#mongodb-dbcommand-dbcmd.commitTransaction)
+
+* Can only be run within a users session.
+
+[`endSessions`](https://www.mongodb.com/docs/manual/reference/command/endSessions/#mongodb-dbcommand-dbcmd.endSessions)
+
+* End session can only end sessions associated with the user. This can be implemented as a user killing their own commands
+
+[`killAllSessions`](https://www.mongodb.com/docs/manual/reference/command/killAllSessions/#mongodb-dbcommand-dbcmd.killAllSessions) / [`killAllSessionsByPattern`](https://www.mongodb.com/docs/manual/reference/command/killAllSessionsByPattern/#mongodb-dbcommand-dbcmd.killAllSessionsByPattern) / [`killSessions`](https://www.mongodb.com/docs/manual/reference/command/killSessions/#mongodb-dbcommand-dbcmd.killSessions)
+
+* Users must have the `killAnySession` privilege to kill other user’s sessions. These operations will be implemented by docdb_api.* operation to verify privileges, and use the **DocumentDbServiceAdmin** role to kill operations owned by other users (limited to users with the **DocumentDbUser** role).
+
+[`refreshSessions`](https://www.mongodb.com/docs/manual/reference/command/refreshSessions/#mongodb-dbcommand-dbcmd.refreshSessions) / [`startSession`](https://www.mongodb.com/docs/manual/reference/command/startSession/#mongodb-dbcommand-dbcmd.startSession)
+
+* These commands are local to a user, and don’t have any Postgres equivalent
+
+[`collMod`](https://www.mongodb.com/docs/manual/reference/command/collMod/#mongodb-dbcommand-dbcmd.collMod)
+
+* CollMod does a number of different things and required privileges depend on the action. For modifying non-capped collections it requires the `collMod` privilege, for views it also required `find` on the source view.
+* Since CollMod can modify indexes and the metadata it will be run as the **DocumentDbServiceAdmin** role.
+
+[`compact`](https://www.mongodb.com/docs/manual/reference/command/compact/#mongodb-dbcommand-dbcmd.compact) 
+
+* Compact uses a VACUUM FULL operation, this can only be done a Postgres super user, or the table owner. This will need to be run as **DocumentDbServiceAdmin**
+
+[`create`](https://www.mongodb.com/docs/manual/reference/command/create/#mongodb-dbcommand-dbcmd.create)
+
+* Create needs to create tables and write metadata, it will be run as the **DocumentDbServiceAdmin** role. The **DocumentDbUser** user does not get create table privileges, to prevent them from being able to create unused tables throughout the database, this ensures the metadata is always set correctly.
+
+[`createIndexes`](https://www.mongodb.com/docs/manual/reference/command/createIndexes/#mongodb-dbcommand-dbcmd.createIndexes)
+
+* createIndexes is run as the **DocumentDbServiceAdmin** role, it needs to populate the collection_indexes table.
+
+[`currentOp`](https://www.mongodb.com/docs/manual/reference/command/currentOp/#mongodb-dbcommand-dbcmd.currentOp)
+
+* Current Op merges data from pg_stat_activity and a DocumentDb in memory store. A user with the DocumentDb `inprog` privilege can see all running queries, if not they can only see their own.
+* A user with the **DocumentDbUser** role will be able to see their data in pg_stat_activity. When the docdb_api.currentOp is called, if the user specifies `$ownOps` the command will run as the **DocumentDbUser**. If the command runs with `$all` the command will run as the **DocumentDbServiceAdmin** role.
+
+[`drop`](https://www.mongodb.com/docs/manual/reference/command/drop/#mongodb-dbcommand-dbcmd.drop)
+
+* Drop deletes a collection. This could be implemented with Postgres privileges, and leaving triggers to remove table / index metadata when the collection is dropped. Or it could be run as the **DocumentDbServiceAdmin** role.
+
+[`dropDatabase`](https://www.mongodb.com/docs/manual/reference/command/dropDatabase/#mongodb-dbcommand-dbcmd.dropDatabase)
+
+* Drop database deletes all collections in a database (Schema in Postgres). This could be implemented with Postgres privileges, and leaving triggers to remove table / index metadata when the collection is dropped. Or it could be run as the **DocumentDbServiceAdmin** role
+
+[`dropConnections`](https://www.mongodb.com/docs/manual/reference/command/dropConnections/#mongodb-dbcommand-dbcmd.dropConnections)
+
+* Currently not implemented
+* Drop connections requires the `dropConnections` privilege. This potentially needs to be implemented in the Gateway along with the extension? for killing Postgres backends it will need to be run as the **DocumentDbServiceAdmin** role.
+
+[`dropIndexes`](https://www.mongodb.com/docs/manual/reference/command/dropIndexes/#mongodb-dbcommand-dbcmd.dropIndexes)
+
+* Drop deletes an index. This could be implemented with Postgres privileges, and leaving triggers to remove index metadata when the collection is dropped. Or it could be run as the **DocumentDbServiceAdmin** role.
+
+[`getParameter`](https://www.mongodb.com/docs/manual/reference/command/getParameter/#mongodb-dbcommand-dbcmd.getParameter)
+
+* DocumentDB users need the `getParameter` privilege to see the parameters. In Postgres most of the parameters are likely to be stored as GUC’s, which are split between only Super user visible and visible for everyone. To support this we would make the GUC’s only super user visible, and then read them as the **DocumentDbServiceAdmin** role. 
+
+[`killCursors`](https://www.mongodb.com/docs/manual/reference/command/killCursors/#mongodb-dbcommand-dbcmd.killCursors)
+
+* This will likely need to kill Postgres backends, a user can kill their own backends, but if they have the DocumentDB `killAnyCursor` the command will need to execute as the **DocumentDbServiceAdmin** role.
+
+[`killOp`](https://www.mongodb.com/docs/manual/reference/command/killOp/#mongodb-dbcommand-dbcmd.killOp)
+
+* This command will kill Postgres backends, a user can kill their own backends, but if they have the DocumentDB `killOp` privilege the command will need to execute as the **DocumentDbServiceAdmin** role.
+
+[`listCollections`](https://www.mongodb.com/docs/manual/reference/command/listCollections/#mongodb-dbcommand-dbcmd.listCollections) / [`listDatabases`](https://www.mongodb.com/docs/manual/reference/command/listDatabases/#mongodb-dbcommand-dbcmd.listDatabases) / [`listIndexes`](https://www.mongodb.com/docs/manual/reference/command/listIndexes/#mongodb-dbcommand-dbcmd.listIndexes)
+
+* These command reads data from the metadata tables, the command can be executed as the **DocumentDbUser**.
+
+[`reIndex`](https://www.mongodb.com/docs/manual/reference/command/reIndex/#mongodb-dbcommand-dbcmd.reIndex)
+
+* Deprecated in MongoDb, it requires a drop index and create index in MongoDb, it requires the `reIndex` privilege. Internally it is a `REINDEX INDEX CONCURRENTLY` command. This can be run by Postgres users with the `MAINTAIN` role for the table, but that also provides additional access, this command should be run as the **DocumentDbServiceAdmin** role.
+
+[`renameCollection`](https://www.mongodb.com/docs/manual/reference/command/renameCollection/#mongodb-dbcommand-dbcmd.renameCollection)
+
+* This needs to modify metadata, this command should be run as the **DocumentDbServiceAdmin** role.
+
+[`collStats`](https://www.mongodb.com/docs/manual/reference/command/collStats/#mongodb-dbcommand-dbcmd.collStats)
+
+* CollStats (deprecated, and replaced with the aggregation stage $collStats), reads metadata from several pg_* tables to fill in the data, some of this data is only accessible to users that have privileges to read the tables. A DocumentDB user can access collStats without the read privilege. This command should be run as the **DocumentDbServiceAdmin** role.
+
+[`connectionStatus`](https://www.mongodb.com/docs/manual/reference/command/connectionStatus/#mongodb-dbcommand-dbcmd.connectionStatus)
+
+* Returns stats about a users connection, it only needs accessible metadata for the user. The command can be executed as the **DocumentDbUser**.
+
+[`dataSize`](https://www.mongodb.com/docs/manual/reference/command/dataSize/#mongodb-dbcommand-dbcmd.dataSize)
+
+* This command runs on a collection and requires the `read` privilege, which can be verified by Postgres.
+
+[`dbHash`](https://www.mongodb.com/docs/manual/reference/command/dbHash/#mongodb-dbcommand-dbcmd.dbHash)
+
+* This hashes the data of all collections in a Db, this command needs the `dbHash` privilege to execute the command. It can be run without the `find` privilege. This command should be run as the **DocumentDbServiceAdmin** role.
+
+[`dbStats`](https://www.mongodb.com/docs/manual/reference/command/dbStats/#mongodb-dbcommand-dbcmd.dbStats)
+
+* dbStats reads metadata from several pg_* tables to fill in the data, some of this data is only accessible to users that have privileges to read the tables. A DocumentDB user can access dbStats without the read privilege. This command should be run as the **DocumentDbServiceAdmin** role.
+
+[`explain`](https://www.mongodb.com/docs/manual/reference/command/explain/#mongodb-dbcommand-dbcmd.explain)
+
+* Explain requires the privileges of the underlying query.
+
+[`getCmdLineOpts`](https://www.mongodb.com/docs/manual/reference/command/getCmdLineOpts/#mongodb-dbcommand-dbcmd.getCmdLineOpts)
+
+* Does not require privileges
+
+[`getLog`](https://www.mongodb.com/docs/manual/reference/command/getLog/#mongodb-dbcommand-dbcmd.getLog)
+
+* Requires the `getLog` privilege, this would only be available through a docdb_api.* operation, it will need to access data not accessible to the users, if that data is stored in a Postgres table the command will need to be run as the **DocumentDbServiceAdmin** role.
+
+[`hostInfo`](https://www.mongodb.com/docs/manual/reference/command/hostInfo/#mongodb-dbcommand-dbcmd.hostInfo)
+
+* Requires the `hostInfo` privilege, this would only be available through a docdb_api.* operation, it will need to access data not accessible to the users, if that data is stored in a Postgres table the command will need to be run as the **DocumentDbServiceAdmin** role.
+
+[`listCommands`](https://www.mongodb.com/docs/manual/reference/command/listCommands/#mongodb-dbcommand-dbcmd.listCommands)
+
+* No Auth Required
+
+[`ping`](https://www.mongodb.com/docs/manual/reference/command/ping/#mongodb-dbcommand-dbcmd.ping)
+
+* No auth required
+
+[`profile`](https://www.mongodb.com/docs/manual/reference/command/profile/#mongodb-dbcommand-dbcmd.profile)
+
+* Requires the `enableProfiler` privilege. This would only be available through a docdb_api.* operation, it will need to access data not accessible to the users, if that data is stored in a Postgres table the command will need to be run as the **DocumentDbServiceAdmin** role.
+
+[`serverStatus`](https://www.mongodb.com/docs/manual/reference/command/serverStatus/#mongodb-dbcommand-dbcmd.serverStatus)
+
+* Requires the `serverStatus` privilege. This would only be available through a docdb_api.* operation, it will need to access data not accessible to the users, if that data is stored in a Postgres table the command will need to be run as the **DocumentDbServiceAdmin** role.
+
+[`whatsmyuri`](https://www.mongodb.com/docs/manual/reference/command/whatsmyuri/#mongodb-dbcommand-dbcmd.whatsmyuri)
+
+* Does not require authorization
+
+[`getAuditConfig`](https://www.mongodb.com/docs/manual/reference/command/getAuditConfig/#mongodb-dbcommand-dbcmd.getAuditConfig)
+
+* Requires the `auditRead` privilege. This would only be available through a docdb_api.* operation, it will need to access data not accessible to the users, if that data is stored in a Postgres table the command will need to be run as the **DocumentDbServiceAdmin** role.
+
+[`logApplicationMessage`](https://www.mongodb.com/docs/manual/reference/command/logApplicationMessage/#mongodb-dbcommand-dbcmd.logApplicationMessage)
+
+* Requires the `applicationMessage` privilege. This would only be available through a docdb_api.* operation, it will need to access data not accessible to the users, if that data is stored in a Postgres table the command will need to be run as the **DocumentDbServiceAdmin** role.
+
+[`setAuditConfig`](https://www.mongodb.com/docs/manual/reference/command/setAuditConfig/#mongodb-dbcommand-dbcmd.setAuditConfig)
+
+* Requires the `auditWrite` privilege. This would only be available through a docdb_api.* operation, it will need to access data not accessible to the users, if that data is stored in a Postgres table the command will need to be run as the **DocumentDbServiceAdmin** role.
+
+[`createSearchIndexes`](https://www.mongodb.com/docs/manual/reference/command/createSearchIndexes/#mongodb-dbcommand-dbcmd.createSearchIndexes) / [`dropSearchIndex`](https://www.mongodb.com/docs/manual/reference/command/dropSearchIndex/#mongodb-dbcommand-dbcmd.dropSearchIndex) / [`updateSearchIndex`](https://www.mongodb.com/docs/manual/reference/command/updateSearchIndex/#mongodb-dbcommand-dbcmd.updateSearchIndex)
+
+* These need the `createSearchIndex` privilege, these are Atlas only
+
+## Appendix: Unsupported Operations
+
+[`cloneCollectionAsCapped`](https://www.mongodb.com/docs/manual/reference/command/cloneCollectionAsCapped/#mongodb-dbcommand-dbcmd.cloneCollectionAsCapped)
+[`compactStructuredEncryptionData`](https://www.mongodb.com/docs/manual/reference/command/compactStructuredEncryptionData/#mongodb-dbcommand-dbcmd.compactStructuredEncryptionData)
+[`convertToCapped`](https://www.mongodb.com/docs/manual/reference/command/convertToCapped/#mongodb-dbcommand-dbcmd.convertToCapped)
+[`logRotate`](https://www.mongodb.com/docs/manual/reference/command/logRotate/#mongodb-dbcommand-dbcmd.logRotate)
+[`filemd5`](https://www.mongodb.com/docs/manual/reference/command/filemd5/#mongodb-dbcommand-dbcmd.filemd5)
+[`fsync`](https://www.mongodb.com/docs/manual/reference/command/fsync/#mongodb-dbcommand-dbcmd.fsync)
+[`fsyncUnlock`](https://www.mongodb.com/docs/manual/reference/command/fsyncUnlock/#mongodb-dbcommand-dbcmd.fsyncUnlock)
+[`getDefaultRWConcern`](https://www.mongodb.com/docs/manual/reference/command/getDefaultRWConcern/#mongodb-dbcommand-dbcmd.getDefaultRWConcern)
+
+[`getClusterParameter`](https://www.mongodb.com/docs/manual/reference/command/getClusterParameter/#mongodb-dbcommand-dbcmd.getClusterParameter)
+
+* DocumentDB users need the `getClusterParameter` privilege to see the parameters. In Postgres most of the parameters are likely to be stored as GUC’s, which are split between only Super user visible and visible for everyone. To support this we would make the GUC’s only super user visible, and then read them as the **DocumentDbServiceAdmin** role. 
+
+[`rotateCertificates`](https://www.mongodb.com/docs/manual/reference/command/rotateCertificates/#mongodb-dbcommand-dbcmd.rotateCertificates)
+[`setFeatureCompatibilityVersion`](https://www.mongodb.com/docs/manual/reference/command/setFeatureCompatibilityVersion/#mongodb-dbcommand-dbcmd.setFeatureCompatibilityVersion)
+[`setIndexCommitQuorum`](https://www.mongodb.com/docs/manual/reference/command/setIndexCommitQuorum/#mongodb-dbcommand-dbcmd.setIndexCommitQuorum)
+[`setClusterParameter`](https://www.mongodb.com/docs/manual/reference/command/setClusterParameter/#mongodb-dbcommand-dbcmd.setClusterParameter)
+[`setParameter`](https://www.mongodb.com/docs/manual/reference/command/setParameter/#mongodb-dbcommand-dbcmd.setParameter)
+[`setDefaultRWConcern`](https://www.mongodb.com/docs/manual/reference/command/setDefaultRWConcern/#mongodb-dbcommand-dbcmd.setDefaultRWConcern)
+[`setUserWriteBlockMode`](https://www.mongodb.com/docs/manual/reference/command/setUserWriteBlockMode/#mongodb-dbcommand-dbcmd.setUserWriteBlockMode)
+[`shutdown`](https://www.mongodb.com/docs/manual/reference/command/shutdown/#mongodb-dbcommand-dbcmd.shutdown)
+[`validateDBMetadata`](https://www.mongodb.com/docs/manual/reference/command/validateDBMetadata/#mongodb-dbcommand-dbcmd.validateDBMetadata)
+
+[Replication Commands](https://www.mongodb.com/docs/manual/reference/command/#replication-commands) (13 commands)
+[Sharding Commands](https://www.mongodb.com/docs/manual/reference/command/#sharding-commands) (50 commands)
+
+[`connPoolStats`](https://www.mongodb.com/docs/manual/reference/command/connPoolStats/#mongodb-dbcommand-dbcmd.connPoolStats)
+[`shardConnPoolStats`](https://www.mongodb.com/docs/manual/reference/command/shardConnPoolStats/#mongodb-dbcommand-dbcmd.shardConnPoolStats)
+[`lockInfo`](https://www.mongodb.com/docs/manual/reference/command/lockInfo/#mongodb-dbcommand-dbcmd.lockInfo)
+[`top`](https://www.mongodb.com/docs/manual/reference/command/top/#mongodb-dbcommand-dbcmd.top)
+[`validate`](https://www.mongodb.com/docs/manual/reference/command/validate/#mongodb-dbcommand-dbcmd.validate)
+[`mapReduce`](https://www.mongodb.com/docs/manual/reference/command/mapReduce/#mongodb-dbcommand-dbcmd.mapReduce)
+
