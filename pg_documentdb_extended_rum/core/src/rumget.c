@@ -3908,9 +3908,25 @@ MoveBuffersForOrderedScan(RumScanOpaque so, RumBtree btree)
 	}
 
 	/* Now do the step to the direction requested */
-	scanData->orderStack->buffer = rumStep(
-		scanData->orderStack->buffer, btree->index, RUM_SHARE,
-		so->orderScanDirection);
+	if (RumEnableEntryPageStep)
+	{
+		scanData->orderStack->buffer = rumStepEntryForScans(
+			scanData->orderStack->buffer, btree->index,
+			so->orderScanDirection);
+	}
+	else
+	{
+		scanData->orderStack->buffer = rumStep(
+			scanData->orderStack->buffer, btree->index, RUM_SHARE,
+			so->orderScanDirection);
+	}
+
+	if (scanData->orderStack->buffer == InvalidBuffer)
+	{
+		/* Through a chain of HALF_DEAD pages we reached the end. */
+		return false;
+	}
+
 	scanData->orderStack->blkno = BufferGetBlockNumber(scanData->orderStack->buffer);
 
 	if (scanData->orderStack->blkno != nextBlockNo)
@@ -4008,6 +4024,10 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 			 */
 			ReleaseBuffer(scanData->orderStack->buffer);
 			scanData->orderStack->blkno = startingBlock;
+
+			/* Check for interrupts where we don't hold any buffers */
+			CHECK_FOR_INTERRUPTS();
+
 			scanData->orderStack->buffer = ReadBuffer(btree->index, startingBlock);
 			LockBuffer(scanData->orderStack->buffer, RUM_SHARE);
 			page = BufferGetPage(scanData->orderStack->buffer);
@@ -4017,7 +4037,7 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 			rum_parallel_release(parallelScan, RumPageRightLink(page));
 			if (RumPageIsDeleted(page) || RumPageIsHalfDead(page))
 			{
-				/* TODO: Should we release here? */
+				LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
 				continue;
 			}
 			else
@@ -4025,6 +4045,7 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 				/* The page is valid - use it */
 				CopyPageContents(page, scanData->orderByEntryPageCopy);
 				scanData->isPageValid = true;
+				scanData->orderStack->off = FirstOffsetNumber;
 
 				LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
 				return true;

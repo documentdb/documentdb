@@ -122,6 +122,10 @@ PGDLLEXPORT bool RumEnableNewBulkDelete = RUM_DEFAULT_ENABLE_NEW_BULK_DELETE;
 PGDLLEXPORT bool RumNewBulkDeleteInlineDataPages =
 	RUM_DEFAULT_ENABLE_NEW_BULK_DELETE_INLINE_DATA_PAGES;
 
+/* FeatureFlag: Added in v115, enabled in v115, remove after v125 */
+#define RUM_DEFAULT_ENABLE_ENTRY_PAGE_STEP true
+PGDLLEXPORT bool RumEnableEntryPageStep = RUM_DEFAULT_ENABLE_ENTRY_PAGE_STEP;
+
 /* SystemConfig */
 #define RUM_DEFAULT_SKIP_PRUNE_POSTING_TREE_PAGES false
 PGDLLEXPORT bool RumVacuumSkipPrunePostingTreePages =
@@ -312,6 +316,15 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&RumNewBulkDeleteInlineDataPages,
 		RUM_DEFAULT_ENABLE_NEW_BULK_DELETE_INLINE_DATA_PAGES,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_entry_page_step", documentDBRumGucPrefix),
+		"Sets whether or not to enable entry page stepping",
+		NULL,
+		&RumEnableEntryPageStep,
+		RUM_DEFAULT_ENABLE_ENTRY_PAGE_STEP,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 

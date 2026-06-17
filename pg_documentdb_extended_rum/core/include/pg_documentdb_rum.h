@@ -645,6 +645,8 @@ extern RumBtreeStack * rumFindLeafPage(RumBtree btree, RumBtreeStack *stack,
 extern RumBtreeStack * rumReFindLeafPage(RumBtree btree, RumBtreeStack *stack);
 extern Buffer rumStep(Buffer buffer, Relation index, int lockmode,
 					  ScanDirection scanDirection);
+extern Buffer rumStepEntryForScans(Buffer buffer, Relation index,
+								   ScanDirection scanDirection);
 extern Buffer rumStepForInsert(Buffer buffer, Relation index, int lockmode);
 extern void freeRumBtreeStack(RumBtreeStack *stack);
 extern void rumInsertValue(Relation index, RumBtree btree, RumBtreeStack *stack,
@@ -1142,6 +1144,7 @@ extern PGDLLIMPORT bool RumEnableXlogInsertEntry;
 extern PGDLLIMPORT bool RumEnableBtreeLockOrder;
 extern PGDLLIMPORT bool EnableCustomXlogRmgr;
 extern PGDLLIMPORT bool EnableRumCompareFunctionFmgr;
+extern PGDLLIMPORT bool RumEnableEntryPageStep;
 
 /* Gucs used by tests */
 extern PGDLLIMPORT bool RumForceOrderedIndexScan;

@@ -13,6 +13,7 @@
 
 #include "postgres.h"
 
+#include "miscadmin.h"
 #include "pg_documentdb_rum.h"
 
 /* How to prepare the entry page for insertion */
@@ -286,6 +287,76 @@ rumEntryGetRightMostTuple(Page page)
 	Assert(maxoff != InvalidOffsetNumber);
 
 	return (IndexTuple) PageGetItem(page, PageGetItemId(page, maxoff));
+}
+
+
+/*
+ * Steps in the direction specified in the entryTree for read-only scans.
+ * This is different from rumStep for a few reasons:
+ * Typically for Vacuum, we want to avoid races where a page could get deleted
+ * as we're traversing into it. To avoid this race, we acquire the lock on the
+ * next page first, then release the current page. However, this means that there is
+ * no opportunity where we have no locks to check for interrupts.
+ * We cannot release first, and then lock the next page typically since that races
+ * with vacuum page deletion. However, for entry pages, deleted pages enter a half-dead
+ * state and only get recycled after the transaction xid min. Consequently, stepping
+ * for entry pages can release, check for interrupts, and then acquire the next page.
+ */
+Buffer
+rumStepEntryForScans(Buffer buffer, Relation index, ScanDirection scanDirection)
+{
+	Buffer nextbuffer;
+	Page page = BufferGetPage(buffer);
+	bool isLeaf = RumPageIsLeaf(page);
+	bool isData = RumPageIsData(page);
+	BlockNumber blkno;
+
+entryScanBegin:
+	blkno = (ScanDirectionIsForward(scanDirection)) ?
+			RumPageGetOpaque(page)->rightlink :
+			RumPageGetOpaque(page)->leftlink;
+
+	if (blkno == InvalidBlockNumber)
+	{
+		UnlockReleaseBuffer(buffer);
+		return InvalidBuffer;
+	}
+
+	/* First unlock and release the current buffer */
+	UnlockReleaseBuffer(buffer);
+
+	/* Check for interrupts when we're not holding any pins or locks */
+	CHECK_FOR_INTERRUPTS();
+
+	/* Lock and read the next buffer */
+	nextbuffer = ReadBuffer(index, blkno);
+	LockBuffer(nextbuffer, RUM_SHARE);
+
+	/* Sanity check that the page we stepped to is of similar kind. */
+	page = BufferGetPage(nextbuffer);
+	if (isLeaf != RumPageIsLeaf(page) || isData != RumPageIsData(page))
+	{
+		elog(ERROR, "right sibling of RUM page is of different type");
+	}
+
+	/*
+	 * Given the proper lock sequence above, we should never land on a deleted
+	 * page.
+	 */
+	if (RumPageIsDeleted(page))
+	{
+		elog(ERROR, "%s sibling of RUM page was deleted",
+			 ScanDirectionIsForward(scanDirection) ? "right" : "left");
+	}
+
+	if (RumPageIsHalfDead(page))
+	{
+		/* If on a half dead page, restart and move forward */
+		buffer = nextbuffer;
+		goto entryScanBegin;
+	}
+
+	return nextbuffer;
 }
 
 
