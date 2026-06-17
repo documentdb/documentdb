@@ -315,7 +315,7 @@ bool EnableRumCursorDynamicIndexScans = DEFAULT_ENABLE_RUM_CURSOR_DYNAMIC_INDEX_
 bool EnableRumDynamicIndexScansSkipToTid =
 	DEFAULT_ENABLE_RUM_DYNAMIC_INDEX_SCANS_SKIP_TO_TID;
 
-/* Added in v110, enabled in 110, remove after v113 */
+/* Added in v110, enabled in v110, remove after v113 */
 #define DEFAULT_ENABLE_DOLLAR_IN_TO_SCALAR_ARRAY_OP_EXPR_CONVERSION true
 bool EnableDollarInToScalarArrayOpExprConversion =
 	DEFAULT_ENABLE_DOLLAR_IN_TO_SCALAR_ARRAY_OP_EXPR_CONVERSION;
@@ -328,14 +328,10 @@ bool EnableUseForeignKeyLookupInline = DEFAULT_USE_FOREIGN_KEY_LOOKUP_INLINE;
 #define DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE true
 bool EnableAddToSetAggregationRewrite = DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE;
 
-/* Added in v109, enabled in v109, Remove after 112*/
+/* Added in v109, enabled in v109, Remove after v112*/
 #define DEFAULT_ENABLE_ID_INDEX_PUSHDOWN_FOR_QUERY_OP true
 bool EnableIdIndexPushdownForQueryOp =
 	DEFAULT_ENABLE_ID_INDEX_PUSHDOWN_FOR_QUERY_OP;
-
-/* Added in v110, enabled in v110, remove after v112 */
-#define DEFAULT_ENABLE_BINARY_SEARCH_FOR_ORDERED_MOVE true
-bool EnableBinarySearchForOrderedMove = DEFAULT_ENABLE_BINARY_SEARCH_FOR_ORDERED_MOVE;
 
 /* Added in v110, enabled in v110, remove after v112 */
 #define DEFAULT_INLINE_CHANGESTREAM_MATCH_STAGES true
@@ -1077,14 +1073,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable index push down for _id index."),
 		NULL, &EnableIdIndexPushdownForQueryOp,
 		DEFAULT_ENABLE_ID_INDEX_PUSHDOWN_FOR_QUERY_OP,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableBinarySearchForOrderedMove", newGucPrefix),
-		gettext_noop(
-			"Whether to enable binary search for ordered move."),
-		NULL, &EnableBinarySearchForOrderedMove,
-		DEFAULT_ENABLE_BINARY_SEARCH_FOR_ORDERED_MOVE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

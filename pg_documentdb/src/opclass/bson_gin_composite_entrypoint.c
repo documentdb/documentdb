@@ -169,7 +169,6 @@ extern bool RumHasMultiKeyPaths;
 extern int MaxWildcardIndexKeySize;
 extern int MaxNonOrderedTermScanThreshold;
 extern bool EnableOrderedCompositeOperatorScan;
-extern bool EnableBinarySearchForOrderedMove;
 extern bool EnableComparableTerms;
 extern bool EnablePartialMatchHasRecheck;
 extern bool EnableFailureOnParallelIndexArrays;
@@ -1654,7 +1653,7 @@ advance_ordered_scan_data_start:
 			/* This particular bound is exhausted - move to the next one
 			 * We find the next possible bound for this path.
 			 */
-			if (entry->isBoundsAllEquality && EnableBinarySearchForOrderedMove)
+			if (entry->isBoundsAllEquality)
 			{
 				CompareMetadata searchMetadata = {
 					.isBackwardScan = runData->metaInfo->isBackwardScan,
