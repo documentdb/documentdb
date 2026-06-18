@@ -3,8 +3,7 @@ SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documen
 SET documentdb.next_collection_id TO 9400;
 SET documentdb.next_collection_index_id TO 9400;
 
--- Enable dynamic cursors with PK cursor scan
-SET documentdb.enablePrimaryKeyCursorScan TO on;
+-- Enable dynamic cursors with PK cursor scan (default on)
 SET documentdb.enableDynamicCursors TO on;
 SET documentdb.enableIndexOnlyScanForFindProject TO on;
 

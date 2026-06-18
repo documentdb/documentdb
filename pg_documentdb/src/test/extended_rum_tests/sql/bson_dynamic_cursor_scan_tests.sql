@@ -3,8 +3,7 @@ SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documen
 SET documentdb.next_collection_id TO 9200;
 SET documentdb.next_collection_index_id TO 9200;
 
--- Enable PK cursor scan for dynamic streaming cursors
-SET documentdb.enablePrimaryKeyCursorScan TO on;
+-- Enable PK cursor scan (on by default) for dynamic streaming cursors
 set documentdb.enableDynamicCursors TO on;
 
 -- Insert 10 documents with _id in reverse insertion order so TID order differs from _id order
@@ -133,7 +132,6 @@ $cmd$);
 
 SET enable_indexscan TO on;
 SET enable_bitmapscan TO on;
-SET documentdb.enablePrimaryKeyCursorScan TO on;
 
 -- ===========================================================================
 -- Test 11: Full drain with batchSize >= total rows - verify single-page drain

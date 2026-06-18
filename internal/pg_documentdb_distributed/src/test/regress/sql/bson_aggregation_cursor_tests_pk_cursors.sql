@@ -3,7 +3,6 @@ SET documentdb.next_collection_id TO 400;
 SET documentdb.next_collection_index_id TO 400;
 SET citus.next_shard_id TO 40000;
 
-set documentdb.enablePrimaryKeyCursorScan to on;
 
 -- insert 10 documents - but insert the _id as reverse order of insertion order (so that TID and insert order do not match)
 DO $$
@@ -176,7 +175,6 @@ BEGIN;
 set local enable_seqscan to on;
 set local enable_indexscan to off;
 set local enable_bitmapscan to off;
-set local documentdb.enablePrimaryKeyCursorScan to on;
 set local citus.max_adaptive_executor_pool_size to 1;
 EXECUTE drain_find_query('{ "find": "aggregation_cursor_pk", "projection": { "_id": 1 }, "batchSize": 2 }', '{ "getMore": { "$numberLong": "534" }, "collection": "aggregation_cursor_pk", "batchSize": 2 }');
 
@@ -185,7 +183,6 @@ EXECUTE drain_find_query('{ "find": "aggregation_cursor_pk", "projection": { "_i
 ROLLBACK;
 
 BEGIN;
-set local documentdb.enablePrimaryKeyCursorScan to on;
 set local citus.max_adaptive_executor_pool_size to 1;
 EXECUTE drain_find_query('{ "find": "aggregation_cursor_pk", "projection": { "_id": 1 }, "batchSize": 2 }', '{ "getMore": { "$numberLong": "534" }, "collection": "aggregation_cursor_pk", "batchSize": 2 }');
 
@@ -230,7 +227,6 @@ set citus.propagate_set_commands to 'local';
 set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
 set local citus.explain_analyze_sort_method to taskId;
-set local documentdb.enablePrimaryKeyCursorScan to on;
 
 -- shard key is _id so range queries should still do bitmap heap scan on the RUM index since we don't have a shard_key filter.
 DROP TABLE firstPageResponse;
@@ -287,7 +283,6 @@ set citus.propagate_set_commands to 'local';
 set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
 set local citus.explain_analyze_sort_method to taskId;
-set local documentdb.enablePrimaryKeyCursorScan to on;
 
 -- range queries on _id with shard_key equality should use pk index scan
 DROP TABLE firstPageResponse;

@@ -740,7 +740,7 @@ SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id
 (1 row)
 
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
-                                                                                                          get_feature_counter_pretty                                                                                                          
+                                                                                                                    get_feature_counter_pretty                                                                                                                     
 ---------------------------------------------------------------------
  {"Feature_usage":[{"command_insert" : 2}, {"command_insert_100" : 1}, {"command_insert_one" : 1}, {"command_update" : 3}, {"command_update_100" : 1}, {"command_update_one" : 2}, {"update_many" : 3}, {"update_operator_inc" : 1}, {"update_operator_set" : 3}]}
 (1 row)
@@ -980,9 +980,9 @@ SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
 
 DROP TABLE topo_first_page;
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
-                                                                                       get_feature_counter_pretty                                                                                       
+                                                                     get_feature_counter_pretty                                                                     
 ---------------------------------------------------------------------
- {"Feature_usage":[{"command_find_cursor_first_page" : 1}, {"command_get_more" : 1}, {"cursor_can_use_fast_bitmap" : 1}, {"cursor_local_unsharded" : 2}, {"cursor_type_streaming" : 1}, {"match" : 2}]}
+ {"Feature_usage":[{"command_find_cursor_first_page" : 1}, {"command_get_more" : 1}, {"cursor_local_unsharded" : 2}, {"cursor_type_streaming" : 1}, {"match" : 2}]}
 (1 row)
 
 -- Sharded with shard key equality (first page)
@@ -1033,9 +1033,9 @@ SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
 
 DROP TABLE topo_first_page;
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
-                                                                                              get_feature_counter_pretty                                                                                              
+                                                                            get_feature_counter_pretty                                                                            
 ---------------------------------------------------------------------
- {"Feature_usage":[{"command_find_cursor_first_page" : 1}, {"command_get_more" : 1}, {"cursor_can_use_fast_bitmap" : 1}, {"cursor_sharded_equality_on_shard_key" : 2}, {"cursor_type_streaming" : 1}, {"match" : 2}]}
+ {"Feature_usage":[{"command_find_cursor_first_page" : 1}, {"command_get_more" : 1}, {"cursor_sharded_equality_on_shard_key" : 2}, {"cursor_type_streaming" : 1}, {"match" : 2}]}
 (1 row)
 
 -- Sharded with $in on shard key (first page and getMore)

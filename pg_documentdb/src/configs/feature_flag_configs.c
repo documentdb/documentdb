@@ -272,8 +272,8 @@ bool EnableGroupByDistinctScan = DEFAULT_ENABLE_GROUP_BY_DISTINCT_SCAN;
  * SECTION: Aggregation & Query feature flags
  */
 
-/* Added in v109, Pending stabilization, enable in v114 */
-#define DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN false
+/* Added in v109, enabled in v115, remove after v117 */
+#define DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN true
 bool EnablePrimaryKeyCursorScan = DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN;
 
 /* Added in v110, Pending stabilization, enable in v114 */
