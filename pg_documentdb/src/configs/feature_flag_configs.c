@@ -256,6 +256,10 @@ bool EnableDeleteOnePlanCacheOptimization =
 #define DEFAULT_ENABLE_DYNAMIC_CURSORS false
 bool EnableDynamicCursors = DEFAULT_ENABLE_DYNAMIC_CURSORS;
 
+/* Added in v115, enabled in v115, remove after v117 */
+#define DEFAULT_ENABLE_PG_PRNG_CURSOR_ID true
+bool EnablePGPrngCursorId = DEFAULT_ENABLE_PG_PRNG_CURSOR_ID;
+
 /* Added in v114, enabled in v114, remove after v120 */
 #define DEFAULT_ENABLE_INDEX_PATH_KEY_SUMMARIZATION true
 bool EnableIndexPathKeySummarization = DEFAULT_ENABLE_INDEX_PATH_KEY_SUMMARIZATION;
@@ -667,6 +671,15 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to enable dynamic cursors for aggregation query rewrites."),
 		NULL, &EnableDynamicCursors,
 		DEFAULT_ENABLE_DYNAMIC_CURSORS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enablePGPrngCursorId", newGucPrefix),
+		gettext_noop(
+			"Whether cursor ids use the fast non-cryptographic PRNG (true) or "
+			"the strong CSPRNG (false)."),
+		NULL, &EnablePGPrngCursorId,
+		DEFAULT_ENABLE_PG_PRNG_CURSOR_ID,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

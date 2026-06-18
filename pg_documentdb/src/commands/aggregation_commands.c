@@ -12,6 +12,7 @@
 #include <fmgr.h>
 #include <miscadmin.h>
 #include <funcapi.h>
+#include <common/pg_prng.h>
 #include <executor/executor.h>
 #include <utils/varlena.h>
 #include <access/xact.h>
@@ -39,6 +40,7 @@
 extern bool UseFileBasedPersistedCursors;
 extern bool EnableDelayedHoldPortal;
 extern bool EnableDynamicCursors;
+extern bool EnablePGPrngCursorId;
 
 /* --------------------------------------------------------- */
 /* Data types */
@@ -1043,6 +1045,41 @@ GenerateGetMoreQuery(text *database, pgbson *getMoreSpec, pgbson *continuationSp
 }
 
 
+/*
+ * Handles the first page of a persisted (non-streaming) cursor.
+ *
+ * A persisted cursor materializes its remaining results so that later getMore
+ * requests can resume it. The backend storage backing the cursor depends on the
+ * mode:
+ *   - a file-based cursor: the overflow beyond the first page is spilled to an
+ *     on-disk cursor file (see cursor_store.c), or
+ *   - a held SPI portal: the query plan is kept open as a portal whose tuples
+ *     are held across the transaction boundary.
+ * This function plans/opens that storage, drains the first batch into
+ * "arrayWriter", and - when the cursor is not exhausted on the first page -
+ * builds and returns the continuation document used by getMore. It also assigns
+ * the client-facing cursor id into "*cursorId" and reports, via the out
+ * parameters, whether the query fully drained and whether the connection must
+ * be kept (held portals are connection-bound).
+ *
+ * Cursor id assignment (the backend cursor/file is always named "cursor_<id>"
+ * via FormatCursorName). The client-facing id is what is returned to the client
+ * and what killCursors/delete_cursors later uses to locate the file, so for
+ * file cursors the backend name must equal "cursor_<client id>":
+ *
+ *   Condition                                          | cursor id for cursor name
+ *   ---------------------------------------------------+----------------------
+ *   *cursorId != 0 (caller supplied, e.g. tests)       | the provided cursor id
+ *   *cursorId == 0 && (file cursor || !delayed hold)   | a generated cursor id
+ *   *cursorId == 0 && delayed hold portal cursor       | a backend-local id
+ *
+ * The last row is the delayed-hold-portal optimization: a portal cursor that
+ * fully drains on the first page never pays for id generation and never holds
+ * the portal, so its name uses a cheap backend-local id ((pid << 32) | counter)
+ * and the client id is generated lazily only if the cursor persists. File
+ * cursors opt out of that lazy id because the file name has to be derivable
+ * from the client id for killCursors to remove it.
+ */
 static pgbson *
 HandlePersistentCursorCore(int64_t *cursorId, QueryCursorPlanResult *planResult,
 						   bool *queryFullyDrained, bool *persistConnection,
@@ -1054,18 +1091,47 @@ HandlePersistentCursorCore(int64_t *cursorId, QueryCursorPlanResult *planResult,
 	int64_t cursorIdForBackendCursor;
 	int32_t numIterations = 0;
 
+	/*
+	 * isHoldCursor indicates the cursor must outlive the current transaction.
+	 * IsInTransactionBlock() is true only inside an explicit BEGIN...COMMIT
+	 * block, where the cursor lives within that transaction and a later getMore
+	 * runs in the same transaction. Outside such a block (the common case) each
+	 * command is its own transaction, so the cursor must be "held" - persisted
+	 * to a file or a held portal - to survive until the next getMore.
+	 */
+	bool isTopLevel = true;
+	bool isHoldCursor = !IsInTransactionBlock(isTopLevel);
+
+	/*
+	 * File-based persisted cursors are cleaned up by killCursors
+	 * (delete_cursors), which rebuilds the cursor file name from the
+	 * client-facing cursor id. Such files must therefore be named after that id
+	 * (and not after a backend-local id), otherwise killCursors cannot locate
+	 * the file to remove it.
+	 */
+	bool useHoldFileCursor = isHoldCursor && useFileBasedCursors;
+
 	pgbson *continuationDoc = NULL;
 	if (*cursorId != 0)
 	{
 		cursorIdForBackendCursor = *cursorId;
 	}
-	else if (!EnableDelayedHoldPortal)
+	else if (!EnableDelayedHoldPortal || useHoldFileCursor)
 	{
+		/*
+		 * Non-delayed hold portal eagerly assigns the client cursor id. Same
+		 * for file-based cursor which needs its file named after that id so killCursors
+		 * can find it.
+		 */
 		*cursorId = GenerateCursorId(*cursorId);
 		cursorIdForBackendCursor = *cursorId;
 	}
 	else
 	{
+		/* The non-file portal path  where delay until we confirm we need
+		 * continuation, we keep the lazy assignment and generate a cheaper
+		 * local id until we have to.
+		 */
 		cursorIdForBackendCursor = (((int64_t) MyProcPid) << 32) |
 								   current_cursor_count;
 	}
@@ -1074,12 +1140,10 @@ HandlePersistentCursorCore(int64_t *cursorId, QueryCursorPlanResult *planResult,
 	const char *cursorName = FormatCursorName(cursorStringInfo,
 											  cursorIdForBackendCursor);
 
-	bool isTopLevel = true;
-	bool isHoldCursor = !IsInTransactionBlock(isTopLevel);
 	*persistConnection = isHoldCursor;
 	bool closeCursor = false;
 
-	if (isHoldCursor && useFileBasedCursors)
+	if (useHoldFileCursor)
 	{
 		*persistConnection = false;
 		bytea *cursorFileState = CreateAndDrainPersistedQueryWithFiles(cursorName,
@@ -1095,7 +1159,6 @@ HandlePersistentCursorCore(int64_t *cursorId, QueryCursorPlanResult *planResult,
 
 		if (!*queryFullyDrained)
 		{
-			*cursorId = GenerateCursorId(*cursorId);
 			continuationDoc = BuildPersistedFileContinuationDocument(cursorName,
 																	 *cursorId,
 																	 queryKind,
@@ -1106,6 +1169,8 @@ HandlePersistentCursorCore(int64_t *cursorId, QueryCursorPlanResult *planResult,
 		}
 		else
 		{
+			/* Fully drained on the first page; report a closed cursor. */
+			*cursorId = 0;
 			continuationDoc = NULL;
 		}
 	}
@@ -1130,6 +1195,8 @@ HandlePersistentCursorCore(int64_t *cursorId, QueryCursorPlanResult *planResult,
 		}
 		else
 		{
+			/* Fully drained on the first page; report a closed cursor. */
+			*cursorId = 0;
 			continuationDoc = NULL;
 		}
 	}
@@ -1832,18 +1899,34 @@ GenerateCursorId(int64_t inputValue)
 		return inputValue;
 	}
 
-	/* 2^53-1 masks integer precision of IEEE 754 double precision floating point numbers
-	 * Works around issue with certain versions of the NodeJS driver
-	 */
-	char cursorBuffer[8];
-
-	/* This is the same logic UUID generation uses - we should be good here */
-	if (!pg_strong_random(cursorBuffer, 8))
+	/*
+	 * 2^53-1 masks integer precision of IEEE 754 double precision floating
+	 * point numbers. Works around issue with certain versions of the NodeJS
+	 * driver.
+	 *
+	 * A cursor id only needs to be unique among live cursors so by default the
+	 * fast non-cryptographic PRNG is sufficient instead of expensive
+	 * pg_strong_random() which provides cryptographic unpredictability
+	 * guarantees.	 */
+	int64_t cursorId;
+	if (EnablePGPrngCursorId)
 	{
-		ereport(ERROR, (errmsg("Failed to create a unique identifier for the cursor")));
+		cursorId = (int64_t) pg_prng_uint64(&pg_global_prng_state);
+	}
+	else
+	{
+		char cursorBuffer[8];
+
+		/* This is the same logic UUID generation uses */
+		if (!pg_strong_random(cursorBuffer, 8))
+		{
+			ereport(ERROR, (errmsg(
+								"Failed to create a unique identifier for the cursor")));
+		}
+
+		cursorId = *(int64_t *) cursorBuffer;
 	}
 
-	int64_t cursorId = *(int64_t *) cursorBuffer;
 	return (cursorId & CursorAcceptableBitsMask);
 }
 
