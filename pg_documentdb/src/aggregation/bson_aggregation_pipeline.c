@@ -1640,6 +1640,11 @@ ParseAggregationQueryAndLookupCollection(text *database, pgbson *aggregationSpec
 	List *aggregationStages = ExtractAggregationStages(&pipelineValue,
 													   context);
 
+	if (context->requiresTailableCursor)
+	{
+		queryData->cursorKind = QueryCursorType_Tailable;
+	}
+
 	/*
 	 * Look up the collection (non-agnostic only) so we can detect the
 	 * remote-unsharded case before generating the query. The looked-up
@@ -8485,6 +8490,11 @@ ExtractAggregationStages(const bson_value_t *pipelineValue,
 		if (definition->isOutputStage)
 		{
 			lastEncounteredOutputStage = definition->stage;
+		}
+
+		if (definition->stageEnum == Stage_ChangeStream)
+		{
+			context->requiresTailableCursor = true;
 		}
 
 		AggregationStage *stage = palloc0(sizeof(AggregationStage));

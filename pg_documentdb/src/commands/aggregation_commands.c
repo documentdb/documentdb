@@ -341,10 +341,12 @@ aggregate_cursor_first_page(text *database, pgbson *aggregationSpec,
 	 */
 	MongoCollection *collection = NULL;
 	AggregationQueryPlan *plan = ParseAggregationQueryAndLookupCollection(
-		database, aggregationSpec, &queryData, cursorParamKind, setStatementTimeout,
-		&collection);
+		database, aggregationSpec, &queryData, cursorParamKind,
+		setStatementTimeout, &collection);
 
-	if (CanDispatchRemoteUnshardedFirstPage(collection))
+	/* We can't support dynamic cursors for tailable cursors as tailable cursors do their own remote dispatch management. */
+	if (queryData.cursorKind != QueryCursorType_Tailable &&
+		CanDispatchRemoteUnshardedFirstPage(collection))
 	{
 		/*
 		 * SetCursorTopology (normally run inside ApplyParsedAggregationQuery) is
