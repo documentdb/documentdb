@@ -464,10 +464,16 @@ bool EnableInsertDuplicateInlineHandling =
 
 /* Improves updateMany performance but can lead to deadlocks when concurrent writes update the same document */
 /* To enable this default we need to handle deadlock scenarios gracefully */
+
 /* Added in v114, Pending stabilization, enable in v120 */
 #define DEFAULT_ENABLE_COMMUTATIVE_UPDATE_MANY false
 bool EnableCommutativeUpdateMany =
 	DEFAULT_ENABLE_COMMUTATIVE_UPDATE_MANY;
+
+/* Added in v115, Pending stabilization, enable in v121 */
+#define DEFAULT_ENABLE_COMMUTATIVE_DELETE_MANY false
+bool EnableCommutativeDeleteMany =
+	DEFAULT_ENABLE_COMMUTATIVE_DELETE_MANY;
 
 /* Added in v114, enabled in v114, remove after v116 */
 #define DEFAULT_ENABLE_ARRAY_FILTER_LOGICAL_OPERATORS true
@@ -1300,6 +1306,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableCommutativeUpdateMany,
 		DEFAULT_ENABLE_COMMUTATIVE_UPDATE_MANY,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableCommutativeDeleteMany", newGucPrefix),
+		gettext_noop(
+			"Whether to enable commutative writes for deleteMany to improve performance. Can lead to deadlocks when concurrent writes update the same document."),
+		NULL,
+		&EnableCommutativeDeleteMany,
+		DEFAULT_ENABLE_COMMUTATIVE_DELETE_MANY,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

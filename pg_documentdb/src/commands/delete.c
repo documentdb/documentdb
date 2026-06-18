@@ -40,6 +40,7 @@
 #include "api_hooks.h"
 
 extern bool EnableDeleteOnePlanCacheOptimization;
+extern bool EnableCommutativeDeleteMany;
 
 
 /*
@@ -987,7 +988,22 @@ DeleteAllMatchingDocuments(MongoCollection *collection, pgbson *queryDoc,
 													collection->shardTableName, planId,
 													deleteQuery.data, argTypes, argCount);
 
-	SPI_execute_plan(plan, argValues, argNulls, readOnly, maxTupleCount);
+	if (collection->shardKey != NULL && EnableCommutativeDeleteMany)
+	{
+		/*
+		 * In distributed scenarios, enable commutative writes to improve
+		 * deleteMany performance. The GUC is scoped to just this query
+		 * execution to avoid leaking into subsequent operations (e.g., updates)
+		 * in the same transaction.
+		 */
+		RunMultiValueQueryWithCommutativeWrites(deleteQuery.data, plan, argCount,
+												argTypes, argValues, argNulls,
+												readOnly, maxTupleCount);
+	}
+	else
+	{
+		SPI_execute_plan(plan, argValues, argNulls, readOnly, maxTupleCount);
+	}
 	rowsDeleted = SPI_processed;
 
 	pfree(deleteQuery.data);
