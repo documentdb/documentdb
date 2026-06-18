@@ -1,0 +1,55 @@
+#!/bin/bash
+set -e
+
+# Per packaging-design.md §4.3: the gateway runtime package is runtime-
+# only and MUST NOT mutate PostgreSQL-side state (pg_hba.conf,
+# pg_ident.conf, postgresql.conf, gateway PG role). PG-side cleanup
+# belongs to:
+#   - documentdb-postgresql-tools  → documentdb-register-gateway --restore
+#   - documentdb-N (stand-alone)   → its own postrm strips per-major
+#                                    managed blocks via the wizard's state
+# This postrm only cleans up gateway-owned runtime state.
+
+# Real-user E2E flagged (Gap #22): suppress systemd "Host is down" noise
+# in containers without systemd.
+has_working_systemd() {
+    [[ -d /run/systemd/system ]] && command -v systemctl >/dev/null 2>&1
+}
+
+case "$1" in
+    purge)
+        # Remove the gateway's runtime and persistent state, including any
+        # auto-generated TLS material under /var/lib/documentdb-gateway, then
+        # the dedicated system user/group. On purge (unlike remove) the
+        # operator-authored gateway.env is removed too, matching Debian purge
+        # semantics (config is only preserved across remove, not purge).
+        #
+        # This intentionally mirrors the full-erase ($1 == 0) cleanup in the
+        # RPM spec %postun (oss/packaging/rpm/spec/documentdb-gateway.spec).
+        # A shared helper script is not factored out because both run at
+        # uninstall time after the package's own files are already removed,
+        # and the DEB/RPM maintainer-script models differ. Keep the two in
+        # sync.
+        rm -rf /run/documentdb-gateway 2>/dev/null || true
+        rm -rf /var/lib/documentdb-gateway 2>/dev/null || true
+        rm -f /etc/documentdb/gateway/gateway.env 2>/dev/null || true
+        rmdir --ignore-fail-on-non-empty /etc/documentdb/gateway 2>/dev/null || true
+        rmdir --ignore-fail-on-non-empty /etc/documentdb 2>/dev/null || true
+        if getent passwd documentdb-gateway >/dev/null 2>&1; then
+            userdel documentdb-gateway 2>/dev/null || true
+        fi
+        if getent group documentdb-gateway >/dev/null 2>&1; then
+            groupdel documentdb-gateway 2>/dev/null || true
+        fi
+        if has_working_systemd; then
+            systemctl daemon-reload 2>/dev/null || true
+        fi
+        ;;
+    remove|disappear|upgrade|failed-upgrade|abort-install|abort-upgrade)
+        if has_working_systemd; then
+            systemctl daemon-reload 2>/dev/null || true
+        fi
+        ;;
+esac
+
+exit 0

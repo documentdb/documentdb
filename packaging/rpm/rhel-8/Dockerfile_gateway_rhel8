@@ -1,0 +1,71 @@
+ARG BASE_IMAGE=rockylinux:8
+FROM ${BASE_IMAGE}
+
+ARG DOCUMENTDB_VERSION
+
+ENV DOCUMENTDB_VERSION=${DOCUMENTDB_VERSION}
+ENV RUSTUP_HOME=/root/.rustup
+ENV CARGO_HOME=/root/.cargo
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN test -n "$DOCUMENTDB_VERSION" || (echo "DOCUMENTDB_VERSION not set" && false)
+
+RUN dnf -y swap curl-minimal curl && \
+    dnf -y install \
+        ca-certificates \
+        cmake \
+        curl \
+        findutils \
+        gcc \
+        gcc-c++ \
+        git \
+        make \
+        openssl-devel \
+        pkgconf-pkg-config \
+        python3 \
+        rpm-build \
+        systemd-rpm-macros \
+        tar && \
+    dnf clean all
+
+WORKDIR /build
+COPY . /build
+
+RUN /build/scripts/install_rustup.sh --install-toolchain
+
+WORKDIR /build/pg_documentdb_gw
+
+# Pin the workspace Cargo.toml version to DOCUMENTDB_VERSION so the
+# binary's CARGO_PKG_VERSION (used by telemetry as service.version), the
+# RPM package version, and the spec filename all agree. The source
+# version "0.1.0" is intentionally kept in git for development; packaging
+# overrides it at build time. Sanity-check the substitution worked.
+# (DOCUMENTDB_VERSION is already validated non-empty earlier in the
+# Dockerfile.)
+RUN sed -i -E "s/^version = \".*\"/version = \"${DOCUMENTDB_VERSION}\"/" Cargo.toml && \
+    if ! grep -Eq "^version = \"${DOCUMENTDB_VERSION}\"$" Cargo.toml; then \
+        echo "ERROR: failed to set workspace Cargo.toml version to ${DOCUMENTDB_VERSION}" >&2; \
+        exit 1; \
+    fi
+
+RUN CARGO_MANIFEST_DIR=/build/pg_documentdb_gw cargo build --profile=release-with-symbols -p documentdb_gateway
+
+RUN mkdir -p /root/rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS} && \
+    cp /build/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway /root/rpmbuild/SOURCES/ && \
+    cp /build/pg_documentdb_gw/licenses/LICENSE_Apache-2.0 /root/rpmbuild/SOURCES/ && \
+    cp /build/pg_documentdb_gw/licenses/LICENSE_MIT /root/rpmbuild/SOURCES/ && \
+    cp /build/packaging/gateway/systemd/documentdb-gateway.service /root/rpmbuild/SOURCES/ && \
+    cp /build/packaging/gateway/documentdb-gateway-wrapper.sh /root/rpmbuild/SOURCES/ && \
+    cp /build/packaging/gateway/strip-setup-config.sh /root/rpmbuild/SOURCES/ && \
+    cp /build/packaging/gateway/config/gateway.env /root/rpmbuild/SOURCES/ && \
+    cp /build/pg_documentdb_gw/SetupConfiguration.json /root/rpmbuild/SOURCES/ && \
+    cp /build/packaging/gateway/sysusers/documentdb-gateway.conf /root/rpmbuild/SOURCES/documentdb-gateway-sysusers.conf && \
+    cp /build/packaging/gateway/tmpfiles/documentdb-gateway.conf /root/rpmbuild/SOURCES/documentdb-gateway-tmpfiles.conf && \
+    cp /build/packaging/rpm/spec/documentdb-gateway.spec /root/rpmbuild/SPECS/ && \
+    sed -i "s/DOCUMENTDB_VERSION/${DOCUMENTDB_VERSION}/g" /root/rpmbuild/SPECS/documentdb-gateway.spec && \
+    if grep -q 'DOCUMENTDB_VERSION' /root/rpmbuild/SPECS/documentdb-gateway.spec; then \
+        echo "ERROR: DOCUMENTDB_VERSION placeholder not fully replaced in spec" >&2; \
+        exit 1; \
+    fi
+
+CMD ["/bin/bash", "-lc", "set -euo pipefail && rpmbuild -bb /root/rpmbuild/SPECS/documentdb-gateway.spec --define '_topdir /root/rpmbuild' && find /root/rpmbuild/RPMS -type f -name 'documentdb-gateway-*.rpm' -exec cp {} /output/ \\; && chown -R \"$(stat -c '%u:%g' /output)\" /output"]

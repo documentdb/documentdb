@@ -1,0 +1,34 @@
+[Unit]
+Description=DocumentDB Gateway
+After=network.target
+Documentation=https://github.com/documentdb/documentdb
+
+[Service]
+Type=simple
+User=documentdb-gateway
+Group=documentdb-gateway
+WorkingDirectory=/var/lib/documentdb-gateway
+UMask=0077
+EnvironmentFile=-/etc/documentdb/gateway/gateway.env
+ExecStart=/usr/bin/documentdb-gateway run
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# Hardened sandboxing
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
+ReadWritePaths=/var/lib/documentdb-gateway /run/documentdb-gateway
+
+[Install]
+WantedBy=multi-user.target

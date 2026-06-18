@@ -92,7 +92,7 @@ ENV CERT_PATH="" \
 
 RUN sudo mkdir /home/documentdb/gateway
 RUN sudo mkdir -p /home/documentdb/gateway/pg_documentdb_gw/target/release-with-symbols
-RUN  ln -s /usr/bin/documentdb_gateway /home/documentdb/gateway/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway  
+RUN ln -s /usr/bin/documentdb-gateway /home/documentdb/gateway/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway
 
 # Create /var/run/postgresql directory with proper permissions
 RUN sudo mkdir -p /var/run/postgresql && \

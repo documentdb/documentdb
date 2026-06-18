@@ -1,0 +1,22 @@
+ARG BASE_IMAGE=rockylinux:9
+
+FROM ${BASE_IMAGE}
+
+ARG GATEWAY_RPM_REL_PATH
+
+# Fail fast if the caller did not pass the gateway RPM path build-arg.
+RUN [ -n "${GATEWAY_RPM_REL_PATH}" ] || (echo "ERROR: GATEWAY_RPM_REL_PATH build-arg is required. Example: --build-arg GATEWAY_RPM_REL_PATH=packaging/documentdb-gateway-0.106.0-1.el9.x86_64.rpm" >&2; exit 1)
+
+# procps-ng provides ps; shadow-utils backs the package's EL8 useradd fallback.
+RUN dnf -y install procps-ng shadow-utils && dnf clean all
+
+# Install the gateway RPM. dnf resolves the runtime deps (openssl + the
+# shlibdeps-detected libraries) and runs the %pre/%post scriptlets that create
+# the documentdb-gateway system user and register the systemd unit.
+COPY ${GATEWAY_RPM_REL_PATH} /tmp/documentdb-gateway.rpm
+RUN dnf -y install /tmp/documentdb-gateway.rpm && dnf clean all
+
+COPY packaging/test_packages/test-gateway-install-entrypoint-rpm.sh /usr/local/bin/test-gateway-install-entrypoint-rpm.sh
+RUN chmod +x /usr/local/bin/test-gateway-install-entrypoint-rpm.sh
+
+ENTRYPOINT ["test-gateway-install-entrypoint-rpm.sh"]

@@ -1,6 +1,27 @@
 %global pg_version POSTGRES_VERSION
 %define debug_package %{nil}
 
+# Disable brp-mangle-shebangs: the spec ships the full source tree
+# under /usr/src/documentdb (for `make check`). When the source tree
+# is on a Windows/WSL-mounted filesystem every file shows as mode 0777,
+# so brp-mangle-shebangs treats every text file as a script. It then
+# chokes on Rust source files whose first line is an attribute like
+# `#![expect(...)]` (not a valid shebang). Disabling the hook makes
+# the spec portable across native-Linux and WSL-mounted build hosts.
+# The shipped files under /usr/src/documentdb/ are reference source +
+# test data, not executables; their exec bits are not used.
+%undefine __brp_mangle_shebangs
+
+# Real-user E2E flagged (Gap #6): /usr/bin/make and /usr/bin/pkg-config
+# are auto-added as runtime Requires because rpmbuild's automatic
+# dependency generator scans the Makefiles shipped under
+# /usr/src/documentdb/ (for `make check`). These are PGXS BUILD
+# tooling, not runtime needs of the loadable extension. Filter them
+# out of Requires so a minimal install does not pull in ~30MB of
+# build chain. /usr/bin/python3 is also added (test helpers); it's
+# a small dep and python3 is commonly on RHEL hosts so we keep it.
+%global __requires_exclude ^/usr/bin/(make|pkg-config)$
+
 Name:           postgresql%{pg_version}-documentdb
 Version:        DOCUMENTDB_VERSION
 Release:        1%{?dist}
@@ -30,7 +51,14 @@ Requires:       (postgresql%{pg_version}-server or percona-postgresql%{pg_versio
 Requires:       (pgvector_%{pg_version} or percona-pgvector_%{pg_version})
 Requires:       pg_cron_%{pg_version}
 Requires:       postgis36_%{pg_version}
+# rum extension is bundled with PG 18+; only require the external package on PG ≤17.
+%if %{pg_version} < 18
 Requires:       rum_%{pg_version}
+%endif
+# Suggests (not Requires/Recommends) the administrator tools package; useful
+# when the operator wants documentdb-tune for postgresql.conf hardening but
+# can omit it for read-only / driver-only deployments.
+Suggests:       documentdb-postgresql-tools
 # Libbson is now bundled, so no runtime Requires for it.
 # pcre2 is statically linked.
 # libbid.a is bundled.

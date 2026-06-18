@@ -1,7 +1,9 @@
 # Define the base image dynamically
 ARG BASE_IMAGE=ubuntu:22.04
 FROM ${BASE_IMAGE}
+ARG DOCUMENTDB_VERSION
 ARG DEBIAN_FRONTEND=noninteractive
+ENV DOCUMENTDB_VERSION=${DOCUMENTDB_VERSION}
 
 RUN apt-get update; \
     apt-get install -y --no-install-recommends software-properties-common jq curl sudo git make wget build-essential openssl pkg-config libssl-dev ca-certificates lsb-release gnupg2; \
@@ -15,6 +17,7 @@ WORKDIR /home/documentdb/code
 
 COPY . /home/documentdb/code
 
+RUN sudo chown -R documentdb:documentdb /home/documentdb/code
 RUN sudo chmod +x /home/documentdb/code/scripts/*.sh
 RUN /home/documentdb/code/scripts/install_llvm.sh
 
@@ -26,17 +29,28 @@ ENV PATH=$PATH:$CARGO_HOME/bin
 
 RUN /home/documentdb/code/scripts/install_rustup.sh --install-toolchain
 
-RUN cargo install cargo-deb
-
-RUN sudo chown -R documentdb:documentdb /home/documentdb/code
-
 WORKDIR /home/documentdb/code/pg_documentdb_gw
 
-RUN CARGO_MANIFEST_DIR=/home/documentdb/code/pg_documentdb_gw cargo build --profile=release-with-symbols
+# Pin the workspace Cargo.toml version to DOCUMENTDB_VERSION so the
+# binary's CARGO_PKG_VERSION (used by telemetry as service.version), the
+# `dpkg -l` package version, and the deb filename all agree. The source
+# version "0.1.0" is intentionally kept in git for development; packaging
+# overrides it at build time. Sanity-check the substitution worked.
+RUN if [ -z "$DOCUMENTDB_VERSION" ]; then \
+        echo "ERROR: DOCUMENTDB_VERSION build-arg is required" >&2; exit 1; \
+    fi && \
+    sed -i -E "s/^version = \".*\"/version = \"${DOCUMENTDB_VERSION}\"/" Cargo.toml && \
+    if ! grep -Eq "^version = \"${DOCUMENTDB_VERSION}\"$" Cargo.toml; then \
+        echo "ERROR: failed to set workspace Cargo.toml version to ${DOCUMENTDB_VERSION}" >&2; \
+        exit 1; \
+    fi
+
+RUN CARGO_MANIFEST_DIR=/home/documentdb/code/pg_documentdb_gw cargo build --profile=release-with-symbols -p documentdb_gateway
 
 # Create /output directory and set permissions for the documentdb user
 USER root
 RUN mkdir -p /output && chown documentdb:documentdb /output
+RUN apt-get update && apt-get install -y --no-install-recommends dpkg-dev && rm -rf /var/lib/apt/lists/*
 USER documentdb
 
-CMD ["cargo", "deb", "--no-build", "--profile=release-with-symbols", "--output", "/output/"]
+CMD ["/bin/bash", "-c", "set -euo pipefail && test -n \"$OS\" || (echo \"OS not set\" && false) && /home/documentdb/code/packaging/gateway/build-gateway-deb.sh --binary /home/documentdb/code/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway --version \"$DOCUMENTDB_VERSION\" --output-dir /output && cd /output && for f in documentdb-gateway_*.deb; do mv \"$f\" \"$OS-$f\"; done"]
