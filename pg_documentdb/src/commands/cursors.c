@@ -199,7 +199,7 @@ typedef struct DynamicStreamingTupleDestReceiver
 	pgbson *continuationDocument;
 
 	/* The custom scan used for the core execution of the query */
-	CustomScanState *queryCustomScan;
+	PlanState *topLevelPlanState;
 } DynamicStreamingTupleDestReceiver;
 
 
@@ -608,7 +608,8 @@ UpdateQueryDescriptionForDynamicCursor(PlanState *planState, DestReceiver *destR
 {
 	DynamicStreamingTupleDestReceiver *receiver =
 		(DynamicStreamingTupleDestReceiver *) destReceiver;
-	receiver->queryCustomScan = (CustomScanState *) planState;
+
+	receiver->topLevelPlanState = planState;
 }
 
 
@@ -622,12 +623,6 @@ DrainDynamicStreamingCursor(QueryCursorPlanResult *planResult,
 	if (batchSize == 0)
 	{
 		return inputContinuation;
-	}
-
-	Plan *topLevelPlan = planResult->queryPlan->planTree;
-	if (!IsA(topLevelPlan, CustomScan))
-	{
-		ereport(ERROR, (errmsg("Could not find top level custom scan for continuation")));
 	}
 
 	DynamicStreamingTupleDestReceiver *receiver = CreateDynamicStreamingTupleDestReceiver(
@@ -1165,8 +1160,15 @@ DynamicStreamingDestReceiverReceive(TupleTableSlot *slot,
 		base->numRowsFetched >= (uint32_t) base->batchSize)
 	{
 		oldContext = MemoryContextSwitchTo(base->writerContext);
-		receiver->continuationDocument = GetContinuationFromCustomScan(
-			receiver->queryCustomScan);
+		CustomScanState *customScanState = GetDynamicStreamingCustomScanState(
+			receiver->topLevelPlanState);
+		if (customScanState == NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("Failed to get dynamic streaming custom scan state")));
+		}
+
+		receiver->continuationDocument = GetContinuationFromCustomScan(customScanState);
 		MemoryContextSwitchTo(oldContext);
 		receiver->terminationReason = sizeLimitReached ?
 									  TerminationReason_BatchSizeLimit :

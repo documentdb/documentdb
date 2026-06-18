@@ -1142,14 +1142,13 @@ AddFilterToQuery(Query *query, AggregationPipelineBuildContext *context,
 	 * Retrieve the path string of SinglePath index path from the collection */
 	HTAB *indexPathNameHashSet = CreateStringViewHashSet();
 	AddPathStringToHashset(indexIdList, indexPathNameHashSet);
-	context->requiredFilterPathNameHashSet = indexPathNameHashSet;
 
 	/* Add a match expression into where clause
 	 * checking that the collection has the appropriate index keys
 	 * Example: where document @@ '{ "value": {$regex: /^bb/}' */
-	Query *filterQuery = HandleMatch(&vectorSearchOptions->filterBson, query, context);
-
-	context->requiredFilterPathNameHashSet = NULL;
+	Query *filterQuery = HandleMatchWithIndexFilter(&vectorSearchOptions->filterBson,
+													query,
+													context, indexPathNameHashSet);
 	hash_destroy(indexPathNameHashSet);
 
 	return filterQuery;

@@ -111,6 +111,7 @@ GenerateListCollectionsQuery(text *databaseDatum, pgbson *listCollectionsSpec,
 {
 	AggregationPipelineBuildContext context = { 0 };
 	context.databaseNameDatum = databaseDatum;
+	context.joinStatus = JoinStageStatus_Unknown;
 
 	bson_iter_t listCollectionsIter;
 	PgbsonInitIterator(listCollectionsSpec, &listCollectionsIter);
@@ -214,6 +215,7 @@ GenerateListIndexesQuery(text *databaseDatum, pgbson *listIndexesSpec,
 {
 	AggregationPipelineBuildContext context = { 0 };
 	context.databaseNameDatum = databaseDatum;
+	context.joinStatus = JoinStageStatus_Unknown;
 
 	bson_iter_t listIndexesIter;
 	PgbsonInitIterator(listIndexesSpec, &listIndexesIter);

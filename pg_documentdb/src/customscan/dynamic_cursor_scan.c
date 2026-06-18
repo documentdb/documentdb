@@ -268,15 +268,50 @@ RegisterDynamicCursorScanNodes(void)
 bool
 IsDynamicCustomScanPath(Plan *plan)
 {
-	if (!IsA(plan, CustomScan))
+	CHECK_FOR_INTERRUPTS();
+	check_stack_depth();
+	if (IsA(plan, CustomScan))
 	{
-		return false;
+		CustomScan *scan = (CustomScan *) plan;
+		return strcmp(scan->methods->CustomName,
+					  DynamicExtensionCursorScanMethods.CustomName) == 0 &&
+			   scan->methods == &ExtensionCursorScanMethods;
 	}
 
-	CustomScan *scan = (CustomScan *) plan;
-	return strcmp(scan->methods->CustomName,
-				  DynamicExtensionCursorScanMethods.CustomName) == 0 &&
-		   scan->methods == &ExtensionCursorScanMethods;
+	if (IsA(plan, SubqueryScan))
+	{
+		SubqueryScan *subqueryScan = (SubqueryScan *) plan;
+		return IsDynamicCustomScanPath(subqueryScan->subplan);
+	}
+
+	return false;
+}
+
+
+CustomScanState *
+GetDynamicStreamingCustomScanState(PlanState *planState)
+{
+	CHECK_FOR_INTERRUPTS();
+	check_stack_depth();
+	if (IsA(planState, CustomScanState))
+	{
+		CustomScanState *scanState = (CustomScanState *) planState;
+		if (strcmp(scanState->methods->CustomName,
+				   DynamicExtensionCursorScanMethods.CustomName) == 0)
+		{
+			return scanState;
+		}
+
+		return NULL;
+	}
+
+	if (IsA(planState, SubqueryScanState))
+	{
+		SubqueryScanState *subqueryScan = (SubqueryScanState *) planState;
+		return GetDynamicStreamingCustomScanState(subqueryScan->subplan);
+	}
+
+	return NULL;
 }
 
 
@@ -692,6 +727,76 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 }
 
 
+static bool
+IsPlannerInfoValidForDynamicCursorPlans(PlannerInfo *root)
+{
+	check_stack_depth();
+	CHECK_FOR_INTERRUPTS();
+
+	if (root->hasJoinRTEs || root->hasRecursion || root->hasLateralRTEs ||
+		root->group_pathkeys != NIL || root->distinct_pathkeys != NIL ||
+		root->agginfos != NIL || root->hasAlternativeSubPlans ||
+		root->window_pathkeys != NIL || root->parse->hasTargetSRFs)
+	{
+		/* Use persisted cursors for these scenarios */
+		return false;
+	}
+
+	if (root->parse->commandType == CMD_MERGE)
+	{
+		/* $merge and $out do not support dynamic cursors */
+		return false;
+	}
+
+	if (root->parse->limitCount != NULL)
+	{
+		/* Dynamic streaming requires limit 1 */
+		if (IsA(root->parse->limitCount, Const))
+		{
+			Const *limitConst = (Const *) root->parse->limitCount;
+			if (DatumGetInt64(limitConst->constvalue) != 1)
+			{
+				/* Dynamic streaming cursors only support limit 1 */
+				return false;
+			}
+		}
+		else
+		{
+			/* Non-constant limit - can't handle dynamically */
+			return false;
+		}
+	}
+
+	if (root->parse->limitOffset != NULL)
+	{
+		/* Dynamic streaming requires offset 0 */
+		if (IsA(root->parse->limitOffset, Const))
+		{
+			Const *offsetConst = (Const *) root->parse->limitOffset;
+			if (DatumGetInt64(offsetConst->constvalue) != 0)
+			{
+				/* Dynamic streaming cursors only support offset 0 */
+				return false;
+			}
+		}
+		else
+		{
+			/* Non-constant offset - can't handle dynamically */
+			return false;
+		}
+	}
+
+	if (root->parent_root != NULL &&
+		!IsPlannerInfoValidForDynamicCursorPlans(root->parent_root))
+	{
+		/* In an unsupported subquery - use persisted cursors */
+		return false;
+	}
+
+	return true;
+}
+
+
 bool
 UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 										   RangeTblEntry *rte,
@@ -785,66 +890,10 @@ UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 		return false;
 	}
 
-	/*
-	 *  If a continuation is provided, ensure that the plan paths are valid.
-	 */
-	if (root->hasJoinRTEs || root->hasRecursion || root->hasLateralRTEs ||
-		root->group_pathkeys != NIL || root->distinct_pathkeys != NIL ||
-		root->agginfos != NIL || root->hasAlternativeSubPlans ||
-		root->window_pathkeys != NIL || root->parse->hasTargetSRFs)
+	if (!IsPlannerInfoValidForDynamicCursorPlans(root))
 	{
-		/* Use persisted cursors for these scenarios */
+		/* The planner info is not valid for dynamic cursor plans - use persisted */
 		return false;
-	}
-
-	if (root->parent_root != NULL)
-	{
-		/* In a subquery - use persisted cursors */
-		return false;
-	}
-
-	if (root->parse->commandType == CMD_MERGE)
-	{
-		/* $merge and $out do not support dynamic cursors */
-		return false;
-	}
-
-	if (root->parse->limitCount != NULL)
-	{
-		/* Dynamic streaming requires limit 1 */
-		if (IsA(root->parse->limitCount, Const))
-		{
-			Const *limitConst = (Const *) root->parse->limitCount;
-			if (DatumGetInt64(limitConst->constvalue) != 1)
-			{
-				/* Dynamic streaming cursors only support limit 1 */
-				return false;
-			}
-		}
-		else
-		{
-			/* Non-constant limit - can't handle dynamically */
-			return false;
-		}
-	}
-
-	if (root->parse->limitOffset != NULL)
-	{
-		/* Dynamic streaming requires offset 0 */
-		if (IsA(root->parse->limitOffset, Const))
-		{
-			Const *offsetConst = (Const *) root->parse->limitOffset;
-			if (DatumGetInt64(offsetConst->constvalue) != 0)
-			{
-				/* Dynamic streaming cursors only support offset 0 */
-				return false;
-			}
-		}
-		else
-		{
-			/* Non-constant offset - can't handle dynamically */
-			return false;
-		}
 	}
 
 	/* Parse the continuation state */

@@ -57,7 +57,7 @@
 -- | $sample  | Random sample                            | Non-streamable  |                                          |
 -- | $count   | Count documents                          | Non-streamable  |                                          |
 -- | $facet   | Multi-faceted aggregation                | Non-streamable  |                                          |
--- | $redact  | Field-level redaction                    | Non-streamable  |                                          |
+-- | $redact  | Field-level redaction                    | Streamable      |                                          |
 -- | $bktAuto | Auto-bucketing                           | Non-streamable  |                                          |
 -- | $densify | Densify time series                      | Non-streamable  |                                          |
 -- | $fill    | Fill missing values                      | Non-streamable  |                                          |
@@ -65,7 +65,7 @@
 -- | $setWFld | Set window fields                        | Non-streamable  |                                          |
 -- | $collSts | Collection stats                         | Non-streamable  |                                          |
 -- | $docs    | Documents stage                          | Non-streamable  |                                          |
--- | $inhibit | Inhibit optimization                     | Non-streamable  |                                          |
+-- | $inhibit | Inhibit optimization                     | Streamable      | CTE wraps streaming inner scan           |
 -- | $search  | Vector/text search                       | Non-streamable  |                                          |
 -- | $vecSrch | Vector search                            | Non-streamable  |                                          |
 -- | $geoNear | Geospatial near                          | Non-streamable  |                                          |
@@ -391,10 +391,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$facet": { "byA": [{ "$match": { "a": 1 } }] } }], "cursor": {} }');
 
--- Stage: $redact (non-streamable - RequiresPersistentCursorTrue)
--- Note: Dynamic cursors produces DocumentDBApiCursorScan but streaming does not
--- produce DocumentDBApiScan. $redact should be streaming enabled; the streaming
--- cursor path is missing the equivalent DocumentDBApiScan wrapper.
+-- Stage: $redact (streamable - RequiresPersistentCursorFalse)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$redact": "$$KEEP" }], "cursor": {} }');
 SET documentdb.enableDynamicCursors TO off;
@@ -464,7 +461,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": 1, "pipeline": [{ "$documents": [{ "x": 1 }, { "x": 2 }] }], "cursor": {} }');
 
--- Stage: $_internalInhibitOptimization (non-streamable - RequiresPersistentCursorTrue)
+-- Stage: $_internalInhibitOptimization (streamable - CTE wraps a streaming inner scan)
+-- The CTE materializes results, but the inner scan still uses DocumentDBApiCursorScan.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$_internalInhibitOptimization": {} }], "cursor": {} }');
 SET documentdb.enableDynamicCursors TO off;

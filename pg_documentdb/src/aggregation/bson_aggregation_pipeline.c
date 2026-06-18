@@ -93,6 +93,7 @@ extern bool EnableSortGroupStage;
 extern bool EnableSortPushToAccumulatorWithPrefix;
 extern bool EnableSampleScanFixOnSharded;
 extern bool EnableDistinctIndexPushdown;
+extern bool EnableSubqueryPushdownForMatch;
 extern bool EnableDollarSampleReservoirScan;
 
 /* GUC to config tdigest compression */
@@ -158,6 +159,9 @@ typedef struct AggregationStageDefinition
 
 	/* Whether or not the stage is an output stage. $merge and $out are output stages */
 	bool isOutputStage;
+
+	/* whether or not the stage is a multi-collection stage */
+	bool isMultiJoinUnionStage;
 
 	/* Allow Base shard table pushdown */
 	bool allowBaseShardTablePushdown;
@@ -429,6 +433,9 @@ static const AggregationStageDefinition LookupUnwindStageDefinition = {
 	.isOutputStage = false,
 	.pipelineCheckFunc = NULL,
 	.allowBaseShardTablePushdown = false,
+
+	/* $lookup may touch multiple collections */
+	.isMultiJoinUnionStage = true,
 	.stageEnum = Stage_LookupUnwind,
 };
 
@@ -443,6 +450,7 @@ static const AggregationStageDefinition SortGroupStageDefinition = {
 	.canHandleAgnosticQueries = false,
 	.isProjectTransform = false,
 	.isOutputStage = false,
+	.isMultiJoinUnionStage = false,
 	.pipelineCheckFunc = NULL,
 	.allowBaseShardTablePushdown = true,
 	.stageEnum = Stage_SortGroup,
@@ -464,6 +472,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = true,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_Internal_InhibitOptimization,
@@ -477,6 +486,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = true,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_AddFields,
@@ -490,6 +500,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_Bucket,
@@ -503,6 +514,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_BucketAuto,
@@ -516,6 +528,9 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = true,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+
+		/* $changeStream may touch multiple collections or cluster level */
+		.isMultiJoinUnionStage = true,
 		.pipelineCheckFunc = PreCheckChangeStreamPipelineStages,
 		.allowBaseShardTablePushdown = false,
 		.stageEnum = Stage_ChangeStream,
@@ -529,6 +544,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = false,
 		.stageEnum = Stage_CollStats,
@@ -546,6 +562,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_Count,
@@ -564,6 +581,9 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = true,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+
+		/* $currentOp may touch multiple collections via joins etc */
+		.isMultiJoinUnionStage = true,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = false,
 		.stageEnum = Stage_CurrentOp,
@@ -577,6 +597,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_Densify,
@@ -590,6 +611,11 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = true,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+
+		/* $documents is a non-collection, but can be used in conjunction
+		 * in lookups, unionWiths etc, just be safe here.
+		 */
+		.isMultiJoinUnionStage = true,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = false,
 		.stageEnum = Stage_Documents,
@@ -607,6 +633,9 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+
+		/* $facet may handle sub-pipelines with joins */
+		.isMultiJoinUnionStage = true,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = false,
 		.stageEnum = Stage_Facet,
@@ -620,6 +649,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_Fill,
@@ -633,6 +663,11 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+
+		/* Geonear creates a custom projection which we don't want to
+		 * interfere with match pushdown. Just skip for $geoNear.
+		 */
+		.isMultiJoinUnionStage = true,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_GeoNear,
@@ -646,6 +681,9 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+
+		/* Recursive CTE has joins with self */
+		.isMultiJoinUnionStage = true,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = false,
 		.stageEnum = Stage_GraphLookup,
@@ -664,6 +702,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_Group,
@@ -677,6 +716,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = false,
 		.stageEnum = Stage_IndexStats,
@@ -694,6 +734,9 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = true,
 		.isOutputStage = false,
+
+		/* $inverseMatch joins with another collection */
+		.isMultiJoinUnionStage = true,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_InverseMatch,
@@ -711,6 +754,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_Limit,
@@ -724,6 +768,9 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = true,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+
+		/* Defensive - assume that this joins */
+		.isMultiJoinUnionStage = true,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = false,
 		.stageEnum = Stage_ListLocalSessions,
@@ -737,6 +784,9 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+
+		/* Defensive - assume that this joins */
+		.isMultiJoinUnionStage = true,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = false,
 		.stageEnum = Stage_ListSessions,
@@ -752,6 +802,9 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+
+		/* Lookup is a left join */
+		.isMultiJoinUnionStage = true,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = false,
 		.stageEnum = Stage_Lookup,
@@ -769,6 +822,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = true,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_Match,
@@ -782,6 +836,9 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = true,
+
+		/* $merge outputs into same or different collection */
+		.isMultiJoinUnionStage = true,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = false,
 		.stageEnum = Stage_Merge,
@@ -795,6 +852,9 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = true,
+
+		/* $out outputs to a new collection */
+		.isMultiJoinUnionStage = true,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = false,
 		.stageEnum = Stage_Out,
@@ -810,6 +870,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = true,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_Project,
@@ -823,6 +884,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = true,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_Redact,
@@ -838,6 +900,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = true,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_ReplaceRoot,
@@ -853,6 +916,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = true,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_ReplaceWith,
@@ -870,6 +934,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_Sample,
@@ -885,6 +950,9 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+
+		/* Defensive: Presume it *may* join */
+		.isMultiJoinUnionStage = true,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_Search,
@@ -898,6 +966,9 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+
+		/* Defensive: Presume it *may* join */
+		.isMultiJoinUnionStage = true,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_SearchMeta,
@@ -911,6 +982,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = true,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_Set,
@@ -924,6 +996,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_SetWindowFields,
@@ -941,6 +1014,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_Skip,
@@ -958,6 +1032,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_Sort,
@@ -971,6 +1046,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_SortByCount,
@@ -984,6 +1060,12 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+
+		/* $unionWith does consider multiple collections
+		 * Even though there's no join, presume we need the join
+		 * path.
+		 */
+		.isMultiJoinUnionStage = true,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = false,
 		.stageEnum = Stage_UnionWith,
@@ -997,6 +1079,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = true,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_Unset,
@@ -1010,6 +1093,8 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
+		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = true,
 		.stageEnum = Stage_Unwind,
 	},
@@ -1024,6 +1109,7 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.canHandleAgnosticQueries = false,
 		.isProjectTransform = false,
 		.isOutputStage = false,
+		.isMultiJoinUnionStage = false,
 		.pipelineCheckFunc = NULL,
 
 		/* $vectorSearch is needed to be executed withing custom scan boundaries see EvaluateMetaSearchScore in vector/vector_utilities.c */
@@ -1491,6 +1577,7 @@ ParseAggregationQueryAndLookupCollection(text *database, pgbson *aggregationSpec
 	AggregationPipelineBuildContext *context = &plan->context;
 	context->databaseNameDatum = database;
 	context->optimizePipelineStages = true;
+	context->joinStatus = JoinStageStatus_Unknown;
 	queryData->cursorKind = QueryCursorType_Unspecified;
 
 	bson_iter_t aggregationIterator;
@@ -1737,6 +1824,9 @@ ApplyParsedAggregationQuery(AggregationQueryPlan *plan)
 	{
 		/* Fall back to streaming cursor if dynamic cursor cannot be added */
 		cursorParamKind = CursorParamKind_Streaming;
+
+		/* If we couldn't add dynamic cursors then fall back to not allowing this */
+		context->joinStatus = JoinStageStatus_Unknown;
 	}
 
 	query = MutateQueryWithPipeline(query, aggregationStages, context);
@@ -2273,6 +2363,9 @@ ApplyFindSpecCore(const FindSpec *spec, Query *query, Query *baseQuery,
 	{
 		/* Fall back to streaming cursor if dynamic cursor cannot be added */
 		cursorParamKind = CursorParamKind_Streaming;
+
+		/* If we couldn't add dynamic cursors then fall back to not allowing this */
+		context->joinStatus = JoinStageStatus_Unknown;
 	}
 
 	/* First apply match */
@@ -2396,7 +2489,6 @@ ParseFindQueryAndLookupCollection(text *database, pgbson *findSpec,
 {
 	FindQueryPlan *plan = palloc0(sizeof(FindQueryPlan));
 	plan->queryData = queryData;
-	plan->context.databaseNameDatum = database;
 
 	/* Queries start out as persistent cursor */
 	queryData->cursorKind = QueryCursorType_Unspecified;
@@ -2404,6 +2496,9 @@ ParseFindQueryAndLookupCollection(text *database, pgbson *findSpec,
 	/* For finds, we can generally query the shard directly if available. */
 	plan->context.allowShardBaseTable = true;
 	plan->context.databaseNameDatum = database;
+
+	/* Find queries have no joins */
+	plan->context.joinStatus = JoinStageStatus_NoJoinsOrUnions;
 	plan->spec = ParseFindQuery(findSpec, queryData,
 								setStatementTimeout, &plan->context);
 
@@ -2542,6 +2637,7 @@ GenerateCountQuery(text *databaseDatum, pgbson *countSpec, bool setStatementTime
 {
 	AggregationPipelineBuildContext context = { 0 };
 	context.databaseNameDatum = databaseDatum;
+	context.joinStatus = JoinStageStatus_Unknown;
 
 	bson_iter_t countIterator;
 	PgbsonInitIterator(countSpec, &countIterator);
@@ -2774,6 +2870,7 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 {
 	AggregationPipelineBuildContext context = { 0 };
 	context.databaseNameDatum = databaseDatum;
+	context.joinStatus = JoinStageStatus_Unknown;
 
 	bson_iter_t distinctIter;
 	PgbsonInitIterator(distinctSpec, &distinctIter);
@@ -4312,8 +4409,9 @@ HandleLimit(const bson_value_t *existingValue, Query *query,
  * Applies the match on the current projector.
  */
 Query *
-HandleMatch(const bson_value_t *existingValue, Query *query,
-			AggregationPipelineBuildContext *context)
+HandleMatchWithIndexFilter(const bson_value_t *existingValue, Query *query,
+						   AggregationPipelineBuildContext *context,
+						   HTAB *requiredFilterPathNameHashSet)
 {
 	ReportFeatureUsage(FEATURE_STAGE_MATCH);
 	if (existingValue->value_type != BSON_TYPE_DOCUMENT)
@@ -4329,12 +4427,36 @@ HandleMatch(const bson_value_t *existingValue, Query *query,
 	}
 
 	TargetEntry *entry = linitial(query->targetList);
+
+	if (context->joinStatus == JoinStageStatus_NoJoinsOrUnions &&
+		EnableSubqueryPushdownForMatch &&
+		EnableDynamicCursors &&
+		IsA(entry->expr, FuncExpr))
+	{
+		/* If we're not doing a filter on a Var field and it's being
+		 * processed by a function, then, it's better to push this query
+		 * to a subquery such that the projection is applied first, and then
+		 * the filter is applied. In the case of joins, we want the match to
+		 * be pulled up to be able to participate in the joins
+		 * To achieve this and ensure that subquery pullup works, we add an
+		 * offset 0 (since offset 0) is skipped by the planner but not by
+		 * the subquery optimizer, and push it to a subquery.
+		 * TODO: Be more aggressive in the subquery pushdown (not just if
+		 * there exists a $lookup somewhere in the pipeline).
+		 */
+		Assert(query->limitOffset == NULL);
+		query->limitOffset = (Node *) makeConst(INT8OID, -1, InvalidOid, sizeof(int64_t),
+												Int64GetDatum(0), false, true);
+		query = MigrateQueryToSubQuery(query, context);
+		entry = linitial(query->targetList);
+	}
+
 	BsonQueryOperatorContext filterContext = { 0 };
 	filterContext.documentExpr = entry->expr;
 	filterContext.inputType = MongoQueryOperatorInputType_Bson;
 	filterContext.simplifyOperators = true;
 	filterContext.coerceOperatorExprIfApplicable = true;
-	filterContext.requiredFilterPathNameHashSet = context->requiredFilterPathNameHashSet;
+	filterContext.requiredFilterPathNameHashSet = requiredFilterPathNameHashSet;
 	filterContext.variableContext = context->variableSpec;
 
 	if (EnableCollation)
@@ -4357,6 +4479,14 @@ HandleMatch(const bson_value_t *existingValue, Query *query,
 
 	query->jointree->quals = (Node *) make_ands_explicit(quals);
 	return query;
+}
+
+
+Query *
+HandleMatch(const bson_value_t *existingValue, Query *query,
+			AggregationPipelineBuildContext *context)
+{
+	return HandleMatchWithIndexFilter(existingValue, query, context, NULL);
 }
 
 
@@ -8492,6 +8622,11 @@ ExtractAggregationStages(const bson_value_t *pipelineValue,
 			lastEncounteredOutputStage = definition->stage;
 		}
 
+		if (definition->isMultiJoinUnionStage)
+		{
+			context->joinStatus = JoinStageStatus_HasJoinsOrUnions;
+		}
+
 		if (definition->stageEnum == Stage_ChangeStream)
 		{
 			context->requiresTailableCursor = true;
@@ -8516,6 +8651,11 @@ ExtractAggregationStages(const bson_value_t *pipelineValue,
 	if (context->optimizePipelineStages)
 	{
 		TryOptimizeAggregationPipelines(&aggregationStages, context);
+	}
+
+	if (context->joinStatus == JoinStageStatus_Unknown)
+	{
+		context->joinStatus = JoinStageStatus_NoJoinsOrUnions;
 	}
 
 	return aggregationStages;
@@ -9777,6 +9917,8 @@ TryOptimizeAggregationPipelines(List **aggregationStages,
 							PgbsonWriterGetPgbson(&writer));
 						lookupUnwindStage->stageDefinition =
 							(AggregationStageDefinition *) &LookupUnwindStageDefinition;
+
+						context->joinStatus = JoinStageStatus_HasJoinsOrUnions;
 						*aggregationStages = foreach_delete_current(stagesList, cell);
 					}
 				}

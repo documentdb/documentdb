@@ -57,7 +57,7 @@
 -- | $sample  | Random sample                            | Non-streamable  |                                          |
 -- | $count   | Count documents                          | Non-streamable  |                                          |
 -- | $facet   | Multi-faceted aggregation                | Non-streamable  |                                          |
--- | $redact  | Field-level redaction                    | Non-streamable  |                                          |
+-- | $redact  | Field-level redaction                    | Streamable      |                                          |
 -- | $bktAuto | Auto-bucketing                           | Non-streamable  |                                          |
 -- | $densify | Densify time series                      | Non-streamable  |                                          |
 -- | $fill    | Fill missing values                      | Non-streamable  |                                          |
@@ -65,7 +65,7 @@
 -- | $setWFld | Set window fields                        | Non-streamable  |                                          |
 -- | $collSts | Collection stats                         | Non-streamable  |                                          |
 -- | $docs    | Documents stage                          | Non-streamable  |                                          |
--- | $inhibit | Inhibit optimization                     | Non-streamable  |                                          |
+-- | $inhibit | Inhibit optimization                     | Streamable      | CTE wraps streaming inner scan           |
 -- | $search  | Vector/text search                       | Non-streamable  |                                          |
 -- | $vecSrch | Vector search                            | Non-streamable  |                                          |
 -- | $geoNear | Geospatial near                          | Non-streamable  |                                          |
@@ -1119,10 +1119,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
 
--- Stage: $redact (non-streamable - RequiresPersistentCursorTrue)
--- Note: Dynamic cursors produces DocumentDBApiCursorScan but streaming does not
--- produce DocumentDBApiScan. $redact should be streaming enabled; the streaming
--- cursor path is missing the equivalent DocumentDBApiScan wrapper.
+-- Stage: $redact (streamable - RequiresPersistentCursorFalse)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$redact": "$$KEEP" }], "cursor": {} }');
                                                                              QUERY PLAN                                                                             
@@ -1419,17 +1416,22 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Function Call: bson_lookup_unwind('{ "$documents" : [ { "x" : { "$numberInt" : "1" } }, { "x" : { "$numberInt" : "2" } } ] }'::bson, '$documents'::text)
 (3 rows)
 
--- Stage: $_internalInhibitOptimization (non-streamable - RequiresPersistentCursorTrue)
+-- Stage: $_internalInhibitOptimization (streamable - CTE wraps a streaming inner scan)
+-- The CTE materializes results, but the inner scan still uses DocumentDBApiCursorScan.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$_internalInhibitOptimization": {} }], "cursor": {} }');
-                          QUERY PLAN                           
----------------------------------------------------------------
+                                          QUERY PLAN                                           
+-----------------------------------------------------------------------------------------------
  CTE Scan on internalinhibitoptimization inhibit_stage_0
    Output: inhibit_stage_0.document
    CTE internalinhibitoptimization
-     ->  Seq Scan on documentdb_data.documents_2601 collection
+     ->  Custom Scan (DocumentDBApiCursorScan)
            Output: collection.document
-(5 rows)
+           scanType: Primary Key Scan
+           indexName: _id_
+           ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
+                 Output: collection.shard_key_value, collection.object_id, collection.document
+(9 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$_internalInhibitOptimization": {} }], "cursor": {} }');

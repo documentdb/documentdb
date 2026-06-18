@@ -92,11 +92,24 @@ typedef enum
 } Stage;
 
 
+typedef enum JoinStageStatus
+{
+	JoinStageStatus_Unknown = 0,
+	JoinStageStatus_NoJoinsOrUnions,
+	JoinStageStatus_HasJoinsOrUnions,
+} JoinStageStatus;
+
+
 /*
  * Shared context during aggregation pipeline build phase.
  */
 typedef struct
 {
+	/* *********************************************************************
+	 * Query Builder Fields
+	 * *********************************************************************
+	 */
+
 	/* The current stage number (used for tagging stage identifiers) */
 	int stageNum;
 
@@ -109,43 +122,39 @@ typedef struct
 	/* Whether the query should retain an expanded target list*/
 	bool expandTargetList;
 
-	/* Whether or not the query requires a persisted cursor */
-	bool requiresPersistentCursor;
-
-	/* Whether or not the stage can handle a single batch cursor */
-	bool isSingleRowResult;
-
-	/* The namespace 'db.coll' associated with this query */
-	const char *namespaceName;
+	/* the level of nested pipeline for stages that have nested pipelines ($facet/$lookup). */
+	int nestedPipelineLevel;
 
 	/* The current parameter count (Note: Increment this before use) */
 	int currentParamCount;
 
-	/* The current Mongo collection */
-	MongoCollection *mongoCollection;
-
-	/* the level of nested pipeline for stages that have nested pipelines ($facet/$lookup). */
-	int nestedPipelineLevel;
-
 	/* The number of nested levels (incremented by MigrateSubQuery) */
 	int numNestedLevels;
+
+	/*
+	 * Whether or not to apply the optimization transformation on the stages
+	 */
+	bool optimizePipelineStages;
+
+	/* Whether or not the query has join stages (to optimize subquery behavior) */
+	JoinStageStatus joinStatus;
+
+	/* *********************************************************************
+	 * Namespace Fields
+	 * *********************************************************************
+	 */
+
+	/* The namespace 'db.coll' associated with this query */
+	const char *namespaceName;
+
+	/* The current Mongo collection */
+	MongoCollection *mongoCollection;
 
 	/* The database name associated with this request */
 	text *databaseNameDatum;
 
 	/* The collection name associated with this request (if applicable) */
 	StringView collectionNameView;
-
-	/* The sort specification that precedes it (if available).
-	 * If the stage changes the sort order, this is reset.
-	 * BSON_TYPE_EOD if not available.
-	 */
-	bson_value_t sortSpec;
-
-	/* The path name of the collection, used for filtering of vector search
-	 * it is set only when the filter of vector search is specified
-	 */
-	HTAB *requiredFilterPathNameHashSet;
 
 	/* Whether or not the aggregation query allows direct shard delegation
 	 * This allows queries to go directly against a local shard *iff* it's available.
@@ -154,13 +163,46 @@ typedef struct
 	 */
 	bool allowShardBaseTable;
 
+	/* *********************************************************************
+	 * Cursor Fields
+	 * *********************************************************************
+	 */
+
+	/* Whether or not the query requires a persisted cursor */
+	bool requiresPersistentCursor;
+
+	/* Whether or not the stage can handle a single batch cursor */
+	bool isSingleRowResult;
+
+	/* Whether or not the query requires a tailable cursor */
+	bool requiresTailableCursor;
+
+	/* Whether or not it's a point read query */
+	bool isPointReadQuery;
+
+	/* *********************************************************************
+	 * Pipeline stage fields
+	 * *********************************************************************
+	 */
+
+	/* The sort specification that precedes it (if available).
+	 * If the stage changes the sort order, this is reset.
+	 * BSON_TYPE_EOD if not available.
+	 */
+	bson_value_t sortSpec;
+
+	/* Parent Stage Name For $redact scenarios */
+	ParentStageName parentStageName;
+
+	/* *********************************************************************
+	 * Global Query Metadata fields
+	 * *********************************************************************
+	 */
+
 	/*
 	 * The variable spec expression that preceds it.
 	 */
 	Expr *variableSpec;
-
-	/* Whether or not the query requires a tailable cursor */
-	bool requiresTailableCursor;
 
 	/*
 	 * String indicating a standard ICU collation. An example string is "und-u-ks-level1-kc-true".
@@ -170,13 +212,10 @@ typedef struct
 	 */
 	const char collationString[MAX_ICU_COLLATION_LENGTH];
 
-	/*
-	 * Whether or not to apply the optimization transformation on the stages
+	/* *********************************************************************
+	 * Feature tracking fields
+	 * *********************************************************************
 	 */
-	bool optimizePipelineStages;
-
-	/* Whether or not it's a point read query */
-	bool isPointReadQuery;
 
 	/* Tracks shard key filter type applied in HandleMatch. */
 	enum
@@ -185,9 +224,6 @@ typedef struct
 		ShardKeyFilter_Equality = 1,
 		ShardKeyFilter_In = 2,
 	} shardKeyFilterAppliedType;
-
-	/*Parent Stage Name*/
-	ParentStageName parentStageName;
 } AggregationPipelineBuildContext;
 
 
@@ -228,6 +264,9 @@ void ParseCursorDocument(bson_iter_t *iterator, QueryData *queryData);
 const char * CreateNamespaceName(text *databaseName,
 								 const StringView *collectionName);
 
+Query * HandleMatchWithIndexFilter(const bson_value_t *existingValue, Query *query,
+								   AggregationPipelineBuildContext *context,
+								   HTAB *requiredFilterPathNameHashSet);
 Query * HandleMatch(const bson_value_t *existingValue, Query *query,
 					AggregationPipelineBuildContext *context);
 Query * HandleSimpleProjectionStage(const bson_value_t *existingValue, Query *query,

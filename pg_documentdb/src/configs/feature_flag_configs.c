@@ -374,6 +374,10 @@ bool EnableObjectIdFuncExprConversion = DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVER
 #define DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED true
 bool EnableSampleScanFixOnSharded = DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED;
 
+/* Added in v115, enabled in v115, remove after v117 */
+#define DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_MATCH true
+bool EnableSubqueryPushdownForMatch = DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_MATCH;
+
 /* Added in v114, enabled in v114, remove after v117 */
 #define DEFAULT_ENABLE_DOLLAR_SAMPLE_RESERVOIR_SCAN true
 bool EnableDollarSampleReservoirScan = DEFAULT_ENABLE_DOLLAR_SAMPLE_RESERVOIR_SCAN;
@@ -1275,6 +1279,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableSampleScanFixOnSharded,
 		DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableSubqueryPushdownForMatch", newGucPrefix),
+		gettext_noop(
+			"Whether to enable pushdown of subqueries for match operations."),
+		NULL,
+		&EnableSubqueryPushdownForMatch,
+		DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_MATCH,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

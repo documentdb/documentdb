@@ -793,6 +793,7 @@ CreateInverseMatchFromCollectionQuery(InverseMatchArgs *inverseMatchArgs,
 	subPipelineContext.nestedPipelineLevel = context->nestedPipelineLevel + 1;
 	subPipelineContext.databaseNameDatum = context->databaseNameDatum;
 	subPipelineContext.variableSpec = context->variableSpec;
+	subPipelineContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 	subPipelineContext.parentStageName = ParentStageName_INVERSEMATCH;
 	strncpy((char *) subPipelineContext.collationString, context->collationString,
 			MAX_ICU_COLLATION_LENGTH);
@@ -1077,6 +1078,7 @@ HandleUnionWith(const bson_value_t *existingValue, Query *query,
 		subPipelineContext.nestedPipelineLevel = context->nestedPipelineLevel + 1;
 		subPipelineContext.databaseNameDatum = context->databaseNameDatum;
 		subPipelineContext.variableSpec = context->variableSpec;
+		subPipelineContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 		subPipelineContext.parentStageName = ParentStageName_UNIONWITH;
 		strncpy((char *) subPipelineContext.collationString, context->collationString,
 				MAX_ICU_COLLATION_LENGTH);
@@ -1096,6 +1098,7 @@ HandleUnionWith(const bson_value_t *existingValue, Query *query,
 		subPipelineContext.nestedPipelineLevel = context->nestedPipelineLevel + 1;
 		subPipelineContext.databaseNameDatum = context->databaseNameDatum;
 		subPipelineContext.variableSpec = context->variableSpec;
+		subPipelineContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 		subPipelineContext.parentStageName = ParentStageName_UNIONWITH;
 		strncpy((char *) subPipelineContext.collationString, context->collationString,
 				MAX_ICU_COLLATION_LENGTH);
@@ -1275,6 +1278,7 @@ BuildFacetUnionAllQuery(int numStages, const bson_value_t *facetValue,
 		AggregationPipelineBuildContext nestedContext = { 0 };
 		nestedContext.nestedPipelineLevel = parentContext->nestedPipelineLevel + 1;
 		nestedContext.databaseNameDatum = parentContext->databaseNameDatum;
+		nestedContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 		nestedContext.sortSpec = *sortSpec;
 		nestedContext.variableSpec = parentContext->variableSpec;
 		nestedContext.parentStageName = ParentStageName_FACET;
@@ -1335,6 +1339,7 @@ BuildFacetUnionAllQuery(int numStages, const bson_value_t *facetValue,
 			nestedContext.databaseNameDatum = parentContext->databaseNameDatum;
 			nestedContext.sortSpec = *sortSpec;
 			nestedContext.variableSpec = parentContext->variableSpec;
+			nestedContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 			nestedContext.parentStageName = ParentStageName_FACET;
 			strncpy((char *) nestedContext.collationString,
 					parentContext->collationString, MAX_ICU_COLLATION_LENGTH);
@@ -2004,6 +2009,7 @@ OptimizeLookup(LookupArgs *lookupArgs,
 	optimizationArgs->rightQueryContext.parentStageName = ParentStageName_LOOKUP;
 	optimizationArgs->rightQueryContext.optimizePipelineStages =
 		leftQueryContext->optimizePipelineStages;
+	optimizationArgs->rightQueryContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 
 	optimizationArgs->isLookupAgnostic = lookupArgs->from.length == 0;
 	optimizationArgs->isLookupUncorrelated = !lookupArgs->hasLookupMatch;
@@ -2762,6 +2768,7 @@ ProcessLookupCoreWithLet(Query *query, AggregationPipelineBuildContext *context,
 		projectorQueryContext.mongoCollection =
 			optimizationArgs.rightQueryContext.mongoCollection;
 		projectorQueryContext.variableSpec = letExpr;
+		projectorQueryContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 		projectorQueryContext.parentStageName = ParentStageName_LOOKUP;
 		strncpy((char *) projectorQueryContext.collationString, context->collationString,
 				MAX_ICU_COLLATION_LENGTH);
@@ -3567,6 +3574,7 @@ GenerateBaseCaseQuery(AggregationPipelineBuildContext *parentContext,
 	subPipelineContext.nestedPipelineLevel = parentContext->nestedPipelineLevel + 2;
 	subPipelineContext.databaseNameDatum = parentContext->databaseNameDatum;
 	subPipelineContext.variableSpec = parentContext->variableSpec;
+	subPipelineContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 	strncpy((char *) subPipelineContext.collationString, parentContext->collationString,
 			MAX_ICU_COLLATION_LENGTH);
 	pg_uuid_t *collectionUuid = NULL;
@@ -3667,6 +3675,7 @@ GenerateRecursiveCaseQuery(AggregationPipelineBuildContext *parentContext,
 	subPipelineContext.nestedPipelineLevel = parentContext->nestedPipelineLevel + 2;
 	subPipelineContext.databaseNameDatum = parentContext->databaseNameDatum;
 	subPipelineContext.variableSpec = parentContext->variableSpec;
+	subPipelineContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 	strncpy((char *) subPipelineContext.collationString, parentContext->collationString,
 			MAX_ICU_COLLATION_LENGTH);
 	pg_uuid_t *collectionUuid = NULL;
@@ -3842,6 +3851,7 @@ BuildRecursiveGraphLookupQuery(QuerySource parentSource, GraphLookupArgs *args,
 	subPipelineContext.nestedPipelineLevel = parentContext->nestedPipelineLevel + 1;
 	subPipelineContext.databaseNameDatum = parentContext->databaseNameDatum;
 	subPipelineContext.variableSpec = parentContext->variableSpec;
+	subPipelineContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 	strncpy((char *) subPipelineContext.collationString, parentContext->collationString,
 			MAX_ICU_COLLATION_LENGTH);
 
