@@ -54,12 +54,24 @@ DECLARE
     v_idx         text;
     v_portal_name text;
     v_is_aggregate bool;
+    v_is_single_batch bool;
 BEGIN
     -- Detect find vs aggregate from the spec itself (keeps the helper signature
     -- identical to the full test's so the two co-scheduled definitions don't
     -- create an ambiguous overload).
     v_is_aggregate := (bson_dollar_project(p_find_spec::documentdb_core.bson,
         '{ "aggregate": 1 }') ->> 'aggregate') IS NOT NULL;
+
+    -- A singleBatch request (top-level "singleBatch" for find, "cursor.singleBatch"
+    -- for aggregate) must return exactly one batch and close the cursor; it must
+    -- never materialize a worker file cursor or a held portal. Used below to
+    -- assert the continuation never resumes via a persisted path.
+    v_is_single_batch := COALESCE(
+        (bson_dollar_project(p_find_spec::documentdb_core.bson,
+            '{ "singleBatch": 1 }') ->> 'singleBatch') = 'true',
+        (bson_dollar_project(p_find_spec::documentdb_core.bson,
+            '{ "cursor.singleBatch": 1 }') ->> 'cursor.singleBatch') = 'true',
+        false);
 
     -- First page (find or aggregate entry point)
     IF v_is_aggregate THEN
@@ -92,11 +104,17 @@ BEGIN
         --   qc = CursorKind_Streaming                 (legacy streaming)
         --   qp = true + qn = CursorKind_Persisted     (coordinator portal)
         IF (bson_dollar_project(v_cont, '{ "qr": 1 }') ->> 'qr') IS NOT NULL THEN
-            -- A file cursor's worker continuation ("wc") has no scan "type" field.
-            IF (bson_dollar_project(v_cont, '{ "wc.dc.type": 1 }') ->> 'wc.dc.type') IS NULL THEN
+            -- A streaming worker cursor carries a "wc.dc.type" scan type. A
+            -- persisted worker cursor has none: it is a file cursor when it
+            -- carries the "wc.qf" file-state binary, otherwise a held portal.
+            -- Distinguishing them keeps a held portal from being mislabeled as
+            -- a file cursor.
+            IF (bson_dollar_project(v_cont, '{ "wc.dc.type": 1 }') ->> 'wc.dc.type') IS NOT NULL THEN
+                v_cursor_kind := 'DynamicStreamingRemote';
+            ELSIF (bson_dollar_project(v_cont, '{ "wc.qf": 1 }') ->> 'wc.qf') IS NOT NULL THEN
                 v_cursor_kind := 'DynamicFileCursorRemote';
             ELSE
-                v_cursor_kind := 'DynamicStreamingRemote';
+                v_cursor_kind := 'DynamicHoldPortalRemote';
             END IF;
         ELSIF (bson_dollar_project(v_cont, '{ "qd": 1 }') ->> 'qd') IS NOT NULL THEN
             v_cursor_kind := 'DynamicStreaming';
@@ -108,9 +126,14 @@ BEGIN
             v_cursor_kind := 'Unknown';
         END IF;
 
-        -- IF v_cursor_kind NOT IN ('DynamicStreamingRemote', 'DynamicFileCursorRemote') THEN
-        --     RAISE EXCEPTION 'Page 1: expected remote unsharded cursor, got Kind=%, Continuation=%', v_cursor_kind, v_cont;
-        -- END IF;
+        -- A singleBatch query must never fall back to a worker file cursor or a
+        -- held portal: a continuation of either kind means it persisted state
+        -- instead of returning a single self-contained batch and closing.
+        IF v_is_single_batch AND v_cursor_kind IN
+            ('DynamicFileCursorRemote', 'DynamicHoldPortalRemote', 'Persisted') THEN
+            RAISE EXCEPTION 'singleBatch must not create a file or hold-portal cursor, got Kind=%, Continuation=%',
+                v_cursor_kind, v_cont;
+        END IF;
 
         SELECT (bson_dollar_project(v_cont, '{ "wc.dc.type": 1 }') ->> 'wc.dc.type')::int
         INTO v_cursor_type;
@@ -119,7 +142,7 @@ BEGIN
         END IF;
         v_cursor_type_name := CASE
             WHEN v_cursor_kind IN ('Persisted', 'Unknown') THEN 'N/A'
-            WHEN v_cursor_type =  0 THEN 'DynamicFileCursorRemote'
+            WHEN v_cursor_type =  0 THEN v_cursor_kind
             WHEN v_cursor_type =  1 THEN 'QueryScanType_TidRangeScan'
             WHEN v_cursor_type =  2 THEN 'QueryScanType_PrimaryKeyScan'
             WHEN v_cursor_type =  3 THEN 'QueryScanType_SecondaryIndexScan'
@@ -169,11 +192,17 @@ BEGIN
 
         IF v_cont IS NOT NULL THEN
             IF (bson_dollar_project(v_cont, '{ "qr": 1 }') ->> 'qr') IS NOT NULL THEN
-                -- A file cursor's worker continuation ("wc") has no scan "type" field.
-                IF (bson_dollar_project(v_cont, '{ "wc.dc.type": 1 }') ->> 'wc.dc.type') IS NULL THEN
+                -- A streaming worker cursor carries a "wc.dc.type" scan type. A
+                -- persisted worker cursor has none: it is a file cursor when it
+                -- carries the "wc.qf" file-state binary, otherwise a held portal.
+                -- Distinguishing them keeps a held portal from being mislabeled
+                -- as a file cursor.
+                IF (bson_dollar_project(v_cont, '{ "wc.dc.type": 1 }') ->> 'wc.dc.type') IS NOT NULL THEN
+                    v_cursor_kind := 'DynamicStreamingRemote';
+                ELSIF (bson_dollar_project(v_cont, '{ "wc.qf": 1 }') ->> 'wc.qf') IS NOT NULL THEN
                     v_cursor_kind := 'DynamicFileCursorRemote';
                 ELSE
-                    v_cursor_kind := 'DynamicStreamingRemote';
+                    v_cursor_kind := 'DynamicHoldPortalRemote';
                 END IF;
             ELSIF (bson_dollar_project(v_cont, '{ "qd": 1 }') ->> 'qd') IS NOT NULL THEN
                 v_cursor_kind := 'DynamicStreaming';
@@ -183,6 +212,14 @@ BEGIN
                 v_cursor_kind := 'Unknown';
             END IF;
 
+            -- A singleBatch query must never resume via a worker file cursor or
+            -- a held portal on getMore either.
+            IF v_is_single_batch AND v_cursor_kind IN
+                ('DynamicFileCursorRemote', 'DynamicHoldPortalRemote', 'Persisted') THEN
+                RAISE EXCEPTION 'singleBatch must not create a file or hold-portal cursor, got Kind=%, Continuation=%',
+                    v_cursor_kind, v_cont;
+            END IF;
+
             SELECT (bson_dollar_project(v_cont, '{ "wc.dc.type": 1 }') ->> 'wc.dc.type')::int
             INTO v_cursor_type;
             IF v_cursor_type IS NULL THEN
@@ -190,7 +227,7 @@ BEGIN
             END IF;
             v_cursor_type_name := CASE
                 WHEN v_cursor_kind IN ('Persisted', 'Unknown') THEN 'N/A'
-                WHEN v_cursor_type =  0 THEN 'DynamicFileCursorRemote'
+                WHEN v_cursor_type =  0 THEN v_cursor_kind
                 WHEN v_cursor_type =  1 THEN 'QueryScanType_TidRangeScan'
                 WHEN v_cursor_type =  2 THEN 'QueryScanType_PrimaryKeyScan'
                 WHEN v_cursor_type =  3 THEN 'QueryScanType_SecondaryIndexScan'
@@ -226,6 +263,29 @@ BEGIN
     RAISE NOTICE 'Done: drained % pages', v_page_num;
 END;
 $$;
+
+-- ===========================================================================
+-- Helper UDF: EXPLAIN the first-page plan for a find or aggregate spec.
+-- Auto-detects the entry point (find vs aggregate) from the spec's "aggregate"
+-- key and routes through bson_aggregation_find / bson_aggregation_pipeline so a
+-- single call works for both. run_explain_and_trim normalizes the volatile
+-- distributed runtime details so the plan shape is deterministic.
+-- ===========================================================================
+CREATE OR REPLACE FUNCTION remote_explain_first_page(p_spec text)
+    RETURNS SETOF text LANGUAGE plpgsql AS $fn$
+DECLARE
+    v_is_aggregate bool;
+    v_first_fn text;
+BEGIN
+    v_is_aggregate := (bson_dollar_project(p_spec::documentdb_core.bson, '{ "aggregate": 1 }') ->> 'aggregate') IS NOT NULL;
+    v_first_fn := CASE WHEN v_is_aggregate
+                       THEN 'documentdb_api_catalog.bson_aggregation_pipeline'
+                       ELSE 'documentdb_api_catalog.bson_aggregation_find' END;
+    RETURN QUERY SELECT documentdb_distributed_test_helpers.run_explain_and_trim(
+        format($q$EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM %s('dyncur_sp_db', %L::documentdb_core.bson)$q$,
+               v_first_fn, p_spec));
+END;
+$fn$;
 
 -- ===========================================================================
 -- example DynamicStreamingRemote cursor continuation
@@ -748,6 +808,86 @@ BEGIN
     END LOOP;
 END $$;
 
+
+-- ===========================================================================
+-- SECTION R-SingleBatch: a singleBatch find/aggregate must return exactly one
+-- batch and close the cursor on the remote-unsharded path — never a worker-side
+-- persisted/file cursor that drains the whole result. Verified by counting: a
+-- single page is drained (kind=Done, no getMore) holding the requested batch,
+-- for both a streamable query and a non-streamable ($group) one.
+-- ===========================================================================
+-- find singleBatch, streamable {a:1} sort, batchSize 5 => one batch of 5, closed.
+SELECT remote_drain_and_report(
+    '{ "find": "remote_e2e_coll", "filter": { }, "sort": { "a": 1 }, "projection": { "_id": 1, "a": 1 }, "singleBatch": true, "batchSize": 5, "hint": "idx_a" }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 5 }',
+    false  -- print continuation token
+);
+-- aggregate singleBatch, non-streamable $group, batchSize 5 => one batch, closed.
+SELECT remote_drain_and_report(
+    '{ "aggregate": "remote_e2e_coll", "pipeline": [ { "$group": { "_id": { "$mod": ["$a", 5] }, "count": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "cursor": { "singleBatch": true, "batchSize": 5 } }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 5 }',
+    false  -- print continuation token
+);
+
+
+-- ===========================================================================
+-- SECTION R-PointLookup: point _id lookup + sort on a non-indexed field, batchSize 1
+-- A fresh remote-unsharded collection holding 100 documents (string _ids plus a
+-- createdDateTime), including the specific _id the query targets. Reproduces a
+-- customer-shaped find({ _id: <string> }).sort({ createdDateTime: -1 }) drained
+-- one document per page through the remote-unsharded path.
+-- ===========================================================================
+SELECT documentdb_api.drop_collection('dyncur_sp_db', 'pointLookup');
+
+-- The specific document the query targets.
+SELECT documentdb_api.insert_one('dyncur_sp_db', 'pointLookup',
+    '{ "_id": "dsdsdasdasdasdadewe68676wqeeq", "createdDateTime": { "$date": { "$numberLong": "1744859493000" } }, "app": "iconic" }');
+
+-- 99 more documents to bring the collection to 100 records.
+SELECT COUNT(documentdb_api.insert_one('dyncur_sp_db', 'pointLookup',
+    FORMAT('{ "_id": "pointLookup_%s", "createdDateTime": { "$date": { "$numberLong": "%s" } }, "app": "doc_%s" }',
+        i, 1744859493000 + i * 1000, i)::documentdb_core.bson))
+FROM generate_series(1, 99) AS i;
+
+SELECT documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'pointLookup', 1);
+
+ANALYZE;
+
+-- ---------------------------------------------------------------------------
+-- Test R-PointLookup: find({ _id: "dsds..." }) sort { createdDateTime: -1 }, batchSize 1
+-- A unique-_id point lookup returns a single document; with batchSize 1 it
+-- drains in one page through the remote-unsharded path.
+-- ---------------------------------------------------------------------------
+SELECT remote_drain_and_report(
+    '{ "find": "pointLookup", "filter": { "_id": "dsdsdasdasdasdadewe68676wqeeq" }, "sort": { "createdDateTime": -1 }, "batchSize": 1 }',
+    '{ "getMore": { "$numberLong": "538" }, "collection": "pointLookup", "batchSize": 1 }',
+    false  -- print continuation token
+);
+
+-- ---------------------------------------------------------------------------
+-- Prove the pointLookup collection maps to shard table documents_42003_4200006
+-- (the table the EXPLAIN below references) and that its shard is placed on the
+-- remote worker node. A collection's logical Citus table is
+-- documentdb_data.documents_<collection_id>; its single unsharded shard is
+-- documents_<collection_id>_<shardid>.
+-- ---------------------------------------------------------------------------
+SELECT collection_id AS pointlookup_id FROM documentdb_api_catalog.collections
+    WHERE database_name = 'dyncur_sp_db' AND collection_name = 'pointLookup' \gset
+
+SELECT format('documents_%s_%s', :'pointlookup_id', s.shardid) AS shard_table,
+       n.nodename,
+       n.nodeport
+FROM pg_dist_shard s
+    JOIN pg_dist_placement p USING (shardid)
+    JOIN pg_dist_node n USING (groupid)
+WHERE s.logicalrelid = ('documentdb_data.documents_' || :'pointlookup_id')::regclass;
+
+-- ---------------------------------------------------------------------------
+-- Test R-PointLookup EXPLAIN: plan shape for the point _id lookup + sort.
+-- createdDateTime is not indexed, so the planner adds a Sort node over the
+-- _id point lookup; the scan is dispatched to the remote worker.
+-- ---------------------------------------------------------------------------
+SELECT remote_explain_first_page('{ "find": "pointLookup", "filter": { "_id": "dsdsdasdasdasdadewe68676wqeeq" }, "sort": { "createdDateTime": -1 }, "batchSize": 1 }');
 
 BEGIN;
 SET LOCAL client_min_messages TO WARNING;

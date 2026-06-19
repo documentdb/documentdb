@@ -62,12 +62,13 @@ pgbson * DrainDynamicStreamingCursor(QueryCursorPlanResult *planResult,
 
 TupleDesc ConstructCursorResultTupleDesc(AttrNumber maxAttrNum);
 
-Datum PostProcessCursorPage(pgbson_writer *cursorDoc,
-							pgbson_array_writer *arrayWriter,
-							pgbson_writer *topLevelWriter, int64_t cursorId,
-							pgbson *continuation, bool persistConnection,
-							pgbson *lastContinuationToken,
-							TupleDesc tupleDesc);
+int64_t FinishWriteCursorPage(pgbson_writer *cursorDoc, pgbson_array_writer *arrayWriter,
+							  pgbson_writer *topLevelWriter, int64_t cursorId,
+							  pgbson *continuation, bool persistConnection,
+							  pgbson *lastContinuationToken);
+Datum FormFinalCursorResultTuple(pgbson *resultDocument, pgbson *continuation,
+								 bool persistConnection, int64_t cursorId,
+								 TupleDesc cursorResultTupleDesc);
 
 HTAB * CreateCursorHashSet(void);
 HTAB * CreateTailableCursorHashSet(void);

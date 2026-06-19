@@ -2556,12 +2556,11 @@ SetupCursorPagePreamble(pgbson_writer *topLevelWriter, pgbson_writer *cursorDoc,
  * with the actual one (if it's drained, replace it with 0).
  * Also creates the result tuple that's (document, continuation) and returns it.
  */
-Datum
-PostProcessCursorPage(pgbson_writer *cursorDoc, pgbson_array_writer *arrayWriter,
+int64_t
+FinishWriteCursorPage(pgbson_writer *cursorDoc, pgbson_array_writer *arrayWriter,
 					  pgbson_writer *topLevelWriter, int64_t cursorId,
 					  pgbson *continuation, bool persistConnection,
-					  pgbson *lastContinuationToken,
-					  TupleDesc cursorResultTupleDesc)
+					  pgbson *lastContinuationToken)
 {
 	/* Finish the cursor doc*/
 	PgbsonWriterEndArray(cursorDoc, arrayWriter);
@@ -2587,14 +2586,8 @@ PostProcessCursorPage(pgbson_writer *cursorDoc, pgbson_array_writer *arrayWriter
 		PgbsonWriterAppendTimestamp(topLevelWriter, "operationTime", 13, currentTime);
 	}
 
-	bool queryFullyDrained = continuation == NULL;
-
 	/* If this is a oneshot query (singlePage) mark it as drained. */
-	if (cursorId == 0)
-	{
-		queryFullyDrained = true;
-	}
-	else if (queryFullyDrained)
+	if (continuation == NULL)
 	{
 		/* Write out the cursor_id given that the cursor is not drained */
 		cursorId = 0;
@@ -2613,6 +2606,24 @@ PostProcessCursorPage(pgbson_writer *cursorDoc, pgbson_array_writer *arrayWriter
 		bson_iter_overwrite_int64(&cursorDocIter, cursorId);
 	}
 
+	return cursorId;
+}
+
+
+Datum
+FormFinalCursorResultTuple(pgbson *resultDocument, pgbson *continuation, bool
+						   persistConnection,
+						   int64_t cursorId, TupleDesc cursorResultTupleDesc)
+{
+	/*
+	 * Defensive: a 0 cursorId is a closed (non-resumable) cursor, so treat it as
+	 * drained even if a continuation was built. In normal operation a non-NULL
+	 * continuation always carries a non-zero cursorId, so this only guards an
+	 * inconsistent (cursorId == 0, continuation != NULL) state. Mirrors the prior
+	 * PostProcessCursorPage behavior.
+	 */
+	bool queryFullyDrained = (continuation == NULL) || (cursorId == 0);
+
 	/* Returns (continuation bson, cursorPage bson) */
 	/* Continuation is either an simple bson doc or NULL (if drained) */
 	Datum values[4];
@@ -2620,7 +2631,7 @@ PostProcessCursorPage(pgbson_writer *cursorDoc, pgbson_array_writer *arrayWriter
 	memset(values, 0, sizeof(values));
 	memset(nulls, 0, sizeof(nulls));
 
-	values[0] = PointerGetDatum(PgbsonWriterGetPgbson(topLevelWriter));
+	values[0] = PointerGetDatum(resultDocument);
 	values[1] = queryFullyDrained ? (Datum) 0 : PointerGetDatum(continuation);
 	nulls[0] = false;
 	nulls[1] = queryFullyDrained;

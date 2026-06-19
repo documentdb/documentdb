@@ -103,11 +103,17 @@ BEGIN
         --   qc = CursorKind_Streaming                 (legacy streaming)
         --   qp = true + qn = CursorKind_Persisted     (coordinator portal)
         IF (bson_dollar_project(v_cont, '{ "qr": 1 }') ->> 'qr') IS NOT NULL THEN
-            -- A file cursor's worker continuation ("wc") has no scan "type" field.
-            IF (bson_dollar_project(v_cont, '{ "wc.dc.type": 1 }') ->> 'wc.dc.type') IS NULL THEN
+            -- A streaming worker cursor carries a "wc.dc.type" scan type. A
+            -- persisted worker cursor has none: it is a file cursor when it
+            -- carries the "wc.qf" file-state binary, otherwise a held portal.
+            -- Distinguishing them keeps a held portal from being mislabeled as
+            -- a file cursor.
+            IF (bson_dollar_project(v_cont, '{ "wc.dc.type": 1 }') ->> 'wc.dc.type') IS NOT NULL THEN
+                v_cursor_kind := 'DynamicStreamingRemote';
+            ELSIF (bson_dollar_project(v_cont, '{ "wc.qf": 1 }') ->> 'wc.qf') IS NOT NULL THEN
                 v_cursor_kind := 'DynamicFileCursorRemote';
             ELSE
-                v_cursor_kind := 'DynamicStreamingRemote';
+                v_cursor_kind := 'DynamicHoldPortalRemote';
             END IF;
         ELSIF (bson_dollar_project(v_cont, '{ "qd": 1 }') ->> 'qd') IS NOT NULL THEN
             v_cursor_kind := 'DynamicStreaming';
@@ -130,7 +136,7 @@ BEGIN
         END IF;
         v_cursor_type_name := CASE
             WHEN v_cursor_kind IN ('Persisted', 'Unknown') THEN 'N/A'
-            WHEN v_cursor_type =  0 THEN 'DynamicFileCursorRemote'
+            WHEN v_cursor_type =  0 THEN v_cursor_kind
             WHEN v_cursor_type =  1 THEN 'QueryScanType_TidRangeScan'
             WHEN v_cursor_type =  2 THEN 'QueryScanType_PrimaryKeyScan'
             WHEN v_cursor_type =  3 THEN 'QueryScanType_SecondaryIndexScan'
@@ -180,11 +186,17 @@ BEGIN
 
         IF v_cont IS NOT NULL THEN
             IF (bson_dollar_project(v_cont, '{ "qr": 1 }') ->> 'qr') IS NOT NULL THEN
-                -- A file cursor's worker continuation ("wc") has no scan "type" field.
-                IF (bson_dollar_project(v_cont, '{ "wc.dc.type": 1 }') ->> 'wc.dc.type') IS NULL THEN
+                -- A streaming worker cursor carries a "wc.dc.type" scan type. A
+                -- persisted worker cursor has none: it is a file cursor when it
+                -- carries the "wc.qf" file-state binary, otherwise a held portal.
+                -- Distinguishing them keeps a held portal from being mislabeled
+                -- as a file cursor.
+                IF (bson_dollar_project(v_cont, '{ "wc.dc.type": 1 }') ->> 'wc.dc.type') IS NOT NULL THEN
+                    v_cursor_kind := 'DynamicStreamingRemote';
+                ELSIF (bson_dollar_project(v_cont, '{ "wc.qf": 1 }') ->> 'wc.qf') IS NOT NULL THEN
                     v_cursor_kind := 'DynamicFileCursorRemote';
                 ELSE
-                    v_cursor_kind := 'DynamicStreamingRemote';
+                    v_cursor_kind := 'DynamicHoldPortalRemote';
                 END IF;
             ELSIF (bson_dollar_project(v_cont, '{ "qd": 1 }') ->> 'qd') IS NOT NULL THEN
                 v_cursor_kind := 'DynamicStreaming';
@@ -201,7 +213,7 @@ BEGIN
             END IF;
             v_cursor_type_name := CASE
                 WHEN v_cursor_kind IN ('Persisted', 'Unknown') THEN 'N/A'
-                WHEN v_cursor_type =  0 THEN 'DynamicFileCursorRemote'
+                WHEN v_cursor_type =  0 THEN v_cursor_kind
                 WHEN v_cursor_type =  1 THEN 'QueryScanType_TidRangeScan'
                 WHEN v_cursor_type =  2 THEN 'QueryScanType_PrimaryKeyScan'
                 WHEN v_cursor_type =  3 THEN 'QueryScanType_SecondaryIndexScan'
@@ -479,12 +491,20 @@ NOTICE:  Done: drained 2 pages
 
 -- ===========================================================================
 -- SECTION D: EXPLAIN verification of plan shapes
--- Verifies which plan nodes are used for streaming vs persistent cursors
+-- NOTE: these EXPLAINs run plain bson_aggregation_find(), which yields a Citus
+-- Adaptive distributed plan, NOT the dynamic-cursor plan. The cursor custom
+-- scan wraps at the find_cursor_first_page layer and never appears here, so the
+-- worker plan reflects the plain find: unhinted sorts materialize via Seq Scan
+-- + Sort, hinted queries use an Index Scan. The actual cursor plan can differ
+-- from what is shown here (compare the drain reports in Sections A / E / H).
 -- ===========================================================================
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
 -- ---------------------------------------------------------------------------
--- Test D1: EXPLAIN for streaming cursor (no skip/limit)
--- Should show DocumentDBApiCursorScan wrapping an index scan
+-- Test D1: EXPLAIN for an unhinted sort find (no skip/limit)
+-- Plain find with no hint: the worker plan is a Seq Scan + Sort (no index hint
+-- -> bson_dollar_fullscan). The dynamic-cursor custom scan does not appear here
+-- (see the section note); the same query drains as an ordered streaming
+-- index-scan cursor in Sections A / E.
 -- ---------------------------------------------------------------------------
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncur_sp_db',
@@ -647,7 +667,7 @@ FROM cursor_get_more(database => 'dyncur_sp_db',
 
 DROP TABLE sp_first_page_response;
 -- ---------------------------------------------------------------------------
--- Test E2: Persistent cursor with skip returns correct offset results
+-- Test E2: File-based cursor with skip returns correct offset results
 -- skip: 5, sort: { val: 1 } - first batch should start from val=60 (6th doc)
 -- ---------------------------------------------------------------------------
 CREATE TEMP TABLE sp_skip_response AS
@@ -656,7 +676,8 @@ SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.fi
 FROM find_cursor_first_page(database => 'dyncur_sp_db',
     commandSpec => '{ "find": "sp_coll", "sort": { "val": 1 }, "projection": { "_id": 1, "val": 1 }, "skip": 5, "batchSize": 3 }',
     cursorId => 538);
--- persistconnection should be true for persistent cursor
+-- persistconnection is false: a skip query drains via a worker file cursor
+-- (state persisted to a file, not a held connection)
 SELECT cp, persistconnection FROM sp_skip_response;
                                                                                                                                           cp                                                                                                                                           | persistconnection 
 ---------------------------------------------------------------------
@@ -665,7 +686,7 @@ SELECT cp, persistconnection FROM sp_skip_response;
 
 DROP TABLE sp_skip_response;
 -- ---------------------------------------------------------------------------
--- Test E3: Persistent cursor with limit returns correct count
+-- Test E3: File-based cursor with limit returns correct count
 -- limit: 7, sort: { val: 1 }, batchSize: 3
 -- Should return exactly 7 docs total across all batches
 -- ---------------------------------------------------------------------------

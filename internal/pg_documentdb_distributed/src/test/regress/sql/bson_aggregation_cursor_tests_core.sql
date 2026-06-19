@@ -43,7 +43,7 @@ $fn$;
 CREATE FUNCTION aggregation_cursor_test.drain_find_query(
     loopCount int, pageSize int, project bson DEFAULT NULL, skipVal int4 DEFAULT NULL, limitVal int4 DEFAULT NULL,
     sort bson DEFAULT NULL, filter bson default null,
-    obfuscate_id bool DEFAULT false) RETURNS SETOF aggregation_cursor_test.drain_result AS
+    obfuscate_id bool DEFAULT false, singleBatch bool DEFAULT NULL) RETURNS SETOF aggregation_cursor_test.drain_result AS
 $$
     DECLARE
         i int;
@@ -56,7 +56,7 @@ $$
         getMoreSpec bson;
     BEGIN
 
-    WITH r1 AS (SELECT 'get_aggregation_cursor_test' AS "find", filter AS "filter", sort AS "sort", project AS "projection", skipVal AS "skip", limitVal as "limit", pageSize AS "batchSize")
+    WITH r1 AS (SELECT 'get_aggregation_cursor_test' AS "find", filter AS "filter", sort AS "sort", project AS "projection", skipVal AS "skip", limitVal as "limit", pageSize AS "batchSize", singleBatch AS "singleBatch")
     SELECT row_get_bson(r1) INTO findSpec FROM r1;
 
     WITH r1 AS (SELECT 'get_aggregation_cursor_test' AS "collection", 4294967294::int8 AS "getMore", pageSize AS "batchSize")
@@ -173,6 +173,59 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pa
 -- test singleBatch
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 3, pipeline => '{ "": [{ "$project": { "a": 1 } }]}', singleBatch => TRUE);
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 3, pipeline => '{ "": [{ "$project": { "a": 1 } }]}', singleBatch => FALSE);
+
+-- ===========================================================================
+-- singleBatch must return exactly one batch and close the cursor (id = 0), even
+-- for an otherwise non-streamable query (a blocking $group), and must never fall
+-- back to a persisted/file cursor that drains the whole result. Verified by
+-- counting the returned batch and confirming a follow-up getMore yields nothing.
+-- ===========================================================================
+-- find singleBatch, streamable PK sort: one batch of 3 (ids 10,9,8), cursor closed.
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 1, pageSize => 3, project => '{ "_id": 1 }', sort => '{ "_id": -1 }', singleBatch => TRUE);
+-- aggregate singleBatch, non-streamable $group + $sort: one batch of 3, cursor closed.
+SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pageSize => 3, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": 1 } } }, { "$sort": { "_id": 1 } }]}', singleBatch => TRUE);
+-- find singleBatch with an effectively unbounded batch: all 10 ids in one batch, closed.
+SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 1, pageSize => 100000, project => '{ "_id": 1 }', sort => '{ "_id": 1 }', singleBatch => TRUE);
+
+-- Drive the worker drain UDF directly (identical on the streaming and
+-- remote-dispatch configs) and confirm via the cursor-type feature counter that
+-- a singleBatch query — even a non-streamable $group — runs as a single-batch
+-- cursor, not a file/persisted cursor that would drain everything.
+SELECT collection_id AS sb_coll_id FROM documentdb_api_catalog.collections
+    WHERE database_name = 'db' AND collection_name = 'get_aggregation_cursor_test' \gset
+SELECT count(*) * 0 AS reset FROM documentdb_api_internal.command_feature_counter_stats(true);
+SELECT documentdb_api_catalog.bson_dollar_project(
+    (documentdb_api_internal.cursor_dynamic_drain_page('db',
+        '{ "find": "get_aggregation_cursor_test", "projection": { "_id": 1 }, "sort": { "_id": -1 }, "singleBatch": true, "batchSize": 3 }'::documentdb_core.bson,
+        ('documentdb_data.documents_' || :'sb_coll_id')::regclass, '{}'::documentdb_core.bson, 1,
+        '{ "p_use_file_based_cursor": true, "p_batch_size": 3, "p_namespace": "db.get_aggregation_cursor_test" }'::documentdb_core.bson))[1],
+    '{ "cursorId": "$cursor.id", "batchCount": { "$size": { "$ifNull": ["$cursor.firstBatch", []] } } }'::documentdb_core.bson) AS find_singlebatch_worker;
+SELECT documentdb_api_catalog.bson_dollar_project(
+    (documentdb_api_internal.cursor_dynamic_drain_page('db',
+        '{ "aggregate": "get_aggregation_cursor_test", "pipeline": [ { "$group": { "_id": "$_id", "c": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "cursor": { "singleBatch": true, "batchSize": 3 } }'::documentdb_core.bson,
+        ('documentdb_data.documents_' || :'sb_coll_id')::regclass, '{}'::documentdb_core.bson, 2,
+        '{ "p_use_file_based_cursor": true, "p_batch_size": 3, "p_namespace": "db.get_aggregation_cursor_test" }'::documentdb_core.bson))[1],
+    '{ "cursorId": "$cursor.id", "batchCount": { "$size": { "$ifNull": ["$cursor.firstBatch", []] } } }'::documentdb_core.bson) AS agg_singlebatch_worker;
+-- Expect cursor_type_single_batch = 2 and no file/persisted cursor counter.
+SELECT feature_name, usage_count FROM documentdb_api_internal.command_feature_counter_stats(false)
+    WHERE feature_name LIKE 'cursor_type%' ORDER BY feature_name;
+
+-- Assert no singleBatch drain materialized a file/persisted/hold-portal cursor:
+-- the single-batch counter must be the only cursor-type feature recorded.
+DO $assert$
+DECLARE
+    v_bad text;
+BEGIN
+    SELECT string_agg(feature_name || '=' || usage_count, ', ' ORDER BY feature_name)
+    INTO v_bad
+    FROM documentdb_api_internal.command_feature_counter_stats(false)
+    WHERE feature_name LIKE 'cursor_type%'
+      AND feature_name <> 'cursor_type_single_batch';
+    IF v_bad IS NOT NULL THEN
+        RAISE EXCEPTION 'singleBatch must not create a file/persisted/hold-portal cursor, found: %', v_bad;
+    END IF;
+END
+$assert$;
 
 -- FIND: Test streaming vs not
 SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 100000, skipVal => 2);
@@ -580,10 +633,49 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 3, pa
 -- Streaming aggregate with batchSize=1 and filter: single-row batches with continuation
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 1, pipeline => '{ "": [{ "$match": { "_id": { "$gte": 5 } } }] }', collection_name => 'partial_final_batch_coll');
 
+-- ===========================================================================
+-- SECTION R-PointLookup: point _id lookup + sort on a non-indexed field, batchSize 1
+-- A fresh collection of 100 documents (string _ids plus a createdDateTime),
+-- including the specific _id the query targets. A unique-_id point lookup
+-- returns a single document and drains in one page (cursor closed, no
+-- continuation) on every cursor config.
+-- ===========================================================================
+SELECT documentdb_api.drop_collection('db', 'pointLookup');
+
+-- The specific document the query targets.
+SELECT documentdb_api.insert_one('db', 'pointLookup',
+    '{ "_id": "dsdsdasdasdasdadewe68676wqeeq", "createdDateTime": { "$date": { "$numberLong": "1744859493000" } }, "app": "iconic" }');
+
+-- 99 more documents to bring the collection to 100 records.
+SELECT COUNT(documentdb_api.insert_one('db', 'pointLookup',
+    FORMAT('{ "_id": "pointLookup_%s", "createdDateTime": { "$date": { "$numberLong": "%s" } }, "app": "doc_%s" }',
+        i, 1744859493000 + i * 1000, i)::documentdb_core.bson))
+FROM generate_series(1, 99) AS i;
+
+ANALYZE;
+
+-- EXPLAIN: a point _id lookup is served by the _id primary-key index. The sort
+-- on the non-indexed createdDateTime is elided because a unique _id match yields
+-- at most one row, so the plan is a bare Index Scan (no Sort node).
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('db',
+    '{ "find": "pointLookup", "filter": { "_id": "dsdsdasdasdasdadewe68676wqeeq" }, "sort": { "createdDateTime": -1 }, "batchSize": 100 }');
+
+-- Test R-PointLookup: find({ _id: "dsds..." }) sort { createdDateTime: -1 }, batchSize 1.
+-- The unique-_id match returns one document and drains in a single page: the
+-- cursor closes (cursor.id 0, no continuation) without needing a getMore.
+SELECT documentdb_api_catalog.bson_dollar_project(cursorPage,
+        '{ "ok": 1, "cursor.id": 1, "batchCount": { "$size": "$cursor.firstBatch" }, "ids": "$cursor.firstBatch._id" }'::documentdb_core.bson) AS page,
+    continuation IS NULL AS drained,
+    persistConnection
+FROM documentdb_api.find_cursor_first_page(database => 'db',
+    commandSpec => '{ "find": "pointLookup", "filter": { "_id": "dsdsdasdasdasdadewe68676wqeeq" }, "sort": { "createdDateTime": -1 }, "batchSize": 100 }'::documentdb_core.bson,
+    cursorId => 4294967294);
+
 -- Clean up the collection so the next run (with different GUC) starts fresh
 SELECT documentdb_api.drop_collection('db', 'partial_final_batch_coll');
 SELECT documentdb_api.drop_collection('db', 'get_aggregation_cursor_test');
 SELECT documentdb_api.drop_collection('db', 'get_aggregation_cursor_smalldoc_test');
 SELECT documentdb_api.drop_collection('db', 'bitmap_cursor_continuation');
+SELECT documentdb_api.drop_collection('db', 'pointLookup');
 
 DROP SCHEMA aggregation_cursor_test CASCADE;

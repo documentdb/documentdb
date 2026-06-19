@@ -183,6 +183,14 @@ typedef struct
 	int32_t numIterations;
 } QueryGetMoreInfo;
 
+typedef struct LocalFirstPageResult
+{
+	pgbson *resultDocument;
+	pgbson *continuationDoc;
+	bool persistConnection;
+	int64_t cursorId;
+} LocalFirstPageResult;
+
 /* --------------------------------------------------------- */
 /* Forward declaration */
 /* --------------------------------------------------------- */
@@ -864,10 +872,13 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 	}
 
 	bool persistConnection = false;
-	Datum responseDatum = PostProcessCursorPage(&cursorDoc, &arrayWriter, &writer,
-												getMoreInfo.cursorId, continuationDoc,
-												persistConnection, postBatchResumeToken,
-												tupleDesc);
+	int64_t cursorId = FinishWriteCursorPage(&cursorDoc, &arrayWriter, &writer,
+											 getMoreInfo.cursorId, continuationDoc,
+											 persistConnection, postBatchResumeToken);
+	pgbson *resultDocument = PgbsonWriterGetPgbson(&writer);
+	Datum responseDatum = FormFinalCursorResultTuple(resultDocument, continuationDoc,
+													 persistConnection,
+													 cursorId, tupleDesc);
 	return responseDatum;
 }
 
@@ -1087,6 +1098,17 @@ HandlePersistentCursorCore(int64_t *cursorId, QueryCursorPlanResult *planResult,
 						   QueryKind queryKind, uint32_t accumulatedSize,
 						   bool useFileBasedCursors)
 {
+	/*
+	 * A singleBatch request must be served by the single-batch path
+	 * (CreateAndDrainSingleBatchQuery), which returns exactly one batch and
+	 * closes the cursor. It must never reach this persistent path, which
+	 * materializes a file cursor or a held portal that resumes across getMore
+	 * calls - that would both violate singleBatch semantics and leak a cursor.
+	 * The first-page dispatch routes QueryCursorType_SingleBatch to its own
+	 * case, so observing that kind here indicates a routing regression.
+	 */
+	Assert(queryData->cursorKind != QueryCursorType_SingleBatch);
+
 	current_cursor_count++;
 	int64_t cursorIdForBackendCursor;
 	int32_t numIterations = 0;
@@ -1271,9 +1293,10 @@ HandleRemoteUnshardedFirstPage(text *database, pgbson *querySpec, int64_t cursor
  * Given a pre-built query (for find/aggregate/list) handles the local cursor
  * request and builds a response for the first page.
  */
-static Datum
-HandleLocalFirstPageRequest(text *database, pgbson *querySpec, int64_t cursorId,
-							QueryData *queryData, QueryKind queryKind, Query *query)
+static LocalFirstPageResult
+HandleLocalFirstPageRequestCore(text *database, pgbson *querySpec, int64_t cursorId,
+								QueryData *queryData, QueryKind queryKind, Query *query,
+								bool useFileBasedPersistentCursors)
 {
 	pgbson_writer writer;
 	pgbson_writer cursorDoc;
@@ -1371,7 +1394,7 @@ HandleLocalFirstPageRequest(text *database, pgbson *querySpec, int64_t cursorId,
 														 &persistConnection, queryData,
 														 &arrayWriter, queryKind,
 														 accumulatedSize,
-														 UseFileBasedPersistedCursors);
+														 useFileBasedPersistentCursors);
 			break;
 		}
 
@@ -1443,7 +1466,7 @@ HandleLocalFirstPageRequest(text *database, pgbson *querySpec, int64_t cursorId,
 															 &persistConnection,
 															 queryData, &arrayWriter,
 															 queryKind, accumulatedSize,
-															 UseFileBasedPersistedCursors);
+															 useFileBasedPersistentCursors);
 			}
 			break;
 		}
@@ -1458,14 +1481,37 @@ HandleLocalFirstPageRequest(text *database, pgbson *querySpec, int64_t cursorId,
 
 	/* Report cursor topology feature counter */
 	ReportCursorTopologyFeatureUsage(queryData->cursorTopology);
+	cursorId = FinishWriteCursorPage(&cursorDoc, &arrayWriter, &writer,
+									 cursorId, continuationDoc,
+									 persistConnection, postBatchResumeToken);
+	pgbson *resultDocument = PgbsonWriterGetPgbson(&writer);
+	LocalFirstPageResult firstPageResult =
+	{
+		.resultDocument = resultDocument,
+		.continuationDoc = continuationDoc,
+		.persistConnection = persistConnection,
+		.cursorId = cursorId
+	};
+	return firstPageResult;
+}
 
+
+static Datum
+HandleLocalFirstPageRequest(text *database, pgbson *querySpec, int64_t cursorId,
+							QueryData *queryData, QueryKind queryKind, Query *query)
+{
 	/* See sql/udfs/commands_crud/query_cursors_aggregate--latest.sql */
 	AttrNumber maxOutAttrNum = 4;
 	TupleDesc tupleDesc = ConstructCursorResultTupleDesc(maxOutAttrNum);
 
-	return PostProcessCursorPage(&cursorDoc, &arrayWriter, &writer, cursorId,
-								 continuationDoc, persistConnection,
-								 postBatchResumeToken, tupleDesc);
+	LocalFirstPageResult firstPageResult =
+		HandleLocalFirstPageRequestCore(database, querySpec, cursorId, queryData,
+										queryKind, query,
+										UseFileBasedPersistedCursors);
+	return FormFinalCursorResultTuple(firstPageResult.resultDocument,
+									  firstPageResult.continuationDoc,
+									  firstPageResult.persistConnection,
+									  firstPageResult.cursorId, tupleDesc);
 }
 
 
@@ -2156,7 +2202,7 @@ PatchCursorPageId(pgbson *pageBson, int64_t cursorId)
 /*
  * Forms the (cursorPage, continuation, persistConnection, cursorId) result tuple
  * for an already-finalized cursor page (used by the remote pass-through path,
- * mirroring the tail of PostProcessCursorPage).
+ * mirroring FormFinalCursorResultTuple).
  */
 static Datum
 FormCursorResultDatum(pgbson *cursorPage, pgbson *continuation,
@@ -2328,14 +2374,6 @@ command_cursor_dynamic_drain_page(PG_FUNCTION_ARGS)
 	 * writes "nextBatch".
 	 */
 	bool isFirstPage = IsPgbsonEmptyDocument(continuation);
-
-	pgbson_writer topLevelWriter;
-	pgbson_writer cursorDoc;
-	pgbson_array_writer batchArrayWriter;
-	uint32_t accumulatedSize = 5;
-	SetupCursorPagePreamble(&topLevelWriter, &cursorDoc, &batchArrayWriter,
-							namespaceName, isFirstPage, &accumulatedSize);
-
 	int32 cursorType = 0;            /* 0 = drained */
 	pgbson *continuationOut = NULL;
 
@@ -2352,8 +2390,16 @@ command_cursor_dynamic_drain_page(PG_FUNCTION_ARGS)
 	 */
 	AllowNestedDistributionInCurrentTransaction();
 
+	pgbson *pageBson = NULL;
 	if (!isFirstPage)
 	{
+		pgbson_writer topLevelWriter;
+		pgbson_writer cursorDoc;
+		pgbson_array_writer batchArrayWriter;
+		uint32_t accumulatedSize = 5;
+		SetupCursorPagePreamble(&topLevelWriter, &cursorDoc, &batchArrayWriter,
+								namespaceName, isFirstPage, &accumulatedSize);
+
 		/*
 		 * getMore: the worker continuation is a self-describing local cursor spec
 		 * (a "qd"/"dc" dynamic-streaming spec, or a "qn"/"qf" persisted-file
@@ -2376,6 +2422,15 @@ command_cursor_dynamic_drain_page(PG_FUNCTION_ARGS)
 			/* Non-zero signals the coordinator that the cursor has more data. */
 			cursorType = CursorKind_DynamicRemote;
 		}
+
+		/*
+		 * Finalize the page envelope. The worker leaves cursor.id = 0; the
+		 * coordinator patches it in place before returning the page on the wire.
+		 */
+		PgbsonWriterEndArray(&cursorDoc, &batchArrayWriter);
+		PgbsonWriterEndDocument(&topLevelWriter, &cursorDoc);
+		PgbsonWriterAppendDouble(&topLevelWriter, "ok", 2, 1);
+		pageBson = PgbsonWriterGetPgbson(&topLevelWriter);
 	}
 	else
 	{
@@ -2390,7 +2445,7 @@ command_cursor_dynamic_drain_page(PG_FUNCTION_ARGS)
 		 * queries (catalog lookups, the shard scan) run locally within this
 		 * worker process rather than acquiring a new distributed XID.
 		 */
-		QueryData queryData = { 0 };
+		QueryData queryData = GenerateFirstPageQueryData();
 		queryData.timeSystemVariables = timeVars;
 		queryData.cursorStateConst = NULL;
 
@@ -2399,106 +2454,20 @@ command_cursor_dynamic_drain_page(PG_FUNCTION_ARGS)
 													 queryKind, CursorParamKind_Dynamic,
 													 setStatementTimeout);
 
-		/*
-		 * Prefer the batchSize parsed from the query spec; fall back to the
-		 * coordinator-provided p_batch_size when the spec did not carry one.
-		 */
-		if (queryData.batchSize >= 1)
+		int64_t cursorId = 0;
+		bool useFileBasedPersistentCursors = useFileBasedCursor;
+		LocalFirstPageResult firstPageResult =
+			HandleLocalFirstPageRequestCore(database, querySpec, cursorId,
+											&queryData, queryKind, dynQuery,
+											useFileBasedPersistentCursors);
+		pageBson = firstPageResult.resultDocument;
+		continuationOut = firstPageResult.continuationDoc;
+		if (continuationOut != NULL)
 		{
-			batchSize = queryData.batchSize;
-		}
-
-		bool isDynamicStreaming = false;
-		QueryCursorPlanResult *planResult = PlanDynamicQueryAndDetermineCursorType(
-			dynQuery, &isDynamicStreaming);
-
-		if (isDynamicStreaming)
-		{
-			/* Streamable query: drain a dynamic streaming cursor and wrap the
-			 * worker continuation as a standard dynamic-streaming spec. */
-			ReportFeatureUsage(
-				FEATURE_CURSOR_TYPE_DYNAMIC_REMOTE_WORKER_FIRSTPAGE_STREAMING);
-			pgbson *innerDoc = DrainDynamicStreamingCursor(planResult, batchSize,
-														   PgbsonInitEmpty(),
-														   &batchArrayWriter,
-														   accumulatedSize);
-
-			if (innerDoc != NULL)
-			{
-				int64_t innerCursorId = 0;
-
-				/*
-				 * Thread the worker-evaluated $$NOW (populated into queryData
-				 * during query generation above) into the continuation so it is
-				 * pinned for the lifetime of the cursor rather than re-derived on
-				 * each getMore.
-				 */
-				continuationOut = BuildDynamicStreamingContinuationDocument(
-					innerCursorId, queryKind, querySpec, 1, innerDoc,
-					&queryData.timeSystemVariables);
-
-				/* Non-zero signals the coordinator that the cursor has more data. */
-				cursorType = CursorKind_DynamicRemote;
-			}
-		}
-		else
-		{
-			/*
-			 * Non-streamable query (e.g., with a sort): fall back to a file-based
-			 * persistent cursor. Regenerate the query with CursorParamKind_Persistent
-			 * (without the cursor_tracker qual) for correct persistent plan generation.
-			 */
-			ReportFeatureUsage(
-				FEATURE_CURSOR_TYPE_DYNAMIC_REMOTE_WORKER_FIRSTPAGE_FILE);
-			QueryData fileQueryData = { 0 };
-
-			/*
-			 * Reuse the $$NOW captured during the dynamic generation above so the
-			 * persisted-file continuation pins the same value across pages (the
-			 * already-set nowValue is reused rather than re-evaluated).
-			 */
-			fileQueryData.timeSystemVariables = queryData.timeSystemVariables;
-			Query *fileQuery = GenerateCursorQueryForKind(
-				database, querySpec, &fileQueryData, queryKind,
-				CursorParamKind_Persistent, setStatementTimeout);
-
-			/* Use the effective batch size (spec value preferred above, else the
-			 * coordinator-provided p_batch_size). */
-			fileQueryData.batchSize = batchSize;
-
-			bool isHoldCursor = false;
-			QueryCursorPlanResult *filePlanResult = PlanForcedPersistentQuery(
-				fileQuery, isHoldCursor);
-
-			/*
-			 * Reuse the shared persisted-cursor handler to generate the cursor
-			 * name, drain the first page to a worker-side file, and build the
-			 * standard persisted-file continuation. The persist-connection and
-			 * cursor-id outputs are coordinator concerns and are unused here.
-			 */
-			int64_t workerCursorId = 0;
-			bool fileQueryFullyDrained = false;
-			bool filePersistConnection = false;
-			continuationOut = HandlePersistentCursorCore(
-				&workerCursorId, filePlanResult, &fileQueryFullyDrained,
-				&filePersistConnection, &fileQueryData, &batchArrayWriter,
-				queryKind, accumulatedSize, useFileBasedCursor);
-			if (!fileQueryFullyDrained)
-			{
-				/* Non-zero signals the coordinator that the cursor has more data. */
-				cursorType = CursorKind_DynamicRemote;
-			}
+			/* Non-zero signals the coordinator that the cursor has more data. */
+			cursorType = CursorKind_DynamicRemote;
 		}
 	}
-
-	/*
-	 * Finalize the page envelope. The worker leaves cursor.id = 0; the
-	 * coordinator patches it in place before returning the page on the wire.
-	 */
-	PgbsonWriterEndArray(&cursorDoc, &batchArrayWriter);
-	PgbsonWriterEndDocument(&topLevelWriter, &cursorDoc);
-	PgbsonWriterAppendDouble(&topLevelWriter, "ok", 2, 1);
-	pgbson *pageBson = PgbsonWriterGetPgbson(&topLevelWriter);
 
 	/*
 	 * Build the bson[] result with fixed element positions:
