@@ -382,6 +382,10 @@ bool EnableSubqueryPushdownForMatch = DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_MATCH
 #define DEFAULT_ENABLE_DOLLAR_SAMPLE_RESERVOIR_SCAN true
 bool EnableDollarSampleReservoirScan = DEFAULT_ENABLE_DOLLAR_SAMPLE_RESERVOIR_SCAN;
 
+/* Added in v114, enabled in v114, remove after v117 */
+#define DEFAULT_ENABLE_SKIP_COMMENT_FIELD_ON_UPSERT true
+bool EnableSkipCommentFieldOnUpsert = DEFAULT_ENABLE_SKIP_COMMENT_FIELD_ON_UPSERT;
+
 /*
  * SECTION: Let support feature flags
  */
@@ -1290,6 +1294,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableSubqueryPushdownForMatch,
 		DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_MATCH,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableSkipCommentFieldOnUpsert", newGucPrefix),
+		gettext_noop(
+			"Whether to skip persisting the $comment query metadata field onto the document generated during an upsert."),
+		NULL,
+		&EnableSkipCommentFieldOnUpsert,
+		DEFAULT_ENABLE_SKIP_COMMENT_FIELD_ON_UPSERT,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

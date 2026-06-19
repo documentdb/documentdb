@@ -84,7 +84,179 @@ SELECT bson_get_value(documentdb_api_internal.update_bson_document('{}', '{ "": 
  t
 (1 row)
 
--- upsert case: _id collision between query and replace; errors out
+-- upsert case: $comment in the query predicate is request-only metadata. By default the
+-- enableSkipCommentFieldOnUpsert flag is on, so $comment is skipped and never persisted
+-- onto the generated document.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "dropbox-users" } } }', '{ "id": "g1", "appId": 11627, "$comment": "ctx=trace", "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                                              update_bson_document                                               
+-----------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "id" : "g1", "appId" : { "$numberInt" : "11627" }, "name" : "dropbox-users" }
+(1 row)
+
+-- By default $comment nested within $and is likewise not persisted, while sibling fields are.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "dropbox-users" } } }', '{ "$and": [ { "id": "g1", "appId": 11627, "_id": 5 }, { "$comment": "ctx=trace" } ] }', NULL, NULL, NULL) as update_bson_document;
+                                              update_bson_document                                               
+-----------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "id" : "g1", "appId" : { "$numberInt" : "11627" }, "name" : "dropbox-users" }
+(1 row)
+
+-- With the flag disabled, $comment is materialized into the generated document,
+-- preserving the historical behavior for existing customers that rely on it.
+SET documentdb.enableSkipCommentFieldOnUpsert TO off;
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "dropbox-users" } } }', '{ "id": "g1", "appId": 11627, "$comment": "ctx=trace", "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                                                           update_bson_document                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "id" : "g1", "appId" : { "$numberInt" : "11627" }, "$comment" : "ctx=trace", "name" : "dropbox-users" }
+(1 row)
+
+RESET documentdb.enableSkipCommentFieldOnUpsert;
+-- upsert case: filter-only query operators are never persisted onto the generated document.
+-- $alwaysTrue at top level is skipped.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "$alwaysTrue": 1, "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                update_bson_document                 
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "name" : "test" }
+(1 row)
+
+-- $alwaysFalse at top level is skipped.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "$alwaysFalse": 1, "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                update_bson_document                 
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "name" : "test" }
+(1 row)
+
+-- $text at top level is skipped.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "$text": { "$search": "hello" }, "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                update_bson_document                 
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "name" : "test" }
+(1 row)
+
+-- $where at top level is skipped.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "$where": "true", "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                update_bson_document                 
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "name" : "test" }
+(1 row)
+
+-- $jsonSchema at top level is skipped.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "$jsonSchema": { "required": ["a"] }, "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                update_bson_document                 
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "name" : "test" }
+(1 row)
+
+-- $sampleRate at top level is skipped.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "$sampleRate": 0.5, "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                update_bson_document                 
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "name" : "test" }
+(1 row)
+
+-- Filter-only operators nested within $and are also skipped.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "$and": [ { "a": 1, "_id": 5 }, { "$alwaysTrue": 1 } ] }', NULL, NULL, NULL) as update_bson_document;
+                               update_bson_document                                
+-----------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "1" }, "name" : "test" }
+(1 row)
+
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "$and": [ { "a": 1, "_id": 5 }, { "$alwaysFalse": 1 } ] }', NULL, NULL, NULL) as update_bson_document;
+                               update_bson_document                                
+-----------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "1" }, "name" : "test" }
+(1 row)
+
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "$and": [ { "a": 1, "_id": 5 }, { "$where": "true" } ] }', NULL, NULL, NULL) as update_bson_document;
+                               update_bson_document                                
+-----------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "1" }, "name" : "test" }
+(1 row)
+
+-- Multiple filter-only operators combined with regular fields.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "$alwaysTrue": 1, "$alwaysFalse": 0, "a": 1, "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                               update_bson_document                                
+-----------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "1" }, "name" : "test" }
+(1 row)
+
+-- $expr at top level still errors on upsert.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "$expr": { "$eq": ["$a", 1] }, "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+ERROR:  Use of the $expr operator is not permitted within the query predicate for an upsert operation.
+-- $expr within $and also errors on upsert.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "$and": [ { "_id": 5 }, { "$expr": { "$eq": ["$a", 1] } } ] }', NULL, NULL, NULL) as update_bson_document;
+ERROR:  Use of the $expr operator is not permitted within the query predicate for an upsert operation.
+-- Field-level comparison operators are not equality, so they do NOT contribute
+-- values to the upsert document. Only $eq, $all, and single-element $in do.
+-- $bitsAllClear is a filter — field "a" is not persisted.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "a": { "$bitsAllClear": [1, 5] }, "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                update_bson_document                 
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "name" : "test" }
+(1 row)
+
+-- $bitsAllSet is a filter — field "a" is not persisted.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "a": { "$bitsAllSet": [1, 5] }, "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                update_bson_document                 
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "name" : "test" }
+(1 row)
+
+-- $bitsAnyClear is a filter — field "a" is not persisted.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "a": { "$bitsAnyClear": [1, 5] }, "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                update_bson_document                 
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "name" : "test" }
+(1 row)
+
+-- $bitsAnySet is a filter — field "a" is not persisted.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "a": { "$bitsAnySet": [1, 5] }, "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                update_bson_document                 
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "name" : "test" }
+(1 row)
+
+-- $exists is a filter — field "a" is not persisted.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "a": { "$exists": true }, "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                update_bson_document                 
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "name" : "test" }
+(1 row)
+
+-- $type is a filter — field "a" is not persisted.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "a": { "$type": "int" }, "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                update_bson_document                 
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "name" : "test" }
+(1 row)
+
+-- $mod is a filter — field "a" is not persisted.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "a": { "$mod": [2, 0] }, "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                update_bson_document                 
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "name" : "test" }
+(1 row)
+
+-- $gt/$lt are filters — field "a" is not persisted.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "a": { "$gt": 5, "$lt": 10 }, "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                update_bson_document                 
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "name" : "test" }
+(1 row)
+
+-- $eq contributes equality — field "a" IS persisted.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "a": { "$eq": 42 }, "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                                update_bson_document                                
+------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "42" }, "name" : "test" }
+(1 row)
+
+-- $eq combined with $bitsAllClear — only $eq value contributes.
+SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$set": { "name": "test" } } }', '{ "a": { "$eq": 42, "$bitsAllClear": [1] }, "_id": 5 }', NULL, NULL, NULL) as update_bson_document;
+                                update_bson_document                                
+------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "42" }, "name" : "test" }
+(1 row)
+
 SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "_id": 3, "b": 2 } }', '{"$and": [ { "a": 1, "_id": 2.0 }]}', NULL, NULL, NULL);
 ERROR:  Cannot modify '_id' field as part of the operation
 SELECT documentdb_api_internal.update_bson_document('{}', '{ "": { "$setOnInsert": {"_id.b": 1}, "$set":{ "_id": 1 } } }', '{"_id.a": 4}', NULL, NULL, NULL);
@@ -574,16 +746,16 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1,2]}', 
 ERROR:  Found unexpected fields after $each in $addToSet: $position
 -- $addToSet with no $each: dollar-prefixed key is treated as a literal value to add
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1,2]}', '{ "": { "$addToSet": { "key": { "$position": 1 } } } }', '{}', NULL, NULL, NULL) as update_bson_document;
-                                                                  update_bson_document
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                           update_bson_document                                                           
+------------------------------------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "key" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$position" : { "$numberInt" : "1" } } ] }
 (1 row)
 
 -- GUC off path: lenient mode preserved (no error, modifier silently ignored)
 SET documentdb.enableStrictAddToSetModifierValidation TO off;
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1,2]}', '{ "": { "$addToSet": { "key": { "$each": [3,4], "$position": 1 } } } }', '{}', NULL, NULL, NULL) as update_bson_document;
-                                                                  update_bson_document
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                              update_bson_document                                                              
+------------------------------------------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "key" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] }
 (1 row)
 
@@ -2497,21 +2669,21 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "arr": [[{"a": 1
 -- $pull with $eq:[array] must remove nested array elements matching the whole array value
 -- [1] should be removed (exact match), scalar 1 and [1,2] should not be removed
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1, [1], [1, 2]]}', '{"": {"$pull": {"key": {"$eq": [1]}}}}', '{}', NULL, NULL, NULL) as update_bson_document;
-                                                           update_bson_document
------------------------------------------------------------------------------------------------------------------------------------------
+                                                    update_bson_document                                                    
+----------------------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "key" : [ { "$numberInt" : "1" }, [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] ] }
 (1 row)
 
 -- Binary nested array: [Binary] should be removed, plain Binary and [Binary,"other"] should not
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [{"$binary":{"base64":"pmajuNcUhjGdgg==","subType":"00"}}, [{"$binary":{"base64":"pmajuNcUhjGdgg==","subType":"00"}}], [{"$binary":{"base64":"pmajuNcUhjGdgg==","subType":"00"}}, "other"]]}', '{"": {"$pull": {"key": {"$eq": [{"$binary":{"base64":"pmajuNcUhjGdgg==","subType":"00"}}]}}}}', '{}', NULL, NULL, NULL) as update_bson_document;
-                                                                                                       update_bson_document
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                         update_bson_document                                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "key" : [ { "$binary" : { "base64" : "pmajuNcUhjGdgg==", "subType" : "00" } }, [ { "$binary" : { "base64" : "pmajuNcUhjGdgg==", "subType" : "00" } }, "other" ] ] }
 (1 row)
 
 -- Object inside nested array: [{"a":1}] should be removed, plain {"a":1} and [{"a":1},{"a":2}] should not
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [{"a": 1}, [{"a": 1}], [{"a": 1}, {"a": 2}]]}', '{"": {"$pull": {"key": {"$eq": [{"a": 1}]}}}}', '{}', NULL, NULL, NULL) as update_bson_document;
-                                                                          update_bson_document
+                                                                   update_bson_document                                                                   
 ----------------------------------------------------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "key" : [ { "a" : { "$numberInt" : "1" } }, [ { "a" : { "$numberInt" : "1" } }, { "a" : { "$numberInt" : "2" } } ] ] }
 (1 row)
@@ -2524,49 +2696,49 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [{"a": 1}
 ERROR:  Invalid array index path a
 -- Doubly-nested: $eq:[1] recurses one level; both [1] and [[1],2] removed (inner [1] matches), scalar 1 kept
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1, [1], [[1], 2]]}', '{"": {"$pull": {"key": {"$eq": [1]}}}}', '{}', NULL, NULL, NULL) as update_bson_document;
-                          update_bson_document
------------------------------------------------------------------------
+                          update_bson_document                          
+------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "key" : [ { "$numberInt" : "1" } ] }
 (1 row)
 
 -- Literal [1] form on same input does NOT recurse: only exact [1] removed, [[1],2] kept
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1, [1], [[1], 2]]}', '{"": {"$pull": {"key": [1]}}}', '{}', NULL, NULL, NULL) as update_bson_document;
-                                                      update_bson_document
--------------------------------------------------------------------------------------------------------------------------------
+                                                      update_bson_document                                                      
+--------------------------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "key" : [ { "$numberInt" : "1" }, [ [ { "$numberInt" : "1" } ], { "$numberInt" : "2" } ] ] }
 (1 row)
 
 -- $eq:[1,2] multi-value: order-sensitive whole-array equality; only exact [1,2] removed
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1, 2, [1,2], [1,2,3], [2,1], 3]}', '{"": {"$pull": {"key": {"$eq": [1,2]}}}}', '{}', NULL, NULL, NULL) as update_bson_document;
-                                                                                                                  update_bson_document
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                  update_bson_document                                                                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "key" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ], [ { "$numberInt" : "2" }, { "$numberInt" : "1" } ], { "$numberInt" : "3" } ] }
 (1 row)
 
 -- $eq:[1,2,3] across nested arrays: only exact [1,2,3] removed, subset/reversed/superset kept
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [[1,2,3], [1,2], [2,1], [1,2,3,4]]}', '{"": {"$pull": {"key": {"$eq": [1,2,3]}}}}', '{}', NULL, NULL, NULL) as update_bson_document;
-                                                                                                                    update_bson_document
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                    update_bson_document                                                                                                                    
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "key" : [ [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ], [ { "$numberInt" : "2" }, { "$numberInt" : "1" } ], [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] ] }
 (1 row)
 
 -- $in with mixed scalars and nested arrays: recursion makes nested arrays match if any inner element matches
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1, [1,2], [1,2,3], [1,2,3,4], 2, 3, [2,3], 4, [1,2,3,4], [5,6]]}', '{"": {"$pull": {"key": {"$in": [1,2,3]}}}}', '{}', NULL, NULL, NULL) as update_bson_document;
-                                                    update_bson_document
----------------------------------------------------------------------------------------------------------------------------
+                                                    update_bson_document                                                    
+----------------------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "key" : [ { "$numberInt" : "4" }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" } ] ] }
 (1 row)
 
 -- $in:[1] removes all elements: scalar 1, [1] (recursion), [1,2] (recursion finds 1)
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1, [1], [1,2]]}', '{"": {"$pull": {"key": {"$in": [1]}}}}', '{}', NULL, NULL, NULL) as update_bson_document;
-               update_bson_document
--------------------------------------------------
+               update_bson_document               
+--------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "key" : [  ] }
 (1 row)
 
 -- $eq:[1] with deeper nesting: only one level of recursion; [[[1]]] is kept
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [[1], [[1]], [[[1]]]]}', '{"": {"$pull": {"key": {"$eq": [1]}}}}', '{}', NULL, NULL, NULL) as update_bson_document;
-                                update_bson_document
+                                update_bson_document                                
 ------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "key" : [ [ [ [ { "$numberInt" : "1" } ] ] ] ] }
 (1 row)
