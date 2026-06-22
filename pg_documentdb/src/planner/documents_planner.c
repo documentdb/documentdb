@@ -817,11 +817,11 @@ ExtensionGetRelationInfoHookCore(PlannerInfo *root, Oid relationObjectId,
 			{
 				firstIndex->amcostestimate = documentdb_btcostestimate;
 			}
-			else if (firstIndex->ncolumns == 1 &&
+			else if (EnableCompositeParallelIndexScan && firstIndex->ncolumns == 1 &&
 					 IsCompositeOpFamilyOidWithParallelSupport(firstIndex->relam,
 															   firstIndex->opfamily[0]))
 			{
-				firstIndex->amcanparallel = EnableCompositeParallelIndexScan;
+				firstIndex->amcanparallel = true;
 			}
 		}
 	}
@@ -1971,8 +1971,7 @@ ForceExcludeNonIndexPaths(PlannerInfo *root, RelOptInfo *rel,
 		rel->pathlist = TrimPathListForSeqTypeScans(rel->pathlist);
 		rel->partial_pathlist = TrimPathListForSeqTypeScans(rel->partial_pathlist);
 
-
-		if (rel->pathlist == NIL)
+		if (rel->pathlist == NIL && rel->partial_pathlist == NIL)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
 							errmsg(

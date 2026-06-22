@@ -374,6 +374,11 @@ bool EnableObjectIdFuncExprConversion = DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVER
 #define DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED true
 bool EnableSampleScanFixOnSharded = DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED;
 
+/* Added in v115, Pending stabilization, enable in v118 */
+#define DEFAULT_ENABLE_ADD_SHARD_KEY_ONLY_ON_PRIMARY_KEY_FILTERS false
+bool EnableAddShardKeyOnlyOnPrimaryKeyFilters =
+	DEFAULT_ENABLE_ADD_SHARD_KEY_ONLY_ON_PRIMARY_KEY_FILTERS;
+
 /* Added in v115, enabled in v115, remove after v117 */
 #define DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_MATCH true
 bool EnableSubqueryPushdownForMatch = DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_MATCH;
@@ -1286,6 +1291,18 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableAddShardKeyOnlyOnPrimaryKeyFilters", newGucPrefix),
+		gettext_noop(
+			"Whether to enable adding shard key only on primary key filters."),
+		NULL,
+		&EnableAddShardKeyOnlyOnPrimaryKeyFilters,
+		DEFAULT_ENABLE_ADD_SHARD_KEY_ONLY_ON_PRIMARY_KEY_FILTERS,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enableSubqueryPushdownForMatch", newGucPrefix),

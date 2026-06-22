@@ -43,9 +43,6 @@ typedef struct RumSharedVacInfo
 PGDLLEXPORT RumSharedVacInfo *rumSharedVacInfo;
 extern int32_t RumVacuumCycleIdOverride;
 
-PGDLLEXPORT int RumParallelScanTrancheId = 0;
-PGDLLEXPORT const char *RumParallelScanTrancheName = "RUM parallel scan Tranche";
-
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 
 #if PG_VERSION_NUM >= 150000
@@ -98,20 +95,6 @@ RumVacuumShmemInit(void)
 
 
 static void
-InitializeRumParallelLWLock(void)
-{
-	if (RumParallelScanTrancheId == 0)
-	{
-#if PG_VERSION_NUMBER >= 180000
-		RumParallelScanTrancheId = LWLockNewTrancheId(RumParallelScanTrancheName);
-#else
-		RumParallelScanTrancheId = LWLockNewTrancheId();
-#endif
-	}
-}
-
-
-static void
 RumVacuumSharedMemoryRequest(void)
 {
 	if (prev_shmem_request_hook != NULL)
@@ -129,7 +112,6 @@ RumVacuumSharedMemoryInit(void)
 {
 	/* CODESYNC: With Shmem request above */
 	RumVacuumShmemInit();
-	InitializeRumParallelLWLock();
 
 	if (prev_shmem_startup_hook != NULL)
 	{

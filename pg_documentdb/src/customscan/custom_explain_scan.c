@@ -164,6 +164,8 @@ AddExplainCustomScanWrapper(PlannerInfo *root, RelOptInfo *rel,
 							RangeTblEntry *rte, uint64 collectionId)
 {
 	rel->pathlist = AddExplainCustomPathCore(rel->pathlist, rte->relid, collectionId);
+	rel->partial_pathlist = AddExplainCustomPathCore(rel->partial_pathlist, rte->relid,
+													 collectionId);
 }
 
 
@@ -250,12 +252,15 @@ AddExplainCustomPathCore(List *pathList, Oid relOid, uint64 collectionId)
 
 		/* For now the custom path is as parallel safe as its inner path */
 		path->parallel_safe = inputPath->parallel_safe;
+		path->parallel_aware = inputPath->parallel_aware;
+		path->parallel_workers = inputPath->parallel_workers;
 
 		/* move the 'projection' from the path to the custom path. */
 		path->pathtarget = inputPath->pathtarget;
 
 		/* Copy the param paths */
 		path->param_info = inputPath->param_info;
+
 		customPath->custom_paths = list_make1(inputPath);
 		customPath->path.pathkeys = inputPath->pathkeys;
 

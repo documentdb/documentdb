@@ -182,6 +182,7 @@ AddDistinctCustomScanWrapper(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 	if (distinctScenario || groupScenario)
 	{
 		rel->pathlist = AddDistinctCustomPathCore(root, rel->pathlist);
+		rel->partial_pathlist = AddDistinctCustomPathCore(root, rel->partial_pathlist);
 	}
 }
 
@@ -262,6 +263,8 @@ AddDistinctCustomPathCore(PlannerInfo *root, List *pathList)
 
 		/* For now the custom path is as parallel safe as its inner path */
 		path->parallel_safe = inputPath->parallel_safe;
+		path->parallel_workers = inputPath->parallel_workers;
+		path->parallel_aware = inputPath->parallel_aware;
 
 		/* move the 'projection' from the path to the custom path. */
 		path->pathtarget = inputPath->pathtarget;

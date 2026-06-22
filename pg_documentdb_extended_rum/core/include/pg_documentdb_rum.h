@@ -1001,6 +1001,7 @@ extern Datum rummarkpos(PG_FUNCTION_ARGS);
 extern Datum rumrestrpos(PG_FUNCTION_ARGS);
 extern void rumNewScanKey(IndexScanDesc scan, ScanDirection scanDirection);
 extern void freeScanKeys(RumScanOpaque so);
+extern void startScan(IndexScanDesc scan);
 
 #if PG_VERSION_NUM >= 180000
 extern Size rumestimateparallelscan(Relation rel, int nkeys, int norderbys);

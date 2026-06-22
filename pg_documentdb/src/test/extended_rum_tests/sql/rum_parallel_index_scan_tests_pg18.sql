@@ -1,0 +1,1 @@
+\i sql/rum_parallel_index_scan_tests.sql

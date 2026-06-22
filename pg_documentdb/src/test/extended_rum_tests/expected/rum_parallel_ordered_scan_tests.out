@@ -25,6 +25,7 @@ SELECT FORMAT('ALTER TABLE documentdb_data.documents_%s SET (autovacuum_enabled 
 ALTER TABLE documentdb_data.documents_20101 SET (autovacuum_enabled = off, parallel_workers = 2)
 -- Insert enough documents to span multiple index pages.
 -- Use date values spread across a range so $lte filters return partial results.
+-- Years cycle 2015-2024 (i % 10), so each year has 500 docs.
 SELECT COUNT(documentdb_api.insert_one('pord_db', 'ordered_scan',
     FORMAT('{ "_id": %s, "createdAt": { "$date": "%s-01-01T00:00:00Z" }, "val": %s }',
         i,
@@ -50,32 +51,29 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
 -- VACUUM FREEZE marks all heap pages all-visible, enabling Index Only Scan
 SELECT FORMAT('VACUUM FREEZE documentdb_data.documents_%s', :pord_col) \gexec
 VACUUM FREEZE documentdb_data.documents_20101
+SET documentdb.forceDisableSeqScan TO on;
 SET enable_bitmapscan TO off;
-SET enable_seqscan TO off;
+SET documentdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO on;
 -- ============================================================
--- Baseline: Non-parallel count via the underlying table
--- Query the table directly with @<= to use the RUM ordered
--- scan path. VACUUM FREEZE enables Index Only Scan.
+-- Baseline: Non-parallel counts via the API
 -- ============================================================
 SET documentdb.enableCompositeParallelIndexScan TO off;
--- Non-parallel baseline count with $lte filter
-SELECT FORMAT('SELECT count(*) FROM documentdb_data.documents_%s WHERE document @<= ''{ "createdAt": { "$date": "2019-12-31T00:00:00Z" } }''::documentdb_core.bson', :pord_col) \gexec
-SELECT count(*) FROM documentdb_data.documents_20101 WHERE document @<= '{ "createdAt": { "$date": "2019-12-31T00:00:00Z" } }'::documentdb_core.bson
- count 
--------
-  2500
+-- Non-parallel baseline count with $lte filter (years 2015-2019 = 2500)
+SELECT documentdb_api.count_query('pord_db', '{ "count": "ordered_scan", "query": { "createdAt": { "$lte": { "$date": "2019-12-31T00:00:00Z" } } } }');
+                               count_query                               
+-------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "2500" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
--- Non-parallel baseline full count
-SELECT FORMAT('SELECT count(*) FROM documentdb_data.documents_%s WHERE document @<= ''{ "createdAt": { "$date": "2030-01-01T00:00:00Z" } }''::documentdb_core.bson', :pord_col) \gexec
-SELECT count(*) FROM documentdb_data.documents_20101 WHERE document @<= '{ "createdAt": { "$date": "2030-01-01T00:00:00Z" } }'::documentdb_core.bson
- count 
--------
-  5000
+-- Non-parallel baseline full count (all 5000)
+SELECT documentdb_api.count_query('pord_db', '{ "count": "ordered_scan", "query": { "createdAt": { "$lte": { "$date": "2030-01-01T00:00:00Z" } } } }');
+                               count_query                               
+-------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "5000" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 -- ============================================================
--- Parallel ordered scan: count queries
+-- Parallel ordered scan: count queries (forward walk)
 -- This is the scenario that previously caused SEGV due to
 -- orderStack->off not being reset after CopyPageContents
 -- in MoveBuffersForOrderedScanParallel.
@@ -86,54 +84,324 @@ SET min_parallel_index_scan_size TO 0;
 SET min_parallel_table_scan_size TO 0;
 SET documentdb.enableCompositeParallelIndexScan TO on;
 SET documentdb.forceParallelScanIfAvailable TO on;
--- Verify the plan uses Parallel Index Only Scan on the RUM index
-SELECT documentdb_test_helpers.run_explain_and_trim(
-    FORMAT('EXPLAIN (COSTS OFF) SELECT count(*) FROM documentdb_data.documents_%s WHERE document @<= ''{ "createdAt": { "$date": "2019-12-31T00:00:00Z" } }''::documentdb_core.bson', :'pord_col'));
-                                                    run_explain_and_trim                                                    
-----------------------------------------------------------------------------------------------------------------------------
- Finalize Aggregate
-   ->  Gather
-         Workers Planned: 2
-         ->  Partial Aggregate
-               ->  Parallel Index Only Scan using "createdAt_1" on documents_20101
-                     Index Cond: (document @<= '{ "createdAt" : { "$date" : { "$numberLong" : "1577750400000" } } }'::bson)
-(6 rows)
+SET documentdb.enableExtendedExplainPlans TO on;
+-- Verify the plan uses Index Scan on the RUM index
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('pord_db',
+    '{ "find": "ordered_scan", "filter": { "createdAt": { "$lte": { "$date": "2019-12-31T00:00:00Z" } } }, "sort": { "createdAt": 1 } }');
+                                                              QUERY PLAN                                                              
+--------------------------------------------------------------------------------------------------------------------------------------
+ Gather Merge
+   Workers Planned: 2
+   ->  Parallel Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: pord_db.ordered_scan
+         indexName: createdAt_1
+         indexKey: {"createdAt": 1}
+         isMultiKey: false
+         indexBounds: ["createdAt": [{ "$date" : { "$numberLong" : "-9223372036854775808" } }, { "$date" : "2019-12-31T00:00:00Z" }]]
+         ->  Parallel Index Scan using "createdAt_1" on documents_20101 collection
+               Index Cond: (document @<= '{ "createdAt" : { "$date" : { "$numberLong" : "1577750400000" } } }'::bson)
+               Order By: (document |-<> '{ "createdAt" : { "$numberInt" : "1" } }'::bson)
+(11 rows)
 
 -- Parallel count with $lte — must match non-parallel baseline (2500)
 -- Previously this would crash with SEGV due to orderStack->off not being
 -- reset after CopyPageContents in MoveBuffersForOrderedScanParallel.
-SELECT FORMAT('SELECT count(*) FROM documentdb_data.documents_%s WHERE document @<= ''{ "createdAt": { "$date": "2019-12-31T00:00:00Z" } }''::documentdb_core.bson', :pord_col) \gexec
-SELECT count(*) FROM documentdb_data.documents_20101 WHERE document @<= '{ "createdAt": { "$date": "2019-12-31T00:00:00Z" } }'::documentdb_core.bson
- count 
--------
-  2500
+SELECT documentdb_api.count_query('pord_db', '{ "count": "ordered_scan", "query": { "createdAt": { "$lte": { "$date": "2019-12-31T00:00:00Z" } } } }');
+                               count_query                               
+-------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "2500" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 -- Parallel full count — must match non-parallel baseline (5000)
-SELECT FORMAT('SELECT count(*) FROM documentdb_data.documents_%s WHERE document @<= ''{ "createdAt": { "$date": "2030-01-01T00:00:00Z" } }''::documentdb_core.bson', :pord_col) \gexec
-SELECT count(*) FROM documentdb_data.documents_20101 WHERE document @<= '{ "createdAt": { "$date": "2030-01-01T00:00:00Z" } }'::documentdb_core.bson
+SELECT documentdb_api.count_query('pord_db', '{ "count": "ordered_scan", "query": { "createdAt": { "$lte": { "$date": "2030-01-01T00:00:00Z" } } } }');
+                               count_query                               
+-------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "5000" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- ============================================================
+-- Parallel ordered scan: range filter ($gt + $lt)
+-- ============================================================
+SELECT documentdb_api.count_query('pord_db', '{ "count": "ordered_scan", "query": { "createdAt": { "$gt": { "$date": "2017-01-01T00:00:00Z" }, "$lt": { "$date": "2020-01-01T00:00:00Z" } } } }');
+                               count_query                               
+-------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1000" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- ============================================================
+-- Parallel ordered scan: backward walk with $gte/$gt
+-- The $gte operator triggers a backward direction scan through
+-- the RUM index, exercising the backward page walk in parallel.
+-- ============================================================
+-- Verify backward walk plan uses Index Scan on RUM index
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('pord_db',
+    '{ "find": "ordered_scan", "filter": { "createdAt": { "$gte": { "$date": "2020-01-01T00:00:00Z" } } }, "sort": { "createdAt": -1 } }');
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ Gather Merge
+   Workers Planned: 2
+   ->  Parallel Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: pord_db.ordered_scan
+         indexName: createdAt_1
+         indexKey: {"createdAt": 1}
+         isMultiKey: false
+         indexBounds: ["createdAt": [{ "$date" : "2020-01-01T00:00:00Z" }, { "$date" : "292278994-08-17T07:12:55.807Z" }]]
+         ->  Parallel Index Scan using "createdAt_1" on documents_20101 collection
+               Index Cond: (document @>= '{ "createdAt" : { "$date" : { "$numberLong" : "1577836800000" } } }'::bson)
+               Order By: (document OPERATOR(documentdb_api_internal.<>-|) '{ "createdAt" : { "$numberInt" : "-1" } }'::bson)
+(11 rows)
+
+-- Backward walk count with $gte (years 2020-2024 = 2500 rows)
+SELECT documentdb_api.count_query('pord_db', '{ "count": "ordered_scan", "query": { "createdAt": { "$gte": { "$date": "2020-01-01T00:00:00Z" } } } }');
+                               count_query                               
+-------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "2500" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Backward walk count with $gt (exclusive, years 2021-2024 = 2000 rows)
+SELECT documentdb_api.count_query('pord_db', '{ "count": "ordered_scan", "query": { "createdAt": { "$gt": { "$date": "2020-01-01T00:00:00Z" } } } }');
+                               count_query                               
+-------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "2000" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Backward walk full count (all 5000 rows)
+SELECT documentdb_api.count_query('pord_db', '{ "count": "ordered_scan", "query": { "createdAt": { "$gte": { "$date": "2010-01-01T00:00:00Z" } } } }');
+                               count_query                               
+-------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "5000" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- ============================================================
+-- Parallel ordered scan: forward walk with sort ascending
+-- bson_aggregation_find with sort exercises the parallel index
+-- scan with full tuple retrieval in the forward direction.
+-- ============================================================
+-- Verify forward walk plan uses Index Scan on RUM index
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('pord_db',
+    '{ "find": "ordered_scan", "filter": { "createdAt": { "$lte": { "$date": "2030-01-01T00:00:00Z" } } }, "sort": { "createdAt": 1 } }');
+                                                              QUERY PLAN                                                              
+--------------------------------------------------------------------------------------------------------------------------------------
+ Gather Merge
+   Workers Planned: 2
+   ->  Parallel Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: pord_db.ordered_scan
+         indexName: createdAt_1
+         indexKey: {"createdAt": 1}
+         isMultiKey: false
+         indexBounds: ["createdAt": [{ "$date" : { "$numberLong" : "-9223372036854775808" } }, { "$date" : "2030-01-01T00:00:00Z" }]]
+         ->  Parallel Index Scan using "createdAt_1" on documents_20101 collection
+               Index Cond: (document @<= '{ "createdAt" : { "$date" : { "$numberLong" : "1893456000000" } } }'::bson)
+               Order By: (document |-<> '{ "createdAt" : { "$numberInt" : "1" } }'::bson)
+(11 rows)
+
+-- Forward sort: count all documents with createdAt ASC
+WITH r1 AS (SELECT document FROM bson_aggregation_find('pord_db',
+    '{ "find": "ordered_scan", "filter": { "createdAt": { "$lte": { "$date": "2030-01-01T00:00:00Z" } } }, "sort": { "createdAt": 1 } }'))
+SELECT COUNT(*) FROM r1;
  count 
 -------
   5000
 (1 row)
 
 -- ============================================================
--- Parallel ordered scan: range filter ($gt + $lt)
+-- Parallel ordered scan: backward walk with sort descending
+-- bson_aggregation_find with sort descending exercises the
+-- parallel index scan with backward page walk.
 -- ============================================================
-SELECT FORMAT('SELECT count(*) FROM documentdb_data.documents_%s WHERE document @> ''{ "createdAt": { "$date": "2017-01-01T00:00:00Z" } }''::documentdb_core.bson AND document @< ''{ "createdAt": { "$date": "2020-01-01T00:00:00Z" } }''::documentdb_core.bson', :pord_col) \gexec
-SELECT count(*) FROM documentdb_data.documents_20101 WHERE document @> '{ "createdAt": { "$date": "2017-01-01T00:00:00Z" } }'::documentdb_core.bson AND document @< '{ "createdAt": { "$date": "2020-01-01T00:00:00Z" } }'::documentdb_core.bson
+-- Verify backward walk plan uses Index Scan on RUM index
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('pord_db',
+    '{ "find": "ordered_scan", "filter": { "createdAt": { "$gte": { "$date": "2015-01-01T00:00:00Z" } } }, "sort": { "createdAt": -1 } }');
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ Gather Merge
+   Workers Planned: 2
+   ->  Parallel Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: pord_db.ordered_scan
+         indexName: createdAt_1
+         indexKey: {"createdAt": 1}
+         isMultiKey: false
+         indexBounds: ["createdAt": [{ "$date" : "2015-01-01T00:00:00Z" }, { "$date" : "292278994-08-17T07:12:55.807Z" }]]
+         ->  Parallel Index Scan using "createdAt_1" on documents_20101 collection
+               Index Cond: (document @>= '{ "createdAt" : { "$date" : { "$numberLong" : "1420070400000" } } }'::bson)
+               Order By: (document OPERATOR(documentdb_api_internal.<>-|) '{ "createdAt" : { "$numberInt" : "-1" } }'::bson)
+(11 rows)
+
+-- Backward sort: count all documents with createdAt DESC
+WITH r1 AS (SELECT document FROM bson_aggregation_find('pord_db',
+    '{ "find": "ordered_scan", "filter": { "createdAt": { "$gte": { "$date": "2015-01-01T00:00:00Z" } } }, "sort": { "createdAt": -1 } }'))
+SELECT COUNT(*) FROM r1;
  count 
 -------
-  1000
+  5000
 (1 row)
 
+-- ============================================================
+-- Parallel ordered scan: forward walk with filter + sort
+-- Narrower filter to exercise partial scan with sort
+-- ============================================================
+-- Forward sort with range filter: createdAt between 2017 and 2020
+WITH r1 AS (SELECT document FROM bson_aggregation_find('pord_db',
+    '{ "find": "ordered_scan", "filter": { "createdAt": { "$gte": { "$date": "2017-01-01T00:00:00Z" }, "$lt": { "$date": "2020-01-01T00:00:00Z" } } }, "sort": { "createdAt": 1 } }'))
+SELECT COUNT(*) FROM r1;
+ count 
+-------
+  1500
+(1 row)
+
+-- Backward sort with range filter: createdAt between 2017 and 2020
+WITH r1 AS (SELECT document FROM bson_aggregation_find('pord_db',
+    '{ "find": "ordered_scan", "filter": { "createdAt": { "$gte": { "$date": "2017-01-01T00:00:00Z" }, "$lt": { "$date": "2020-01-01T00:00:00Z" } } }, "sort": { "createdAt": -1 } }'))
+SELECT COUNT(*) FROM r1;
+ count 
+-------
+  1500
+(1 row)
+
+-- ============================================================
+-- Parallel ordered scan: distinct query
+-- Exercises parallel index scan with distinct pushdown on the
+-- createdAt field (10 distinct year values: 2015-2024).
+-- ============================================================
+SET documentdb.enableDistinctIndexPushdown TO on;
+-- Verify distinct plan uses parallel scan on RUM index
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_distinct('pord_db',
+    '{ "distinct": "ordered_scan", "key": "createdAt" }');
+                                                           QUERY PLAN                                                            
+---------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Unique
+         ->  Gather Merge
+               Workers Planned: 2
+               ->  ProjectSet
+                     ->  Parallel Custom Scan (DocumentDBApiExplainQueryScan)
+                           namespaceName: pord_db.ordered_scan
+                           indexName: createdAt_1
+                           indexKey: {"createdAt": 1}
+                           isMultiKey: false
+                           indexBounds: ["createdAt": (MinKey, MaxKey)]
+                           ->  Parallel Index Only Scan using "createdAt_1" on documents_20101 collection
+                                 Index Cond: (document @<> '{ "createdAt" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                                 Order By: (document |-<> '{ "createdAt" : { "$numberInt" : "1" } }'::bson)
+(14 rows)
+
+-- Distinct values: should return 10 distinct dates (one per year 2015-2024)
+SELECT document FROM bson_aggregation_distinct('pord_db',
+    '{ "distinct": "ordered_scan", "key": "createdAt" }');
+                                                                                                                                                                                                                                                                                      document                                                                                                                                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "values" : [ { "$date" : { "$numberLong" : "1420070400000" } }, { "$date" : { "$numberLong" : "1451606400000" } }, { "$date" : { "$numberLong" : "1483228800000" } }, { "$date" : { "$numberLong" : "1514764800000" } }, { "$date" : { "$numberLong" : "1546300800000" } }, { "$date" : { "$numberLong" : "1577836800000" } }, { "$date" : { "$numberLong" : "1609459200000" } }, { "$date" : { "$numberLong" : "1640995200000" } }, { "$date" : { "$numberLong" : "1672531200000" } }, { "$date" : { "$numberLong" : "1704067200000" } } ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Distinct with filter: only years 2017-2019 (3 distinct values)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_distinct('pord_db',
+    '{ "distinct": "ordered_scan", "key": "createdAt", "query": { "createdAt": { "$gte": { "$date": "2017-01-01T00:00:00Z" }, "$lt": { "$date": "2020-01-01T00:00:00Z" } } } }');
+                                                                                                               QUERY PLAN                                                                                                               
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Unique
+         ->  Gather Merge
+               Workers Planned: 2
+               ->  ProjectSet
+                     ->  Parallel Custom Scan (DocumentDBApiExplainQueryScan)
+                           namespaceName: pord_db.ordered_scan
+                           indexName: createdAt_1
+                           indexKey: {"createdAt": 1}
+                           isMultiKey: false
+                           indexBounds: ["createdAt": [{ "$date" : "2017-01-01T00:00:00Z" }, { "$date" : "2020-01-01T00:00:00Z" })]
+                           ->  Parallel Index Only Scan using "createdAt_1" on documents_20101 collection
+                                 Index Cond: ((document @>= '{ "createdAt" : { "$date" : { "$numberLong" : "1483228800000" } } }'::bson) AND (document @< '{ "createdAt" : { "$date" : { "$numberLong" : "1577836800000" } } }'::bson))
+                                 Order By: (document |-<> '{ "createdAt" : { "$numberInt" : "1" } }'::bson)
+(14 rows)
+
+SELECT document FROM bson_aggregation_distinct('pord_db',
+    '{ "distinct": "ordered_scan", "key": "createdAt", "query": { "createdAt": { "$gte": { "$date": "2017-01-01T00:00:00Z" }, "$lt": { "$date": "2020-01-01T00:00:00Z" } } } }');
+                                                                                                    document                                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "values" : [ { "$date" : { "$numberLong" : "1483228800000" } }, { "$date" : { "$numberLong" : "1514764800000" } }, { "$date" : { "$numberLong" : "1546300800000" } } ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET documentdb.enableDistinctIndexPushdown;
+-- ============================================================
+-- Parallel ordered scan: custom distinct scan
+-- With enableDistinctCustomScan, the planner wraps the index scan
+-- in a DocumentDBApiDistinctQueryScan node that skips duplicate
+-- index entries, scanning only one row per distinct value.
+-- ============================================================
+SET documentdb.enableDistinctIndexPushdown TO on;
+SET documentdb.enableDistinctCustomScan TO on;
+-- Ensure stats are up to date for deterministic plans
+SELECT FORMAT('ANALYZE documentdb_data.documents_%s', :pord_col) \gexec
+ANALYZE documentdb_data.documents_20101
+-- Verify custom distinct plan with parallel scan
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_distinct('pord_db',
+    '{ "distinct": "ordered_scan", "key": "createdAt" }');
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Unique
+         ->  Gather Merge
+               Workers Planned: 2
+               ->  ProjectSet
+                     ->  Parallel Custom Scan (DocumentDBApiExplainQueryScan)
+                           namespaceName: pord_db.ordered_scan
+                           indexName: createdAt_1
+                           indexKey: {"createdAt": 1}
+                           isMultiKey: false
+                           indexBounds: ["createdAt": (MinKey, MaxKey)]
+                           ->  Parallel Custom Scan (DocumentDBApiDistinctQueryScan)
+                                 ->  Parallel Index Only Scan using "createdAt_1" on documents_20101 collection
+                                       Index Cond: (document @<> '{ "createdAt" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                                       Order By: (document |-<> '{ "createdAt" : { "$numberInt" : "1" } }'::bson)
+(15 rows)
+
+-- Custom distinct: should return 10 distinct dates (one per year 2015-2024)
+SELECT document FROM bson_aggregation_distinct('pord_db',
+    '{ "distinct": "ordered_scan", "key": "createdAt" }');
+                                                                                                                                                                                                                                                                                      document                                                                                                                                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "values" : [ { "$date" : { "$numberLong" : "1420070400000" } }, { "$date" : { "$numberLong" : "1451606400000" } }, { "$date" : { "$numberLong" : "1483228800000" } }, { "$date" : { "$numberLong" : "1514764800000" } }, { "$date" : { "$numberLong" : "1546300800000" } }, { "$date" : { "$numberLong" : "1577836800000" } }, { "$date" : { "$numberLong" : "1609459200000" } }, { "$date" : { "$numberLong" : "1640995200000" } }, { "$date" : { "$numberLong" : "1672531200000" } }, { "$date" : { "$numberLong" : "1704067200000" } } ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Custom distinct with filter: only years 2017-2019 (3 distinct values)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_distinct('pord_db',
+    '{ "distinct": "ordered_scan", "key": "createdAt", "query": { "createdAt": { "$gte": { "$date": "2017-01-01T00:00:00Z" }, "$lt": { "$date": "2020-01-01T00:00:00Z" } } } }');
+                                                                                                                  QUERY PLAN                                                                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Unique
+         ->  Gather Merge
+               Workers Planned: 2
+               ->  ProjectSet
+                     ->  Parallel Custom Scan (DocumentDBApiExplainQueryScan)
+                           namespaceName: pord_db.ordered_scan
+                           indexName: createdAt_1
+                           indexKey: {"createdAt": 1}
+                           isMultiKey: false
+                           indexBounds: ["createdAt": [{ "$date" : "2017-01-01T00:00:00Z" }, { "$date" : "2020-01-01T00:00:00Z" })]
+                           ->  Parallel Custom Scan (DocumentDBApiDistinctQueryScan)
+                                 ->  Parallel Index Only Scan using "createdAt_1" on documents_20101 collection
+                                       Index Cond: ((document @>= '{ "createdAt" : { "$date" : { "$numberLong" : "1483228800000" } } }'::bson) AND (document @< '{ "createdAt" : { "$date" : { "$numberLong" : "1577836800000" } } }'::bson))
+                                       Order By: (document |-<> '{ "createdAt" : { "$numberInt" : "1" } }'::bson)
+(15 rows)
+
+SELECT document FROM bson_aggregation_distinct('pord_db',
+    '{ "distinct": "ordered_scan", "key": "createdAt", "query": { "createdAt": { "$gte": { "$date": "2017-01-01T00:00:00Z" }, "$lt": { "$date": "2020-01-01T00:00:00Z" } } } }');
+                                                                                                    document                                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "values" : [ { "$date" : { "$numberLong" : "1483228800000" } }, { "$date" : { "$numberLong" : "1514764800000" } }, { "$date" : { "$numberLong" : "1546300800000" } } ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET documentdb.enableDistinctIndexPushdown;
+RESET documentdb.enableDistinctCustomScan;
 -- Cleanup
 RESET parallel_tuple_cost;
 RESET parallel_setup_cost;
 RESET min_parallel_index_scan_size;
 RESET min_parallel_table_scan_size;
-RESET enable_seqscan;
+RESET documentdb.forceDisableSeqScan;
 RESET enable_bitmapscan;
+RESET documentdb.enableAddShardKeyOnlyOnPrimaryKeyFilters;
 RESET documentdb.enableCompositeParallelIndexScan;
 RESET documentdb.forceParallelScanIfAvailable;
 SELECT documentdb_api.drop_collection('pord_db', 'ordered_scan');

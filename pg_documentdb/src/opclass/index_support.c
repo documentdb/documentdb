@@ -4058,8 +4058,16 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 								 nonEqualityPrefixes, pathSortOrders);
 
 		/* Trim the order by clauses from the index if there's filters */
-		if (firstFilterColumnFound)
+		if (firstFilterColumnFound && list_length(orderbyIndexClauses) > 0)
 		{
+			/* If the index supports parallel scan, we need to duplicate this list
+			 * so that parallel scans can also see the trimmed clauses.
+			 */
+			if (indexPath->indexinfo->amcanparallel)
+			{
+				indexPath->indexclauses = list_copy(indexPath->indexclauses);
+			}
+
 			foreach(cell, orderbyIndexClauses)
 			{
 				IndexClause *clause = lfirst(cell);

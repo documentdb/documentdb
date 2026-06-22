@@ -93,6 +93,7 @@ extern bool EnableSortGroupStage;
 extern bool EnableSortPushToAccumulatorWithPrefix;
 extern bool EnableSampleScanFixOnSharded;
 extern bool EnableDistinctIndexPushdown;
+extern bool EnableAddShardKeyOnlyOnPrimaryKeyFilters;
 extern bool EnableSubqueryPushdownForMatch;
 extern bool EnableDollarSampleReservoirScan;
 
@@ -1205,6 +1206,20 @@ CheckMaxAllowedAggregationStages(int numberOfStages)
 							"The pipeline length cannot exceed a maximum of %d stages.",
 							MaxAggregationStagesAllowed)));
 	}
+}
+
+
+inline static bool
+ShouldSkipShardKeyFilterOnBaseTable(AggregationPipelineBuildContext *context)
+{
+	if (!EnableAddShardKeyOnlyOnPrimaryKeyFilters)
+	{
+		return false;
+	}
+
+	return context->mongoCollection != NULL &&
+		   context->mongoCollection->shardKey == NULL &&
+		   context->allowShardBaseTable;
 }
 
 
@@ -4834,6 +4849,16 @@ AddShardKeyAndIdFilters(const bson_value_t *existingValue, Query *query,
 		{
 			existingQuals = lappend(existingQuals, idFilter);
 			context->isPointReadQuery = isPointRead;
+
+			/* If we skipped writing the shard key on the base table, write it now */
+			if (ShouldSkipShardKeyFilterOnBaseTable(context) &&
+				context->mongoCollection->shardKey == NULL)
+			{
+				Expr *zeroShardKeyFilter = CreateNonShardedShardKeyValueFilter(
+					var->varno,
+					context->mongoCollection);
+				existingQuals = lappend(existingQuals, zeroShardKeyFilter);
+			}
 		}
 	}
 
@@ -8847,7 +8872,8 @@ GenerateBaseTableQuery(text *databaseDatum, const StringView *collectionNameView
 	query->targetList = list_make1(baseTargetEntry);
 
 	/* Now do filters - if there's no shard key we inject a default shard key of 'collectionId' */
-	if (collection != NULL && collection->shardKey == NULL)
+	if (collection != NULL && collection->shardKey == NULL &&
+		!ShouldSkipShardKeyFilterOnBaseTable(context))
 	{
 		/* construct a shard_key_value = <collection_id> filter */
 		Expr *zeroShardKeyFilter = CreateNonShardedShardKeyValueFilter(

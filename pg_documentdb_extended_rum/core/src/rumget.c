@@ -1924,7 +1924,7 @@ startOrderedScanEntries(IndexScanDesc scan, RumState *rumstate, RumScanOpaque so
 }
 
 
-static void
+void
 startScan(IndexScanDesc scan)
 {
 	RumScanOpaque so = (RumScanOpaque) scan->opaque;
@@ -3988,7 +3988,9 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 		if (scanData->isPageValid && RumEnableSupportDeadIndexItems &&
 			so->numKilled > 0)
 		{
+			LockBuffer(scanData->orderStack->buffer, RUM_SHARE);
 			RumKillEntryItems(so, scanData);
+			LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
 		}
 
 		while (true)
@@ -4084,7 +4086,7 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 		/*
 		 * stack->off points to the interested entry, buffer is already locked
 		 */
-		bool moveResult = parallelScan != NULL ?
+		bool moveResult = (parallelScan && so->isParallelEnabled) ?
 						  MoveBuffersForOrderedScanParallel(so, orderedBtree,
 															parallelScan) :
 						  MoveBuffersForOrderedScan(so, orderedBtree);
@@ -4786,6 +4788,13 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 			{
 				/* Run startScan as well on the workers - the rest is done below
 				 * with parallel cooperation.
+				 *
+				 * NOTE: This performs a redundant B-tree descent (rumFindLeafPage)
+				 * whose buffer will be discarded once this worker seizes its
+				 * assigned page from the parallel state. This is wasteful I/O
+				 * but required to initialize the orderByScanData structures.
+				 * A future optimization could skip the descent and only allocate
+				 * the scan data structures.
 				 */
 				so->isParallelEnabled = true;
 				startScan(scan);
