@@ -160,7 +160,6 @@ SELECT collection_id, shard_key_value, transaction_id, rows_affected FROM docume
 (3 rows)
 
 SELECT drop_collection('db', 'collection_without_retry_table');
-NOTICE:  table "retry_3370" does not exist, skipping
  drop_collection 
 ---------------------------------------------------------------------
  t
