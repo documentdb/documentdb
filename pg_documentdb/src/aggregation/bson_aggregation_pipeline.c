@@ -4347,7 +4347,7 @@ HandleLimit(const bson_value_t *existingValue, Query *query,
 	ReportFeatureUsage(FEATURE_STAGE_LIMIT);
 	if (!BsonValueIsNumber(existingValue))
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION15957),
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION5107201),
 						errmsg("the limit must be specified as a number")));
 	}
 
