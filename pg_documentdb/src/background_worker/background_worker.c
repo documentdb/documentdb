@@ -526,6 +526,8 @@ CheckJobCompletion(BackgroundWorkerJobExecution *jobExec)
 		return;
 	}
 
+	MemoryContext stableContext = CurrentMemoryContext;
+
 	/* Checks if command is busy. If not, close connection and reset it. */
 	PG_TRY();
 	{
@@ -543,6 +545,8 @@ CheckJobCompletion(BackgroundWorkerJobExecution *jobExec)
 	}
 	PG_CATCH();
 	{
+		MemoryContextSwitchTo(stableContext);
+
 		/* Clear error context since we don't use it. */
 		FlushErrorState();
 
@@ -678,7 +682,22 @@ ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *database
 	}
 
 	PGconn *conn = NULL;
-	StringInfo localhostConnStr = makeStringInfo();
+
+	/*
+	 * PG's error recovery unwinds a thrown error in ErrorContext and does not
+	 * restore CurrentMemoryContext, so the PG_CATCH below must switch back
+	 * explicitly later.
+	 */
+	MemoryContext stableContext = CurrentMemoryContext;
+
+	StringInfoData localhostConnStr;
+	initStringInfo(&localhostConnStr);
+	appendStringInfo(&localhostConnStr,
+					 "%s port=%d user=%s dbname=%s application_name='%s'",
+					 LocalhostConnectionString, PostPortNumber,
+					 userName,
+					 databaseName,
+					 jobExec->job.jobName);
 
 	/*
 	 * The job execution consists of creating a LibPQ connection an sending its
@@ -687,14 +706,7 @@ ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *database
 	 */
 	PG_TRY();
 	{
-		appendStringInfo(localhostConnStr,
-						 "%s port=%d user=%s dbname=%s application_name='%s'",
-						 LocalhostConnectionString, PostPortNumber,
-						 userName,
-						 databaseName,
-						 jobExec->job.jobName);
-
-		char *connStr = localhostConnStr->data;
+		char *connStr = localhostConnStr.data;
 
 		conn = PQconnectStart(connStr);
 		if (conn == NULL)
@@ -742,6 +754,8 @@ ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *database
 	}
 	PG_CATCH();
 	{
+		MemoryContextSwitchTo(stableContext);
+
 		/* Clear error context since we don't use it. */
 		FlushErrorState();
 
@@ -760,7 +774,12 @@ ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *database
 	}
 	PG_END_TRY();
 
-	pfree(localhostConnStr->data);
+	/*
+	 * The StringInfoData header is local, only its buffer is palloc'd, and
+	 * it lives in the long-lived bg-worker context, so free it explicitly rather
+	 * than relying on a context reset.
+	 */
+	pfree(localhostConnStr.data);
 }
 
 
