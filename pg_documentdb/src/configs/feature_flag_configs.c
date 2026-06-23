@@ -309,11 +309,6 @@ bool EnablePullNestedArrayEqFix = DEFAULT_ENABLE_PULL_NESTED_ARRAY_EQ_FIX;
 #define DEFAULT_ENABLE_DELAYED_HOLD_PORTAL true
 bool EnableDelayedHoldPortal = DEFAULT_ENABLE_DELAYED_HOLD_PORTAL;
 
-/* Added in v112, enabled in v112, remove after v114 */
-#define DEFAULT_ENABLE_STREAMING_CURSOR_DRAIN_VIA_DESTRECEIVER true
-bool EnableStreamingCursorDrainViaDestReceiver =
-	DEFAULT_ENABLE_STREAMING_CURSOR_DRAIN_VIA_DESTRECEIVER;
-
 /* Added in v114, enabled in v114, remove after v120 */
 #define DEFAULT_ENABLE_RUM_CURSOR_DYNAMIC_INDEX_SCANS true
 bool EnableRumCursorDynamicIndexScans = DEFAULT_ENABLE_RUM_CURSOR_DYNAMIC_INDEX_SCANS;
@@ -1228,14 +1223,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to only invalidate collection cache on collection changes instead of invalidating entire database cache."),
 		NULL, &EnableOnlyCollectionCacheInvalidateOnCollectionChanges,
 		DEFAULT_ENABLE_ONLY_COLLECTION_CACHE_INVALIDATE_ON_COLLECTION_CHANGES,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableStreamingCursorDrainViaDestReceiver", newGucPrefix),
-		gettext_noop(
-			"Whether to use direct executor DestReceiver for streaming cursor drainage instead of SPI."),
-		NULL, &EnableStreamingCursorDrainViaDestReceiver,
-		DEFAULT_ENABLE_STREAMING_CURSOR_DRAIN_VIA_DESTRECEIVER,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

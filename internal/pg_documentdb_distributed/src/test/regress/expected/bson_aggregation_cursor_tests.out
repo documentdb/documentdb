@@ -3,7 +3,6 @@ SET citus.next_shard_id TO 3120000;
 SET documentdb.next_collection_id TO 3120;
 SET documentdb.next_collection_index_id TO 3120;
 SET citus.multi_shard_modify_mode TO 'sequential';
-SET documentdb.enableStreamingCursorDrainViaDestReceiver TO off;
 \i sql/bson_aggregation_cursor_tests_core.sql
 CREATE SCHEMA aggregation_cursor_test;
 DO $$

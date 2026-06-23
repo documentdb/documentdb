@@ -52,7 +52,6 @@ extern bool EnablePrimaryKeyCursorScan;
 extern bool UseFileBasedPersistedCursors;
 extern bool EnableDebugQueryText;
 extern bool EnableDelayedHoldPortal;
-extern bool EnableStreamingCursorDrainViaDestReceiver;
 
 
 /*
@@ -389,88 +388,16 @@ DrainSingleResultQuery(Query *query)
 
 
 /*
- * Drain a streaming query using the old SPI cursor-based path.
- * This is the fallback when EnableStreamingCursorDrainViaDestReceiver is off.
- */
-static bool
-DrainStreamingQueryViaSPI(HTAB *cursorMap, Query *query, int batchSize,
-						  int32_t *numIterations, uint32_t accumulatedSize,
-						  pgbson_array_writer *arrayWriter)
-{
-	bool queryFullyDrained = false;
-	int32_t accumulatedRows = 0;
-	bool isTailableCursor = false;
-
-	MemoryContext currentContext = CurrentMemoryContext;
-	while (true)
-	{
-		Datum continuationParam = (Datum) 0;
-		if (cursorMap != NULL)
-		{
-			pgbson *continuation = SerializeContinuationForWorker(cursorMap, batchSize,
-																  isTailableCursor);
-			continuationParam = PointerGetDatum(continuation);
-		}
-		Portal queryPortal = PlanStreamingQuery(query, continuationParam, cursorMap);
-
-		/* Drain the cursor and fetch the next page based on batchSize provided. */
-		uint64_t currentAccumulatedSize = 0;
-		TerminationReason reason = FetchCursorAndWriteUntilPageOrSize(
-			queryPortal, batchSize, arrayWriter, &accumulatedSize, cursorMap,
-			&accumulatedRows, &currentAccumulatedSize, currentContext);
-
-		/* Close the portal since the current page is retrieved. */
-		SPI_cursor_close(queryPortal);
-
-		SPI_finish();
-
-		(*numIterations)++;
-
-		if (cursorMap == NULL)
-		{
-			queryFullyDrained = reason == TerminationReason_CursorCompletion;
-			break;
-		}
-		else if (reason == TerminationReason_CursorCompletion)
-		{
-			if (currentAccumulatedSize < (uint64_t) MaxWorkerCursorSize)
-			{
-				queryFullyDrained = true;
-				break;
-			}
-		}
-		else
-		{
-			/* We terminated because of size or batchSize limits */
-			break;
-		}
-	}
-
-	return queryFullyDrained;
-}
-
-
-/*
  * Drain a streaming query by planning the query and executing it directly
  * through the executor with a DestReceiver. Each iteration re-plans with
  * an updated continuation parameter. Loops until the page size/batch size
  * is reached or the cursor is fully drained.
- *
- * When EnableStreamingCursorDrainViaDestReceiver is off, falls back to the
- * SPI cursor-based path (DrainStreamingQueryViaSPI).
  */
 bool
 DrainStreamingQuery(HTAB *cursorMap, Query *query, int batchSize,
 					int32_t *numIterations, uint32_t accumulatedSize,
 					pgbson_array_writer *arrayWriter)
 {
-	if (!EnableStreamingCursorDrainViaDestReceiver)
-	{
-		return DrainStreamingQueryViaSPI(cursorMap, query, batchSize,
-										 numIterations, accumulatedSize,
-										 arrayWriter);
-	}
-
 	bool queryFullyDrained = false;
 	int32_t accumulatedRows = 0;
 	bool isTailableCursor = false;
