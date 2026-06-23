@@ -6359,9 +6359,9 @@ IsFormatSpecifierExist(char *formatSpecifier)
 {
 	DateFormatMap key;
 	key.mongoFormat = formatSpecifier;
-	DateFormatMap *result = bsearch(&key, dateFormats, sizeof(dateFormats) /
-									sizeof(DateFormatMap), sizeof(DateFormatMap),
-									CompareDateFormatMap);
+	const DateFormatMap *result = bsearch(&key, dateFormats, sizeof(dateFormats) /
+										  sizeof(DateFormatMap), sizeof(DateFormatMap),
+										  CompareDateFormatMap);
 	if (result != NULL)
 	{
 		return result - dateFormats;
@@ -6375,9 +6375,9 @@ GetOffsetFromTimezoneAbbr(char *timezoneAbbr)
 {
 	TimezoneMap key;
 	key.abbreviation = timezoneAbbr;
-	TimezoneMap *result = bsearch(&key, timezoneMap, sizeof(timezoneMap) /
-								  sizeof(TimezoneMap), sizeof(TimezoneMap),
-								  CompareTimezoneMap);
+	const TimezoneMap *result = bsearch(&key, timezoneMap, sizeof(timezoneMap) /
+										sizeof(TimezoneMap), sizeof(TimezoneMap),
+										CompareTimezoneMap);
 	if (result != NULL)
 	{
 		return result->offset;

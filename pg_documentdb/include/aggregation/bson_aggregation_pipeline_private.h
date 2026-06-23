@@ -233,7 +233,7 @@ typedef struct
 	bson_value_t stageValue;
 
 	/* Definition of internal handlers */
-	AggregationStageDefinition *stageDefinition;
+	const AggregationStageDefinition *stageDefinition;
 } AggregationStage;
 
 

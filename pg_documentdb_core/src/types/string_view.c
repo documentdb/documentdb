@@ -114,7 +114,7 @@ PGDLLEXPORT StringView
 StringViewFindPrefix(const StringView *view, char upToCharacter)
 {
 	StringView result = { 0 };
-	char *substring = memchr(view->string, upToCharacter, view->length);
+	const char *substring = memchr(view->string, upToCharacter, view->length);
 	if (substring != NULL && (substring - view->string) < view->length)
 	{
 		result.string = view->string;
@@ -137,7 +137,7 @@ PGDLLEXPORT StringView
 StringViewFindSuffix(const StringView *view, char upToCharacter)
 {
 	StringView result = { 0 };
-	char *substring = memchr(view->string, upToCharacter, view->length);
+	const char *substring = memchr(view->string, upToCharacter, view->length);
 	if (substring != NULL && (substring - view->string) < view->length)
 	{
 		uint32_t substringLength = (uint32_t) ((view->string + view->length) -

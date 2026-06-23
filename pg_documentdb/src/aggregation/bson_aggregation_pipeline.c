@@ -3133,7 +3133,7 @@ CanInlineLookupPipeline(const bson_value_t *pipeline,
 		}
 
 		/* Now handle each stage */
-		AggregationStageDefinition *definition = (AggregationStageDefinition *) bsearch(
+		const AggregationStageDefinition *definition = bsearch(
 			stageElement.path, StageDefinitions,
 			AggregationStageCount,
 			sizeof(AggregationStageDefinition),
@@ -8613,7 +8613,7 @@ ExtractAggregationStages(const bson_value_t *pipelineValue,
 		}
 
 		/* Get the definition of the stage */
-		AggregationStageDefinition *definition = (AggregationStageDefinition *) bsearch(
+		const AggregationStageDefinition *definition = bsearch(
 			stageElement.path, StageDefinitions,
 			AggregationStageCount,
 			sizeof(AggregationStageDefinition),
@@ -9941,8 +9941,7 @@ TryOptimizeAggregationPipelines(List **aggregationStages,
 
 						lookupUnwindStage->stageValue = ConvertPgbsonToBsonValue(
 							PgbsonWriterGetPgbson(&writer));
-						lookupUnwindStage->stageDefinition =
-							(AggregationStageDefinition *) &LookupUnwindStageDefinition;
+						lookupUnwindStage->stageDefinition = &LookupUnwindStageDefinition;
 
 						context->joinStatus = JoinStageStatus_HasJoinsOrUnions;
 						*aggregationStages = foreach_delete_current(stagesList, cell);
@@ -9969,8 +9968,7 @@ TryOptimizeAggregationPipelines(List **aggregationStages,
 					PgbsonWriterAppendValue(&writer, "group", 5, &nextStage->stageValue);
 					nextStage->stageValue = ConvertPgbsonToBsonValue(
 						PgbsonWriterGetPgbson(&writer));
-					nextStage->stageDefinition =
-						(AggregationStageDefinition *) &SortGroupStageDefinition;
+					nextStage->stageDefinition = &SortGroupStageDefinition;
 					*aggregationStages = foreach_delete_current(stagesList, cell);
 				}
 

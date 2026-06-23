@@ -358,7 +358,7 @@ ComputeShardKeyHashForDocument(pgbson *shardKeyDoc, uint64_t collectionId,
 static bson_value_t
 FindShardKeyFieldValue(bson_iter_t *docIter, const char *path)
 {
-	char *dot = NULL;
+	const char *dot = NULL;
 	size_t fieldLength;
 
 	if ((dot = strchr(path, '.')))
@@ -1210,21 +1210,21 @@ ExtractAmNameFromCreateIndexCmd(const char *createIndexCmd)
 	}
 
 	/* Find " USING " clause in the command */
-	char *usingPos = strstr(createIndexCmd, " USING ");
+	const char *usingPos = strstr(createIndexCmd, " USING ");
 	if (usingPos == NULL)
 	{
 		return NULL;
 	}
 
 	/* Skip past " USING " and any additional whitespace */
-	char *amNameStart = usingPos + 7; /* strlen(" USING ") = 7 */
+	const char *amNameStart = usingPos + 7; /* strlen(" USING ") = 7 */
 	while (*amNameStart == ' ' || *amNameStart == '\t')
 	{
 		amNameStart++;
 	}
 
 	/* Find the end of the AM name (space, tab, opening parenthesis, or null terminator) */
-	char *amNameEnd = amNameStart;
+	const char *amNameEnd = amNameStart;
 	while (*amNameEnd != '\0' && *amNameEnd != ' ' && *amNameEnd != '\t' && *amNameEnd !=
 		   '(')
 	{

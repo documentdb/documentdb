@@ -2098,7 +2098,7 @@ TraverseDocumentAndWriteLookupIndexCondition(pgbson_array_writer *arrayWriter,
 											 int pathLength)
 {
 	check_stack_depth();
-	char *leftSubstring = memchr(path, '.', pathLength);
+	const char *leftSubstring = memchr(path, '.', pathLength);
 	bool writtenSomething = false;
 
 	if (leftSubstring == NULL)
@@ -2154,7 +2154,7 @@ TraverseDocumentAndWriteLookupIndexCondition(pgbson_array_writer *arrayWriter,
 					 * two cases), we only traverse the array element pointed by the 'array index path'. Additionally we
 					 * also advance the path (e.g., NULL, 'x', 'b.0' accordingly). If the path is NULL, we print and terminate,
 					 * otherwise we traverse recursively. */
-					char *arrayIndexSubstring = memchr(path, '.', pathLength);
+					const char *arrayIndexSubstring = memchr(path, '.', pathLength);
 					int32_t arrayIndex = -1;
 
 					StringView result =
