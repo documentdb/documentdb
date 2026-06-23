@@ -66,6 +66,8 @@ typedef struct RumVacuumStatistics
 	uint32_t prunedEmptyPostingRoots;
 	uint32_t numPostingTreePagesDeleted;
 	uint32_t numEmptyPostingTreePages;
+	uint32_t numFullScanPostingTreePrunes;
+	uint32_t numTargetedPostingTreePrunes;
 	uint32_t numEntryBacktracks;
 	uint32_t numEntryPages;
 	uint32_t numDataPages;
@@ -749,7 +751,8 @@ rumVacuumPostingTree(RumVacuumState *gvs,
 					 BlockNumber rootBlkno,
 					 BlockNumber *blocks_done,
 					 uint32_t *postingTreePagesDeleted,
-					 uint32_t *postingTreeEmptyPages)
+					 uint32_t *postingTreeEmptyPages,
+					 RumVacuumStatistics *vacStats)
 {
 	int numDeletedPages = 0;
 	int numNonEmptyLeafPages = 0;
@@ -761,6 +764,7 @@ rumVacuumPostingTree(RumVacuumState *gvs,
 		if (RumEnableTargetedPostingTreePruning)
 		{
 			/* Perform targeted pruning of the posting tree */
+			vacStats->numTargetedPostingTreePrunes++;
 			numDeletedPages = rumPostingTreePruneEmptyPagesTargeted(gvs, attnum,
 																	rootBlkno);
 		}
@@ -771,6 +775,8 @@ rumVacuumPostingTree(RumVacuumState *gvs,
 			DataPageDeleteStack root,
 								*ptr,
 								*tmp;
+
+			vacStats->numFullScanPostingTreePrunes++;
 
 			buffer = ReadBufferExtended(gvs->index, MAIN_FORKNUM, rootBlkno,
 										RBM_NORMAL, gvs->strategy);
@@ -1430,7 +1436,8 @@ rumBulkDeleteOneEntryPage(Page page, Buffer buffer, BlockNumber currentBlockNo,
 						  uint32_t *numEmptyPostingTrees, uint32_t *numEmptyPages,
 						  uint32_t *prunedEmptyPostingRoots, uint32_t *numPrunedPages,
 						  uint32_t *postingTreePagesDeleted,
-						  uint32_t *postingTreeEmptyPages)
+						  uint32_t *postingTreeEmptyPages,
+						  RumVacuumStatistics *vacStats)
 {
 	Page resPage;
 	bool isEmptyPage = true;
@@ -1490,7 +1497,8 @@ rumBulkDeleteOneEntryPage(Page page, Buffer buffer, BlockNumber currentBlockNo,
 													rootOfPostingTree[i],
 													blocks_done,
 													postingTreePagesDeleted,
-													postingTreeEmptyPages);
+													postingTreeEmptyPages,
+													vacStats);
 
 			if (isEmptyTree)
 			{
@@ -1642,7 +1650,8 @@ rumBulkDeleteTreeOrdered(IndexVacuumInfo *info,
 								  &vacStats.prunedEmptyPostingRoots,
 								  &vacStats.numPrunedPages,
 								  &vacStats.numPostingTreePagesDeleted,
-								  &vacStats.numEmptyPostingTreePages);
+								  &vacStats.numEmptyPostingTreePages,
+								  &vacStats);
 
 		pgstat_progress_update_param(PROGRESS_SCAN_BLOCKS_DONE, blocks_done);
 		if (blkno == InvalidBlockNumber)        /* rightmost page */
@@ -1667,14 +1676,16 @@ LogFinalVacuumState(Relation index, RumVacuumStatistics *stats, bool isNewBulkDe
 	elog_rum_unredacted(
 		"Vacuum[index=%u,vacuumCleanup=%d] emptyEntryPages=%u, emptyEntries=%u, emptyPostingTrees=%u, prunedEntries=%u, prunedPages=%u,"
 		"prunedPostingTrees=%u, postingPagesDeleted=%u, emptyPostingPages=%u, numBacktracks=%u, isNewBulkDelete=%d, "
-		"numEntryPages=%u, numDataPages=%u, numVoidPages=%u",
+		"numEntryPages=%u, numDataPages=%u, numVoidPages=%u, "
+		"fullScanPostingTreePrunes=%u, targetedPostingTreePrunes=%u",
 		index->rd_id, isVacuumCleanup, stats->numEmptyPages, stats->numEmptyEntries,
 		stats->numEmptyPostingTrees,
 		stats->numPrunedEntries, stats->numPrunedPages, stats->prunedEmptyPostingRoots,
 		stats->numPostingTreePagesDeleted, stats->numEmptyPostingTreePages,
 		stats->numEntryBacktracks, isNewBulkDelete, stats->numEntryPages,
 		stats->numDataPages,
-		stats->numVoidPages);
+		stats->numVoidPages,
+		stats->numFullScanPostingTreePrunes, stats->numTargetedPostingTreePrunes);
 
 	/* Log test only stats */
 	if (stats->numPagesSkippedForBackTrack > 0)
@@ -2242,7 +2253,8 @@ backtrack:
 								  &vacStats->prunedEmptyPostingRoots,
 								  &vacStats->numPrunedPages,
 								  &vacStats->numPostingTreePagesDeleted,
-								  &vacStats->numEmptyPostingTreePages);
+								  &vacStats->numEmptyPostingTreePages,
+								  vacStats);
 	}
 	else if (RumPageIsData(page) && gvs->inlineVacuumBulkDelDataPages)
 	{
