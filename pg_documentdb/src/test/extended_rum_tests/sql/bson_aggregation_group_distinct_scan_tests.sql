@@ -201,9 +201,12 @@ ROLLBACK;
 
 -- ------------------------------------------------------------
 -- Case 1b: $group with $first accumulator.
--- $first could in principle reuse the first matching TID per
--- key, but that optimization is not implemented yet, so the
--- wrapper must not fire today.
+-- This file covers the original distinct-scan wrapper, which is
+-- gated by enableGroupByDistinctScan and only fires for $group
+-- pipelines with NO accumulators. The $first scenario is gated
+-- by the separate enableDistinctScanForGroupFirst GUC (covered
+-- in bson_aggregation_group_first_distinct_scan_tests.sql) and
+-- is intentionally OFF here, so the wrapper must not fire today.
 -- ------------------------------------------------------------
 BEGIN;
 SET LOCAL enable_seqscan TO off;

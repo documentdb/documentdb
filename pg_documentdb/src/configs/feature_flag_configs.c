@@ -272,6 +272,10 @@ bool EnableDistinctCustomScan = DEFAULT_ENABLE_DISTINCT_CUSTOM_SCAN;
 #define DEFAULT_ENABLE_GROUP_BY_DISTINCT_SCAN false
 bool EnableGroupByDistinctScan = DEFAULT_ENABLE_GROUP_BY_DISTINCT_SCAN;
 
+/* Added in v114, pending stabilization, enable in v116 */
+#define DEFAULT_ENABLE_DISTINCT_SCAN_FOR_GROUP_FIRST false
+bool EnableDistinctScanForGroupFirst = DEFAULT_ENABLE_DISTINCT_SCAN_FOR_GROUP_FIRST;
+
 /*
  * SECTION: Aggregation & Query feature flags
  */
@@ -718,6 +722,15 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"$group pipelines that have no aggregate accumulators."),
 		NULL, &EnableGroupByDistinctScan,
 		DEFAULT_ENABLE_GROUP_BY_DISTINCT_SCAN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableDistinctScanForGroupFirst", newGucPrefix),
+		gettext_noop(
+			"Whether or not to enable the distinct custom scan wrapper for "
+			"$group pipelines whose accumulators are exclusively $first."),
+		NULL, &EnableDistinctScanForGroupFirst,
+		DEFAULT_ENABLE_DISTINCT_SCAN_FOR_GROUP_FIRST,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

@@ -97,6 +97,9 @@ FinalizeTtlMetrics_HookType
 UpdateExtendedIndexStats_HookType
 	update_extended_index_stats_hook = NULL;
 
+GetEffectiveAggregateFunctionOid_HookType
+	get_effective_aggregate_function_oid_hook = NULL;
+
 /*
  * Single node scenario is always a metadata coordinator
  */

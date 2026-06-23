@@ -140,6 +140,7 @@ extern bool EnableExtendedIndexes;
 extern bool EnableDynamicCursors;
 extern bool EnableDistinctCustomScan;
 extern bool EnableGroupByDistinctScan;
+extern bool EnableDistinctScanForGroupFirst;
 extern bool EnableDollarSampleReservoirScan;
 
 planner_hook_type ExtensionPreviousPlannerHook = NULL;
@@ -532,8 +533,8 @@ ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		}
 	}
 
-	if ((EnableDistinctCustomScan && list_length(root->distinct_pathkeys) > 0) ||
-		(EnableGroupByDistinctScan && list_length(root->group_pathkeys) > 0))
+	if (EnableDistinctCustomScan || EnableGroupByDistinctScan ||
+		EnableDistinctScanForGroupFirst)
 	{
 		AddDistinctCustomScanWrapper(root, rel, rte);
 	}

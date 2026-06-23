@@ -198,4 +198,28 @@ RESET documentdb.enableSortGroupStage;
 RESET documentdb.enableSortPushToAccumulatorWithPrefix;
 SELECT documentdb_api.drop_collection('db', 'fl_sortgroup_dist');
 
+-- =============================================================================
+-- Test 5: Sharded $group with $first using an expression, exercising the
+-- relpath distinct-scan path on worker shards (enableDistinctScanForGroupFirst).
+-- Use one document per category so $first on each group is deterministic
+-- regardless of shard-local row ordering.
+-- =============================================================================
+
+SELECT documentdb_api.insert_one('db', 'fl_distinct_dist', '{ "_id": 1, "category": "A", "name": "alpha" }');
+SELECT documentdb_api.insert_one('db', 'fl_distinct_dist', '{ "_id": 2, "category": "B", "name": "beta" }');
+SELECT documentdb_api.insert_one('db', 'fl_distinct_dist', '{ "_id": 3, "category": "C", "name": "gamma" }');
+
+SELECT documentdb_api.shard_collection('db', 'fl_distinct_dist', '{ "_id": "hashed" }', false);
+
+set citus.propagate_set_commands to 'local';
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+SET LOCAL documentdb.enableNewWithExprAccumulators TO on;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_distinct_dist", "pipeline": [ { "$group": { "_id": "$category", "firstExpr": { "$first": { "$concat": ["$name", "-seen"] } } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
+ROLLBACK;
+
+SELECT documentdb_api.drop_collection('db', 'fl_distinct_dist');
+
 SET documentdb.enableNewWithExprAccumulators TO off;

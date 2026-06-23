@@ -329,4 +329,27 @@ typedef void (*UpdateExtendedIndexStats_HookType)(uint64 collectionId,
 												  IndexInfo *indexInfo);
 extern UpdateExtendedIndexStats_HookType update_extended_index_stats_hook;
 
+
+/*
+ * Optional hook that, given an Aggref, may resolve it to a different aggregate
+ * function oid that better represents the underlying aggregation for
+ * planner-classification purposes (e.g. when the surface Aggref is a wrapper
+ * around another aggregate introduced by a query rewrite).
+ *
+ * Example: With distributed-execution rewrite, a partial aggregate is pushed
+ * down to a shard, the original Aggref's aggfnoid is replaced with a wrapper.
+ *
+ * On entry *aggregateFunctionOid is initialized to aggref->aggfnoid. The hook
+ * may overwrite it with a different oid and return true; returning false (or
+ * leaving the hook unset) means the caller should keep aggref->aggfnoid as-is.
+ *
+ * Lives as a hook because the core extension intentionally has no knowledge of
+ * any aggregate-wrapping rewrites; implementations are provided by extensions
+ * that introduce such rewrites.
+ */
+typedef bool (*GetEffectiveAggregateFunctionOid_HookType)(Aggref *aggref,
+														  Oid *aggregateFunctionOid);
+extern GetEffectiveAggregateFunctionOid_HookType
+	get_effective_aggregate_function_oid_hook;
+
 #endif

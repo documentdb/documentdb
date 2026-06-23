@@ -10,8 +10,8 @@
  */
 
 #include <postgres.h>
+#include <catalog/pg_type.h>
 #include <fmgr.h>
-#include <utils/lsyscache.h>
 #include <nodes/extensible.h>
 #include <nodes/makefuncs.h>
 #include <nodes/nodeFuncs.h>
@@ -39,6 +39,7 @@
 #include "index_am/documentdb_rum.h"
 #include "utils/query_utils.h"
 #include "commands/commands_common.h"
+#include "api_hooks_def.h"
 
 
 /* --------------------------------------------------------- */
@@ -110,6 +111,13 @@ static bool EqualUnsupportedExtensionQueryScanNode(const struct ExtensibleNode *
 static TupleTableSlot * DistinctQueryScanNext(CustomScanState *node);
 static bool DistinctQueryScanNextRecheck(ScanState *state, TupleTableSlot *slot);
 static List * AddDistinctCustomPathCore(PlannerInfo *root, List *pathList);
+static bool ContainsDisqualifyingAggref(Node *node, void *context);
+static bool IsSafeFirstAggregateFunctionOid(Oid aggregateFunctionOid);
+static bool HasOnlySafeGroupFirstAggrefs(PlannerInfo *root);
+
+extern bool EnableDistinctCustomScan;
+extern bool EnableDistinctScanForGroupFirst;
+extern bool EnableGroupByDistinctScan;
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -164,22 +172,29 @@ AddDistinctCustomScanWrapper(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 {
 	/*
 	 * Currently we only support scenarios where it's all DISTINCT or GROUP BY
-	 * with no actual aggregate accumulators in the target list.
+	 * with either no actual aggregate accumulators or exclusively safe $first
+	 * accumulators in the target list.
 	 *
 	 * Note: we cannot rely on root->parse->hasAggs here because the aggregation
 	 * pipeline rewrite for $group sets hasAggs = true even when only an _id
 	 * grouping expression is present (no accumulators). We instead walk the
 	 * top-level target list for Aggref nodes.
 	 */
-	bool distinctScenario = root->distinct_pathkeys != NIL &&
+	bool distinctScenario = EnableDistinctCustomScan &&
+							root->distinct_pathkeys != NIL &&
 							list_length(root->distinct_pathkeys) == list_length(
 		root->query_pathkeys);
-	bool groupScenario = root->group_pathkeys != NIL && root->query_pathkeys != NIL &&
+	bool groupScenario = EnableGroupByDistinctScan &&
+						 root->group_pathkeys != NIL && root->query_pathkeys != NIL &&
 						 list_length(root->group_pathkeys) == list_length(
 		root->query_pathkeys) &&
 						 !contain_aggs_of_level((Node *) root->parse->targetList, 0);
+	bool groupFirstScenario = EnableDistinctScanForGroupFirst &&
+							  root->group_pathkeys != NIL &&
+							  root->parse->havingQual == NULL &&
+							  HasOnlySafeGroupFirstAggrefs(root);
 
-	if (distinctScenario || groupScenario)
+	if (distinctScenario || groupScenario || groupFirstScenario)
 	{
 		rel->pathlist = AddDistinctCustomPathCore(root, rel->pathlist);
 		rel->partial_pathlist = AddDistinctCustomPathCore(root, rel->partial_pathlist);
@@ -234,7 +249,6 @@ AddDistinctCustomPathCore(PlannerInfo *root, List *pathList)
 			indexPath->indexinfo->relam, indexPath->indexinfo->opfamily[0],
 			&isPathSummarizationForced);
 
-
 		if (skipTidsFunc == NULL)
 		{
 			customPlanPaths = lappend(customPlanPaths, inputPath);
@@ -286,10 +300,136 @@ AddDistinctCustomPathCore(PlannerInfo *root, List *pathList)
 		 * with the RegisterNodes method below.
 		 */
 		customPath->custom_private = list_make1(queryState);
+
 		customPlanPaths = lappend(customPlanPaths, customPath);
 	}
 
 	return customPlanPaths;
+}
+
+
+/*
+ * expression_tree_walker callback that returns true (aborting the walk) as
+ * soon as it encounters an Aggref that is NOT safe to combine with
+ * distinct-scan key skipping. An Aggref is considered safe when:
+ *
+ *   - aggfnoid is a $first variant that picks the first input row for the
+ *     group without consulting an explicit sort spec, AND
+ *   - it has no explicit aggorder / aggdistinct / aggfilter (which would
+ *     change semantics).
+ */
+static bool
+ContainsDisqualifyingAggref(Node *node, void *context)
+{
+	if (node == NULL)
+	{
+		return false;
+	}
+
+	if (IsA(node, Aggref))
+	{
+		Aggref *aggref = (Aggref *) node;
+		Oid aggregateFunctionOid = aggref->aggfnoid;
+
+		/*
+		 * Allow an extension-provided hook to resolve the Aggref to its
+		 * effective aggregate function oid (Example: unwrapping an aggregate
+		 * wrapper introduced by a query rewrite on a distributed-execution
+		 * layer that injects a partial aggregation down to shards). When no hook
+		 * is registered, we classify aggref->aggfnoid as-is.
+		 */
+		if (get_effective_aggregate_function_oid_hook != NULL)
+		{
+			get_effective_aggregate_function_oid_hook(aggref, &aggregateFunctionOid);
+		}
+
+		if (!IsSafeFirstAggregateFunctionOid(aggregateFunctionOid))
+		{
+			/* any other accumulator (including sort-aware bsonfirst) disqualifies */
+			return true;
+		}
+
+		if (aggref->aggorder != NIL || aggref->aggdistinct != NIL ||
+			aggref->aggfilter != NULL)
+		{
+			/*
+			 * Explicit ORDER BY / DISTINCT / FILTER inside the accumulator
+			 * changes semantics.
+			 */
+			return true;
+		}
+
+		/* Aggref is OK; do not recurse into its sub-expressions */
+		return false;
+	}
+
+	return expression_tree_walker(node, ContainsDisqualifyingAggref, context);
+}
+
+
+static bool
+IsSafeFirstAggregateFunctionOid(Oid aggregateFunctionOid)
+{
+	return aggregateFunctionOid == BsonFirstOnSortedAggregateFunctionOid() ||
+		   aggregateFunctionOid == BsonFirstWithExprAggregateFunctionOid();
+}
+
+
+static bool
+HasOnlySafeGroupFirstAggrefs(PlannerInfo *root)
+{
+	ListCell *aggInfoCell;
+
+	/*
+	 * We rely exclusively on root->agginfos to enumerate the query's
+	 * aggregates. The core planner populates agginfos via preprocess_aggrefs()
+	 * before query_planner() runs, which is where this path-injection hook fires;
+	 * so whenever the query has any aggregate (as a $first group always does)
+	 * agginfos is already populated.
+	 *
+	 * If agginfos is empty we deliberately decline the optimization and return
+	 * false rather than re-deriving the aggregate set from the target list.
+	 * Returning false is always safe: the query simply runs with the normal
+	 * GroupAggregate plan. This keeps us on a single, well-tested code path and
+	 * avoids ever firing the distinct-scan rewrite based on an unvalidated
+	 * planner state.
+	 */
+	if (root->agginfos == NIL)
+	{
+		return false;
+	}
+
+	bool foundSafeAggref = false;
+
+	foreach(aggInfoCell, root->agginfos)
+	{
+		AggInfo *aggInfo = (AggInfo *) lfirst(aggInfoCell);
+
+#if PG_VERSION_NUM >= 160000
+		ListCell *aggrefCell;
+
+		foreach(aggrefCell, aggInfo->aggrefs)
+		{
+			Aggref *aggref = (Aggref *) lfirst(aggrefCell);
+			if (ContainsDisqualifyingAggref((Node *) aggref, NULL))
+			{
+				return false;
+			}
+
+			foundSafeAggref = true;
+		}
+#else
+		Aggref *aggref = aggInfo->representative_aggref;
+		if (aggref == NULL || ContainsDisqualifyingAggref((Node *) aggref, NULL))
+		{
+			return false;
+		}
+
+		foundSafeAggref = true;
+#endif
+	}
+
+	return foundSafeAggref;
 }
 
 

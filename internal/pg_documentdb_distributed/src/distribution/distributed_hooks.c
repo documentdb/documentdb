@@ -12,6 +12,7 @@
 #include <utils/timestamp.h>
 #include <nodes/makefuncs.h>
 #include <catalog/namespace.h>
+#include <catalog/pg_type.h>
 #include <utils/lsyscache.h>
 #include <utils/memutils.h>
 #include <metadata/index.h>
@@ -25,6 +26,7 @@
 #include "utils/documentdb_errors.h"
 
 #include "metadata/collection.h"
+#include "metadata/distributed_oid_cache.h"
 #include "api_hooks_def.h"
 
 #include "shard_colocation.h"
@@ -767,6 +769,54 @@ GetDistributedOperationCancellationQuery(int64 shardId, StringView *opIdView,
 
 
 /*
+ * Citus distributed-execution rewrite: when a partial aggregate is pushed
+ * down to a shard, the original Aggref's aggfnoid is replaced with Citus's
+ * worker_partial_agg / worker_binary_partial_agg wrapper, whose first
+ * argument is a Const carrying the underlying aggregate's regprocedure oid.
+ *
+ * This hook unwraps that wrapper so callers in the core extension (which is
+ * intentionally Citus-agnostic) can classify the Aggref by its underlying
+ * aggregate without knowing anything about Citus's worker-side functions.
+ *
+ * If the Aggref is not a recognized wrapper, returns false and leaves
+ * *aggregateFunctionOid untouched.
+ */
+static bool
+GetEffectiveAggregateFunctionOidCore(Aggref *aggref, Oid *aggregateFunctionOid)
+{
+	if ((aggref->aggfnoid != CitusWorkerPartialAggregateFunctionOid() &&
+		 aggref->aggfnoid != CitusWorkerBinaryPartialAggregateFunctionOid()) ||
+		aggref->args == NIL)
+	{
+		return false;
+	}
+
+	TargetEntry *firstArg = linitial(aggref->args);
+	Expr *firstArgExpr = firstArg->expr;
+	if (IsA(firstArgExpr, RelabelType))
+	{
+		firstArgExpr = ((RelabelType *) firstArgExpr)->arg;
+	}
+
+	if (!IsA(firstArgExpr, Const))
+	{
+		return false;
+	}
+
+	Const *functionConst = (Const *) firstArgExpr;
+	if (functionConst->constisnull ||
+		(functionConst->consttype != REGPROCEDUREOID &&
+		 functionConst->consttype != OIDOID))
+	{
+		return false;
+	}
+
+	*aggregateFunctionOid = DatumGetObjectId(functionConst->constvalue);
+	return true;
+}
+
+
+/*
  * Register hook overrides for DocumentDB.
  */
 void
@@ -808,6 +858,8 @@ InitializeDocumentDBDistributedHooks(void)
 
 	update_postgres_index_hook = UpdateDistributedPostgresIndex;
 	get_operation_cancellation_query_hook = GetDistributedOperationCancellationQuery;
+
+	get_effective_aggregate_function_oid_hook = GetEffectiveAggregateFunctionOidCore;
 
 	RegisterDistributedExplainStageHook();
 
