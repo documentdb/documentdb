@@ -16,48 +16,28 @@ use crate::{error::DocumentDBError, protocol::util::SyncLittleEndianRead};
 ///
 /// # Errors
 /// Returns error if the operation fails.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "BSON document sizes fit in usize on supported platforms"
-)]
-#[expect(
-    clippy::cast_sign_loss,
-    reason = "length is validated positive by BSON spec"
-)]
 pub fn read_document_bytes<'a>(
     cursor: &mut Cursor<&'a [u8]>,
 ) -> Result<(&'a RawDocument, usize), DocumentDBError> {
-    let data = &cursor.clone().into_inner()[cursor.position() as usize..];
+    let start = usize::try_from(cursor.position()).map_err(|error| {
+        DocumentDBError::bad_value(format!("BSON document offset is invalid: {error}"))
+    })?;
+    let data = &cursor.clone().into_inner()[start..];
     let length = cursor.read_i32_sync()?;
-    let doc = RawDocument::from_bytes(&data[0..length as usize])?;
-    cursor.set_position(cursor.position() + length as u64 - 4);
-    Ok((doc, length as usize))
-}
-
-/// Converts a BSON value to `f64` if it is a numeric type.
-///
-/// # Panics
-/// Panics if the BSON element type does not match its value accessor.
-#[must_use]
-#[expect(
-    clippy::expect_used,
-    reason = "element type is checked before accessor call"
-)]
-#[expect(
-    clippy::unwrap_in_result,
-    reason = "expect is used on type-checked BSON values"
-)]
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "i64-to-f64 loss is acceptable for numeric coercion"
-)]
-pub fn convert_to_f64(bson: RawBsonRef) -> Option<f64> {
-    match bson.element_type() {
-        ElementType::Double => Some(bson.as_f64().expect("checked")),
-        ElementType::Int32 => Some(f64::from(bson.as_i32().expect("checked"))),
-        ElementType::Int64 => Some(bson.as_i64().expect("checked") as f64),
-        _ => None,
-    }
+    let length = usize::try_from(length).map_err(|error| {
+        DocumentDBError::bad_value(format!("BSON document length is negative: {error}"))
+    })?;
+    let document_bytes = data.get(..length).ok_or_else(|| {
+        DocumentDBError::bad_value(format!(
+            "BSON document length {length} exceeds available bytes {}",
+            data.len()
+        ))
+    })?;
+    let doc = RawDocument::from_bytes(document_bytes)?;
+    cursor.set_position(u64::try_from(start + length).map_err(|error| {
+        DocumentDBError::bad_value(format!("BSON document end offset is invalid: {error}"))
+    })?);
+    Ok((doc, length))
 }
 
 /// Converts a BSON value to `bool` if it is a boolean or numeric type.

@@ -45,9 +45,7 @@ pub async fn process_drop_database(
     dynamic_config: &Arc<dyn DynamicConfiguration>,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let request_info = request_context.info;
-
-    let db = request_info.db()?.to_owned();
+    let db = request_context.request().db().to_owned();
 
     // Invalidate cursors
     connection_context
@@ -81,18 +79,16 @@ pub async fn process_drop_collection(
     dynamic_config: &Arc<dyn DynamicConfiguration>,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let request_info = request_context.info;
+    let request = request_context.request();
 
-    let coll = request_info.collection()?.to_owned();
-    let coll_str = coll.as_str();
-    let db = request_info.db()?.to_owned();
-    let db_str = db.as_str();
+    let db = request.db();
+    let coll = request.collection()?;
 
     // Invalidate cursors
     connection_context
         .service_context
         .cursor_store()
-        .invalidate_cursors_by_collection(db_str, coll_str);
+        .invalidate_cursors_by_collection(db, coll);
 
     // Nested transactions not allowed when database is in read-only mode
     let is_read_only_for_disk_full =
@@ -100,22 +96,17 @@ pub async fn process_drop_collection(
 
     if is_read_only_for_disk_full {
         pg_data_client
-            .execute_drop_collection_when_readonly(
-                request_context,
-                db_str,
-                coll_str,
-                connection_context,
-            )
+            .execute_drop_collection_when_readonly(request_context, db, coll, connection_context)
             .await?;
     } else {
         pg_data_client
-            .execute_drop_collection(request_context, db_str, coll_str, connection_context)
+            .execute_drop_collection(request_context, db, coll, connection_context)
             .await?;
     }
 
     Ok(Response::Raw(RawResponse::new(rawdoc! {
         "ok": OK_SUCCEEDED,
-        "dropped": coll,
+        "dropped": coll.to_owned(),
     })))
 }
 
@@ -136,11 +127,11 @@ pub async fn process_shard_collection(
     reshard: bool,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let collection_path = request_context.info.collection()?.to_owned();
-    let (db, collection) =
-        protocol::extract_database_and_collection_names(collection_path.as_str())?;
+    let collection_path = request_context.request().collection()?;
+    let (db, collection) = protocol::extract_database_and_collection_names(collection_path)?;
+
     let key = request_context
-        .payload
+        .request()
         .document()
         .get_document("key")
         .map_err(DocumentDBError::parse_failure())?;

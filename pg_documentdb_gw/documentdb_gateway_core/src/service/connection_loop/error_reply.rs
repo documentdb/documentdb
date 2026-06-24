@@ -13,8 +13,8 @@ use crate::{
     context::ConnectionContext,
     error::{DocumentDBError, ErrorCode, Result},
     protocol::header::Header,
-    requests::{request_tracker::RequestTracker, Request, RequestIntervalKind},
-    responses::{self, error_to_raw_document_buf},
+    requests::{request_tracker::RequestTracker, RequestIntervalKind, RequestObservation},
+    responses::{self, CommandError},
     telemetry::{self, client_info},
 };
 
@@ -26,7 +26,7 @@ pub(super) async fn log_and_write_error<W>(
     connection_context: &ConnectionContext,
     header: &Header,
     error: &DocumentDBError,
-    request: Option<&Request<'_>>,
+    request: Option<RequestObservation<'_, '_>>,
     writer: &mut W,
     collection: Option<String>,
     request_tracker: &RequestTracker,
@@ -36,7 +36,8 @@ pub(super) async fn log_and_write_error<W>(
 where
     W: AsyncWrite + Unpin,
 {
-    let response = error_to_raw_document_buf(error);
+    let command_error = CommandError::from(error);
+    let response = command_error.to_raw_document_buf();
 
     if let Some(start) = handle_message_start {
         request_tracker.record_duration(RequestIntervalKind::HandleMessage, start);
@@ -67,7 +68,7 @@ where
             header,
             request,
             Right((error, response.as_bytes().len())),
-            collection,
+            &collection,
             request_tracker,
             activity_id,
             &client_info::parse_client_info(connection_context.client_information.as_ref()),
@@ -85,7 +86,7 @@ pub(super) async fn reply_with_request_error<W>(
     connection_context: &ConnectionContext,
     header: &Header,
     error: &DocumentDBError,
-    request: Option<&Request<'_>>,
+    request: Option<RequestObservation<'_, '_>>,
     writer: &mut W,
     collection: Option<String>,
     request_tracker: &RequestTracker,
@@ -161,7 +162,7 @@ mod tests {
 
     use crate::{
         protocol::opcode::OpCode,
-        requests::RequestType,
+        requests::{Request, RequestType, WireRequest},
         testing::{
             assert_error_response, assert_header_matches, build_op_msg_parts, build_raw_document,
             decode_op_msg_response, logout_document, test_connection_context,
@@ -266,6 +267,10 @@ mod tests {
         .await;
         let logout_document = logout_document();
         let request = Request::RawBuf(RequestType::Logout, build_raw_document(&logout_document));
+        let request_info = request
+            .extract_common()
+            .expect("logout request should have valid common fields");
+        let wire_request = WireRequest::from_request_and_info(&request, request_info);
         let request_tracker = RequestTracker::new();
         let (header, _) = build_op_msg_parts(&logout_document, 73);
         let error = DocumentDBError::documentdb_error(
@@ -278,7 +283,7 @@ mod tests {
             &connection_context,
             &header,
             &error,
-            Some(&request),
+            Some(RequestObservation::Strict(&wire_request)),
             &mut response_writer,
             Some("admin".to_owned()),
             &request_tracker,

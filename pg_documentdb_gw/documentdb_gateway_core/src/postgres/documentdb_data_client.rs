@@ -21,6 +21,7 @@ use crate::{
         conn_mgmt::{Connection, ConnectionPool, PoolConnection, PullConnection, QueryOptions},
         PgDataClient, PgDocument, ScopedTransaction,
     },
+    requests::ExplainTarget,
     responses::{PgResponse, Response},
 };
 
@@ -58,8 +59,9 @@ impl DocumentDBDataClient {
         query: &str,
         query_options: QueryOptions,
     ) -> Result<Vec<Row>> {
-        let db = request_context.info().db()?;
-        let doc = request_context.payload().document();
+        let request = request_context.request();
+        let db = request.db();
+        let doc = request.document();
 
         let run_db_bson = |conn: Arc<Connection>| async move {
             conn.query_db_bson(query, db, &PgDocument(doc)).await
@@ -97,8 +99,9 @@ impl DocumentDBDataClient {
         query: &str,
         query_options: QueryOptions,
     ) -> Result<Response> {
-        let db = request_context.info().db()?;
-        let doc = request_context.payload().document();
+        let request = request_context.request();
+        let db = request.db();
+        let doc = request.document();
 
         let run_cursor = |conn: Arc<Connection>| async move {
             let rows = conn.query_db_bson(query, db, &PgDocument(doc)).await?;
@@ -122,7 +125,7 @@ impl DocumentDBDataClient {
         query: &str,
         query_options: QueryOptions,
     ) -> Result<Response> {
-        let doc = request_context.payload().document();
+        let doc = request_context.request().document();
 
         let run_doc = |conn: Arc<Connection>| async move {
             let rows = conn
@@ -218,10 +221,10 @@ impl PgDataClient for DocumentDBDataClient {
         scale: f64,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let request_info = request_context.info();
+        let request = request_context.request();
 
-        let db = request_info.db()?;
-        let coll = request_info.collection()?;
+        let db = request.db();
+        let coll = request.collection()?;
 
         let run_coll_stats = |conn: Arc<Connection>| async move {
             let rows = conn
@@ -335,9 +338,9 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Vec<Row>> {
-        let (request, request_info, _) = request_context.get_components();
+        let request = request_context.request();
 
-        let db = request_info.db()?;
+        let db = request.db();
         let doc = request.document();
         let extra = request.extra();
 
@@ -367,9 +370,9 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Vec<Row>> {
-        let (request, request_info, _) = request_context.get_components();
+        let request = request_context.request();
 
-        let db = request_info.db()?;
+        let db = request.db();
         let doc = request.document();
         let extra = request.extra();
 
@@ -555,11 +558,12 @@ impl PgDataClient for DocumentDBDataClient {
     async fn execute_explain(
         &self,
         request_context: &RequestContext<'_>,
+        explain_target: &ExplainTarget<'_>,
         query_base: &str,
         verbosity: Verbosity,
         connection_context: &ConnectionContext,
     ) -> Result<(Option<serde_json::Value>, String)> {
-        let (request, request_info, _) = request_context.get_components();
+        let request = request_context.request();
         let analyze = match verbosity {
             Verbosity::QueryPlanner | Verbosity::AllShardsQueryPlan => "False",
             _ => "True",
@@ -570,8 +574,8 @@ impl PgDataClient for DocumentDBDataClient {
             .query_catalog()
             .explain(analyze, query_base);
 
-        let db = request_info.db()?;
-        let doc = request.document();
+        let db = request.db();
+        let doc = explain_target.document();
         let explain_query_str = explain_query.as_str();
 
         let explain_config = match verbosity {
@@ -675,7 +679,7 @@ impl PgDataClient for DocumentDBDataClient {
         pull_connection: PullConnection,
         connection_context: &ConnectionContext,
     ) -> Result<Vec<Row>> {
-        let doc = request_context.payload().document();
+        let doc = request_context.request().document();
         let continuation = &cursor.continuation;
 
         let run_get_more = |conn: Arc<Connection>| async move {
@@ -707,7 +711,7 @@ impl PgDataClient for DocumentDBDataClient {
         enable_write_procedures: bool,
         enable_write_procedures_with_batch_commit: bool,
     ) -> Result<Vec<Row>> {
-        let (request, request_info, _) = request_context.get_components();
+        let request = request_context.request();
 
         let is_batch_commit =
             enable_write_procedures_with_batch_commit && connection_context.transaction.is_none();
@@ -720,7 +724,7 @@ impl PgDataClient for DocumentDBDataClient {
             query = self.service_context.query_catalog().insert_txn_proc();
         }
 
-        let db = request_info.db()?;
+        let db = request.db();
         let doc = request.document();
         let extra = request.extra();
 
@@ -772,7 +776,7 @@ impl PgDataClient for DocumentDBDataClient {
     ) -> Result<Response> {
         // TODO: Handle the case where !nameOnly - the legacy gateway simply returns 0s in the appropriate format
         let filter = request_context
-            .payload()
+            .request()
             .document()
             .get_document("filter")
             .ok();
@@ -834,7 +838,7 @@ impl PgDataClient for DocumentDBDataClient {
         enable_write_procedures: bool,
         enable_write_procedures_with_batch_commit: bool,
     ) -> Result<Vec<Row>> {
-        let (request, request_info, _) = request_context.get_components();
+        let request = request_context.request();
 
         let is_batch_commit =
             enable_write_procedures_with_batch_commit && connection_context.transaction.is_none();
@@ -853,7 +857,7 @@ impl PgDataClient for DocumentDBDataClient {
             query_str = self.service_context.query_catalog().update_txn_proc();
         }
 
-        let db = request_info.db()?;
+        let db = request.db();
         let doc = request.document();
         let extra = request.extra();
 
@@ -990,10 +994,10 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let (request, request_info, _) = request_context.get_components();
+        let request = request_context.request();
 
-        let db = request_info.db()?;
-        let coll = request_info.collection()?;
+        let db = request.db();
+        let coll = request.collection()?;
         let doc = request.document();
 
         let run_coll_mod = |conn: Arc<Connection>| async move {
@@ -1061,7 +1065,7 @@ impl PgDataClient for DocumentDBDataClient {
         scale: f64,
         connection_context: &ConnectionContext,
     ) -> Result<Response> {
-        let db = request_context.info().db()?;
+        let db = request_context.request().db();
 
         let run_db_stats = |conn: Arc<Connection>| async move {
             let rows = conn
@@ -1092,7 +1096,7 @@ impl PgDataClient for DocumentDBDataClient {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Vec<Row>> {
-        let doc = request_context.payload().document();
+        let doc = request_context.request().document();
         let run_rename = |conn: Arc<Connection>| async move {
             conn.query(
                 self.service_context.query_catalog().rename_collection(),

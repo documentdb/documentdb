@@ -6,7 +6,7 @@
  *-------------------------------------------------------------------------
  */
 
-use crate::{error::DocumentDBError, requests::Request};
+use crate::{error::DocumentDBError, requests::RequestObservation};
 
 pub const NANOS_PER_MILLISECOND: u64 = 1_000_000;
 
@@ -41,7 +41,7 @@ pub const fn get_status_code_u16(error: Option<&DocumentDBError>) -> u16 {
 /// If request context is missing, this returns `"unknown"`.
 /// If the operation name resolves to an empty string, this returns `"<empty>"`.
 #[must_use]
-pub fn get_safe_operation_name(request: Option<&Request<'_>>) -> String {
+pub fn get_safe_operation_name(request: Option<RequestObservation<'_, '_>>) -> String {
     let operation_name =
         request.map_or_else(|| "unknown".to_owned(), |r| r.request_type().to_string());
 
@@ -49,5 +49,24 @@ pub fn get_safe_operation_name(request: Option<&Request<'_>>) -> String {
         "<empty>".to_owned()
     } else {
         operation_name
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        error::{DocumentDBError, ErrorCode},
+        telemetry::utils::get_status_code_u16,
+    };
+
+    #[test]
+    fn telemetry_status_uses_error_code_http_status_mapping() {
+        let auth_failed =
+            DocumentDBError::documentdb_error(ErrorCode::AuthenticationFailed, String::new());
+        let unauthorized =
+            DocumentDBError::documentdb_error(ErrorCode::Unauthorized, String::new());
+
+        assert_eq!(get_status_code_u16(Some(&auth_failed)), 401);
+        assert_eq!(get_status_code_u16(Some(&unauthorized)), 403);
     }
 }

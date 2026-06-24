@@ -43,6 +43,19 @@ pub fn build_op_msg_parts(document: &Document, request_id: i32) -> (Header, Vec<
     (header, body)
 }
 
+pub fn build_op_msg_parts_with_sections(
+    sections: &[Vec<u8>],
+    request_id: i32,
+) -> (Header, Vec<u8>) {
+    let body = build_op_msg_body_with_sections(sections);
+    let length =
+        i32::try_from(Header::LENGTH + body.len()).expect("message size should fit into i32");
+    let header =
+        Header::new(length, request_id, 0, OpCode::Msg).expect("test header should be valid");
+
+    (header, body)
+}
+
 pub fn build_op_msg_request(document: &Document, request_id: i32) -> Vec<u8> {
     let (header, body) = build_op_msg_parts(document, request_id);
     let mut bytes = encode_header(
@@ -52,6 +65,36 @@ pub fn build_op_msg_request(document: &Document, request_id: i32) -> Vec<u8> {
         header.op_code(),
     );
     bytes.extend_from_slice(&body);
+    bytes
+}
+
+pub fn build_document_section(document: &Document) -> Vec<u8> {
+    let raw_document = build_raw_document(document);
+    let mut bytes = Vec::with_capacity(1 + raw_document.as_bytes().len());
+    bytes.push(0);
+    bytes.extend_from_slice(raw_document.as_bytes());
+    bytes
+}
+
+pub fn build_document_sequence_section(identifier: &str, documents: &[Document]) -> Vec<u8> {
+    let raw_documents: Vec<_> = documents.iter().map(build_raw_document).collect();
+    let document_bytes_len = raw_documents
+        .iter()
+        .map(|document| document.as_bytes().len())
+        .sum::<usize>();
+    let section_size =
+        i32::try_from(std::mem::size_of::<i32>() + identifier.len() + 1 + document_bytes_len)
+            .expect("document sequence section size should fit into i32");
+    let section_size_usize =
+        usize::try_from(section_size).expect("document sequence size should fit into usize");
+    let mut bytes = Vec::with_capacity(1 + section_size_usize);
+    bytes.push(1);
+    bytes.extend_from_slice(&section_size.to_le_bytes());
+    bytes.extend_from_slice(identifier.as_bytes());
+    bytes.push(0);
+    for document in raw_documents {
+        bytes.extend_from_slice(document.as_bytes());
+    }
     bytes
 }
 
@@ -171,11 +214,15 @@ fn encode_header(length: i32, request_id: i32, response_to: i32, op_code: OpCode
 }
 
 fn build_op_msg_body(document: &Document) -> Vec<u8> {
-    let raw_document = build_raw_document(document);
-    let mut bytes =
-        Vec::with_capacity(std::mem::size_of::<u32>() + 1 + raw_document.as_bytes().len());
+    build_op_msg_body_with_sections(&[build_document_section(document)])
+}
+
+fn build_op_msg_body_with_sections(sections: &[Vec<u8>]) -> Vec<u8> {
+    let sections_len = sections.iter().map(Vec::len).sum::<usize>();
+    let mut bytes = Vec::with_capacity(std::mem::size_of::<u32>() + sections_len);
     bytes.extend_from_slice(&0_u32.to_le_bytes());
-    bytes.push(0);
-    bytes.extend_from_slice(raw_document.as_bytes());
+    for section in sections {
+        bytes.extend_from_slice(section);
+    }
     bytes
 }

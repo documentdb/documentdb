@@ -25,6 +25,7 @@ use crate::{
         },
         PgDocument,
     },
+    requests::ExplainTarget,
     responses::{PgResponse, Response},
 };
 
@@ -161,6 +162,7 @@ pub trait PgDataClient: Send + Sync {
     async fn execute_explain(
         &self,
         request_context: &RequestContext<'_>,
+        explain_target: &ExplainTarget<'_>,
         query_base: &str,
         verbosity: Verbosity,
         connection_context: &ConnectionContext,
@@ -445,8 +447,8 @@ pub trait PgDataClient: Send + Sync {
             }
         };
 
-        let request_info = request_context.info();
-        let command_timeout_ms = request_info.max_time_ms.map(i64::cast_unsigned);
+        let request = request_context.request();
+        let command_timeout_ms = request.max_time_ms().map(i64::cast_unsigned);
         let req_opts = self.request_options(command_timeout_ms);
 
         run_request_with_retries(
@@ -503,18 +505,17 @@ pub trait PgDataClient: Send + Sync {
                 },
             );
 
-            let request_info = request_context.info();
-            let lsid = request_info.lsid.clone();
-            let transaction_number = request_info
-                .transaction_info
-                .as_ref()
+            let request = request_context.request();
+            let lsid = request.lsid().cloned();
+            let transaction_number = request
+                .transaction_info()
                 .map(|txn_info| txn_info.transaction_number);
 
             connection_context.add_cursor(
                 connection,
                 cursor,
-                request_info.db()?,
-                request_info.collection()?,
+                request.db(),
+                request.collection()?,
                 cursor_timeout,
                 lsid,
                 transaction_number,

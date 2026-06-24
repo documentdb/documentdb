@@ -22,7 +22,7 @@ pub use custom_error_mapping::{
     global_custom_error_mapper, register_custom_error_mapper, CustomPostgresErrorMapper,
 };
 pub use custom_pg_db_error::CustomPgDbError;
-pub use error::error_to_raw_document_buf;
+pub use error::{error_to_raw_document_buf, CommandError};
 pub use pg::{
     from_known_external_error_code, i32_to_postgres_sqlstate, map_pg_db_error, map_pg_error,
     postgres_sqlstate_to_i32, PgResponse, PostgresErrorMappedResult,

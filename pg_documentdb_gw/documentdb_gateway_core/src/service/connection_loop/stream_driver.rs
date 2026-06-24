@@ -39,15 +39,18 @@ where
 
         match next_header_result {
             Ok(Some(header)) => {
-                let request_activity_id =
+                let activity_uuid =
                     connection_context.generate_request_activity_id(header.request_id());
+                let mut activity_buf = [0u8; uuid::fmt::Hyphenated::LENGTH];
+                let request_activity_id =
+                    activity_uuid.hyphenated().encode_lower(&mut activity_buf);
 
                 next_header = request_pipeline::handle_message::<T, _, _>(
                     &mut connection_context,
                     &header,
                     &mut reader,
                     &mut writer,
-                    &request_activity_id,
+                    request_activity_id,
                     idle_timeout,
                 )
                 .await;

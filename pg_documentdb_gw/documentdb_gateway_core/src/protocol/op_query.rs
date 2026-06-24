@@ -14,14 +14,60 @@ use bytes::Buf;
 use crate::{
     error::{DocumentDBError, Result},
     protocol::{self, bson_writer, reader},
-    requests::Request,
+    requests::{RequestPreview, WireRequest},
 };
+
+struct QueryCommand<'a> {
+    document: &'a RawDocument,
+    database_name: &'a str,
+    collection_name: &'a str,
+}
 
 /// Parse an `OP_QUERY` message using `Buf` for efficient in-memory reads.
 ///
 /// # Errors
 /// Returns an error if the message is malformed or cannot be parsed.
-pub fn parse_query(message: &[u8]) -> Result<Request<'_>> {
+pub fn parse_query(message: &[u8]) -> Result<WireRequest<'_>> {
+    let command = parse_query_document(message)?;
+
+    if command.collection_name == "$cmd" {
+        if has_database_name(command.document) {
+            return reader::parse_cmd(command.document, None);
+        }
+
+        return parse_cmd_with_db(command.document, command.database_name);
+    }
+
+    Err(DocumentDBError::internal_error(
+        "Unable to parse OP_QUERY request".to_owned(),
+    ))
+}
+
+/// Parse an `OP_QUERY` message into a payload-only request.
+///
+/// # Errors
+/// Returns an error if the message is malformed or cannot be parsed.
+pub(crate) fn parse_query_payload(message: &[u8]) -> Result<RequestPreview<'_>> {
+    let command = parse_query_document(message)?;
+
+    if command.collection_name == "$cmd" {
+        if has_database_name(command.document) {
+            let database_name = command
+                .document
+                .get_str("$db")
+                .unwrap_or(command.database_name);
+            return reader::parse_cmd_payload_with_db(command.document, None, database_name);
+        }
+
+        return parse_cmd_payload_with_db(command.document, command.database_name);
+    }
+
+    Err(DocumentDBError::internal_error(
+        "Unable to parse OP_QUERY request".to_owned(),
+    ))
+}
+
+fn parse_query_document(message: &[u8]) -> Result<QueryCommand<'_>> {
     let mut buf = message;
 
     if buf.remaining() < 4 {
@@ -59,36 +105,39 @@ pub fn parse_query(message: &[u8]) -> Result<Request<'_>> {
         ));
     }
 
-    // Parse the command document - this one IS inspected by the gateway
+    // Parse the command document — this one IS inspected by the gateway
     let query = RawDocument::from_bytes(&buf[..query_size])?;
     let (db, collection_name) = protocol::extract_database_and_collection_names(collection_path)?;
 
-    // OP_QUERY is only supported for commands currently
-    if collection_name == "$cmd" {
-        // If `$db` is present in the document body (regardless of type), use the zero-copy path.
-        // Otherwise, rebuild the document with `$db` injected from the namespace —
-        // legacy drivers rely on the wire-level fullCollectionName and may omit `$db`.
-        //
-        // Note: leaving an invalid `$db` value in-place ensures it is rejected by the
-        // common command validation path, rather than appending a second `$db` field.
-        if matches!(query.get("$db"), Ok(Some(_))) {
-            return reader::parse_cmd(query, None);
-        }
-        return parse_cmd_with_db(query, db);
-    }
-
-    Err(DocumentDBError::internal_error(
-        "Unable to parse OP_QUERY request".to_owned(),
-    ))
+    Ok(QueryCommand {
+        document: query,
+        database_name: db,
+        collection_name,
+    })
 }
 
-/// Rebuild a command document with `$db` appended, then parse it as a command.
-fn parse_cmd_with_db(query: &RawDocument, db: &str) -> Result<Request<'static>> {
+fn has_database_name(query: &RawDocument) -> bool {
+    matches!(query.get("$db"), Ok(Some(_)))
+}
+
+fn parse_cmd_with_db(query: &RawDocument, db: &str) -> Result<WireRequest<'static>> {
+    reader::parse_cmd_buf(build_command_with_db(query, db)?)
+}
+
+fn parse_cmd_payload_with_db(query: &RawDocument, db: &str) -> Result<RequestPreview<'static>> {
+    reader::parse_cmd_buf_payload(build_command_with_db(query, db)?)
+}
+
+fn build_command_with_db(query: &RawDocument, db: &str) -> Result<RawDocumentBuf> {
     let query_bytes = query.as_bytes();
 
-    // The original doc is: [4-byte len][elements...][0x00 terminator]
-    // We insert a `$db` string element before the terminator.
-    let elements = &query_bytes[4..query_bytes.len() - 1]; // strip length prefix and terminator
+    if query_bytes.len() < 5 {
+        return Err(DocumentDBError::internal_error(
+            "OP_QUERY command document is too short".to_owned(),
+        ));
+    }
+
+    let elements = &query_bytes[4..query_bytes.len() - 1];
 
     let mut body = Vec::with_capacity(query_bytes.len() + db.len() + 16);
     let doc_start = bson_writer::begin_document(&mut body);
@@ -96,13 +145,11 @@ fn parse_cmd_with_db(query: &RawDocument, db: &str) -> Result<Request<'static>> 
     bson_writer::append_bson_string(&mut body, "$db", db);
     bson_writer::end_document(&mut body, doc_start)?;
 
-    let doc = RawDocumentBuf::from_bytes(body).map_err(|e| {
+    RawDocumentBuf::from_bytes(body).map_err(|e| {
         DocumentDBError::internal_error(format!(
             "Failed to construct command with $db for OP_QUERY: {e}"
         ))
-    })?;
-
-    reader::parse_cmd_buf(doc)
+    })
 }
 
 #[cfg(test)]
@@ -131,11 +178,8 @@ mod tests {
         let msg = build_op_query_message("testdb.$cmd", command.as_bytes());
 
         let request = parse_query(&msg).expect("should parse OP_QUERY");
-        let info = request
-            .extract_common()
-            .expect("extract_common should succeed");
-
-        assert_eq!(info.db().expect("db should be present"), "testdb");
+        assert_eq!(request.db(), "testdb");
+        assert_eq!(request.document().get_str("$db").unwrap(), "testdb");
         assert_eq!(request.request_type(), RequestType::Find);
     }
 
@@ -145,12 +189,7 @@ mod tests {
         let msg = build_op_query_message("wiredb.$cmd", command.as_bytes());
 
         let request = parse_query(&msg).expect("should parse OP_QUERY");
-        let info = request
-            .extract_common()
-            .expect("extract_common should succeed");
-
-        // Should use the $db from the document body, not the namespace
-        assert_eq!(info.db().expect("db should be present"), "fromBody");
+        assert_eq!(request.db(), "fromBody");
     }
 
     #[test]
@@ -163,34 +202,26 @@ mod tests {
     }
 
     #[test]
-    fn op_query_invalid_db_type_rejected_without_duplicate() {
-        // $db is present but with an integer type instead of a string.
-        // The parser should NOT inject a second $db; instead it should pass
-        // the document as-is so common validation rejects the invalid type.
+    fn op_query_invalid_db_type_is_rejected() {
         let command = rawdoc! { "find": "myCollection", "$db": 42 };
         let msg = build_op_query_message("testdb.$cmd", command.as_bytes());
 
-        let request = parse_query(&msg).expect("should parse OP_QUERY");
-        let result = request.extract_common();
-
-        // Common validation rejects $db because it's not a string
-        assert!(
-            result.is_err(),
-            "non-string $db should be rejected by common validation"
-        );
+        parse_query(&msg).expect_err("non-string $db should be rejected");
     }
 
     #[test]
-    fn op_query_invalid_db_type_does_not_inject_duplicate() {
-        // $db is a boolean — verify that the document passed to parse_cmd
-        // still contains exactly one $db field (the invalid one from the body),
-        // not an additional string $db injected from the namespace.
+    fn op_query_payload_invalid_db_type_does_not_inject_duplicate() {
         let command = rawdoc! { "ping": 1, "$db": true };
         let msg = build_op_query_message("wiredb.$cmd", command.as_bytes());
 
-        let request = parse_query(&msg).expect("should parse OP_QUERY");
+        let request = parse_query_payload(&msg).expect("should parse OP_QUERY payload");
 
-        // Count $db fields in the underlying document
+        assert_eq!(
+            request.db_hint(),
+            Some("wiredb"),
+            "payload metadata should still carry the namespace database"
+        );
+
         let db_count = request
             .document()
             .iter()
@@ -199,7 +230,19 @@ mod tests {
             .count();
         assert_eq!(
             db_count, 1,
-            "should have exactly one $db field, not a duplicate"
+            "payload parser should not append a duplicate database field"
         );
+    }
+
+    #[test]
+    fn op_query_payload_injects_db_when_missing() {
+        let command = rawdoc! { "ping": 1 };
+        let msg = build_op_query_message("payloadDb.$cmd", command.as_bytes());
+
+        let request = parse_query_payload(&msg).expect("should parse OP_QUERY payload");
+
+        assert_eq!(request.db_hint(), Some("payloadDb"));
+        assert_eq!(request.document().get_str("$db").unwrap(), "payloadDb");
+        assert_eq!(request.request_type(), RequestType::Ping);
     }
 }

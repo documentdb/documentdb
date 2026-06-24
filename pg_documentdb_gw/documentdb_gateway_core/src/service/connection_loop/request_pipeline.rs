@@ -15,7 +15,9 @@ use crate::{
     context::{ConnectionContext, RequestContext},
     postgres::PgDataClient,
     protocol::{self, header::Header},
-    requests::{request_tracker::RequestTracker, validation, RequestIntervalKind},
+    requests::{
+        request_tracker::RequestTracker, validation, RequestIntervalKind, RequestObservation,
+    },
     service::connection_loop::{
         error_reply,
         read_ahead::{self, PendingHeaderRead},
@@ -98,17 +100,24 @@ where
     }
 
     let format_request_start = Instant::now();
-    let request = match protocol::reader::parse_request(
+    let wire_request = match protocol::reader::parse_request(
         &message,
         &mut connection_context.requires_response,
     ) {
         Ok(request) => request,
         Err(error) => {
+            let telemetry_wire_request = protocol::reader::parse_request_payload(
+                &message,
+                &mut connection_context.requires_response,
+            )
+            .ok();
             error_reply::reply_with_request_error::<W>(
                 connection_context,
                 header,
                 &error,
-                None,
+                telemetry_wire_request
+                    .as_ref()
+                    .map(RequestObservation::Preview),
                 writer,
                 None,
                 &request_tracker,
@@ -122,33 +131,13 @@ where
     };
     request_tracker.record_duration(RequestIntervalKind::FormatRequest, format_request_start);
 
-    let request_info = match request.extract_common() {
-        Ok(request_info) => request_info,
-        Err(error) => {
-            error_reply::reply_with_request_error::<W>(
-                connection_context,
-                header,
-                &error,
-                Some(&request),
-                writer,
-                None,
-                &request_tracker,
-                activity_id,
-                Some(handle_message_start),
-            )
-            .await;
-
-            return next_header;
-        }
-    };
-
-    if let Err(error) = validation::validate_request(connection_context, &request_info, &request) {
-        let collection = request_info.collection().unwrap_or("").to_owned();
+    if let Err(error) = validation::validate_request(connection_context, &wire_request) {
+        let collection = wire_request.collection().unwrap_or("").to_owned();
         error_reply::reply_with_request_error::<W>(
             connection_context,
             header,
             &error,
-            Some(&request),
+            Some(RequestObservation::Strict(&wire_request)),
             writer,
             Some(collection),
             &request_tracker,
@@ -160,12 +149,7 @@ where
         return next_header;
     }
 
-    let request_context = RequestContext {
-        activity_id,
-        payload: &request,
-        info: &request_info,
-        tracker: &request_tracker,
-    };
+    let request_context = RequestContext::new(activity_id, &wire_request, &request_tracker);
 
     // Errors in request handling are handled explicitly so that telemetry can have access to the
     // request. The next header read is already pending, so the caller can await it on the next
@@ -179,12 +163,16 @@ where
     )
     .await
     {
-        let collection = request_context.info.collection().unwrap_or("").to_owned();
+        let collection = request_context
+            .request()
+            .collection()
+            .unwrap_or("")
+            .to_owned();
         error_reply::reply_with_request_error::<W>(
             connection_context,
             header,
             &error,
-            Some(&request),
+            Some(RequestObservation::Strict(request_context.request())),
             writer,
             Some(collection),
             request_context.tracker,
@@ -203,7 +191,7 @@ mod tests {
 
     use std::sync::Arc;
 
-    use bson::doc;
+    use bson::{doc, spec::BinarySubtype, Binary};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use crate::{
@@ -447,6 +435,82 @@ mod tests {
         assert!(
             next_header_result
                 .expect("next header future should resolve after validation failure")
+                .is_none(),
+            "connection should be at EOF after the single invalid request"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_message_replies_when_pre_auth_request_has_transaction_metadata() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        let invalid_document = doc! {
+            "ping": 1_i32,
+            "$db": "admin",
+            "lsid": { "id": Binary { subtype: BinarySubtype::Uuid, bytes: vec![0_u8; 16] } },
+            "txnNumber": 1_i64,
+            "autocommit": false,
+        };
+        let (header, body) = build_op_msg_parts(&invalid_document, 66);
+
+        let (response_bytes, next_header_result) = execute_handle_message::<DocumentDBDataClient>(
+            &mut connection_context,
+            header,
+            body,
+            "activity-pre-auth-transaction-metadata",
+        )
+        .await;
+
+        let (response_header, response_document) = decode_op_msg_response(&response_bytes);
+        assert_header_matches(
+            &response_header,
+            response_header.message_length(),
+            66,
+            66,
+            OpCode::Msg,
+        );
+        assert_error_response(&response_document, ErrorCode::Unauthorized);
+        assert!(
+            next_header_result
+                .expect("next header future should resolve after pre-auth metadata failure")
+                .is_none(),
+            "connection should be at EOF after the single invalid request"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_message_replies_when_pre_auth_request_has_explain_flag() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        let invalid_document = doc! {
+            "ping": 1_i32,
+            "$db": "admin",
+            "explain": true,
+        };
+        let (header, body) = build_op_msg_parts(&invalid_document, 67);
+
+        let (response_bytes, next_header_result) = execute_handle_message::<DocumentDBDataClient>(
+            &mut connection_context,
+            header,
+            body,
+            "activity-pre-auth-explain",
+        )
+        .await;
+
+        let (response_header, response_document) = decode_op_msg_response(&response_bytes);
+        assert_header_matches(
+            &response_header,
+            response_header.message_length(),
+            67,
+            67,
+            OpCode::Msg,
+        );
+        assert_error_response(&response_document, ErrorCode::BadValue);
+        assert!(
+            next_header_result
+                .expect("next header future should resolve after pre-auth explain failure")
                 .is_none(),
             "connection should be at EOF after the single invalid request"
         );

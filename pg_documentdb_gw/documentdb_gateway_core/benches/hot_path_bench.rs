@@ -10,6 +10,7 @@
 
 use std::{
     hint::black_box,
+    io::Cursor,
     pin::Pin,
     sync::OnceLock,
     task::{Context, Poll},
@@ -18,9 +19,10 @@ use std::{
 use bson::{rawdoc, RawDocument, RawDocumentBuf};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use tokio::{
-    io::{AsyncWrite, AsyncWriteExt},
+    io::{AsyncWrite, AsyncWriteExt, BufReader},
     runtime::Runtime,
 };
+use uuid::{Builder, Uuid};
 
 use documentdb_gateway_core::{
     protocol::{header::Header, opcode::OpCode, reader},
@@ -276,12 +278,7 @@ fn op_msg_message(request_id: i32, flags: u32, sections: &[Vec<u8>]) -> RequestM
         body.extend_from_slice(section);
     }
 
-    RequestMessage {
-        request: body,
-        op_code: OpCode::Msg,
-        request_id,
-        response_to: 0,
-    }
+    RequestMessage::new(body.into(), OpCode::Msg, request_id, 0)
 }
 
 #[expect(
@@ -303,12 +300,7 @@ fn op_query_message(request_id: i32, namespace: &str, command: &RawDocumentBuf) 
     body.extend_from_slice(&1_u32.to_le_bytes());
     body.extend_from_slice(command.as_bytes());
 
-    RequestMessage {
-        request: body,
-        op_code: OpCode::Query,
-        request_id,
-        response_to: 0,
-    }
+    RequestMessage::new(body.into(), OpCode::Query, request_id, 0)
 }
 
 fn bench_request_parse(c: &mut Criterion) {
@@ -440,5 +432,319 @@ fn bench_response_writer(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_request_parse, bench_response_writer);
+// ---------------------------------------------------------------------------
+// Activity ID — String vs stack-allocated Hyphenated
+// ---------------------------------------------------------------------------
+
+fn bench_activity_id(c: &mut Criterion) {
+    let connection_id = Uuid::new_v4();
+
+    let mut group = c.benchmark_group("activity_id");
+    group.throughput(Throughput::Elements(1));
+
+    // Current: returns String (heap allocation)
+    group.bench_function("string_alloc", |b| {
+        b.iter(|| {
+            let mut bytes = *connection_id.as_bytes();
+            bytes[12..].copy_from_slice(&42_i32.to_be_bytes());
+            let _id: String = Builder::from_bytes(bytes).into_uuid().to_string();
+        });
+    });
+
+    // Proposed: stack-allocated via encode_lower
+    group.bench_function("stack_encode_lower", |b| {
+        b.iter(|| {
+            let mut bytes = *connection_id.as_bytes();
+            bytes[12..].copy_from_slice(&42_i32.to_be_bytes());
+            let uuid = Builder::from_bytes(bytes).into_uuid();
+            let mut buf = [0u8; uuid::fmt::Hyphenated::LENGTH];
+            let _id: &str = uuid.hyphenated().encode_lower(&mut buf);
+        });
+    });
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// Message Buffer — Vec<u8> (zero-init + alloc) vs BytesMut
+// ---------------------------------------------------------------------------
+
+fn bench_message_buffer(c: &mut Criterion) {
+    let mut group = c.benchmark_group("message_buffer");
+
+    for size in [256, 4096, 65536] {
+        group.throughput(Throughput::Bytes(size as u64));
+
+        // Current: vec![0; N] per request
+        group.bench_with_input(
+            BenchmarkId::new("vec_zero_init", size),
+            &size,
+            |b, &size| {
+                b.iter(|| {
+                    let buf: Vec<u8> = vec![0; size];
+                    std::hint::black_box(buf);
+                });
+            },
+        );
+
+        // Proposed: BytesMut::zeroed per request (matches actual code in reader.rs)
+        group.bench_with_input(
+            BenchmarkId::new("bytes_mut_zeroed", size),
+            &size,
+            |b, &size| {
+                use bytes::BytesMut;
+                b.iter(|| {
+                    let buf = BytesMut::zeroed(size);
+                    let frozen = buf.freeze();
+                    std::hint::black_box(frozen);
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// BufStream buffer size — read throughput at different buffer sizes
+// ---------------------------------------------------------------------------
+
+fn bench_bufstream_sizes(c: &mut Criterion) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    // Simulate reading 64 KiB of data through BufReader with different buffer sizes
+    let data = vec![0xABu8; 65536];
+
+    let mut group = c.benchmark_group("bufstream_read_size");
+    group.throughput(Throughput::Bytes(65536));
+
+    for buf_size in [8 * 1024, 16 * 1024, 32 * 1024, 64 * 1024] {
+        group.bench_with_input(
+            BenchmarkId::new("buf_reader", buf_size),
+            &buf_size,
+            |b, &buf_size| {
+                b.iter(|| {
+                    rt.block_on(async {
+                        let cursor = Cursor::new(&*data);
+                        let mut reader = BufReader::with_capacity(buf_size, cursor);
+                        let mut sink = Vec::with_capacity(65536);
+                        tokio::io::copy(&mut reader, &mut sink).await.unwrap();
+                    });
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// BSON Document Scanning — bson crate iterator vs zero-copy scanner
+// ---------------------------------------------------------------------------
+
+fn bench_bson_scan(c: &mut Criterion) {
+    use bson::rawdoc;
+    use documentdb_gateway_core::protocol::bson_scanner;
+
+    // Realistic command document with common fields
+    let doc = rawdoc! {
+        "find": "users",
+        "$db": "myapp",
+        "maxTimeMS": 5000_i32,
+        "lsid": { "id": bson::Binary { subtype: bson::spec::BinarySubtype::Uuid, bytes: vec![0u8; 16] } },
+        "txnNumber": 42_i64,
+        "autocommit": false,
+        "readConcern": { "level": "majority" },
+        "filter": { "age": { "$gt": 21 } },
+        "projection": { "name": 1, "email": 1 },
+        "sort": { "created": -1 }
+    };
+    let bytes = doc.as_bytes();
+
+    let mut group = c.benchmark_group("bson_document_scan");
+    group.throughput(Throughput::Elements(1));
+
+    // Current: bson crate RawDocument iterator
+    group.bench_function("bson_crate_iter", |b| {
+        b.iter(|| {
+            let doc = bson::RawDocument::from_bytes(bytes).unwrap();
+            let mut field_count = 0u32;
+            for entry in doc {
+                let (k, v) = entry.unwrap();
+                match k {
+                    "$db" => {
+                        let _ = v.as_str();
+                    }
+                    "maxTimeMS" => {
+                        let _ = v.as_i32();
+                    }
+                    "autocommit" | "explain" => {
+                        let _ = v.as_bool();
+                    }
+                    "txnNumber" => {
+                        let _ = v.as_i64();
+                    }
+                    _ => {}
+                }
+                field_count += 1;
+            }
+            std::hint::black_box(field_count);
+        });
+    });
+
+    // New: zero-copy scanner
+    group.bench_function("zero_copy_scanner", |b| {
+        b.iter(|| {
+            let mut field_count = 0u32;
+            bson_scanner::scan_document(bytes, |field| {
+                match field.name() {
+                    b"$db" => {
+                        let _ = field.as_str();
+                    }
+                    b"maxTimeMS" => {
+                        let _ = field.as_i32();
+                    }
+                    b"autocommit" | b"explain" => {
+                        let _ = field.as_bool();
+                    }
+                    b"txnNumber" => {
+                        let _ = field.as_i64();
+                    }
+                    _ => {}
+                }
+                field_count += 1;
+                Ok(())
+            })
+            .unwrap();
+            std::hint::black_box(field_count);
+        });
+    });
+
+    // First field extraction — command name only
+    group.bench_function("bson_first_element", |b| {
+        b.iter(|| {
+            let doc = bson::RawDocument::from_bytes(bytes).unwrap();
+            let first = doc.into_iter().next().unwrap().unwrap();
+            std::hint::black_box(first.0);
+        });
+    });
+
+    group.bench_function("scanner_first_field", |b| {
+        b.iter(|| {
+            let (name, _et) = bson_scanner::first_field_name(bytes).unwrap();
+            std::hint::black_box(name);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_request_extract_common(c: &mut Criterion) {
+    use bson::{rawdoc, spec::ElementType};
+
+    let request = rawdoc! {
+        "find": "users",
+        "$db": "myapp",
+        "maxTimeMS": 5000_i32,
+        "lsid": { "id": bson::Binary { subtype: bson::spec::BinarySubtype::Uuid, bytes: vec![0u8; 16] } },
+        "txnNumber": 42_i64,
+        "autocommit": false,
+        "readConcern": { "level": "majority" },
+        "filter": { "age": { "$gt": 21 } },
+        "projection": { "name": 1, "email": 1 },
+        "sort": { "created": -1 }
+    };
+
+    let mut group = c.benchmark_group("request_extract_common");
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("no_callback_hot_path", |b| {
+        b.iter(|| {
+            let wire_request = reader::parse_cmd(request.as_ref(), None).unwrap();
+            std::hint::black_box(wire_request.max_time_ms());
+            std::hint::black_box(wire_request.transaction_info());
+            std::hint::black_box(wire_request.db());
+            std::hint::black_box(wire_request.collection().unwrap());
+            std::hint::black_box(wire_request.read_concern());
+        });
+    });
+
+    group.bench_function("wire_request_parse_build", |b| {
+        b.iter(|| {
+            let wire_request = reader::parse_cmd(request.as_ref(), None).unwrap();
+            std::hint::black_box(wire_request.request_type());
+            std::hint::black_box(wire_request.execution_mode());
+            std::hint::black_box(wire_request.max_time_ms());
+            std::hint::black_box(wire_request.transaction_info());
+            std::hint::black_box(wire_request.db());
+            std::hint::black_box(wire_request.collection().unwrap());
+            std::hint::black_box(wire_request.read_concern());
+        });
+    });
+
+    group.bench_function("raw_document_iter_baseline", |b| {
+        b.iter(|| {
+            let mut max_time_ms = None;
+            let mut db = None;
+            let mut collection = None;
+            let mut lsid_len = None;
+            let mut transaction_number = None;
+            let mut auto_commit = None;
+            let mut read_concern_level = None;
+
+            for entry in request.as_ref() {
+                let (key, value) = entry.unwrap();
+                match key {
+                    "$db" => db = value.as_str(),
+                    "maxTimeMS" => {
+                        max_time_ms = match value.element_type() {
+                            ElementType::Int32 => value.as_i32().map(i64::from),
+                            ElementType::Int64 => value.as_i64(),
+                            _ => None,
+                        };
+                    }
+                    "find" => collection = value.as_str(),
+                    "lsid" => {
+                        lsid_len = value
+                            .as_document()
+                            .and_then(|document| document.get_binary("id").ok())
+                            .map(|binary| binary.bytes.len());
+                    }
+                    "txnNumber" => transaction_number = value.as_i64(),
+                    "autocommit" => auto_commit = value.as_bool(),
+                    "readConcern" => {
+                        read_concern_level = value
+                            .as_document()
+                            .and_then(|document| document.get_str("level").ok());
+                    }
+                    _ => {}
+                }
+            }
+
+            std::hint::black_box(max_time_ms);
+            std::hint::black_box(db);
+            std::hint::black_box(collection);
+            std::hint::black_box(lsid_len);
+            std::hint::black_box(transaction_number);
+            std::hint::black_box(auto_commit);
+            std::hint::black_box(read_concern_level);
+        });
+    });
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_request_parse,
+    bench_response_writer,
+    bench_activity_id,
+    bench_message_buffer,
+    bench_bufstream_sizes,
+    bench_bson_scan,
+    bench_request_extract_common,
+);
 criterion_main!(benches);

@@ -80,9 +80,9 @@ pub async fn end_or_kill_sessions(
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let request = request_context.payload;
+    let request = request_context.request();
 
-    let key = if request_context.payload.request_type() == RequestType::KillSessions {
+    let key = if request_context.request_type() == RequestType::KillSessions {
         "killSessions"
     } else {
         "endSessions"

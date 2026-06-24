@@ -32,7 +32,7 @@ use crate::{
     },
     processor,
     protocol::OK_SUCCEEDED,
-    requests::{Request, RequestType},
+    requests::{RequestType, WireRequest},
     responses::{self, constant::generic_internal_error_message, RawResponse, Response},
     security::principal::Principal,
 };
@@ -281,14 +281,15 @@ pub async fn process<T>(
 where
     T: PgDataClient,
 {
-    let request = request_context.payload;
+    let request = request_context.request();
+    let request_type = request_context.request_type();
     if let Some(response) =
         handle_auth_request(connection_context, request, request_context).await?
     {
         return Ok(response);
     }
 
-    if request.request_type().allowed_unauthorized() {
+    if request_type.allowed_unauthorized() {
         let service_context = Arc::clone(&connection_context.service_context);
         let data_client = T::new_unauthorized(&service_context)?;
 
@@ -297,13 +298,13 @@ where
 
     Err(DocumentDBError::unauthorized(format!(
         "Command {} is not allowed as the connection is not authenticated yet.",
-        request.request_type().to_string().to_lowercase()
+        request_type.to_string().to_lowercase()
     )))
 }
 
 async fn handle_auth_request(
     connection_context: &mut ConnectionContext,
-    request: &Request<'_>,
+    request: &WireRequest<'_>,
     request_context: &RequestContext<'_>,
 ) -> Result<Option<Response>> {
     match request.request_type() {
@@ -338,7 +339,7 @@ fn generate_server_nonce(client_nonce: &str) -> String {
 
 async fn handle_sasl_start(
     connection_context: &mut ConnectionContext,
-    request: &Request<'_>,
+    request: &WireRequest<'_>,
     request_context: &RequestContext<'_>,
 ) -> Result<Response> {
     let mechanism = request
@@ -361,7 +362,7 @@ async fn handle_sasl_start(
 
 async fn handle_scram(
     connection_context: &mut ConnectionContext,
-    request: &Request<'_>,
+    request: &WireRequest<'_>,
     request_context: &RequestContext<'_>,
 ) -> Result<Response> {
     let payload = parse_sasl_payload(request, true)?;
@@ -409,7 +410,7 @@ async fn handle_scram(
 
 async fn handle_oidc(
     connection_context: &mut ConnectionContext,
-    request: &Request<'_>,
+    request: &WireRequest<'_>,
     request_context: &RequestContext<'_>,
 ) -> Result<Response> {
     let payload = request
@@ -637,7 +638,7 @@ fn parse_and_validate_jwt_token(token_string: &str) -> Result<(String, u64)> {
 
 async fn handle_sasl_continue(
     connection_context: &mut ConnectionContext,
-    request: &Request<'_>,
+    request: &WireRequest<'_>,
     request_context: &RequestContext<'_>,
 ) -> Result<Response> {
     let payload = parse_sasl_payload(request, false)?;
@@ -768,7 +769,10 @@ struct ScramPayload<'a> {
     channel_binding: Option<&'a str>,
 }
 
-fn parse_sasl_payload<'a>(request: &'a Request<'a>, with_header: bool) -> Result<ScramPayload<'a>> {
+fn parse_sasl_payload<'a>(
+    request: &'a WireRequest<'a>,
+    with_header: bool,
+) -> Result<ScramPayload<'a>> {
     let payload = request
         .document()
         .get_binary("payload")

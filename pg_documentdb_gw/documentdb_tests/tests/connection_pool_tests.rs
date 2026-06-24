@@ -27,9 +27,7 @@ use documentdb_gateway_core::{
         },
         create_query_catalog,
     },
-    requests::{
-        request_tracker::RequestTracker, Request as GatewayRequest, RequestInfo, RequestType,
-    },
+    requests::{request_tracker::RequestTracker, RequestExecutionMode, RequestType, WireRequest},
 };
 use documentdb_tests::test_setup::config::{
     failing_setup_configuration, setup_configuration, setup_configuration_with_command_timeout,
@@ -53,6 +51,17 @@ async fn build_connection_pool(
         PgPoolSettings::system_pool_settings(max_connections),
     )
     .expect("Failed to create connection pool")
+}
+
+fn ping_request() -> WireRequest<'static> {
+    WireRequest::from_owned_command_document(
+        RequestType::Ping,
+        RequestExecutionMode::Normal,
+        None,
+        rawdoc! { "ping": 1, "$db": "admin" },
+        None,
+    )
+    .expect("ping request should parse")
 }
 
 fn build_pool_manager(setup_config: &DocumentDBSetupConfiguration) -> PoolManager {
@@ -144,14 +153,8 @@ async fn run_request_with_retries_counts_deadpool_timeouts_once() {
     let _held = pool.acquire_connection().await.unwrap();
     let _ = pool.report_status();
     let request_tracker = RequestTracker::new();
-    let ping = GatewayRequest::RawBuf(RequestType::Ping, rawdoc! { "ping": 1, "$db": "admin" });
-    let info = RequestInfo::new();
-    let ctx = RequestContext {
-        activity_id: "",
-        payload: &ping,
-        info: &info,
-        tracker: &request_tracker,
-    };
+    let ping = ping_request();
+    let ctx = RequestContext::new("", &ping, &request_tracker);
 
     let error = run_request_with_retries(
         ConnectionSource::Pool(&pool),
@@ -211,14 +214,8 @@ async fn run_request_with_retries_returns_exceeded_time_limit_when_command_timeo
 
     let error = {
         let tracker = RequestTracker::new();
-        let ping = GatewayRequest::RawBuf(RequestType::Ping, rawdoc! { "ping": 1, "$db": "admin" });
-        let info = RequestInfo::new();
-        let ctx = RequestContext {
-            activity_id: "",
-            payload: &ping,
-            info: &info,
-            tracker: &tracker,
-        };
+        let ping = ping_request();
+        let ctx = RequestContext::new("", &ping, &tracker);
         run_request_with_retries(
             ConnectionSource::Pool(&pool),
             QueryOptions::builder().build(),
@@ -248,14 +245,8 @@ async fn run_request_with_retries_returns_original_error_when_no_command_timeout
     // never returned — the original pool error propagates instead.
     let error = {
         let tracker = RequestTracker::new();
-        let ping = GatewayRequest::RawBuf(RequestType::Ping, rawdoc! { "ping": 1, "$db": "admin" });
-        let info = RequestInfo::new();
-        let ctx = RequestContext {
-            activity_id: "",
-            payload: &ping,
-            info: &info,
-            tracker: &tracker,
-        };
+        let ping = ping_request();
+        let ctx = RequestContext::new("", &ping, &tracker);
         run_request_with_retries(
             ConnectionSource::Pool(&pool),
             QueryOptions::builder().build(),

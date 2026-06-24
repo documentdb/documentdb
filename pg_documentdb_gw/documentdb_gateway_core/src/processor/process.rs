@@ -35,7 +35,7 @@ pub async fn process_request(
 
     transaction::handle(request_context, connection_context, pg_data_client).await?;
 
-    let result = match request_context.payload.request_type() {
+    let result = match request_context.execution_request_type() {
         RequestType::Aggregate => {
             data_management::process_aggregate(request_context, connection_context, pg_data_client)
                 .await
@@ -348,7 +348,7 @@ pub async fn process_request(
             ErrorCode::CommandNotSupported,
             format!(
                 "Command '{}' not supported.",
-                request_context.payload.request_type().to_command_str()
+                request_context.request_type().to_command_str()
             ),
         )),
     };
@@ -361,8 +361,10 @@ pub async fn process_request(
             }
             // In the case of failures with aggregate/find, we need to abort the transaction.
             Err(_)
-                if request_context.payload.request_type() == RequestType::Find
-                    || request_context.payload.request_type() == RequestType::Aggregate =>
+                if matches!(
+                    request_context.request_type(),
+                    RequestType::Find | RequestType::Aggregate
+                ) =>
             {
                 transaction::process_abort(connection_context, request_context.activity_id).await?;
             }

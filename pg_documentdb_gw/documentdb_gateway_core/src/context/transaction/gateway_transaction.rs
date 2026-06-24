@@ -19,7 +19,7 @@ use crate::{
     postgres::{self, conn_mgmt::Connection},
 };
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct RequestTransactionInfo {
     pub transaction_number: TransactionNumber,
     pub auto_commit: bool,
