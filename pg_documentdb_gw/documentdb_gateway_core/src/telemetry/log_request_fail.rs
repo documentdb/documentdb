@@ -10,7 +10,7 @@ use std::backtrace::Backtrace;
 
 use crate::{
     error::DocumentDBError,
-    requests::Request,
+    requests::RequestObservation,
     telemetry::{event_id::EventId, utils},
 };
 
@@ -19,7 +19,7 @@ use crate::{
 pub fn log_request_failure(
     error: &DocumentDBError,
     activity_id: &str,
-    request: Option<&Request<'_>>,
+    request: Option<RequestObservation<'_, '_>>,
 ) {
     let operation_name = utils::get_safe_operation_name(request);
 

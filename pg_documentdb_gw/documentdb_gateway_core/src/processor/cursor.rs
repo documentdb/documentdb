@@ -84,7 +84,7 @@ pub async fn process_kill_cursors(
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let request = request_context.payload;
+    let request = request_context.request();
 
     let _ = request
         .document()
@@ -144,7 +144,7 @@ pub async fn process_get_more(
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let request = request_context.payload;
+    let request = request_context.request();
 
     let mut id = None;
     request.extract_fields(|k, v| {
@@ -163,11 +163,10 @@ pub async fn process_get_more(
     ))?;
 
     // We use the session id from the request context since we may, or may not be in a transaction.
-    let current_lsid = request_context.info().lsid.as_ref();
+    let current_lsid = request_context.request().lsid();
     let current_transaction_number = request_context
-        .info()
-        .transaction_info
-        .as_ref()
+        .request()
+        .transaction_info()
         .map(|t| &t.transaction_number);
 
     let cursor_ref =

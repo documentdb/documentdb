@@ -9,7 +9,6 @@
 use core::f64;
 use std::{cmp::Ordering, collections::HashMap, str::FromStr};
 
-use async_recursion::async_recursion;
 use bson::{rawdoc, Document, RawArrayBuf, RawBson, RawDocument, RawDocumentBuf};
 use model::{
     DistributedJob, DistributedQueryPlan, DistributedSubPlan, ExplainPlan, IndexCost, IndexDetails,
@@ -23,7 +22,7 @@ use crate::{
     error::{DocumentDBError, Result},
     postgres::{PgDataClient, QueryCatalog},
     protocol::OK_SUCCEEDED,
-    requests::{Request, RequestInfo, RequestType},
+    requests::{ExplainTarget, RequestType},
     responses::{RawResponse, Response},
 };
 
@@ -107,111 +106,74 @@ fn write_output_stage(
     }
 }
 
-/// Processing explain is a bit complicated because the payload can come in two forms:
-/// A command with explain:true, or an explain command wrapping a sub command
-#[async_recursion]
+/// Processing explain handles both inline `explain: true` and top-level explain wrappers.
+///
+/// # Errors
+///
+/// Returns an error if the explain target is malformed or backend explain execution fails.
 pub async fn process_explain(
     request_context: &RequestContext<'_>,
     verbosity: Option<Verbosity>,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    // Extract the first command from the request document
-    let first_command = {
-        let request = request_context.payload;
-        request.document().into_iter().next()
-    };
+    let target = request_context.request().explain_target()?;
+    let request_document = request_context.request().document();
 
-    if let Some(result) = first_command {
-        let result = result?;
+    let verbosity = verbosity.unwrap_or_else(|| {
+        request_document
+            .get_str("verbosity")
+            .map_or(Verbosity::QueryPlanner, Verbosity::from_str)
+    });
 
-        // Default to QueryPlanner here, as Default tends to be too brief
-        let verbosity = verbosity.unwrap_or_else(|| {
-            let request = request_context.payload;
-            request
-                .document()
-                .get_str("verbosity")
-                .map_or(Verbosity::QueryPlanner, Verbosity::from_str)
-        });
-
-        match result.0 {
-            "explain" => {
-                if let Some(explain_doc) = result.1.as_document() {
-                    let new_request = Request::Raw(
-                        RequestType::Explain,
-                        explain_doc,
-                        request_context.payload.extra(),
-                    );
-
-                    let new_request_context = RequestContext {
-                        activity_id: request_context.activity_id,
-                        payload: &new_request,
-                        info: request_context.info,
-                        tracker: request_context.tracker,
-                    };
-
-                    // Recursive call with the unwrapped command
-                    Box::pin(process_explain(
-                        &new_request_context,
-                        Some(verbosity),
-                        connection_context,
-                        pg_data_client,
-                    ))
-                    .await
-                } else {
-                    Err(DocumentDBError::bad_value(
-                        "Explain command was not a document.".to_owned(),
-                    ))
-                }
-            }
-            "aggregate" => {
-                run_explain(
-                    request_context,
-                    "pipeline",
-                    verbosity,
-                    connection_context,
-                    pg_data_client,
-                )
-                .await
-            }
-            "find" => {
-                run_explain(
-                    request_context,
-                    "find",
-                    verbosity,
-                    connection_context,
-                    pg_data_client,
-                )
-                .await
-            }
-            "count" => {
-                run_explain(
-                    request_context,
-                    "count",
-                    verbosity,
-                    connection_context,
-                    pg_data_client,
-                )
-                .await
-            }
-            "distinct" => {
-                run_explain(
-                    request_context,
-                    "distinct",
-                    verbosity,
-                    connection_context,
-                    pg_data_client,
-                )
-                .await
-            }
-            _ => Err(DocumentDBError::bad_value(
-                "Unrecognized explain command.".to_owned(),
-            )),
+    match target.request_type() {
+        RequestType::Aggregate => {
+            run_explain(
+                request_context,
+                &target,
+                "pipeline",
+                verbosity,
+                connection_context,
+                pg_data_client,
+            )
+            .await
         }
-    } else {
-        Err(DocumentDBError::bad_value(
-            "No command was provided to explain".to_owned(),
-        ))
+        RequestType::Find => {
+            run_explain(
+                request_context,
+                &target,
+                "find",
+                verbosity,
+                connection_context,
+                pg_data_client,
+            )
+            .await
+        }
+        RequestType::Count => {
+            run_explain(
+                request_context,
+                &target,
+                "count",
+                verbosity,
+                connection_context,
+                pg_data_client,
+            )
+            .await
+        }
+        RequestType::Distinct => {
+            run_explain(
+                request_context,
+                &target,
+                "distinct",
+                verbosity,
+                connection_context,
+                pg_data_client,
+            )
+            .await
+        }
+        _ => Err(DocumentDBError::bad_value(
+            "Unrecognized explain command.".to_owned(),
+        )),
     }
 }
 
@@ -241,16 +203,22 @@ impl Verbosity {
 #[expect(clippy::expect_used, reason = "values are checked before access")]
 async fn run_explain(
     request_context: &RequestContext<'_>,
+    target: &ExplainTarget<'_>,
     query_base: &str,
     verbosity: Verbosity,
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let request = request_context.payload;
-    let request_info = request_context.info;
+    let request = request_context.request();
 
     let (explain_response, query) = pg_data_client
-        .execute_explain(request_context, query_base, verbosity, connection_context)
+        .execute_explain(
+            request_context,
+            target,
+            query_base,
+            verbosity,
+            connection_context,
+        )
         .await?;
 
     let dynamic_config = connection_context.dynamic_configuration();
@@ -261,10 +229,10 @@ async fn run_explain(
                 .enable_developer_explain()
                 .then(|| convert_to_bson(content.clone()));
 
-            let (collection_name, subtype) = get_subtype_and_collection_name(request)?;
+            let (collection_name, subtype) = get_subtype_and_collection_name(target)?;
             let (body, planning_time, execution_time, data_size) = transform_explain(
                 content,
-                request_info.db()?,
+                request.db(),
                 collection_name,
                 subtype,
                 query_base,
@@ -277,7 +245,7 @@ async fn run_explain(
 
             let command_str = format!(
                 "db.runCommand({{explain: {}}})",
-                Document::try_from(request.document())?
+                Document::try_from(target.document())?
                     .to_string()
                     .replace('\"', "'")
             );
@@ -319,8 +287,8 @@ async fn run_explain(
                     developer_explain(
                         &query,
                         explain_content.expect("Set during developer explain"),
-                        request.document(),
-                        request_info,
+                        target.document(),
+                        request.db(),
                     ),
                 );
             }
@@ -339,31 +307,48 @@ fn developer_explain(
     query: &str,
     explain_content: RawBson,
     request: &RawDocument,
-    request_info: &RequestInfo,
+    db: &str,
 ) -> RawDocumentBuf {
     rawdoc! {
         "sql": {
             "query": query
         },
-        "query_parameters":[request_info.db().unwrap_or_default(), request.to_raw_document_buf()],
+        "query_parameters":[db, request.to_raw_document_buf()],
         "explain": explain_content
     }
 }
 
-fn get_subtype_and_collection_name<'a>(request: &'a Request<'_>) -> Result<(&'a str, RequestType)> {
+fn get_subtype_and_collection_name<'a>(
+    target: &ExplainTarget<'a>,
+) -> Result<(&'a str, RequestType)> {
+    if let Some(collection) = target.collection() {
+        return Ok((collection, target.request_type()));
+    }
+
     let (key, first_field) =
-        request
+        target
             .document()
             .into_iter()
             .next()
             .ok_or(DocumentDBError::bad_value(
                 "Explain request was empty".to_owned(),
             ))??;
-    Ok((
-        first_field.as_str().ok_or(DocumentDBError::bad_value(
-            "First field of explain document needs to be a string".to_owned(),
-        ))?,
-        RequestType::from_str(key)?,
+    let request_type = RequestType::from_str(key)?;
+
+    if let Some(collection) = first_field.as_str() {
+        return Ok((collection, request_type));
+    }
+
+    if request_type == RequestType::Aggregate
+        && (first_field.as_i32().is_some()
+            || first_field.as_i64().is_some()
+            || first_field.as_f64().is_some())
+    {
+        return Ok(("", request_type));
+    }
+
+    Err(DocumentDBError::bad_value(
+        "First field of explain document needs to be a string".to_owned(),
     ))
 }
 
@@ -2173,10 +2158,13 @@ fn smallest_from_i64(value: i64) -> RawBson {
 
 #[cfg(test)]
 mod tests {
+    use bson::rawdoc;
+
     use crate::postgres::QueryCatalog;
 
-    use super::get_stage_from_plan;
     use super::model::ExplainPlan;
+    use super::{get_stage_from_plan, get_subtype_and_collection_name};
+    use crate::requests::{ExplainTarget, RequestType};
 
     /// Helper that builds a minimal [`ExplainPlan`] with the given `node_type`.
     fn plan_with_node_type(node_type: &str) -> ExplainPlan {
@@ -2216,5 +2204,46 @@ mod tests {
         let (stage, _) = get_stage_from_plan(&plan, None, &catalog);
 
         assert_eq!(stage, "COLLSCAN");
+    }
+
+    #[test]
+    fn explain_target_uses_cached_collection_when_available() {
+        let command = rawdoc! { "aggregate": 1_i32 };
+        let target = ExplainTarget::with_collection(RequestType::Aggregate, &command, "cached");
+
+        let (collection, request_type) =
+            get_subtype_and_collection_name(&target).expect("target should resolve");
+
+        assert_eq!(
+            (collection, request_type),
+            ("cached", RequestType::Aggregate)
+        );
+    }
+
+    #[test]
+    fn explain_target_accepts_numeric_aggregate_as_empty_collection() {
+        for command in [
+            rawdoc! { "aggregate": 1_i32 },
+            rawdoc! { "aggregate": 1_i64 },
+            rawdoc! { "aggregate": 1.0_f64 },
+        ] {
+            let target = ExplainTarget::new(RequestType::Aggregate, &command);
+
+            let (collection, request_type) =
+                get_subtype_and_collection_name(&target).expect("target should resolve");
+
+            assert_eq!((collection, request_type), ("", RequestType::Aggregate));
+        }
+    }
+
+    #[test]
+    fn explain_target_rejects_non_string_non_aggregate_collection() {
+        let command = rawdoc! { "find": 1_i32 };
+        let target = ExplainTarget::new(RequestType::Find, &command);
+
+        let error = get_subtype_and_collection_name(&target)
+            .expect_err("non-aggregate numeric target should reject");
+
+        assert_eq!(error.error_code(), crate::error::ErrorCode::BadValue);
     }
 }

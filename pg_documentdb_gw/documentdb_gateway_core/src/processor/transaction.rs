@@ -20,20 +20,20 @@ pub async fn handle(
     connection_context: &mut ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<()> {
-    let (request, request_info, _) = request_context.get_components();
+    let request = request_context.request();
 
     connection_context.transaction = None;
 
-    if let Some(request_transaction_info) = &request_info.transaction_info {
+    if let Some(request_transaction_info) = request.transaction_info() {
         if request_transaction_info.auto_commit {
             return Ok(());
         }
 
         let caller = connection_context.auth_state.principal()?;
 
-        let lsid = request_info
-            .lsid
-            .clone()
+        let lsid = request
+            .lsid()
+            .cloned()
             .ok_or(DocumentDBError::internal_error(
                 "Session Id is missing. Transactions must be associated with a session.".to_owned(),
             ))?;
@@ -51,7 +51,7 @@ pub async fn handle(
             .await;
 
         if let Err(e) = transaction_result {
-            return match (request.request_type(), &e) {
+            return match (request_context.request_type(), &e) {
                 // Especially allow the transaction to remain unfilled if it is committing a committed transaction
                 (RequestType::CommitTransaction, error)
                     if error.error_code() == ErrorCode::TransactionCommitted =>

@@ -54,8 +54,7 @@ pub fn process_is_db_grid(context: &ConnectionContext) -> Response {
 }
 
 pub fn process_get_rw_concern(request_context: &RequestContext<'_>) -> Result<Response> {
-    let request = request_context.payload;
-    let request_info = request_context.info;
+    let request = request_context.request();
 
     request.extract_fields(|k, _| match k {
         "getDefaultRWConcern" | "inMemory" | "comment" | "lsid" | "$db" => Ok(()),
@@ -65,7 +64,7 @@ pub fn process_get_rw_concern(request_context: &RequestContext<'_>) -> Result<Re
         )),
     })?;
 
-    if request_info.db()? != "admin" {
+    if request.db() != "admin" {
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::Unauthorized,
             "Only the admin database can process getDefaultRWConcern.".to_owned(),

@@ -6,9 +6,12 @@
  *-------------------------------------------------------------------------
  */
 
-use crate::error::{DocumentDBError, ErrorCode, Result};
-use bson::RawDocument;
 use std::str::FromStr;
+
+use crate::{
+    error::{DocumentDBError, ErrorCode, Result},
+    protocol::bson_scanner,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ReadPreferenceMode {
@@ -44,32 +47,30 @@ impl ReadPreference {
     /// # Errors
     ///
     /// Returns an error if the operation fails.
-    ///
-    /// # Panics
-    ///
-    /// Panics if document parsing fails.
     #[expect(
         clippy::too_many_lines,
         reason = "complex read preference parsing logic"
     )]
-    #[expect(
-        clippy::unwrap_used,
-        reason = "read_preference_mode is validated before unwrap"
-    )]
-    pub fn parse(raw_document: Option<&RawDocument>) -> Result<()> {
+    pub(super) fn parse(raw_document: Option<&[u8]>) -> Result<()> {
         match raw_document {
             None => Err(DocumentDBError::documentdb_error(
                 ErrorCode::FailedToParse,
                 "'$readPreference' must be a document".to_owned(),
             )),
-            Some(doc) => {
+            Some(doc_bytes) => {
                 let mut read_preference_mode: Option<ReadPreferenceMode> = None;
                 let mut max_staleness_seconds: Option<i32> = None;
                 let mut hedge: Option<bool> = None;
 
-                for entry in doc {
-                    let (k, v) = entry?;
-                    match k {
+                bson_scanner::scan_document(doc_bytes, |field| {
+                    let key = field.name_str().ok_or_else(|| {
+                        DocumentDBError::documentdb_error(
+                            ErrorCode::FailedToParse,
+                            "Read preference field name is not valid UTF-8".to_owned(),
+                        )
+                    })?;
+
+                    match key {
                         "mode" => {
                             if read_preference_mode.is_some() {
                                 return Err(DocumentDBError::documentdb_error(
@@ -78,7 +79,7 @@ impl ReadPreference {
                                 ));
                             }
 
-                            let mode_str = v.as_str().ok_or_else(|| {
+                            let mode_str = field.as_str().ok_or_else(|| {
                                 DocumentDBError::documentdb_error(
                                     ErrorCode::FailedToParse,
                                     "'mode' field must be a string".to_owned(),
@@ -95,7 +96,7 @@ impl ReadPreference {
                                 ));
                             }
 
-                            let seconds = v.as_i32().ok_or_else(|| {
+                            let seconds = field.as_i32().ok_or_else(|| {
                                 DocumentDBError::documentdb_error(
                                     ErrorCode::FailedToParse,
                                     "'maxStalenessSeconds' field must be an integer".to_owned(),
@@ -119,26 +120,7 @@ impl ReadPreference {
                                 ));
                             }
 
-                            let hedge_doc = v.as_document().ok_or_else(|| {
-                                DocumentDBError::documentdb_error(
-                                    ErrorCode::FailedToParse,
-                                    "'hedge' field must be a document".to_owned(),
-                                )
-                            })?;
-
-                            // For simplicity, we only check for the presence of 'enabled' field
-                            for hedge_entry in hedge_doc {
-                                let (hedge_k, hedge_v) = hedge_entry?;
-                                if hedge_k == "enabled" {
-                                    hedge = Some(hedge_v.as_bool().ok_or_else(|| {
-                                        DocumentDBError::documentdb_error(
-                                            ErrorCode::FailedToParse,
-                                            "'enabled' field in 'hedge' must be a boolean"
-                                                .to_owned(),
-                                        )
-                                    })?);
-                                }
-                            }
+                            hedge = Self::parse_hedge(field.as_embedded_document_bytes())?;
                         }
                         "tags" => {
                             return Err(DocumentDBError::documentdb_error(
@@ -149,31 +131,30 @@ impl ReadPreference {
                         }
                         _ => {}
                     }
-                }
+                    Ok(())
+                })?;
 
-                if read_preference_mode.is_none() {
-                    return Err(DocumentDBError::documentdb_error(
+                let read_preference_mode = read_preference_mode.ok_or_else(|| {
+                    DocumentDBError::documentdb_error(
                         ErrorCode::FailedToParse,
                         "'mode' field is required".to_owned(),
+                    )
+                })?;
+
+                if read_preference_mode == ReadPreferenceMode::Primary
+                    && max_staleness_seconds.is_some()
+                {
+                    return Err(DocumentDBError::documentdb_error(
+                        ErrorCode::FailedToParse,
+                        "mode 'primary' does not allow for 'maxStalenessSeconds'".to_owned(),
                     ));
                 }
 
-                let read_preference_mode = read_preference_mode.unwrap();
-
-                if read_preference_mode == ReadPreferenceMode::Primary {
-                    if max_staleness_seconds.is_some() {
-                        return Err(DocumentDBError::documentdb_error(
-                            ErrorCode::FailedToParse,
-                            "mode 'primary' does not allow for 'maxStalenessSeconds'".to_owned(),
-                        ));
-                    }
-
-                    if hedge.is_some() {
-                        return Err(DocumentDBError::documentdb_error(
-                            ErrorCode::FailedToParse,
-                            "mode 'primary' does not allow for 'hedge'".to_owned(),
-                        ));
-                    }
+                if read_preference_mode == ReadPreferenceMode::Primary && hedge.is_some() {
+                    return Err(DocumentDBError::documentdb_error(
+                        ErrorCode::FailedToParse,
+                        "mode 'primary' does not allow for 'hedge'".to_owned(),
+                    ));
                 }
 
                 if read_preference_mode == ReadPreferenceMode::Secondary {
@@ -193,5 +174,123 @@ impl ReadPreference {
                 Ok(())
             }
         }
+    }
+
+    fn parse_hedge(raw_document: Option<&[u8]>) -> Result<Option<bool>> {
+        let hedge_doc = raw_document.ok_or_else(|| {
+            DocumentDBError::documentdb_error(
+                ErrorCode::FailedToParse,
+                "'hedge' field must be a document".to_owned(),
+            )
+        })?;
+
+        let mut hedge = None;
+        bson_scanner::scan_document(hedge_doc, |field| {
+            let key = field.name_str().ok_or_else(|| {
+                DocumentDBError::documentdb_error(
+                    ErrorCode::FailedToParse,
+                    "Hedge field name is not valid UTF-8".to_owned(),
+                )
+            })?;
+
+            if key == "enabled" {
+                hedge = Some(field.as_bool().ok_or_else(|| {
+                    DocumentDBError::documentdb_error(
+                        ErrorCode::FailedToParse,
+                        "'enabled' field in 'hedge' must be a boolean".to_owned(),
+                    )
+                })?);
+            }
+            Ok(())
+        })?;
+        Ok(hedge)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bson::rawdoc;
+
+    use crate::{
+        error::ErrorCode,
+        requests::{read_preference::ReadPreference, read_preference::ReadPreferenceMode},
+    };
+
+    #[test]
+    fn parse_document_bytes_accepts_primary() {
+        let doc = rawdoc! { "mode": "primary" };
+
+        ReadPreference::parse(Some(doc.as_bytes())).unwrap();
+    }
+
+    #[test]
+    fn parse_document_bytes_rejects_missing_mode() {
+        let doc = rawdoc! { "hedge": { "enabled": false } };
+
+        let error = ReadPreference::parse(Some(doc.as_bytes())).unwrap_err();
+
+        assert_eq!(error.error_code(), ErrorCode::FailedToParse);
+    }
+
+    #[test]
+    fn parse_document_bytes_rejects_primary_with_max_staleness() {
+        let doc = rawdoc! { "mode": "primary", "maxStalenessSeconds": 10_i32 };
+
+        let error = ReadPreference::parse(Some(doc.as_bytes())).unwrap_err();
+
+        assert_eq!(error.error_code(), ErrorCode::FailedToParse);
+    }
+
+    #[test]
+    fn parse_document_bytes_rejects_secondary() {
+        let doc = rawdoc! { "mode": "secondary" };
+
+        let error = ReadPreference::parse(Some(doc.as_bytes())).unwrap_err();
+
+        assert_eq!(error.error_code(), ErrorCode::FailedToSatisfyReadPreference);
+    }
+
+    #[test]
+    fn parse_document_bytes_rejects_hedge_enabled_true() {
+        let doc = rawdoc! {
+            "mode": "nearest",
+            "hedge": { "enabled": true },
+        };
+
+        let error = ReadPreference::parse(Some(doc.as_bytes())).unwrap_err();
+
+        assert_eq!(error.error_code(), ErrorCode::BadValue);
+    }
+
+    #[test]
+    fn parse_document_bytes_rejects_hedge_array() {
+        let doc = rawdoc! {
+            "mode": "nearest",
+            "hedge": [],
+        };
+
+        let error = ReadPreference::parse(Some(doc.as_bytes())).unwrap_err();
+
+        assert_eq!(error.error_code(), ErrorCode::FailedToParse);
+    }
+
+    #[test]
+    fn parse_document_bytes_rejects_tags() {
+        let doc = rawdoc! {
+            "mode": "nearest",
+            "tags": [],
+        };
+
+        let error = ReadPreference::parse(Some(doc.as_bytes())).unwrap_err();
+
+        assert_eq!(error.error_code(), ErrorCode::FailedToSatisfyReadPreference);
+    }
+
+    #[test]
+    fn parse_mode_keeps_existing_case_insensitive_mapping() {
+        assert_eq!(
+            "primaryPreferred".parse::<ReadPreferenceMode>().unwrap(),
+            ReadPreferenceMode::PrimaryPreferred
+        );
     }
 }

@@ -16,7 +16,7 @@ use crate::{
     context::ConnectionContext,
     error::DocumentDBError,
     protocol::header::Header,
-    requests::{request_tracker::RequestTracker, Request, RequestType},
+    requests::{request_tracker::RequestTracker, RequestObservation, RequestType},
     responses::Response,
     telemetry::TelemetryProvider,
 };
@@ -81,19 +81,19 @@ impl TelemetryProvider for RecordingTelemetryProvider {
         &self,
         _: &ConnectionContext,
         _: &Header,
-        request: Option<&Request<'_>>,
+        request: Option<RequestObservation<'_, '_>>,
         response: Either<&Response, (&DocumentDBError, usize)>,
-        collection: String,
+        collection: &str,
         _: &RequestTracker,
         activity_id: &str,
         user_agent: &str,
     ) {
         let (is_error, error_code_name, sub_status_code) = match response {
             Either::Left(_) => (false, None, 0),
-            Either::Right((err, _)) => (
+            Either::Right((error, _)) => (
                 true,
-                Some(err.error_code().to_string()),
-                err.sub_status_code().unwrap_or(0),
+                Some(error.error_code().to_string()),
+                error.sub_status_code().unwrap_or(0),
             ),
         };
 
@@ -102,9 +102,9 @@ impl TelemetryProvider for RecordingTelemetryProvider {
             .expect("telemetry events lock should not be poisoned")
             .push(RecordedTelemetryEvent {
                 activity_id: activity_id.to_owned(),
-                collection,
+                collection: collection.to_owned(),
                 user_agent: user_agent.to_owned(),
-                request_type: request.map(Request::request_type),
+                request_type: request.map(RequestObservation::request_type),
                 is_error,
                 error_code_name,
                 sub_status_code,

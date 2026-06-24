@@ -8,7 +8,7 @@
 
 use std::str::FromStr;
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum ReadConcern {
     /// Read concern is not specified.
     #[default]

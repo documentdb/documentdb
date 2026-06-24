@@ -8,6 +8,7 @@
 
 use crate::error::{DocumentDBError, Result};
 
+pub mod bson_scanner;
 pub mod bson_writer;
 pub mod header;
 pub mod message;

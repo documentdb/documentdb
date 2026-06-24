@@ -28,7 +28,8 @@ pub async fn process_create_indexes(
     dynamic_config: &Arc<dyn DynamicConfiguration>,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let db = request_context.info.db()?.to_owned();
+    let db = request_context.request().db();
+
     if !dynamic_config.enable_new_namespace_validation() && (db == "config" || db == "admin") {
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::IllegalOperation,
@@ -43,8 +44,10 @@ pub async fn process_create_indexes(
     let row = create_indexes_rows
         .first()
         .ok_or(DocumentDBError::pg_response_empty())?;
+
     let success: bool = row.get(1);
     let response = PgResponse::new(create_indexes_rows);
+
     if success {
         wait_for_index(
             request_context,
@@ -102,7 +105,7 @@ pub async fn wait_for_index(
             return Ok(Response::Pg(create_result));
         }
 
-        if let Some(max_time_ms) = request_context.info.max_time_ms {
+        if let Some(max_time_ms) = request_context.request().max_time_ms() {
             let max_time_ms = max_time_ms.try_into().map_err(|error| {
                 tracing::error!("Failed to convert max_time_ms to u128: {error}");
                 DocumentDBError::internal_error("Failed to convert max_time_ms to u128".to_owned())

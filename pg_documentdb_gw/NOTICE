@@ -3,7 +3,6 @@ This product includes software developed by the DocumentDB Gateway contributors 
 The full license texts for all dependencies are located in the 'pg_documentdb_gw/licenses/' directory. Below is a summary of included components and their licenses:
 
 - arc-swap (MIT OR Apache-2.0)
-- async-recursion (MIT OR Apache-2.0)
 - async-trait (MIT OR Apache-2.0)
 - base64 (MIT OR Apache-2.0)
 - bitflags (MIT OR Apache-2.0)

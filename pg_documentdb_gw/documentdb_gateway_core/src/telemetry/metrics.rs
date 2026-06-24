@@ -20,7 +20,9 @@ use serde::Deserialize;
 use crate::{
     error::{DocumentDBError, Result},
     protocol::header::Header,
-    requests::{request_tracker::RequestTracker, Request, RequestIntervalKind, RequestType},
+    requests::{
+        request_tracker::RequestTracker, RequestIntervalKind, RequestObservation, RequestType,
+    },
     responses::Response,
     telemetry::config::{env_var, DEFAULT_EXPORT_TIMEOUT_MS, DEFAULT_OTLP_ENDPOINT},
 };
@@ -244,7 +246,7 @@ static GATEWAY_METRICS: LazyLock<GatewayMetrics> = LazyLock::new(|| {
 /// Aggregation (averages, percentiles) is delegated to the collector.
 pub fn record_gateway_metrics(
     header: &Header,
-    request: Option<&Request<'_>>,
+    request: Option<RequestObservation<'_, '_>>,
     response: Either<&Response, (&DocumentDBError, usize)>,
     collection: &str,
     request_tracker: &RequestTracker,
@@ -253,7 +255,9 @@ pub fn record_gateway_metrics(
 
     let operation = request.map_or_else(|| "unknown".to_owned(), |r| r.request_type().to_string());
 
-    let db_name = request.and_then(|r| r.db().ok()).unwrap_or("unknown");
+    let db_name = request
+        .and_then(RequestObservation::db)
+        .unwrap_or("unknown");
 
     let duration_to_secs = |ns: u64| -> f64 { Duration::from_nanos(ns).as_secs_f64() };
 
@@ -293,7 +297,7 @@ pub fn record_gateway_metrics(
     // Record document throughput counters based on operation type
     if let Some(req) = request {
         if let Either::Left(resp) = &response {
-            record_document_counts(metrics, req, resp, &base_attrs);
+            record_document_counts(metrics, req.request_type(), resp, &base_attrs);
         }
     }
 
@@ -328,7 +332,7 @@ pub fn record_gateway_metrics(
 /// Extract document counts from the response based on operation type.
 fn record_document_counts(
     metrics: &GatewayMetrics,
-    request: &Request<'_>,
+    request_type: RequestType,
     response: &Response,
     attrs: &[KeyValue],
 ) {
@@ -336,7 +340,7 @@ fn record_document_counts(
         return;
     };
 
-    match request.request_type() {
+    match request_type {
         RequestType::Find | RequestType::Aggregate | RequestType::GetMore => {
             // Cursor responses: { cursor: { firstBatch/nextBatch: [...] } }
             if let Ok(cursor) = doc.get_document("cursor") {
