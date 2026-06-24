@@ -122,6 +122,9 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
 
     /// Returns whether refreshing settings from `pg_file_settings` is enabled.
     fn enable_pg_file_settings_refresh(&self) -> Option<bool>;
+
+    /// Returns maximum number of incoming connections allowed.
+    fn max_incoming_connections(&self) -> usize;
 }
 
 clone_trait_object!(SetupConfiguration);
