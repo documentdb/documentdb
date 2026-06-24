@@ -190,6 +190,10 @@ command_shard_collection(PG_FUNCTION_ARGS)
 
 		if (!result.success)
 		{
+			/* Parse locally to surface a user-friendly validation error */
+			ShardCollectionArgs localArgs = { 0 };
+			ParseShardCollectionRequest(shardArg, &localArgs);
+
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 							errmsg(
 								"Internal error sharding collection in metadata coordinator"),
@@ -229,6 +233,10 @@ command_reshard_collection(PG_FUNCTION_ARGS)
 
 		if (!result.success)
 		{
+			/* Parse locally to surface a user-friendly validation error */
+			ShardCollectionArgs localArgs = { 0 };
+			ParseReshardCollectionRequest(shardArg, &localArgs);
+
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 							errmsg(
 								"Metadata coordinator encountered internal error while resharding the collection"),
@@ -268,6 +276,10 @@ command_unshard_collection(PG_FUNCTION_ARGS)
 
 		if (!result.success)
 		{
+			/* Parse locally to surface a user-friendly validation error */
+			ShardCollectionArgs localArgs = { 0 };
+			ParseUnshardCollectionRequest(shardArg, &localArgs);
+
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 							errmsg(
 								"Internal error unsharding collection in metadata coordinator"),
