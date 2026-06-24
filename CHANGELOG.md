@@ -12,7 +12,7 @@
 * Schema Validation: enabled by default.
 * Reservoir sampling CustomScan for `$sample` after filter stages, replacing `ORDER BY random() LIMIT K` with O(N) single pass sampling. Guarded by `enableDollarSampleReservoirScan` feature flag *[Perf]*
 
-### documentdb v0.113-0 (Unreleased) ###
+### documentdb v0.113-0 (June 22, 2026) ###
 * Add `EnableSortPushToAccumulator` GUC to control pushing sort order into accumulator in `$sortGroup` stage *[Perf]*
 * Support collation with non-unique ordered indexes with $elemMatch. Requires `EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
 * Use in-place tuple overwrite instead of delete-and-reinsert when vacuuming RUM entry page posting lists *[Perf]*
@@ -22,7 +22,7 @@
 * Support `$elemMatch`, `$slice`, and `$` positional projection operators in `findAndModify` by routing through the find-specific projection path *[Feature]*
 * Enable index-only scan for `$group` accumulators when all referenced fields are covered by the composite index *[Perf]*
 
-### documentdb v0.112-0 (Unreleased) ###
+### documentdb v0.112-0 (May 26, 2026) ###
 * Removed feature flag `documentdb.enableUpdateBsonDocument` and dropped legacy composite-returning `bson_update_document` UDF — all callers now use the scalar `update_bson_document` UDF
 * Eliminate subquery migration in $group for unsharded and sharded with constant _id aggregation queries. Guarded with `EnableGroupSubqueryElimination` *[Perf]*
 * Support collation with non-unique ordered indexes with $lt, $lte. Requires `EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
