@@ -404,16 +404,22 @@ BsonValueHashUint32(const bson_value_t *bsonValue)
 		case BSON_TYPE_REGEX:
 		{
 			return hash_bytes((const unsigned char *)
-							  &bsonValue->value.v_regex.regex,
+							  bsonValue->value.v_regex.regex,
 							  strlen(bsonValue->value.v_regex.regex));
 		}
 
 		case BSON_TYPE_CODE:
-		case BSON_TYPE_CODEWSCOPE:
 		{
 			return hash_bytes((const unsigned char *)
 							  bsonValue->value.v_code.code,
 							  bsonValue->value.v_code.code_len);
+		}
+
+		case BSON_TYPE_CODEWSCOPE:
+		{
+			return hash_bytes((const unsigned char *)
+							  bsonValue->value.v_codewscope.code,
+							  bsonValue->value.v_codewscope.code_len);
 		}
 
 		case BSON_TYPE_SYMBOL:

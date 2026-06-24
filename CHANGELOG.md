@@ -1,4 +1,5 @@
 ### documentdb v0.115-0 (Unreleased) ###
+* Fix backend crash (heap-buffer-overflow) in `$setUnion`/`$setIntersection` element deduplication when hashing `CodeWScope` values (wrong union member read), and fix `Regex` values failing to deduplicate plus a latent over-read for long patterns, in `BsonValueHashUint32`. *[Bugfix]*
 
 ### documentdb v0.114-0 (Unreleased) ###
 * Emit a btree `REUSE_PAGE` WAL marker before a RUM page is reused from the FSM, so streaming standbys resolve recovery conflicts before the page contents are overwritten. Mirrors nbtree's `_bt_allocbuf` behavior. Guarded by `documentdb_rum.enable_emit_reuse_page_on_recycle` feature flag, disabled by default while pending stabilization. *[Perf]*
