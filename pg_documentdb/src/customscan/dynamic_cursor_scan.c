@@ -53,6 +53,7 @@
 #include "utils/documentdb_errors.h"
 #include "opclass/bson_gin_index_mgmt.h"
 #include "utils/docdb_make_funcs.h"
+#include "query/bson_dollar_selectivity.h"
 
 #define InputContinuationNodeName "DynamicCursorScanInputContinuation"
 
@@ -212,6 +213,7 @@ PG_FUNCTION_INFO_V1(command_cursor_tracker);
 extern bool EnableRumCursorDynamicIndexScans;
 extern bool EnableRumDynamicIndexScansSkipToTid;
 extern bool EnableOrderByIdOnCostFunction;
+extern bool EnableDynamicPersistentCursorsWithStats;
 
 /* Declaration of extensibility paths for query processing (See extensible.h) */
 static const struct CustomPathMethods DynamicExtensionCursorScanMethods = {
@@ -422,7 +424,7 @@ CreateCustomScanPathForStreaming(PlannerInfo *root, RelOptInfo *rel, Path *input
 	memcpy(inputContinuationCopy, inputContinuation,
 		   sizeof(DynamicCursorInputContinuation));
 	customPath->custom_private = list_make1(inputContinuationCopy);
-	customPath->path.pathkeys = root->sort_pathkeys;
+	customPath->path.pathkeys = inputPath->pathkeys;
 
 	return customPath;
 }
@@ -655,17 +657,34 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 	List *customPlanPaths = NIL;
 	ListCell *cell;
 
+	/*
+	 * When non-streaming paths are allowed ( i.e., per-collection
+	 * statistics give the planner reliable cost estimates), skip the sort-based
+	 * pruning below so every scan type stays a candidate. The custom path then
+	 * advertises the pathkeys its inner path truly provides letting the planner
+	 * add a runtime Sort where needed and pick the cheapest plan; the cursor type
+	 * check in PlanDynamicQueryAndDetermineCursorType() falls back to a persistent
+	 * cursor (file-based on remote shard) when the chosen plan needs a top-level sort.
+	 */
+	bool isOperatorSelectivityEnabled =
+		EnablePlannerCostSelectivityFromRelOptInfo(root, rel);
+
+
 	/* Walk the existing paths and wrap them in a custom scan */
+	List *alternativePaths = NIL;
 	foreach(cell, rel->pathlist)
 	{
 		Path *inputPath = lfirst(cell);
 
 		inputContinuation->scanType = QueryScanType_Unknown;
 		QueryScanType scanType = QueryScanType_Unknown;
+		Path *originalPath = inputPath;
 		inputPath = UpdateAndClassifyPath(inputPath, root, rel, optCollectionId,
 										  &scanType);
+
 		if (root->sort_pathkeys != NIL)
 		{
+			bool isSupportedPath = scanType != QueryScanType_Unknown;
 			switch (scanType)
 			{
 				case QueryScanType_SecondaryIndexScan:
@@ -676,7 +695,7 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 							root->sort_pathkeys))
 					{
 						/* The pathkeys required by the query are not provided by the index order by - we can't use this path for streaming */
-						continue;
+						isSupportedPath = false;
 					}
 					break;
 				}
@@ -698,7 +717,7 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 							root->sort_pathkeys))
 					{
 						/* The pathkeys required by the query are not provided by the index order by - we can't use this path for streaming */
-						continue;
+						isSupportedPath = false;
 					}
 					break;
 				}
@@ -706,8 +725,23 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 				default:
 				{
 					/* For other scan types, there is no pre-determined ordering - we can't stream these paths */
-					continue;
+					isSupportedPath = false;
+					break;
 				}
+			}
+
+			if (!isSupportedPath)
+			{
+				if (isOperatorSelectivityEnabled)
+				{
+					/* If operator selectivity is enabled - then we can potentially still consider the original path for planning
+					 * since it may be a better fit from a cost perspective.
+					 */
+					alternativePaths = lappend(alternativePaths, originalPath);
+				}
+
+				/* If operator selectivity is not enabled, only consider streaming plans */
+				continue;
 			}
 		}
 
@@ -723,6 +757,16 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 		customPlanPaths = lappend(customPlanPaths, customPath);
 	}
 
+	if (list_length(customPlanPaths) > 0 && EnableDynamicPersistentCursorsWithStats)
+	{
+		/* If we created at least 1 streaming path and we have alternative paths to consider
+		 * add them to the global paths (see comment above about operator selectivity).
+		 * If no paths were added, return NIL still so that we return false back to the planner.
+		 */
+		customPlanPaths = list_concat(customPlanPaths, alternativePaths);
+	}
+
+	list_free(alternativePaths);
 	return customPlanPaths;
 }
 

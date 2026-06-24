@@ -1404,3 +1404,199 @@ SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
 DROP FUNCTION IF EXISTS sp_drain_and_report;
 DROP FUNCTION IF EXISTS sp_drain_ordered;
 DROP FUNCTION IF EXISTS sp_drain_docs;
+
+
+-- ===========================================================================
+-- Runtime Sort vs forced index-order streaming.
+--
+-- When per-collection planner statistics are available the dynamic-cursor
+-- planner keeps the runtime-Sort candidate paths instead of pruning every
+-- candidate but the order-providing index path. For a query that filters on a
+-- selective field and sorts on a different field, the planner then uses the
+-- selective filter index plus a runtime Sort -- far cheaper than scanning the
+-- entire ordered sort-index. That Sort makes the outermost plan node a Sort (not
+-- a bare streaming custom scan), so the query is served by a persistent cursor.
+-- With statistics disabled the planner has no reliable estimates, prunes every
+-- candidate but the order-providing path, and forces the index-order streaming
+-- plan for the same query.
+--
+-- "a" is the selective filter field (plain index); "b" is the sort field (ordered
+-- index). The filter value matches no document, which keeps the selective-index
+-- plan essentially free and makes the choice between the two plans unambiguous.
+-- ===========================================================================
+
+SET documentdb.enableDynamicCursors TO on;
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+SET documentdb.enableCompositeIndexPlanner TO on;
+SET documentdb.enablePlannerStatisticsNewCollections TO on;
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+-- The runtime-Sort plan reads the selective "a" index; allow seq scan so the
+-- planner's cost choice is not skewed by an artificial seq-scan penalty.
+SET enable_seqscan TO on;
+
+SELECT documentdb_api.drop_collection('runtime_sort_db', 'runtime_sort_coll');
+
+-- 500 docs: "a" has 100 distinct values (selective); "b" is a scrambled
+-- permutation of 0..499 so a broken sort would be detectable.
+SELECT COUNT(documentdb_api.insert_one('runtime_sort_db', 'runtime_sort_coll',
+    FORMAT('{ "_id": %s, "a": "grp_%s", "b": %s }', i, i % 100, (i * 37) % 500)::documentdb_core.bson))
+FROM generate_series(1, 500) AS i;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('runtime_sort_db',
+    '{"createIndexes": "runtime_sort_coll", "indexes": [{"key": {"a": 1}, "name": "idx_a"}]}', true);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('runtime_sort_db',
+    '{"createIndexes": "runtime_sort_coll", "indexes": [{"key": {"b": 1}, "name": "idx_b_asc", "enableOrderedIndex": true}]}', true);
+
+-- ---------------------------------------------------------------------------
+-- Case 1: per-collection statistics enabled. The planner picks the selective
+-- "a" index plus a runtime Sort; the Sort makes the outermost node non-streaming
+-- so the query is served by a persistent cursor (persistConnection = true). The
+-- filter matches no document, so the cursor drains zero rows.
+-- ---------------------------------------------------------------------------
+SELECT documentdb_api.coll_mod('runtime_sort_db', 'runtime_sort_coll',
+    '{ "collMod": "runtime_sort_coll", "enableStats": true }');
+ANALYZE;
+
+EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('runtime_sort_db',
+        '{ "find": "runtime_sort_coll", "filter": { "a": "grp_missing" }, "sort": { "b": 1 }, "projection": { "_id": 0, "b": 1 }, "batchSize": 100 }');
+
+SELECT CASE WHEN persistConnection THEN 'persistent (runtime sort)' ELSE 'streaming (index order)' END AS cursor_kind,
+       COALESCE(jsonb_array_length((cursorPage::text::jsonb) -> 'cursor' -> 'firstBatch'), 0) AS docs
+FROM find_cursor_first_page(database => 'runtime_sort_db',
+    commandSpec => '{ "find": "runtime_sort_coll", "filter": { "a": "grp_missing" }, "sort": { "b": 1 }, "projection": { "_id": 0, "b": 1 }, "batchSize": 100 }'::documentdb_core.bson,
+    cursorId => 4294967290);
+
+-- ---------------------------------------------------------------------------
+-- Case 2: no reliable operator selectivity -- per-collection statistics disabled
+-- AND the composite-index planner disabled, so isOperatorSelectivityEnabled
+-- (= EnableCompositeIndexPlanner || perCollectionStats) is false. The path walk
+-- then prunes every candidate but the order-providing "b" ordered index and
+-- forces the index-order streaming plan (persistConnection = false) for the same
+-- zero-result query. (With either signal present the planner would instead be
+-- free to choose the cheaper runtime Sort, as in Case 1.)
+-- ---------------------------------------------------------------------------
+SET documentdb.enableCompositeIndexPlanner TO off;
+SELECT documentdb_api.coll_mod('runtime_sort_db', 'runtime_sort_coll',
+    '{ "collMod": "runtime_sort_coll", "enableStats": false }');
+ANALYZE;
+
+EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('runtime_sort_db',
+        '{ "find": "runtime_sort_coll", "filter": { "a": "grp_missing" }, "sort": { "b": 1 }, "projection": { "_id": 0, "b": 1 }, "batchSize": 100 }');
+
+SELECT CASE WHEN persistConnection THEN 'persistent (runtime sort)' ELSE 'streaming (index order)' END AS cursor_kind,
+       COALESCE(jsonb_array_length((cursorPage::text::jsonb) -> 'cursor' -> 'firstBatch'), 0) AS docs
+FROM find_cursor_first_page(database => 'runtime_sort_db',
+    commandSpec => '{ "find": "runtime_sort_coll", "filter": { "a": "grp_missing" }, "sort": { "b": 1 }, "projection": { "_id": 0, "b": 1 }, "batchSize": 100 }'::documentdb_core.bson,
+    cursorId => 4294967291);
+
+-- Restore the composite-index planner for the coverage section below.
+SET documentdb.enableCompositeIndexPlanner TO on;
+
+-- ===========================================================================
+-- Additional coverage for the dynamic-cursor path-walk switch cases.
+--
+-- Exercises every branch of WalkRelPathsAndCreateCustomPathsForFirstPage --
+-- the secondary-index case, the primary-key case (including the
+-- ConsiderBtreeOrderByPushdown path), the bitmap/"default" case, and the
+-- no-sort path (switch skipped) -- under per-collection statistics both enabled
+-- and disabled. These do NOT assert a streaming-vs-persistent outcome; they only
+-- verify that each shape plans, executes, drains cleanly, and returns correctly
+-- ordered results regardless of the GUC state. The drained result set is
+-- invariant across the GUC, so both blocks below produce identical output.
+-- ===========================================================================
+CREATE OR REPLACE FUNCTION runtime_sort_cov_check(
+    p_coll text, p_find text, p_sort_field text, p_dir int, p_cursor_id bigint)
+    RETURNS text LANGUAGE plpgsql AS $fn$
+DECLARE
+    v_page    documentdb_core.bson;
+    v_cont    documentdb_core.bson;
+    v_batch   jsonb;
+    v_docs    int := 0;
+    v_vals    numeric[] := '{}';
+    v_getmore text := format(
+        '{ "getMore": { "$numberLong": "%s" }, "collection": "%s", "batchSize": 100 }',
+        p_cursor_id, p_coll);
+    v_ordered text;
+BEGIN
+    SELECT cursorPage, continuation INTO v_page, v_cont
+    FROM find_cursor_first_page(database => 'runtime_sort_db',
+        commandSpec => p_find::documentdb_core.bson, cursorId => p_cursor_id);
+
+    v_batch := COALESCE((v_page::text::jsonb) -> 'cursor' -> 'firstBatch', '[]'::jsonb);
+    v_docs := v_docs + jsonb_array_length(v_batch);
+    IF p_dir <> 0 THEN
+        v_vals := v_vals || COALESCE((
+            SELECT array_agg((e -> p_sort_field ->> '$numberInt')::numeric ORDER BY ord)
+            FROM jsonb_array_elements(v_batch) WITH ORDINALITY AS t(e, ord)), '{}');
+    END IF;
+
+    WHILE v_cont IS NOT NULL LOOP
+        SELECT cursorPage, continuation INTO v_page, v_cont
+        FROM cursor_get_more(database => 'runtime_sort_db',
+            getMoreSpec => v_getmore::documentdb_core.bson, continuationSpec => v_cont);
+        v_batch := COALESCE((v_page::text::jsonb) -> 'cursor' -> 'nextBatch', '[]'::jsonb);
+        v_docs := v_docs + jsonb_array_length(v_batch);
+        IF p_dir <> 0 THEN
+            v_vals := v_vals || COALESCE((
+                SELECT array_agg((e -> p_sort_field ->> '$numberInt')::numeric ORDER BY ord)
+                FROM jsonb_array_elements(v_batch) WITH ORDINALITY AS t(e, ord)), '{}');
+        END IF;
+    END LOOP;
+
+    IF p_dir = 0 THEN
+        v_ordered := 'n/a';
+    ELSIF p_dir > 0 THEN
+        v_ordered := (v_vals = (SELECT array_agg(x ORDER BY x) FROM unnest(v_vals) AS x))::text;
+    ELSE
+        v_ordered := (v_vals = (SELECT array_agg(x ORDER BY x DESC) FROM unnest(v_vals) AS x))::text;
+    END IF;
+
+    RETURN format('docs=%s, ordered=%s', v_docs, v_ordered);
+END;
+$fn$;
+
+-- Block 1: per-collection statistics enabled (switch cases keep every candidate).
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+SELECT documentdb_api.coll_mod('runtime_sort_db', 'runtime_sort_coll',
+    '{ "collMod": "runtime_sort_coll", "enableStats": true }');
+ANALYZE;
+
+SELECT q.label, r.result
+FROM (VALUES
+    ('1_secondary_b_asc',  '{ "find": "runtime_sort_coll", "filter": { }, "sort": { "b": 1 }, "projection": { "_id": 0, "b": 1 }, "batchSize": 100 }', 'b', 1, 4294967280::bigint),
+    ('2_secondary_b_desc', '{ "find": "runtime_sort_coll", "filter": { }, "sort": { "b": -1 }, "projection": { "_id": 0, "b": 1 }, "batchSize": 100 }', 'b', -1, 4294967281::bigint),
+    ('3_pk_id_asc',        '{ "find": "runtime_sort_coll", "filter": { }, "sort": { "_id": 1 }, "projection": { "_id": 1 }, "batchSize": 100 }', '_id', 1, 4294967282::bigint),
+    ('4_pk_id_desc',       '{ "find": "runtime_sort_coll", "filter": { }, "sort": { "_id": -1 }, "projection": { "_id": 1 }, "batchSize": 100 }', '_id', -1, 4294967283::bigint),
+    ('5_filter_a_sort_b',  '{ "find": "runtime_sort_coll", "filter": { "a": "grp_1" }, "sort": { "b": 1 }, "projection": { "_id": 0, "b": 1 }, "batchSize": 100 }', 'b', 1, 4294967284::bigint),
+    ('6_bitmap_in_a',      '{ "find": "runtime_sort_coll", "filter": { "a": { "$in": [ "grp_1", "grp_2", "grp_3" ] } }, "sort": { "b": 1 }, "projection": { "_id": 0, "b": 1 }, "batchSize": 100 }', 'b', 1, 4294967285::bigint),
+    ('7_no_sort_a',        '{ "find": "runtime_sort_coll", "filter": { "a": "grp_2" }, "projection": { "_id": 1 }, "batchSize": 100 }', '_id', 0, 4294967286::bigint)
+) AS q(label, find, field, dir, cid)
+CROSS JOIN LATERAL (SELECT runtime_sort_cov_check('runtime_sort_coll', q.find, q.field, q.dir, q.cid) AS result) r
+ORDER BY q.label;
+
+-- Block 2: per-collection statistics disabled (switch cases prune to the
+-- order-providing path). Same shapes, same expected results.
+SELECT documentdb_api.coll_mod('runtime_sort_db', 'runtime_sort_coll',
+    '{ "collMod": "runtime_sort_coll", "enableStats": false }');
+ANALYZE;
+
+SELECT q.label, r.result
+FROM (VALUES
+    ('1_secondary_b_asc',  '{ "find": "runtime_sort_coll", "filter": { }, "sort": { "b": 1 }, "projection": { "_id": 0, "b": 1 }, "batchSize": 100 }', 'b', 1, 4294967280::bigint),
+    ('2_secondary_b_desc', '{ "find": "runtime_sort_coll", "filter": { }, "sort": { "b": -1 }, "projection": { "_id": 0, "b": 1 }, "batchSize": 100 }', 'b', -1, 4294967281::bigint),
+    ('3_pk_id_asc',        '{ "find": "runtime_sort_coll", "filter": { }, "sort": { "_id": 1 }, "projection": { "_id": 1 }, "batchSize": 100 }', '_id', 1, 4294967282::bigint),
+    ('4_pk_id_desc',       '{ "find": "runtime_sort_coll", "filter": { }, "sort": { "_id": -1 }, "projection": { "_id": 1 }, "batchSize": 100 }', '_id', -1, 4294967283::bigint),
+    ('5_filter_a_sort_b',  '{ "find": "runtime_sort_coll", "filter": { "a": "grp_1" }, "sort": { "b": 1 }, "projection": { "_id": 0, "b": 1 }, "batchSize": 100 }', 'b', 1, 4294967284::bigint),
+    ('6_bitmap_in_a',      '{ "find": "runtime_sort_coll", "filter": { "a": { "$in": [ "grp_1", "grp_2", "grp_3" ] } }, "sort": { "b": 1 }, "projection": { "_id": 0, "b": 1 }, "batchSize": 100 }', 'b', 1, 4294967285::bigint),
+    ('7_no_sort_a',        '{ "find": "runtime_sort_coll", "filter": { "a": "grp_2" }, "projection": { "_id": 1 }, "batchSize": 100 }', '_id', 0, 4294967286::bigint)
+) AS q(label, find, field, dir, cid)
+CROSS JOIN LATERAL (SELECT runtime_sort_cov_check('runtime_sort_coll', q.find, q.field, q.dir, q.cid) AS result) r
+ORDER BY q.label;
+
+DROP FUNCTION runtime_sort_cov_check(text, text, text, int, bigint);
+
+-- Cleanup
+SELECT documentdb_api.drop_collection('runtime_sort_db', 'runtime_sort_coll');
+

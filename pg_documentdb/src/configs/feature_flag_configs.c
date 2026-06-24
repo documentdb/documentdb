@@ -257,6 +257,11 @@ bool EnableDeleteOnePlanCacheOptimization =
 bool EnableDynamicCursors = DEFAULT_ENABLE_DYNAMIC_CURSORS;
 
 /* Added in v115, enabled in v115, remove after v117 */
+#define DEFAULT_ENABLE_DYNAMIC_PERSISTENT_CURSORS_WITH_STATS true
+bool EnableDynamicPersistentCursorsWithStats =
+	DEFAULT_ENABLE_DYNAMIC_PERSISTENT_CURSORS_WITH_STATS;
+
+/* Added in v115, enabled in v115, remove after v117 */
 #define DEFAULT_ENABLE_PG_PRNG_CURSOR_ID true
 bool EnablePGPrngCursorId = DEFAULT_ENABLE_PG_PRNG_CURSOR_ID;
 
@@ -336,8 +341,8 @@ bool EnableAddToSetAggregationRewrite = DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_RE
 bool RemoveMatchNamespaceFilters = DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS;
 
 /* Added in v111, enabled in v111, Remove after v113 */
-#define DEFAULT_MULTIPLE_POSITONAL_OPERATORS_NOT_ALLOWED true
-bool MultiplePositionalNotAllowed = DEFAULT_MULTIPLE_POSITONAL_OPERATORS_NOT_ALLOWED;
+#define DEFAULT_MULTIPLE_POSITIONAL_OPERATORS_NOT_ALLOWED true
+bool MultiplePositionalNotAllowed = DEFAULT_MULTIPLE_POSITIONAL_OPERATORS_NOT_ALLOWED;
 
 /* Added in v112, enabled in v112, remove after v114 */
 #define DEFAULT_ENABLE_GROUP_SUBQUERY_ELIMINATION true
@@ -683,6 +688,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to enable dynamic cursors for aggregation query rewrites."),
 		NULL, &EnableDynamicCursors,
 		DEFAULT_ENABLE_DYNAMIC_CURSORS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableDynamicPersistentCursorsWithStats", newGucPrefix),
+		gettext_noop(
+			"Whether or not to enable dynamic persistent cursors with statistics."),
+		NULL, &EnableDynamicPersistentCursorsWithStats,
+		DEFAULT_ENABLE_DYNAMIC_PERSISTENT_CURSORS_WITH_STATS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -1165,7 +1178,7 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Determines whether to throw error when multiple $ positional operators are provided in the same path e.g. 'a.b.$.c.$'"),
 		NULL, &MultiplePositionalNotAllowed,
-		DEFAULT_MULTIPLE_POSITONAL_OPERATORS_NOT_ALLOWED,
+		DEFAULT_MULTIPLE_POSITIONAL_OPERATORS_NOT_ALLOWED,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

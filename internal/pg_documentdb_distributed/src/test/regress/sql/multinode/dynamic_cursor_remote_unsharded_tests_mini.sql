@@ -905,3 +905,108 @@ SELECT remote_drain_and_report(
     '{ "getMore": { "$numberLong": "538" }, "collection": "remote_e2e_coll", "batchSize": 10 }',
     false  -- print continuation token
 );
+
+-- ===========================================================================
+-- SECTION R-RUNTIME-SORT: the planner picks a runtime Sort (persistent cursor)
+-- instead of forcing the streaming index-order plan.
+--
+-- planner keep runtime-sort candidate paths whenever per-collection planner
+-- statistics are available for the collection, instead of pruning every
+-- candidate but the index-order path. With honest pathkeys the planner adds (and
+-- costs) a runtime Sort on top of the cheapest unordered scan (served as a
+-- primary-key scan); for a full-collection sort that beats a full ordered-index
+-- scan, so the outermost plan node is a Sort (not a bare streaming CustomScan)
+-- and the query is served by a persistent cursor. With statistics disabled the
+-- planner has no reliable
+-- estimates, so the dynamic-cursor planner keeps forcing the index-order
+-- streaming plan for the same query.
+-- ===========================================================================
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+SET documentdb.enableCompositeIndexPlanner TO on;
+SET documentdb.enablePlannerStatisticsNewCollections TO on;
+
+SELECT documentdb_api.drop_collection('dyncur_sp_db', 'runtime_sort_coll');
+
+-- val is scrambled across the id range so a broken sort would be detectable.
+SELECT COUNT(documentdb_api.insert_one('dyncur_sp_db', 'runtime_sort_coll',
+    FORMAT('{ "_id": %s, "val": %s }', i, (i * 37) % 500)::documentdb_core.bson))
+FROM generate_series(1, 500) AS i;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncur_sp_db',
+    '{"createIndexes": "runtime_sort_coll", "indexes": [{"key": {"val": 1}, "name": "idx_val_asc", "enableOrderedIndex": true}]}', true);
+
+SELECT documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'runtime_sort_coll', 1);
+
+-- Reporter: drain the cursor fully and report only the deterministic signal —
+-- whether the plan streamed (index-order) or fell back to a persistent runtime
+-- Sort, and for the persistent case whether the worker materialized a
+-- file-based cursor — plus the drained doc count and whether the values came
+-- back sorted.
+CREATE OR REPLACE FUNCTION runtime_sort_report(p_find text)
+    RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+    v_page    documentdb_core.bson;
+    v_cont    documentdb_core.bson;
+    v_persist bool;
+    v_kind    text;
+    v_file    text;
+    v_vals    int[] := '{}';
+    v_arr     int[];
+BEGIN
+    SELECT cursorPage, continuation, persistconnection INTO v_page, v_cont, v_persist
+    FROM find_cursor_first_page('dyncur_sp_db', p_find::documentdb_core.bson, 538);
+
+    -- A streaming worker cursor carries wc.dc.type. Anything else is a persistent
+    -- cursor that materialized a runtime Sort on the worker; a persistent cursor
+    -- that carries a wc.qf file-state binary is file-based, otherwise it is a
+    -- held portal.
+    IF (bson_dollar_project(v_cont, '{ "wc.dc.type": 1 }') ->> 'wc.dc.type') IS NOT NULL THEN
+        v_kind := 'streaming (index order)';
+        v_file := 'n/a';
+    ELSE
+        v_kind := 'persistent (runtime sort)';
+        v_file := CASE WHEN (bson_dollar_project(v_cont, '{ "wc.qf": 1 }') ->> 'wc.qf') IS NOT NULL
+                       THEN 'true' ELSE 'false' END;
+    END IF;
+
+    SELECT array_agg((e -> 'val' ->> '$numberInt')::int ORDER BY ord)
+    INTO v_arr FROM jsonb_array_elements((v_page::text::jsonb) -> 'cursor' -> 'firstBatch') WITH ORDINALITY AS t(e, ord);
+    v_vals := v_vals || COALESCE(v_arr, '{}');
+
+    WHILE v_cont IS NOT NULL LOOP
+        SELECT cursorPage, continuation INTO v_page, v_cont
+        FROM cursor_get_more('dyncur_sp_db',
+            '{ "getMore": { "$numberLong": "538" }, "collection": "runtime_sort_coll", "batchSize": 100 }'::documentdb_core.bson, v_cont);
+        SELECT array_agg((e -> 'val' ->> '$numberInt')::int ORDER BY ord)
+        INTO v_arr FROM jsonb_array_elements((v_page::text::jsonb) -> 'cursor' -> 'nextBatch') WITH ORDINALITY AS t(e, ord);
+        v_vals := v_vals || COALESCE(v_arr, '{}');
+    END LOOP;
+
+    RETURN format('kind=%s, file_based=%s, docs=%s, sorted_ascending=%s',
+        v_kind, v_file, array_length(v_vals, 1),
+        v_vals = (SELECT array_agg(x ORDER BY x) FROM unnest(v_vals) x));
+END;
+$$;
+
+-- Case 1: per-collection statistics enabled → the planner is free to choose the
+-- cheaper seq-scan + runtime Sort, which is served by a persistent cursor (the
+-- order-providing index scan no longer wins on cost). The values still come back
+-- fully sorted.
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+SELECT documentdb_api.coll_mod('dyncur_sp_db', 'runtime_sort_coll',
+    '{ "collMod": "runtime_sort_coll", "enableStats": true }');
+ANALYZE;
+
+SELECT runtime_sort_report('{ "find": "runtime_sort_coll", "filter": { }, "sort": { "val": 1 }, "projection": { "_id": 0, "val": 1 }, "batchSize": 100 }')
+    AS with_statistics;
+
+-- Case 2: per-collection statistics disabled → the dynamic-cursor planner has no
+-- reliable estimates, prunes every candidate but the index-order path, and
+-- forces the streaming plan for the same query.
+SET documentdb.enableDynamicPersistentCursorsWithStats TO off;
+SELECT documentdb_api.coll_mod('dyncur_sp_db', 'runtime_sort_coll',
+    '{ "collMod": "runtime_sort_coll", "enableStats": false }');
+ANALYZE;
+
+SELECT runtime_sort_report('{ "find": "runtime_sort_coll", "filter": { }, "sort": { "val": 1 }, "projection": { "_id": 0, "val": 1 }, "batchSize": 100 }')
+    AS without_statistics;

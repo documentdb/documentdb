@@ -17,5 +17,9 @@ SET documentdb.useLocalExecutionShardQueries TO off;
 -- length of those volatile values.
 \a
 
+SET documentdb.enablePerCollectionPlannerStatistics TO on;
+SET documentdb.enableCompositeIndexPlanner TO on;
+SET documentdb.enablePlannerStatisticsNewCollections TO on;
+
 \i sql/bson_aggregation_cursor_tests_core.sql
 \i sql/bson_aggregation_cursor_integration_tests_core.sql
