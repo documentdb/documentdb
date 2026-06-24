@@ -657,7 +657,14 @@ bson_value_dollar_size(PG_FUNCTION_ARGS)
 	pgbsonelement filterElement;
 	TraverseElementValidateState state = { 0 };
 	PgbsonToSinglePgbsonElement(query, &filterElement);
-	filterElement.pathLength = 0;
+
+	/*
+	 * Keep the filter path intact. When this value-variant runs inside
+	 * $elemMatch (e.g. { arr: { $elemMatch: { sub: { $size: N } } } }) the
+	 * element is each array entry and the size must be evaluated against the
+	 * "sub" sub-path within it. Forcing pathLength to 0 here would skip that
+	 * navigation and count the entry itself, producing wrong matches.
+	 */
 	state.filter = &filterElement;
 	state.traverseState.matchFunc = CompareArraySizeMatch;
 	IsQueryFilterNullFunc isNullFilterEquality = NULL;

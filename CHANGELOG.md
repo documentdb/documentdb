@@ -1,4 +1,5 @@
 ### documentdb v0.115-0 (Unreleased) ###
+* Fix `$size` returning wrong results when applied to a field path nested inside `$elemMatch`. *[Bugfix]*
 * Fix backend crash (heap-buffer-overflow) in `$setUnion`/`$setIntersection` element deduplication when hashing `CodeWScope` values (wrong union member read), and fix `Regex` values failing to deduplicate plus a latent over-read for long patterns, in `BsonValueHashUint32`. *[Bugfix]*
 
 ### documentdb v0.114-0 (Unreleased) ###
