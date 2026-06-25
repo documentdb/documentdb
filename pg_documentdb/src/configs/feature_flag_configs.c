@@ -262,6 +262,10 @@ bool EnableDynamicPersistentCursorsWithStats =
 	DEFAULT_ENABLE_DYNAMIC_PERSISTENT_CURSORS_WITH_STATS;
 
 /* Added in v115, enabled in v115, remove after v117 */
+#define DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STARTUP_SCAN true
+bool EnableDynamicCursorFastStartupScan = DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STARTUP_SCAN;
+
+/* Added in v115, enabled in v115, remove after v117 */
 #define DEFAULT_ENABLE_PG_PRNG_CURSOR_ID true
 bool EnablePGPrngCursorId = DEFAULT_ENABLE_PG_PRNG_CURSOR_ID;
 
@@ -696,6 +700,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to enable dynamic persistent cursors with statistics."),
 		NULL, &EnableDynamicPersistentCursorsWithStats,
 		DEFAULT_ENABLE_DYNAMIC_PERSISTENT_CURSORS_WITH_STATS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableDynamicCursorFastStartupScan", newGucPrefix),
+		gettext_noop(
+			"Whether or not to enable fast startup scan for dynamic cursors."),
+		NULL, &EnableDynamicCursorFastStartupScan,
+		DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STARTUP_SCAN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
