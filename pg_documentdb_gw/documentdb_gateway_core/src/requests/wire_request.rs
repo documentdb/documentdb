@@ -639,6 +639,12 @@ impl<'a> WireRequest<'a> {
         self.common.read_concern()
     }
 
+    /// Returns the request `comment` field when it is a string.
+    #[must_use]
+    pub fn comment(&self) -> Option<&str> {
+        self.common.comment()
+    }
+
     /// Returns whether the parsed command requested inline explain handling.
     #[must_use]
     pub const fn is_explain(&self) -> bool {

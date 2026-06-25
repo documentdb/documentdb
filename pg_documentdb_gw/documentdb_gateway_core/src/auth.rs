@@ -274,6 +274,11 @@ where
 /// # Errors
 ///
 /// Returns an error if the operation fails.
+#[tracing::instrument(
+    name = "gateway.auth",
+    skip_all,
+    fields(otel.kind = "internal", auth.kind = tracing::field::Empty)
+)]
 pub async fn process<T>(
     connection_context: &mut ConnectionContext,
     request_context: &RequestContext<'_>,
@@ -283,9 +288,11 @@ where
 {
     let request = request_context.request();
     let request_type = request_context.request_type();
-    if let Some(response) =
-        handle_auth_request(connection_context, request, request_context).await?
-    {
+    let auth_response = handle_auth_request(connection_context, request, request_context).await?;
+    if let Some(kind) = connection_context.auth_state.auth_kind() {
+        tracing::Span::current().record("auth.kind", tracing::field::debug(kind));
+    }
+    if let Some(response) = auth_response {
         return Ok(response);
     }
 

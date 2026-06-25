@@ -24,6 +24,7 @@ pub struct RequestInfo<'a> {
     collection: Option<Cow<'a, str>>,
     pub lsid: Option<LogicalSessionId>,
     read_concern: ReadConcern,
+    comment: Option<Cow<'a, str>>,
     explain: bool,
 }
 
@@ -63,6 +64,7 @@ pub struct StrictRequestInfo<'a> {
     collection: Option<Cow<'a, str>>,
     lsid: Option<LogicalSessionId>,
     read_concern: ReadConcern,
+    comment: Option<Cow<'a, str>>,
     explain: bool,
 }
 
@@ -83,6 +85,7 @@ impl<'a> StrictRequestInfo<'a> {
             collection: info.collection,
             lsid: info.lsid,
             read_concern: info.read_concern,
+            comment: info.comment,
             explain: info.explain,
         })
     }
@@ -98,6 +101,7 @@ impl<'a> StrictRequestInfo<'a> {
                 .map(|collection| Cow::Owned(collection.into_owned())),
             lsid: self.lsid,
             read_concern: self.read_concern,
+            comment: self.comment.map(|comment| Cow::Owned(comment.into_owned())),
             explain: self.explain,
         }
     }
@@ -138,6 +142,12 @@ impl<'a> StrictRequestInfo<'a> {
         &self.read_concern
     }
 
+    /// Returns the request `comment` field when it is a string.
+    #[must_use]
+    pub(crate) fn comment(&self) -> Option<&str> {
+        self.comment.as_deref()
+    }
+
     #[must_use]
     pub(crate) const fn is_explain(&self) -> bool {
         self.explain
@@ -152,6 +162,7 @@ pub(super) struct RequestInfoBuilder<'a> {
     collection: Option<Cow<'a, str>>,
     lsid: Option<LogicalSessionId>,
     read_concern: ReadConcern,
+    comment: Option<Cow<'a, str>>,
     explain: bool,
 }
 
@@ -165,6 +176,7 @@ impl<'a> RequestInfoBuilder<'a> {
             collection: None,
             lsid: None,
             read_concern: ReadConcern::default(),
+            comment: None,
             explain: false,
         }
     }
@@ -213,6 +225,11 @@ impl<'a> RequestInfoBuilder<'a> {
         self
     }
 
+    pub(super) fn comment(&mut self, comment: &'a str) -> &mut Self {
+        self.comment = Some(Cow::Borrowed(comment));
+        self
+    }
+
     pub(super) const fn isolation_level(&mut self, isolation_level: IsolationLevel) -> &mut Self {
         self.transaction.isolation_level(isolation_level);
         self
@@ -234,6 +251,7 @@ impl<'a> RequestInfoBuilder<'a> {
             collection: self.collection,
             lsid: self.lsid,
             read_concern: self.read_concern,
+            comment: self.comment,
             explain: self.explain,
         }
     }

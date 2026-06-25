@@ -14,7 +14,10 @@ use std::env;
 use opentelemetry::KeyValue;
 use serde::Deserialize;
 
-use crate::telemetry::metrics::{MetricsConfig, MetricsOptions};
+use crate::telemetry::{
+    metrics::{MetricsConfig, MetricsOptions},
+    tracing_export::{TracingConfig, TracingOptions},
+};
 
 // ============================================================================
 // Shared Constants
@@ -35,13 +38,10 @@ pub(crate) fn env_var<T: std::str::FromStr>(var: &str) -> Option<T> {
 }
 
 /// Parse `OTEL_RESOURCE_ATTRIBUTES` into `KeyValue` pairs.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "Used by tracing/logging providers in follow-up PRs"
-    )
-)]
+///
+/// The `OTel` spec defines this env var as a comma-separated list of `key=value` pairs that
+/// describe the entity producing telemetry. Used as baseline resource attributes that
+/// caller-provided programmatic attributes can override.
 pub(crate) fn parse_resource_attributes() -> Vec<KeyValue> {
     env::var("OTEL_RESOURCE_ATTRIBUTES")
         .unwrap_or_default()
@@ -70,6 +70,8 @@ pub struct TelemetryOptions {
     pub service_version: Option<String>,
     /// Metrics configuration
     pub metrics: Option<MetricsOptions>,
+    /// Tracing configuration
+    pub tracing: Option<TracingOptions>,
 }
 
 // ============================================================================
@@ -82,6 +84,7 @@ pub struct TelemetryConfig {
     service_name: Option<String>,
     service_version: Option<String>,
     metrics: MetricsConfig,
+    tracing: TracingConfig,
 }
 
 impl TelemetryConfig {
@@ -93,6 +96,7 @@ impl TelemetryConfig {
             service_name: json.service_name,
             service_version: json.service_version,
             metrics: MetricsConfig::new(json.metrics.as_ref()),
+            tracing: TracingConfig::new(json.tracing.as_ref()),
         }
     }
 
@@ -117,10 +121,15 @@ impl TelemetryConfig {
         &self.metrics
     }
 
+    #[must_use]
+    pub const fn tracing(&self) -> &TracingConfig {
+        &self.tracing
+    }
+
     /// Returns true if any telemetry signal is enabled.
     #[must_use]
     pub fn any_signal_enabled(&self) -> bool {
-        self.metrics.metrics_enabled()
+        self.metrics.metrics_enabled() || self.tracing.traces_enabled()
     }
 }
 
@@ -190,6 +199,7 @@ mod tests {
                 enabled: Some(false),
                 ..Default::default()
             }),
+            ..Default::default()
         };
         let config = TelemetryConfig::new(Some(&json_config));
         assert_eq!(config.service_name(), "json-service");
@@ -209,5 +219,58 @@ mod tests {
 
         assert_eq!(config.service_name(), "partial-service");
         assert_eq!(config.metrics().export_interval_ms(), 90000);
+    }
+
+    #[test]
+    fn test_telemetry_config_any_signal_enabled_when_only_tracing_enabled() {
+        let json_config = TelemetryOptions {
+            metrics: Some(MetricsOptions {
+                enabled: Some(false),
+                ..Default::default()
+            }),
+            tracing: Some(TracingOptions {
+                enabled: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let config = TelemetryConfig::new(Some(&json_config));
+        assert!(config.any_signal_enabled());
+        assert!(config.tracing().traces_enabled());
+        assert!(!config.metrics().metrics_enabled());
+    }
+
+    #[test]
+    fn test_telemetry_config_any_signal_enabled_when_only_metrics_enabled() {
+        let json_config = TelemetryOptions {
+            metrics: Some(MetricsOptions {
+                enabled: Some(true),
+                ..Default::default()
+            }),
+            tracing: Some(TracingOptions {
+                enabled: Some(false),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let config = TelemetryConfig::new(Some(&json_config));
+        assert!(config.any_signal_enabled());
+    }
+
+    #[test]
+    fn test_telemetry_config_any_signal_enabled_false_when_both_disabled() {
+        let json_config = TelemetryOptions {
+            metrics: Some(MetricsOptions {
+                enabled: Some(false),
+                ..Default::default()
+            }),
+            tracing: Some(TracingOptions {
+                enabled: Some(false),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let config = TelemetryConfig::new(Some(&json_config));
+        assert!(!config.any_signal_enabled());
     }
 }

@@ -8,6 +8,7 @@
 
 use either::Either::Left;
 use tokio::{io::AsyncWrite, time::Instant};
+use tracing::Instrument;
 
 use crate::{
     auth,
@@ -109,7 +110,9 @@ where
 
     if connection_context.requires_response {
         let write_response_start = Instant::now();
-        responses::writer::write(header, &response, writer).await?;
+        responses::writer::write(header, &response, writer)
+            .instrument(tracing::info_span!("gateway.write_response"))
+            .await?;
         request_context
             .tracker
             .record_duration(RequestIntervalKind::WriteResponse, write_response_start);

@@ -34,7 +34,11 @@ const POSTGRES_POOL_DISPOSE_INTERVAL_SEC: u64 = 7200;
 
 async fn acquire_pooled_connection(pool: &ConnectionPool) -> Result<Connection> {
     let pool_connection = pool.acquire_connection().await?;
-    Ok(Connection::new(pool_connection, false))
+    Ok(Connection::new(
+        pool_connection,
+        false,
+        pool.sql_commenter_enabled(),
+    ))
 }
 
 #[derive(Debug)]

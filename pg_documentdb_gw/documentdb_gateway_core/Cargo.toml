@@ -40,6 +40,7 @@ tokio-openssl.workspace = true
 tokio-postgres.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+tracing-opentelemetry.workspace = true
 uuid.workspace = true
 whoami.workspace = true
 
