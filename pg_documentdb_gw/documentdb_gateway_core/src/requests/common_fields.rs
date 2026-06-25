@@ -232,6 +232,11 @@ fn extract_common_field<'a>(
         "$readPreference" => {
             ReadPreference::parse(field.as_embedded_document_bytes())?;
         }
+        "comment" => {
+            if let Some(comment) = field.as_str() {
+                request_info.comment(comment);
+            }
+        }
         "explain" => {
             request_info.explain(field.as_bool().unwrap_or(false));
         }

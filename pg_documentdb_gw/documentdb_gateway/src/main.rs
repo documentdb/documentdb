@@ -44,18 +44,15 @@ fn main() {
     // must-exist guarantee. For the no-args form, returns None.
     let explicit_config = cli::dispatch_or_passthrough();
 
-    // Initialize tracing BEFORE config load so the operability/security
-    // warnings emitted during apply_env_overlays (file-permission warnings,
-    // PemFile→auto-gen fallback, etc.) actually reach journalctl.
-    bootstrap::init_tracing();
-
-    // Load configuration via the shared helper so the `run` daemon path uses
-    // the same 3-tier resolution (explicit → packaged → dev → env-only) as
-    // the `check` subcommand. When explicit_config is Some(path), the path
-    // is guaranteed to exist; when None, the helper does the 3-tier fallback.
-    let setup_configuration = bootstrap::load_configuration(explicit_config);
-
-    tracing::info!("Starting server with configuration: {setup_configuration:?}");
+    let setup_configuration = bootstrap::with_bootstrap_tracing(|| {
+        // Load configuration via the shared helper so the `run` daemon path uses
+        // the same 3-tier resolution (explicit → packaged → dev → env-only) as
+        // the `check` subcommand. When explicit_config is Some(path), the path
+        // is guaranteed to exist; when None, the helper does the 3-tier fallback.
+        let setup_configuration = bootstrap::load_configuration(explicit_config);
+        tracing::info!("Starting server with configuration: {setup_configuration:?}");
+        setup_configuration
+    });
 
     // Create Tokio runtime with configured worker threads
     let async_runtime_worker_threads = setup_configuration.async_runtime_worker_threads();
@@ -65,27 +62,41 @@ fn main() {
         .build()
         .expect("Failed to create Tokio runtime");
 
-    tracing::info!("Created Tokio runtime with {async_runtime_worker_threads} worker threads");
+    bootstrap::with_bootstrap_tracing(|| {
+        tracing::info!("Created Tokio runtime with {async_runtime_worker_threads} worker threads");
+    });
 
     // Run the async main logic
     runtime.block_on(start_gateway(setup_configuration));
 }
 
 async fn start_gateway(setup_configuration: DocumentDBSetupConfiguration) {
-    // Initialize telemetry (OTLP exporter requires the async runtime)
+    // Initialize telemetry first so the OTLP tracer provider is available before the
+    // `tracing` subscriber is constructed. Both providers are owned by the manager and
+    // shut down before the runtime exits, ensuring batched data is flushed.
     let telemetry_config = TelemetryConfig::new(setup_configuration.telemetry_options());
 
     let telemetry_manager = if telemetry_config.any_signal_enabled() {
         match TelemetryManager::init_telemetry(&telemetry_config, None) {
             Ok(manager) => Some(manager),
             Err(e) => {
-                tracing::error!("Failed to initialize OpenTelemetry: {e}");
+                eprintln!("Failed to initialize OpenTelemetry: {e}");
                 None
             }
         }
     } else {
         None
     };
+
+    bootstrap::init_tracing_with_telemetry(telemetry_manager.as_ref());
+
+    tracing::info!(
+        "Tracing subscriber installed (otel_traces_enabled={})",
+        telemetry_manager
+            .as_ref()
+            .and_then(TelemetryManager::tracer_provider)
+            .is_some()
+    );
 
     let shutdown_token = SHUTDOWN_CONTROLLER.token();
 

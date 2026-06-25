@@ -54,8 +54,16 @@ pub trait PgDataClient: Send + Sync {
 
     async fn pull_connection_with_transaction(&self, in_transaction: bool) -> Result<Connection> {
         let pool_connection = self.acquire_pool_connection().await?;
+        let sql_commenter_enabled = self
+            .connection_pool()
+            .map(ConnectionPool::sql_commenter_enabled)
+            .unwrap_or(false);
 
-        Ok(Connection::new(pool_connection, in_transaction))
+        Ok(Connection::new(
+            pool_connection,
+            in_transaction,
+            sql_commenter_enabled,
+        ))
     }
 
     /// Returns the underlying connection pool.

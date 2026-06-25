@@ -10,6 +10,8 @@ use tokio::{
     io::{AsyncRead, AsyncWrite},
     time::{Duration, Instant},
 };
+use tracing::field::Empty;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
     context::{ConnectionContext, RequestContext},
@@ -23,11 +25,33 @@ use crate::{
         read_ahead::{self, PendingHeaderRead},
         request_execution,
     },
+    telemetry::context_propagation,
 };
 
 #[expect(
     clippy::too_many_lines,
     reason = "Request hot path coordinates read-ahead, parsing, validation, response writing, and telemetry"
+)]
+#[expect(
+    clippy::async_yields_async,
+    reason = "Returning the read-ahead future is intentional: the next header read is started inside this function so the caller can await it on the next loop iteration"
+)]
+#[tracing::instrument(
+    name = "gateway.request",
+    skip_all,
+    fields(
+        otel.kind = "server",
+        otel.status_code = Empty,
+        db.system.name = "documentdb",
+        db.operation.name = Empty,
+        db.collection.name = Empty,
+        db.namespace = Empty,
+        connection.id = %connection_context.connection_id,
+        network.protocol = %connection_context.transport_protocol(),
+        network.transport.tls = !connection_context.ssl_protocol.is_empty(),
+        request.id = header.request_id(),
+        activity_id = %activity_id,
+    )
 )]
 pub(super) async fn handle_message<'a, T, R, W>(
     connection_context: &mut ConnectionContext,
@@ -60,6 +84,7 @@ where
                 return read_ahead::closed_header_read();
             }
 
+            tracing::Span::current().record("otel.status_code", "ERROR");
             error_reply::reply_with_request_error::<W>(
                 connection_context,
                 header,
@@ -110,13 +135,21 @@ where
     {
         return next_header;
     }
-
     let format_request_start = Instant::now();
     let wire_request = match protocol::reader::parse_request(&message, &mut requires_response) {
         Ok(request) => request,
         Err(error) => {
+            let span = tracing::Span::current();
+            span.record("otel.status_code", "ERROR");
             let telemetry_wire_request =
                 protocol::reader::parse_request_payload(&message, &mut requires_response).ok();
+            if let Some(preview) = telemetry_wire_request.as_ref() {
+                span.record(
+                    "db.operation.name",
+                    tracing::field::display(preview.request_type()),
+                );
+                span.record("db.namespace", preview.db_hint().unwrap_or(""));
+            }
             error_reply::reply_with_request_error::<W>(
                 connection_context,
                 header,
@@ -139,7 +172,29 @@ where
     connection_context.requires_response = requires_response;
     request_tracker.record_duration(RequestIntervalKind::FormatRequest, format_request_start);
 
+    let span = tracing::Span::current();
+    span.record(
+        "db.operation.name",
+        tracing::field::display(wire_request.request_type()),
+    );
+    span.record(
+        "db.collection.name",
+        wire_request.collection().unwrap_or(""),
+    );
+    span.record("db.namespace", wire_request.db());
+
+    // If the client carried a W3C trace context in the request `comment`, re-parent
+    // the gateway's root span onto it so this request (and its downstream
+    // `postgres.execute` span) appear under the caller's distributed trace. Absent
+    // or malformed context leaves the gateway starting its own trace.
+    if let Some(comment) = wire_request.comment() {
+        if let Some(parent_context) = context_propagation::extract_context_from_comment(comment) {
+            span.set_parent(parent_context);
+        }
+    }
+
     if let Err(error) = validation::validate_request(connection_context, &wire_request) {
+        span.record("otel.status_code", "ERROR");
         let collection = wire_request.collection().unwrap_or("").to_owned();
         error_reply::reply_with_request_error::<W>(
             connection_context,
@@ -154,7 +209,6 @@ where
             Some(handle_message_start),
         )
         .await;
-
         return next_header;
     }
 
@@ -172,6 +226,7 @@ where
     )
     .await
     {
+        span.record("otel.status_code", "ERROR");
         let collection = request_context
             .request()
             .collection()

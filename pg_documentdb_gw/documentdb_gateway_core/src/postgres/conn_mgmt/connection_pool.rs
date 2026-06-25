@@ -41,6 +41,7 @@ use crate::{
         },
         QueryCatalog,
     },
+    telemetry::TracingConfig,
     time::{self, EpochClock},
 };
 
@@ -136,6 +137,10 @@ pub struct ConnectionPool {
     metrics: Arc<ConnectionPoolMetrics>,
     identifier: String,
     prune_task: JoinHandle<()>,
+    /// Whether sampled queries from this pool should carry a `SQLCommenter`
+    /// `traceparent` comment for Postgres log correlation. Resolved once from
+    /// telemetry configuration at pool creation.
+    sql_commenter_enabled: bool,
 }
 
 impl ConnectionPool {
@@ -219,6 +224,13 @@ impl ConnectionPool {
             pool_settings.adjusted_max_connections()
         );
 
+        let sql_commenter_enabled = TracingConfig::new(
+            setup_configuration
+                .telemetry_options()
+                .and_then(|t| t.tracing.as_ref()),
+        )
+        .sql_commenter_enabled();
+
         Ok(Self {
             pool,
             timeout_pool,
@@ -228,6 +240,7 @@ impl ConnectionPool {
             metrics,
             identifier: pool_identifier,
             prune_task,
+            sql_commenter_enabled,
         })
     }
 
@@ -239,6 +252,11 @@ impl ConnectionPool {
     /// # Errors
     /// Returns a [`deadpool_postgres::PoolError`] if the pool is exhausted or
     /// the connection cannot be established.
+    #[tracing::instrument(
+        name = "postgres.acquire_connection",
+        skip_all,
+        fields(otel.kind = "client", db.system.name = "postgresql", pool = "primary")
+    )]
     pub async fn acquire_connection(
         &self,
     ) -> std::result::Result<PoolConnection, deadpool_postgres::PoolError> {
@@ -262,6 +280,11 @@ impl ConnectionPool {
     /// # Errors
     /// Returns a [`deadpool_postgres::PoolError`] if the pool is exhausted or
     /// the connection cannot be established.
+    #[tracing::instrument(
+        name = "postgres.acquire_connection",
+        skip_all,
+        fields(otel.kind = "client", db.system.name = "postgresql", pool = "timeout")
+    )]
     pub async fn acquire_timeout_connection(
         &self,
     ) -> std::result::Result<PoolConnection, deadpool_postgres::PoolError> {
@@ -294,6 +317,13 @@ impl ConnectionPool {
 
     pub fn last_used(&self) -> Instant {
         time::u64_to_instant(self.last_used_nanos.load(Ordering::Relaxed))
+    }
+
+    /// Whether sampled queries from this pool should carry a `SQLCommenter`
+    /// `traceparent` comment for Postgres log correlation.
+    #[must_use]
+    pub const fn sql_commenter_enabled(&self) -> bool {
+        self.sql_commenter_enabled
     }
 
     /// Returns a non-mutating status snapshot for this logical pool.

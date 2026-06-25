@@ -8,15 +8,59 @@
 
 use std::{env, path::PathBuf};
 
-use documentdb_gateway_core::configuration::{env_keys, DocumentDBSetupConfiguration};
+use documentdb_gateway_core::{
+    configuration::{env_keys, DocumentDBSetupConfiguration},
+    telemetry::TelemetryManager,
+};
+use opentelemetry::trace::TracerProvider as _;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+/// Tracer name used when bridging `tracing` spans into OpenTelemetry. Must match the
+/// instrumentation library identity surfaced on exported spans.
+const TRACER_NAME: &str = "documentdb_gateway";
+
 pub fn init_tracing() {
+    let _ = tracing_subscriber::registry()
+        .with(create_env_filter())
+        .with(tracing_subscriber::fmt::layer())
+        .try_init();
+}
+
+pub fn init_tracing_with_telemetry(telemetry_manager: Option<&TelemetryManager>) {
+    let registry = tracing_subscriber::registry()
+        .with(create_env_filter())
+        .with(tracing_subscriber::fmt::layer());
+
+    let result =
+        if let Some(provider) = telemetry_manager.and_then(TelemetryManager::tracer_provider) {
+            registry
+                .with(tracing_opentelemetry::OpenTelemetryLayer::new(
+                    provider.tracer(TRACER_NAME),
+                ))
+                .try_init()
+        } else {
+            registry.try_init()
+        };
+
+    if let Err(err) = result {
+        eprintln!("documentdb-gateway: failed to install tracing subscriber: {err}");
+    }
+}
+
+pub fn with_bootstrap_tracing<T>(f: impl FnOnce() -> T) -> T {
+    let subscriber = tracing_subscriber::registry()
+        .with(create_env_filter())
+        .with(tracing_subscriber::fmt::layer());
+    let dispatch = tracing::Dispatch::new(subscriber);
+    tracing::dispatcher::with_default(&dispatch, f)
+}
+
+fn create_env_filter() -> EnvFilter {
     // EnvFilter honors DOCUMENTDB_LOG_LEVEL when set; falls back to
     // RUST_LOG, then to "info" as the package's documented default.
     // Validate up front so a misconfigured value surfaces on stderr
     // rather than silently degrading to the fallback.
-    let filter = match env::var(env_keys::LOG_LEVEL) {
+    match env::var(env_keys::LOG_LEVEL) {
         Ok(raw) => {
             let trimmed = raw.trim();
             if trimmed.is_empty() {
@@ -52,11 +96,7 @@ pub fn init_tracing() {
             );
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
         }
-    };
-    let _ = tracing_subscriber::registry()
-        .with(filter)
-        .with(tracing_subscriber::fmt::layer())
-        .try_init();
+    }
 }
 
 pub fn load_configuration(config: Option<PathBuf>) -> DocumentDBSetupConfiguration {

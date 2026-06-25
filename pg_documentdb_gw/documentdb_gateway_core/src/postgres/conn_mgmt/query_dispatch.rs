@@ -307,6 +307,16 @@ async fn set_statement_timeout(
     clippy::too_many_lines,
     reason = "complex logic that would be harder to read if split across multiple functions"
 )]
+#[tracing::instrument(
+    name = "postgres.execute",
+    skip_all,
+    fields(
+        otel.kind = "client",
+        otel.status_code = tracing::field::Empty,
+        db.system.name = "postgresql",
+        retry.count = tracing::field::Empty,
+    )
+)]
 pub async fn run_request_with_retries<T, F, Fut>(
     source: ConnectionSource<'_>,
     query_options: QueryOptions,
@@ -360,7 +370,11 @@ where
                     );
 
                     match acquire {
-                        Ok(pool_conn) => Arc::new(Connection::new(pool_conn, false)),
+                        Ok(pool_conn) => Arc::new(Connection::new(
+                            pool_conn,
+                            false,
+                            pool.sql_commenter_enabled(),
+                        )),
                         Err(e) => {
                             if needs_timeout_pool {
                                 tracing::warn!(
@@ -493,6 +507,8 @@ where
                     {
                         if let Some(interval) = get_retry_interval(&retry, &mut retry_context) {
                             retry_context.retry_count += 1;
+                            tracing::Span::current()
+                                .record("retry.count", retry_context.retry_count);
                             tracing::warn!(
                                 "Retrying request (attempt {}): {}",
                                 retry_context.retry_count,
@@ -508,11 +524,15 @@ where
                     }
                 }
 
-                check_for_command_timeout_error(
+                if let Err(timeout_error) = check_for_command_timeout_error(
                     &request_options,
                     retry_context.stopwatch.elapsed(),
-                )?;
+                ) {
+                    tracing::Span::current().record("otel.status_code", "ERROR");
+                    return Err(timeout_error);
+                }
 
+                tracing::Span::current().record("otel.status_code", "ERROR");
                 return Err(error);
             }
         }

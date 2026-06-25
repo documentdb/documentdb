@@ -26,6 +26,14 @@ use crate::{
 /// # Errors
 ///
 /// Returns an error if the operation fails.
+#[tracing::instrument(
+    name = "gateway.process_request",
+    skip_all,
+    fields(
+        otel.kind = "internal",
+        db.operation.name = %request_context.request_type(),
+    )
+)]
 pub async fn process_request(
     request_context: &RequestContext<'_>,
     connection_context: &mut ConnectionContext,

@@ -16,27 +16,39 @@ use tokio_postgres::{
     Row,
 };
 
-use crate::postgres::{conn_mgmt::PoolConnection, PgDocument};
+use crate::{
+    postgres::{conn_mgmt::PoolConnection, PgDocument},
+    telemetry::sql_commenter,
+};
 
 // Provides functions which coerce bson to BYTEA. Any statement binding a PgDocument should use query_typed and not query
 // WrongType { postgres: Other(Other { name: "bson", oid: 18934, kind: Simple, schema: "schema_name" }), rust: "document_gateway::postgres::document::PgDocument" })
 // Will be occur if the wrong one is used.
 #[derive(Debug)]
 pub struct Connection {
-    pool_connection: PoolConnection,
+    inner: PoolConnection,
     /// Tracks whether a transaction is active on this connection (user-level
     /// or gateway-level).  Uses `AtomicBool` for interior mutability because
     /// `Connection` lives behind `Arc` and the gateway timeout layer may start
     /// a transaction after construction.
     in_transaction: AtomicBool,
+    /// Whether sampled queries on this connection should carry a `SQLCommenter`
+    /// `traceparent` comment for Postgres log correlation. Inherited from the
+    /// owning pool's telemetry configuration.
+    sql_commenter_enabled: bool,
 }
 
 impl Connection {
     #[must_use]
-    pub const fn new(pool_connection: PoolConnection, in_transaction: bool) -> Self {
+    pub const fn new(
+        pool_connection: PoolConnection,
+        in_transaction: bool,
+        sql_commenter_enabled: bool,
+    ) -> Self {
         Self {
-            pool_connection,
+            inner: pool_connection,
             in_transaction: AtomicBool::new(in_transaction),
+            sql_commenter_enabled,
         }
     }
 
@@ -74,12 +86,28 @@ impl Connection {
         parameter_types: &[Type],
         params: &[&(dyn ToSql + Sync)],
     ) -> std::result::Result<Vec<Row>, tokio_postgres::Error> {
+        if self.sql_commenter_enabled && parameter_types.len() == params.len() {
+            if let Some(comment) = sql_commenter::current_trace_comment() {
+                // A per-request comment changes the statement text, so execute it
+                // as an ephemeral unnamed statement rather than caching it. This
+                // keeps the prepared-statement cache free of high-cardinality,
+                // single-use entries while still binding parameters by type.
+                let commented = format!("{query} {comment}");
+                let typed_params: Vec<(&(dyn ToSql + Sync), Type)> = params
+                    .iter()
+                    .copied()
+                    .zip(parameter_types.iter().cloned())
+                    .collect();
+                return self.inner.query_typed(&commented, &typed_params).await;
+            }
+        }
+
         let statement = self
-            .pool_connection
+            .inner
             .prepare_typed_cached(query, parameter_types)
             .await?;
 
-        self.pool_connection.query(&statement, params).await
+        self.inner.query(&statement, params).await
     }
 
     /// # Errors
@@ -102,7 +130,7 @@ impl Connection {
         &self,
         query: &str,
     ) -> std::result::Result<(), tokio_postgres::Error> {
-        self.pool_connection.batch_execute(query).await
+        self.inner.batch_execute(query).await
     }
 }
 
