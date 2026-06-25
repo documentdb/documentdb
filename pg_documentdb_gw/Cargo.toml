@@ -35,6 +35,7 @@ dyn-clone = "1.0.20"
 either = "1.15.0"
 futures = "0.3.32"
 hex = "0.4.3"
+mimalloc = "0.1.52"
 # mongodb rust driver that we use to write test cases for DocumentDB
 mongodb = { version = "3.6.0", default-features = false, features = [
     "openssl-tls",

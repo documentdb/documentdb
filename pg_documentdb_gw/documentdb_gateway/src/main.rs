@@ -15,6 +15,10 @@
     reason = "Main binary uses unwrap for failures that should crash the process"
 )]
 
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod bootstrap;
 mod check;
 mod cli;
