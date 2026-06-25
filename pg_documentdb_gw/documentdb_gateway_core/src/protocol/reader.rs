@@ -26,7 +26,7 @@ use crate::{
     protocol::{
         bson_scanner,
         header::Header,
-        message::{self, Message, MessageSection},
+        message::{Message, MessageFlags, MessageSection},
         op_insert, op_query,
         opcode::OpCode,
     },
@@ -219,6 +219,17 @@ pub fn parse_request_payload<'a>(
     )))
 }
 
+pub fn requires_response_from_parsed_message(message: &RequestMessage) -> Option<bool> {
+    if message.op_code() != OpCode::Msg {
+        return Some(true);
+    }
+
+    let request = message.request_as_u8();
+    let raw_flags = u32::from_le_bytes(request.get(..4)?.try_into().ok()?);
+    let flags = MessageFlags::from_bits_truncate(raw_flags);
+    Some(!flags.contains(MessageFlags::MORE_TO_COME))
+}
+
 /// Read from a byte array until a nul terminator, parse using utf-8
 ///
 /// # Errors
@@ -249,41 +260,17 @@ fn parse_msg<'a>(
     let reader = Cursor::new(message.request_as_u8());
     let msg: Message = Message::read_from_op_msg(reader, message.response_to())?;
 
-    *requires_response = !msg.flags.contains(message::MessageFlags::MORE_TO_COME);
-    match msg.sections.len() {
-        0 => Err(DocumentDBError::bad_value(
-            "Message had no sections".to_owned(),
-        )),
-        1 => match &msg.sections[0] {
-            MessageSection::Document(doc) => parse_cmd(doc, None),
-            MessageSection::Sequence { .. } => Err(DocumentDBError::bad_value(
-                "Expected the only section to be a document.".to_owned(),
-            )),
-        },
-        2 => match (&msg.sections[0], &msg.sections[1]) {
-            (MessageSection::Document(doc), MessageSection::Document(extra)) => {
-                parse_cmd(doc, Some(extra.as_bytes()))
-            }
-            (
-                MessageSection::Document(doc),
-                MessageSection::Sequence {
-                    documents: extras,
-                    _identifier: identifier,
-                    ..
-                },
-            ) => {
-                let request = parse_cmd(doc, Some(extras))?;
-                validate_sequence_identifier(request.request_type(), Some(identifier))?;
-                Ok(request)
-            }
-            (MessageSection::Sequence { .. }, _) => Err(DocumentDBError::bad_value(
-                "Expected first section to be a single document.".to_owned(),
-            )),
-        },
-        _ => Err(DocumentDBError::bad_value(
-            "Expected at most two sections.".to_owned(),
-        )),
+    *requires_response = !msg.flags.contains(MessageFlags::MORE_TO_COME);
+    if msg.too_many_sections {
+        return Err(DocumentDBError::bad_value(
+            "Expected at most one command document and one extra section.".to_owned(),
+        ));
     }
+    let command = msg
+        .command
+        .ok_or_else(|| DocumentDBError::bad_value("Message had no command document".to_owned()))?;
+
+    parse_cmd_from_message(command, msg.extra.as_ref())
 }
 
 fn parse_msg_payload<'a>(
@@ -293,48 +280,24 @@ fn parse_msg_payload<'a>(
     let reader = Cursor::new(message.request_as_u8());
     let msg: Message = Message::read_from_op_msg(reader, message.response_to())?;
 
-    *requires_response = !msg.flags.contains(message::MessageFlags::MORE_TO_COME);
-    match msg.sections.len() {
-        0 => Err(DocumentDBError::bad_value(
-            "Message had no sections".to_owned(),
-        )),
-        1 => match &msg.sections[0] {
-            MessageSection::Document(doc) => parse_cmd_payload(doc, None),
-            MessageSection::Sequence { .. } => Err(DocumentDBError::bad_value(
-                "Expected the only section to be a document.".to_owned(),
-            )),
-        },
-        2 => match (&msg.sections[0], &msg.sections[1]) {
-            (MessageSection::Document(doc), MessageSection::Document(extra)) => {
-                parse_cmd_payload(doc, Some(extra.as_bytes()))
-            }
-            (
-                MessageSection::Document(doc),
-                MessageSection::Sequence {
-                    documents: extras,
-                    _identifier: identifier,
-                    ..
-                },
-            ) => {
-                let request = parse_cmd_payload(doc, Some(extras))?;
-                validate_sequence_identifier(request.request_type(), Some(identifier))?;
-                Ok(request)
-            }
-            (MessageSection::Sequence { .. }, _) => Err(DocumentDBError::bad_value(
-                "Expected first section to be a single document.".to_owned(),
-            )),
-        },
-        _ => Err(DocumentDBError::bad_value(
-            "Expected at most two sections.".to_owned(),
-        )),
+    *requires_response = !msg.flags.contains(MessageFlags::MORE_TO_COME);
+    if msg.too_many_sections {
+        return Err(DocumentDBError::bad_value(
+            "Expected at most one command document and one extra section.".to_owned(),
+        ));
     }
+    let command = msg
+        .command
+        .ok_or_else(|| DocumentDBError::bad_value("Message had no command document".to_owned()))?;
+
+    parse_cmd_payload_from_message(command, msg.extra.as_ref())
 }
 
 fn validate_sequence_identifier(
     request_type: RequestType,
-    sequence_identifier: Option<&str>,
+    extra: Option<&MessageSection<'_>>,
 ) -> Result<()> {
-    let Some(identifier) = sequence_identifier else {
+    let Some(identifier) = extra.and_then(MessageSection::sequence_identifier) else {
         return Ok(());
     };
 
@@ -361,8 +324,40 @@ fn validate_sequence_identifier(
 /// # Errors
 /// Returns an error if the command document is empty or contains an unrecognized command.
 pub fn parse_cmd<'a>(command: &'a RawDocument, extra: Option<&'a [u8]>) -> Result<WireRequest<'a>> {
+    parse_cmd_core(command, extra, |_| Ok(()))
+}
+
+fn parse_cmd_from_message<'a>(
+    command: &'a RawDocument,
+    extra: Option<&MessageSection<'a>>,
+) -> Result<WireRequest<'a>> {
+    parse_cmd_core(
+        command,
+        extra.map(MessageSection::as_bytes),
+        |request_type| validate_sequence_identifier(request_type, extra),
+    )
+}
+
+fn parse_cmd_payload_from_message<'a>(
+    command: &'a RawDocument,
+    extra: Option<&MessageSection<'a>>,
+) -> Result<RequestPreview<'a>> {
+    let request = parse_cmd_payload(command, extra.map(MessageSection::as_bytes))?;
+    validate_sequence_identifier(request.request_type(), extra)?;
+    Ok(request)
+}
+
+fn parse_cmd_core<'a, F>(
+    command: &'a RawDocument,
+    extra: Option<&'a [u8]>,
+    validate_extra: F,
+) -> Result<WireRequest<'a>>
+where
+    F: FnOnce(RequestType) -> Result<()>,
+{
     let (request_type, common) = extract_request_type_and_info_from_document(command)?;
     let common = StrictRequestInfo::try_from_info(common)?;
+    validate_extra(request_type)?;
     let execution = execution_for(request_type, command, &common);
 
     let request = WireRequest::from_borrowed_parts(
@@ -591,6 +586,25 @@ mod tests {
     }
 
     #[test]
+    fn requires_response_uses_flags_without_parsing_sections_when_more_to_come_is_absent() {
+        let msg = RequestMessage::new(Bytes::from(0_u32.to_le_bytes().to_vec()), OpCode::Msg, 1, 0);
+
+        assert_eq!(requires_response_from_parsed_message(&msg), Some(true));
+    }
+
+    #[test]
+    fn requires_response_uses_raw_more_to_come_flags_without_parsing_sections() {
+        let msg = RequestMessage::new(
+            Bytes::from(MessageFlags::MORE_TO_COME.bits().to_le_bytes().to_vec()),
+            OpCode::Msg,
+            1,
+            0,
+        );
+
+        assert_eq!(requires_response_from_parsed_message(&msg), Some(false));
+    }
+
+    #[test]
     fn parse_request_accepts_document_sequence_before_command_document() {
         let command = doc! { "insert": "users", "$db": "myapp" };
         let documents = vec![doc! { "_id": 1_i32 }, doc! { "_id": 2_i32 }];
@@ -689,6 +703,26 @@ mod tests {
             request.extra().unwrap(),
             build_raw_document(&extra).as_bytes()
         );
+    }
+
+    #[test]
+    fn parse_request_rejects_too_many_sections() {
+        let command = doc! { "ping": 1_i32, "$db": "admin" };
+        let extra_a = doc! { "a": 1_i32 };
+        let extra_b = doc! { "b": 1_i32 };
+        let command_section = build_document_section(&command);
+        let first_extra_section = build_document_section(&extra_a);
+        let second_extra_section = build_document_section(&extra_b);
+        let (header, body) = build_op_msg_parts_with_sections(
+            &[command_section, first_extra_section, second_extra_section],
+            12,
+        );
+        let msg = make_op_msg_from_body(body, header.request_id());
+        let mut requires_response = true;
+
+        parse_request(&msg, &mut requires_response)
+            .expect_err("too many OP_MSG sections should be rejected");
+        assert!(requires_response);
     }
 
     #[test]

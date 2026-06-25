@@ -21,7 +21,9 @@ use crate::{
 pub struct Message<'a> {
     pub(crate) _response_to: i32,
     pub(crate) flags: MessageFlags,
-    pub(crate) sections: Vec<MessageSection<'a>>,
+    pub(crate) command: Option<&'a RawDocument>,
+    pub(crate) extra: Option<MessageSection<'a>>,
+    pub(crate) too_many_sections: bool,
     pub(crate) _checksum: Option<u32>,
     pub(crate) _request_id: Option<i32>,
 }
@@ -66,13 +68,29 @@ impl<'a> Message<'a> {
             message_bytes.len()
         };
 
-        let mut sections = Vec::new();
         let mut section_reader = Cursor::new(&message_bytes[..section_end]);
         section_reader.set_position(reader.position());
+        let mut command = None;
+        let mut extra = None;
+        let mut too_many_sections = false;
 
         while usize::try_from(section_reader.position()).unwrap_or(usize::MAX) < section_end {
             let section = MessageSection::read(&mut section_reader)?;
-            sections.push(section);
+
+            match section {
+                MessageSection::Document(document) if command.is_none() => {
+                    command = Some(document);
+                }
+                MessageSection::Document(document) if extra.is_none() => {
+                    extra = Some(MessageSection::Document(document));
+                }
+                MessageSection::Sequence { .. } if extra.is_none() => {
+                    extra = Some(section);
+                }
+                MessageSection::Document(_) | MessageSection::Sequence { .. } => {
+                    too_many_sections = true;
+                }
+            }
         }
 
         let checksum = if checksum_present {
@@ -96,13 +114,18 @@ impl<'a> Message<'a> {
             None
         };
 
-        // Some drivers don't put the command document first.
-        sections.sort_by_key(MessageSection::payload_type);
+        if command.is_none() {
+            return Err(DocumentDBError::bad_value(
+                "Message had no command document".to_owned(),
+            ));
+        }
 
         Ok(Message {
             _response_to: response_to,
             flags,
-            sections,
+            command,
+            extra,
+            too_many_sections,
             _checksum: checksum,
             _request_id: None,
         })
@@ -235,12 +258,12 @@ pub(crate) enum MessageSection<'a> {
     Document(&'a RawDocument),
     Sequence {
         _size: i32,
-        _identifier: &'a str,
+        identifier: &'a str,
         documents: &'a [u8],
     },
 }
 
-impl MessageSection<'_> {
+impl<'a> MessageSection<'a> {
     /// Reads bytes from `reader` and deserializes them into a `MessageSection`.
     ///
     /// # Errors
@@ -318,15 +341,22 @@ impl MessageSection<'_> {
             _size: i32::try_from(size).map_err(|error| {
                 DocumentDBError::bad_value(format!("Document sequence size is too large: {error}"))
             })?,
-            _identifier: identifier,
+            identifier,
             documents,
         })
     }
 
-    const fn payload_type(&self) -> i32 {
+    pub(crate) fn as_bytes(&self) -> &'a [u8] {
         match self {
-            Self::Document(_) => 0,
-            Self::Sequence { .. } => 1,
+            Self::Document(document) => document.as_bytes(),
+            Self::Sequence { documents, .. } => documents,
+        }
+    }
+
+    pub(crate) const fn sequence_identifier(&self) -> Option<&'a str> {
+        match self {
+            Self::Document(_) => None,
+            Self::Sequence { identifier, .. } => Some(identifier),
         }
     }
 }
