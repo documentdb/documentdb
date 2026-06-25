@@ -52,6 +52,7 @@ extern bool EnablePrimaryKeyCursorScan;
 extern bool UseFileBasedPersistedCursors;
 extern bool EnableDebugQueryText;
 extern bool EnableDelayedHoldPortal;
+extern bool EnableDynamicCursorFastStartupScan;
 
 
 /*
@@ -508,6 +509,14 @@ PlanDynamicQueryAndDetermineCursorType(Query *query, bool *isDynamicStreamable)
 	/* Deparse query text before planning since the planner may modify the query tree */
 	char *sourceText = "";
 	int cursorOptions = CURSOR_OPT_BINARY;
+	if (EnableDynamicCursorFastStartupScan)
+	{
+		/* Turn on fast plan to consider statistics tupleFraction
+		 * for startup path.
+		 */
+		cursorOptions |= CURSOR_OPT_FAST_PLAN;
+	}
+
 	if (EnableDebugQueryText)
 	{
 		bool pretty = false;

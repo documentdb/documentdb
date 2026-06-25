@@ -2175,9 +2175,9 @@ SELECT CASE WHEN persistConnection THEN 'persistent (runtime sort)' ELSE 'stream
 FROM find_cursor_first_page(database => 'runtime_sort_db',
     commandSpec => '{ "find": "runtime_sort_coll", "filter": { "a": "grp_missing" }, "sort": { "b": 1 }, "projection": { "_id": 0, "b": 1 }, "batchSize": 100 }'::documentdb_core.bson,
     cursorId => 4294967290);
-        cursor_kind        | docs 
----------------------------+------
- persistent (runtime sort) |    0
+       cursor_kind       | docs 
+-------------------------+------
+ streaming (index order) |    0
 (1 row)
 
 -- ---------------------------------------------------------------------------
