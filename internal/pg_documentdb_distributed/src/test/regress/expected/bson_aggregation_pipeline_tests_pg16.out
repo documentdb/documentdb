@@ -484,7 +484,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 
 SET documentdb.enableNewWithExprAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO on;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$sum": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$sum": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
                                             document                                            
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "0" }, "d" : { "$numberInt" : "0" }, "e" : { "$numberInt" : "1" } }
@@ -500,7 +500,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 ERROR:  The specified field name d.e is not allowed to include the '.' character.
 SET documentdb.enableNewWithExprAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO on;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d.e": { "$sum": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d.e": { "$sum": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
 ERROR:  The specified field name d.e is not allowed to include the '.' character.
 SET documentdb.enableNewWithExprAccumulators TO off;
 -- $group with first/last

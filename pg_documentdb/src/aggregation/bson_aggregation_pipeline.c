@@ -84,7 +84,6 @@ extern int MaxAggregationStagesAllowed;
 
 extern bool FailOnNonEmptyGroupCountArg;
 extern bool FailOnGroupIdDuplicate;
-extern bool EnableGroupSubqueryElimination;
 extern bool ForceGroupSubqueryElimination;
 extern bool RemoveMatchNamespaceFilters;
 extern bool EnableOrderByIndexTerm;
@@ -8134,8 +8133,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 					  context->mongoCollection->shardKey != NULL);
 
 	bool canEliminateSubquery = ForceGroupSubqueryElimination ||
-								(EnableGroupSubqueryElimination &&
-								 (!isSharded || isGroupConstant));
+								(!isSharded || isGroupConstant);
 
 	if (canEliminateSubquery)
 	{
