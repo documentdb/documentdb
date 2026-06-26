@@ -3785,43 +3785,17 @@ HandleFill(const bson_value_t *existingValue, Query *query,
 		return query;
 	}
 
-	Expr *partitionByFieldsExpr = NULL;
-
-	/* construct partitionByFieldsExpr if it exists */
-	if (partitionByFields.value_type != BSON_TYPE_EOD)
-	{
-		/* convert partitionByFields to pgbson */
-		pgbson *partitionByFieldsDoc = BsonValueToDocumentPgbson(&partitionByFields);
-
-		TargetEntry *firstEntry = linitial(query->targetList);
-		Expr *docExpr = (Expr *) firstEntry->expr;
-
-		RangeTblEntry *rte = linitial(query->rtable);
-		bool isRTEDataTable = (rte->rtekind == RTE_RELATION || rte->rtekind ==
-							   RTE_FUNCTION);
-
-		if (isRTEDataTable && IsPartitionByFieldsOnShardKey(partitionByFieldsDoc,
-															context->mongoCollection))
-		{
-			partitionByFieldsExpr = (Expr *) makeVar(((Var *) docExpr)->varno,
-													 DOCUMENT_DATA_TABLE_SHARD_KEY_VALUE_VAR_ATTR_NUMBER,
-													 INT8OID, -1,
-													 InvalidOid, 0);
-		}
-		else
-		{
-			Const *partitionConst = MakeBsonConst(partitionByFieldsDoc);
-			partitionByFieldsExpr = (Expr *) makeFuncExpr(
-				BsonExpressionPartitionByFieldsGetFunctionOid(),
-				BsonTypeId(), list_make2(
-					docExpr, partitionConst),
-				InvalidOid, InvalidOid,
-				COERCE_EXPLICIT_CALL);
-		}
-	}
+	/*
+	 * partitionByFields is the $fill-specific multi-field partition key. The
+	 * partition expression is built inside HandleSetWindowFieldsCore (after any
+	 * migration to a subquery) so that the embedded document Var references the
+	 * correct range-table level.
+	 */
+	const bson_value_t *partitionByFieldsArg =
+		partitionByFields.value_type != BSON_TYPE_EOD ? &partitionByFields : NULL;
 
 	query = HandleSetWindowFieldsCore(&setWindowFieldsSpec, query, context,
-									  partitionByFieldsExpr,
+									  partitionByFieldsArg,
 									  enableInternalWindowOperator);
 
 	return query;
