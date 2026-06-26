@@ -202,8 +202,13 @@ static pgbson * BuildStreamingContinuationDocument(HTAB *cursorMap, pgbson *quer
 												   int64_t cursorId, QueryKind queryKind,
 												   TimeSystemVariables *
 												   timeSystemVariables,
-												   int numIterations,
-												   bool isTailableCursor);
+												   int numIterations);
+static pgbson * BuildTailableContinuationDocument(pgbson *continuationDoc,
+												  pgbson *querySpec,
+												  int64_t cursorId, QueryKind queryKind,
+												  TimeSystemVariables *
+												  timeSystemVariables,
+												  int numIterations);
 
 static pgbson * BuildDynamicStreamingContinuationDocument(int64_t cursorId, QueryKind
 														  queryKind,
@@ -657,7 +662,7 @@ DrainLocalCursorGetMorePage(text *database, pgbson *cursorSpec,
 							  BuildStreamingContinuationDocument(
 				cursorMap, getMoreInfo->querySpec, getMoreInfo->cursorId,
 				getMoreInfo->queryKind,
-				&getMoreInfo->queryData.timeSystemVariables, numIterations, false);
+				&getMoreInfo->queryData.timeSystemVariables, numIterations);
 			hash_destroy(cursorMap);
 			break;
 		}
@@ -846,21 +851,33 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 											 getMoreInfo.querySpec, &queryData,
 											 cursorParams, setStatementTimeout);
 			ReportCursorTopologyFeatureUsage(queryData.cursorTopology);
-			HTAB *cursorMap = CreateTailableCursorHashSet();
-			BuildTailableCursorContinuationMap(cursorSpec, cursorMap);
+
+			/* Extract the continuation sub-document from the full cursorSpec */
+			pgbson *tailableCursorSpec = NULL;
+			bson_iter_t cursorSpecIter;
+			if (PgbsonInitIteratorAtPath(cursorSpec, "continuation",
+										 &cursorSpecIter))
+			{
+				tailableCursorSpec = PgbsonInitFromDocumentBsonValue(
+					bson_iter_value(&cursorSpecIter));
+			}
+
 			int numIterations = 0;
-			postBatchResumeToken = DrainTailableQuery(cursorMap, query,
+			postBatchResumeToken = DrainTailableQuery(tailableCursorSpec, query,
 													  getMoreInfo.queryData.batchSize,
 													  &numIterations,
 													  accumulatedSize, &arrayWriter);
-			continuationDoc = BuildStreamingContinuationDocument(cursorMap,
-																 getMoreInfo.querySpec,
-																 getMoreInfo.cursorId,
-																 getMoreInfo.queryKind,
-																 &getMoreInfo.queryData.
-																 timeSystemVariables,
-																 numIterations, true);
-			hash_destroy(cursorMap);
+			continuationDoc = BuildTailableContinuationDocument(postBatchResumeToken,
+																getMoreInfo.querySpec,
+																getMoreInfo.cursorId,
+																getMoreInfo.queryKind,
+																&getMoreInfo.queryData.
+																timeSystemVariables,
+																numIterations);
+			if (tailableCursorSpec != NULL)
+			{
+				pfree(tailableCursorSpec);
+			}
 			break;
 		}
 
@@ -1015,7 +1032,7 @@ GenerateGetMoreQuery(text *database, pgbson *getMoreSpec, pgbson *continuationSp
 				BuildContinuationMap(continuationSpec, cursorMap);
 				workerSpec = SerializeContinuationForWorker(cursorMap,
 															getMoreInfo.queryData.
-															batchSize, false);
+															batchSize);
 				cursorParamKind = CursorParamKind_Streaming;
 			}
 			else
@@ -1336,21 +1353,20 @@ HandleLocalFirstPageRequestCore(text *database, pgbson *querySpec, int64_t curso
 		{
 			ReportFeatureUsage(FEATURE_CURSOR_TYPE_TAILABLE);
 
-			HTAB *tailableCursorMap = CreateTailableCursorHashSet();
-			postBatchResumeToken = DrainTailableQuery(tailableCursorMap,
+			pgbson *cursorSpec = NULL;
+			postBatchResumeToken = DrainTailableQuery(cursorSpec,
 													  query,
 													  queryData->batchSize,
 													  &numIterations,
 													  accumulatedSize,
 													  &arrayWriter);
 			cursorId = GenerateCursorId(cursorId);
-			continuationDoc = BuildStreamingContinuationDocument(tailableCursorMap,
-																 querySpec,
-																 cursorId, queryKind,
-																 &queryData->
-																 timeSystemVariables,
-																 numIterations, true);
-			hash_destroy(tailableCursorMap);
+			continuationDoc = BuildTailableContinuationDocument(postBatchResumeToken,
+																querySpec,
+																cursorId, queryKind,
+																&queryData->
+																timeSystemVariables,
+																numIterations);
 			break;
 		}
 
@@ -1373,8 +1389,7 @@ HandleLocalFirstPageRequestCore(text *database, pgbson *querySpec, int64_t curso
 																	 cursorId, queryKind,
 																	 &queryData->
 																	 timeSystemVariables,
-																	 numIterations,
-																	 false);
+																	 numIterations);
 			}
 
 			hash_destroy(cursorMap);
@@ -1568,8 +1583,7 @@ static pgbson *
 BuildStreamingContinuationDocument(HTAB *cursorMap, pgbson *querySpec, int64_t cursorId,
 								   QueryKind queryKind,
 								   TimeSystemVariables *timeSystemVariables, int
-								   numIterations, bool
-								   isTailableCursor)
+								   numIterations)
 {
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
@@ -1579,24 +1593,53 @@ BuildStreamingContinuationDocument(HTAB *cursorMap, pgbson *querySpec, int64_t c
 	PgbsonWriterAppendInt32(&writer, "qk", 2, (int) queryKind);
 
 	/* Add the original query spec so that getMore can reuse it */
-	if (isTailableCursor)
+	/* For streaming cursor, save the query with "qc" key. */
+	PgbsonWriterAppendDocument(&writer, "qc", 2, querySpec);
+
+	SerializeContinuationsToWriter(&writer, cursorMap);
+
+	/* In the response add the number of iterations (used in tests) */
+	PgbsonWriterAppendInt32(&writer, "numIters", 8, numIterations);
+
+	/* Add time system variables accordingly */
+	if (timeSystemVariables != NULL && timeSystemVariables->nowValue.value_type !=
+		BSON_TYPE_EOD)
 	{
-		/* For tailable cursor, save the query with "qt" to differentiate from streaming query. */
-		PgbsonWriterAppendDocument(&writer, "qt", 2, querySpec);
-	}
-	else
-	{
-		/* For streaming cursor, save the query with "qc" key. */
-		PgbsonWriterAppendDocument(&writer, "qc", 2, querySpec);
+		PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
 	}
 
-	if (isTailableCursor)
+	return PgbsonWriterGetPgbson(&writer);
+}
+
+
+/*
+ * Serializes a cursor document that can be reused by getMore for a tailable query.
+ */
+static pgbson *
+BuildTailableContinuationDocument(pgbson *continuationDoc, pgbson *querySpec,
+								  int64_t cursorId,
+								  QueryKind queryKind,
+								  TimeSystemVariables *timeSystemVariables,
+								  int numIterations)
+{
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	PgbsonWriterAppendInt64(&writer, "qi", 2, cursorId);
+	PgbsonWriterAppendBool(&writer, "qp", 2, false);
+
+	PgbsonWriterAppendInt32(&writer, "qk", 2, (int) queryKind);
+
+	/* Add the original query spec so that getMore can reuse it */
+	/* For tailable cursor, save the query with "qt" to differentiate from streaming query. */
+	PgbsonWriterAppendDocument(&writer, "qt", 2, querySpec);
+
+	/*
+	 * continuationDoc may be NULL when the underlying tailable pipeline
+	 * yields no rows (and therefore no resume token) on a given page.
+	 */
+	if (continuationDoc != NULL)
 	{
-		SerializeTailableContinuationsToWriter(&writer, cursorMap);
-	}
-	else
-	{
-		SerializeContinuationsToWriter(&writer, cursorMap);
+		PgbsonWriterAppendDocument(&writer, "continuation", 12, continuationDoc);
 	}
 
 	/* In the response add the number of iterations (used in tests) */

@@ -17,7 +17,7 @@ typedef struct QueryCursorPlanResult QueryCursorPlanResult;
 bool DrainStreamingQuery(HTAB *cursorMap, Query *query, int batchSize,
 						 int32_t *numIterations, uint32_t accumulatedSize,
 						 pgbson_array_writer *arrayWriters);
-pgbson * DrainTailableQuery(HTAB *cursorMap, Query *query, int batchSize,
+pgbson * DrainTailableQuery(pgbson *cursorSpec, Query *query, int batchSize,
 							int32_t *numIterations, uint32_t accumulatedSize,
 							pgbson_array_writer *arrayWriter);
 bool CreateAndDrainPersistedQuery(const char *cursorName,
@@ -71,13 +71,10 @@ Datum FormFinalCursorResultTuple(pgbson *resultDocument, pgbson *continuation,
 								 TupleDesc cursorResultTupleDesc);
 
 HTAB * CreateCursorHashSet(void);
-HTAB * CreateTailableCursorHashSet(void);
 void BuildContinuationMap(pgbson *continuationValue, HTAB *cursorMap);
-void BuildTailableCursorContinuationMap(pgbson *continuationValue, HTAB *cursorMap);
 void SerializeContinuationsToWriter(pgbson_writer *writer, HTAB *cursorMap);
-void SerializeTailableContinuationsToWriter(pgbson_writer *writer, HTAB *cursorMap);
-pgbson * SerializeContinuationForWorker(HTAB *cursorMap, int32_t batchSize,
-										bool isTailable);
+pgbson * SerializeContinuationForWorker(HTAB *cursorMap, int32_t batchSize);
+pgbson * ExtendTailableContinuation(pgbson *continuationValue, int32_t batchSize);
 pgbson * DrainSingleResultQuery(Query *query);
 
 void SetupCursorPagePreamble(pgbson_writer *topLevelWriter,
