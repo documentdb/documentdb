@@ -7,7 +7,7 @@
  */
 
 use std::{
-    future::{poll_fn, Future},
+    future::{poll_fn, Future, IntoFuture},
     pin::Pin,
     task::Poll,
 };
@@ -19,11 +19,27 @@ use crate::{
     protocol::{self, header::Header},
 };
 
-pub(super) type PendingHeaderRead<'a> =
-    Pin<Box<dyn Future<Output = Result<Option<Header>>> + Send + 'a>>;
+type BoxedHeaderRead<'a> = Pin<Box<dyn Future<Output = Result<Option<Header>>> + Send + 'a>>;
+
+/// A pending read of the next request header.
+///
+/// This wraps the in-flight read-ahead future rather than being a `Future` itself. The
+/// instrumented request hot path returns this to the caller so the next header read can be
+/// awaited on the following loop iteration. Callers `.await` it directly via the [`IntoFuture`]
+/// implementation.
+pub(super) struct PendingHeaderRead<'a>(BoxedHeaderRead<'a>);
+
+impl<'a> IntoFuture for PendingHeaderRead<'a> {
+    type Output = Result<Option<Header>>;
+    type IntoFuture = BoxedHeaderRead<'a>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        self.0
+    }
+}
 
 pub(super) fn closed_header_read<'a>() -> PendingHeaderRead<'a> {
-    Box::pin(async { Ok(None) })
+    PendingHeaderRead(Box::pin(async { Ok(None) }))
 }
 
 pub(super) async fn start_next_header_read<'a, R>(
@@ -33,7 +49,7 @@ pub(super) async fn start_next_header_read<'a, R>(
 where
     R: AsyncRead + Unpin + Send + 'a,
 {
-    let mut future: PendingHeaderRead<'a> = Box::pin(protocol::reader::read_header_with_timeout(
+    let mut future: BoxedHeaderRead<'a> = Box::pin(protocol::reader::read_header_with_timeout(
         reader,
         idle_timeout,
     ));
@@ -47,9 +63,9 @@ where
     .await;
 
     if let Some(result) = ready_result {
-        Box::pin(async move { result })
+        PendingHeaderRead(Box::pin(async move { result }))
     } else {
-        future
+        PendingHeaderRead(future)
     }
 }
 

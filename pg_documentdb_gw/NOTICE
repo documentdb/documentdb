@@ -31,5 +31,6 @@ The full license texts for all dependencies are located in the 'pg_documentdb_gw
 - tokio-postgres (MIT OR Apache-2.0)
 - tokio-util (MIT)
 - tracing (MIT)
+- tracing-opentelemetry (MIT)
 - uuid (Apache-2.0 OR MIT)
 - whoami (Apache-2.0 OR BSL-1.0 OR MIT)
