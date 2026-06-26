@@ -3568,16 +3568,15 @@ IsExistPositiveMatch(pgbson *filter)
 {
 	pgbsonelement filterElement;
 	PgbsonToSinglePgbsonElement(filter, &filterElement);
-	bool existsPositiveMatch = true;
 
-	/**
-	 * TODO: FIXME - Verify whether strict number check is required here
-	 * */
-	if (BsonValueIsNumberOrBool(&filterElement.bsonValue) &&
-		BsonValueAsInt64(&filterElement.bsonValue) == 0)
-	{
-		existsPositiveMatch = false;
-	}
+	/*
+	 * The $exists argument is coerced to a boolean using truthiness semantics
+	 * rather than matched as a value: false, 0, null and undefined are all
+	 * negative ($exists: false), every other value is positive ($exists: true).
+	 * BsonValueAsBool implements exactly these semantics and keeps this in sync
+	 * with the planner path in CreateOpExprFromOperatorDocIteratorCore.
+	 */
+	bool existsPositiveMatch = BsonValueAsBool(&filterElement.bsonValue);
 
 	return existsPositiveMatch;
 }
