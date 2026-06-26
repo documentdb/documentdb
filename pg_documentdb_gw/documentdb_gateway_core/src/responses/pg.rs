@@ -20,7 +20,7 @@ use crate::{
             duplicate_key_violation_message, generic_internal_error_message,
             pg_returned_invalid_response_message,
         },
-        global_custom_error_mapper,
+        enhance_internal_error_message, global_custom_error_mapper,
     },
 };
 
@@ -568,7 +568,14 @@ fn transform_error(
     );
 
     *code = mapped_response.error_code() as i32;
-    doc.insert("errmsg", mapped_response.error_message());
+    doc.insert(
+        "errmsg",
+        enhance_internal_error_message(
+            mapped_response.error_message(),
+            mapped_response.error_code(),
+            activity_id,
+        ),
+    );
 
     Ok(())
 }

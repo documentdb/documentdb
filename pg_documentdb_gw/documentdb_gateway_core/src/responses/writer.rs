@@ -158,11 +158,15 @@ where
 
 /// # Errors
 /// Returns error if the operation fails.
-pub async fn write_error_without_header<S>(err: DocumentDBError, stream: &mut S) -> Result<()>
+pub async fn write_error_without_header<S>(
+    err: DocumentDBError,
+    activity_id: &str,
+    stream: &mut S,
+) -> Result<()>
 where
     S: AsyncWrite + Unpin,
 {
-    let response = error_to_raw_document_buf(&err);
+    let response = error_to_raw_document_buf(&err, activity_id);
 
     write_message_for_request_id(0, &response, stream).await?;
     stream.flush().await?;
