@@ -32,10 +32,6 @@ use crate::{
     clippy::too_many_lines,
     reason = "Request hot path coordinates read-ahead, parsing, validation, response writing, and telemetry"
 )]
-#[expect(
-    clippy::async_yields_async,
-    reason = "Returning the read-ahead future is intentional: the next header read is started inside this function so the caller can await it on the next loop iteration"
-)]
 #[tracing::instrument(
     name = "gateway.request",
     skip_all,

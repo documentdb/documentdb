@@ -34,8 +34,7 @@ where
     let mut next_header = read_ahead::start_next_header_read(&mut reader, idle_timeout).await;
 
     loop {
-        let next_header_result = next_header.as_mut().await;
-        drop(next_header);
+        let next_header_result = next_header.await;
 
         match next_header_result {
             Ok(Some(header)) => {
