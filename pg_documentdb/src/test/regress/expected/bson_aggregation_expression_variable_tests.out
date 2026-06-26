@@ -1104,3 +1104,92 @@ FROM bson_aggregation_pipeline(
  { "_id" : { "$numberInt" : "3" }, "result" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] }
 (3 rows)
 
+-- A multi-variable $let whose "in" produces a document/array goes through the
+-- writer finalization path. The variable table is shared across documents, so it
+-- must survive that path; otherwise the second document dereferences a freed table.
+SELECT document
+FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "coll001",
+    "pipeline": [
+      {
+        "$project": {
+          "result": {
+            "$let": {
+              "vars": { "x": "$a", "y": "$_id" },
+              "in": { "p": "$$x", "q": "$$y" }
+            }
+          }
+        }
+      }
+    ]
+  }'
+);
+                                                   document                                                    
+---------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "result" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "1" } } }
+ { "_id" : { "$numberInt" : "2" }, "result" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "2" } } }
+ { "_id" : { "$numberInt" : "3" }, "result" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "3" } } }
+(3 rows)
+
+-- Same scenario, but "in" produces an array.
+SELECT document
+FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "coll001",
+    "pipeline": [
+      {
+        "$project": {
+          "result": {
+            "$let": {
+              "vars": { "x": "$a", "y": "$_id" },
+              "in": [ "$$x", "$$y" ]
+            }
+          }
+        }
+      }
+    ]
+  }'
+);
+                                             document                                              
+---------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "result" : [ { "$numberInt" : "1" }, { "$numberInt" : "1" } ] }
+ { "_id" : { "$numberInt" : "2" }, "result" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] }
+ { "_id" : { "$numberInt" : "3" }, "result" : [ { "$numberInt" : "1" }, { "$numberInt" : "3" } ] }
+(3 rows)
+
+-- The same shared table can also be re-evaluated within a single document when the
+-- $let is nested inside an array operator that iterates more than once.
+SELECT document
+FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "coll001",
+    "pipeline": [
+      { "$match": { "_id": 1 } },
+      {
+        "$project": {
+          "result": {
+            "$reduce": {
+              "input": [1, 2, 3],
+              "initialValue": {},
+              "in": {
+                "$let": {
+                  "vars": { "cur": "$$this", "acc": "$$value" },
+                  "in": { "prev": "$$acc", "next": "$$cur" }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }'
+);
+                                                                                           document                                                                                            
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "result" : { "prev" : { "prev" : { "prev" : {  }, "next" : { "$numberInt" : "1" } }, "next" : { "$numberInt" : "2" } }, "next" : { "$numberInt" : "3" } } }
+(1 row)
+
