@@ -554,9 +554,9 @@ HandleSetWindowFields(const bson_value_t *existingValue, Query *query,
 					  AggregationPipelineBuildContext *context)
 {
 	bool enableInternalWindowOperator = false;
-	Expr *partitionByExpr = NULL;
+	const bson_value_t *partitionByFields = NULL;
 
-	return HandleSetWindowFieldsCore(existingValue, query, context, partitionByExpr,
+	return HandleSetWindowFieldsCore(existingValue, query, context, partitionByFields,
 									 enableInternalWindowOperator);
 }
 
@@ -599,8 +599,9 @@ HandleSetWindowFields(const bson_value_t *existingValue, Query *query,
  *
  * The window aggregation operation is only pushed to shards in case when `partitionBy` expression is same as the `shardKey` of collection or
  *
- * If partitionByExpr is specified and not null, it is used as the partitionBy expression in priority and the partitionBy field in the spec would be skipped.
- * Otherwise, the partitionBy expression is derived from the partitionBy field in the $setWindowFields spec.
+ * If partitionByFields is specified and not EOD (the $fill-specific multi-field partition key, which is not part of the
+ * $setWindowFields grammar), it is used to build the partitionBy expression in priority and the partitionBy field in the
+ * spec would be skipped. Otherwise, the partitionBy expression is derived from the partitionBy field in the spec.
  *
  * If enbaleInternalWindowOperator is set to true, the internal window operators can be used to perform the window operations;
  * In normal usage of $setWindowFields, this should be false.
@@ -611,7 +612,7 @@ Query *
 HandleSetWindowFieldsCore(const bson_value_t *existingValue,
 						  Query *query,
 						  AggregationPipelineBuildContext *context,
-						  Expr *partitionByExpr,
+						  const bson_value_t *partitionByFields,
 						  bool enableInternalWindowOperator)
 {
 	ReportFeatureUsage(FEATURE_STAGE_SETWINDOWFIELDS);
@@ -643,14 +644,50 @@ HandleSetWindowFieldsCore(const bson_value_t *existingValue,
 		 * on a subquery
 		 */
 		query = MigrateQueryToSubQuery(query, context);
+
+		/* After migrating, the base data table is no longer the top range-table
+		 * entry, so the shard-key based partition optimization no longer applies
+		 * and the partition expression must reference the subquery's document
+		 * output instead. Recompute against the new top RTE.
+		 */
+		rte = linitial(query->rtable);
+		isRTEDataTable = (rte->rtekind == RTE_RELATION || rte->rtekind == RTE_FUNCTION);
 	}
 
 	TargetEntry *firstEntry = linitial(query->targetList);
 	Expr *docExpr = firstEntry->expr;
 
 	bson_value_t outputSpec = { 0 };
-	Expr *partitionExpr = partitionByExpr;
+	Expr *partitionExpr = NULL;
 	List *sortOptions = NIL;
+
+	/* $fill's partitionByFields is a fill-specific multi-field partition key that
+	 * is not part of the $setWindowFields grammar. Build its partition expression
+	 * here, after any migration to a subquery, so the embedded document Var
+	 * references the correct range-table level (mirrors the partitionBy handling
+	 * below). When it resolves to the shard key and the data table is still the
+	 * top RTE, partition directly on the shard_key_value column.
+	 */
+	if (partitionByFields != NULL && partitionByFields->value_type != BSON_TYPE_EOD)
+	{
+		pgbson *partitionByFieldsDoc = BsonValueToDocumentPgbson(partitionByFields);
+
+		if (isRTEDataTable &&
+			IsPartitionByFieldsOnShardKey(partitionByFieldsDoc, context->mongoCollection))
+		{
+			partitionExpr = (Expr *) makeVar(((Var *) docExpr)->varno,
+											 DOCUMENT_DATA_TABLE_SHARD_KEY_VALUE_VAR_ATTR_NUMBER,
+											 INT8OID, -1,
+											 InvalidOid, 0);
+		}
+		else
+		{
+			partitionExpr = (Expr *) makeFuncExpr(
+				BsonExpressionPartitionByFieldsGetFunctionOid(), BsonTypeId(),
+				list_make2(docExpr, MakeBsonConst(partitionByFieldsDoc)),
+				InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+		}
+	}
 
 	bson_iter_t iter;
 	BsonValueInitIterator(existingValue, &iter);

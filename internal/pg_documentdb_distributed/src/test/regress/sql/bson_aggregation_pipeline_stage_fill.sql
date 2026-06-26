@@ -43,6 +43,15 @@ SELECT document FROM bson_aggregation_pipeline('db','{ "aggregate": "filltest", 
 SELECT document FROM bson_aggregation_pipeline('db','{ "aggregate": "filltest", "pipeline":  [{"$fill": {"partitionByFields": ["a"], "sortBy": { "date": 1 },"output": {"quantity": { "method": "linear"}}}}]}');
 SELECT document FROM bson_aggregation_pipeline('db','{ "aggregate": "filltest", "pipeline":  [{"$fill": {"partitionByFields": ["a", "cost"], "sortBy": { "date": 1 },"output": {"quantity": { "method": "locf"}}}}]}');
 
+-- partitionByFields combined with a stage that migrates the window query into a
+-- subquery: a preceding $sort leaves resjunk sort keys and $limit sets a limit
+-- count. Previously the partition expression was built before the migration and
+-- referenced a stale range-table level, aborting the planner.
+SELECT document FROM bson_aggregation_pipeline('db','{ "aggregate": "filltest", "pipeline":  [{"$sort": { "_id": 1 }}, {"$fill": {"partitionByFields": ["a"], "output": {"quantity": { "method": "locf"}}}}]}');
+SELECT document FROM bson_aggregation_pipeline('db','{ "aggregate": "filltest", "pipeline":  [{"$sort": { "_id": 1 }}, {"$fill": {"partitionByFields": ["a", "cost"], "output": {"quantity": { "method": "locf"}}}}]}');
+SELECT document FROM bson_aggregation_pipeline('db','{ "aggregate": "filltest", "pipeline":  [{"$sort": { "date": 1 }}, {"$fill": {"partitionByFields": ["a"], "sortBy": { "date": 1 }, "output": {"quantity": { "method": "linear"}}}}]}');
+SELECT document FROM bson_aggregation_pipeline('db','{ "aggregate": "filltest", "pipeline":  [{"$sort": { "_id": 1 }}, {"$limit": 100}, {"$fill": {"partitionByFields": ["a"], "output": {"quantity": { "method": "locf"}}}}]}');
+
 ----------------------------
 -- positive corner case
 ----------------------------
