@@ -14,7 +14,7 @@ use crate::{
     error::{DocumentDBError, ErrorCode, Result},
     protocol::header::Header,
     requests::{request_tracker::RequestTracker, RequestIntervalKind, RequestObservation},
-    responses::{self, CommandError},
+    responses::{self, error_to_raw_document_buf},
     telemetry::{self, client_info},
 };
 
@@ -37,14 +37,13 @@ pub(super) async fn log_and_write_error<W>(
 where
     W: AsyncWrite + Unpin,
 {
-    let command_error = CommandError::from(error);
+    let response = error_to_raw_document_buf(error, activity_id);
 
     if let Some(start) = handle_message_start {
         request_tracker.record_duration(RequestIntervalKind::HandleMessage, start);
     }
 
     let response_length = if requires_response {
-        let response = command_error.to_raw_document_buf();
         let response_length = response.as_bytes().len();
 
         let write_response_start = Instant::now();
