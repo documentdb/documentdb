@@ -69,8 +69,6 @@
 #include "index_am/index_am_utils.h"
 #include "index_am/index_am_extend_create.h"
 
-extern bool EnableDottedValueTextIndexTerms;
-
 /* Return value of TryCreateCollectionIndexes */
 typedef struct
 {
@@ -174,6 +172,8 @@ extern bool EnableCompositeShardDocumentTerms;
 extern bool EnablePerCollectionPlannerStatistics;
 extern bool EnablePlannerStatisticsNewCollections;
 extern bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath;
+extern bool EnableIndexMetadataGlobalTracking;
+extern bool EnableDottedValueTextIndexTerms;
 
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool SkipFailOnCollation;
@@ -215,10 +215,6 @@ static ReIndexResult reindex_concurrently(Datum dbNameDatum,
 static IndexDef * ParseIndexDefDocument(const bson_iter_t *indexesArrayIter,
 										bool ignoreUnknownIndexOptions,
 										bool buildAsUniqueForPrepareUnique);
-static IndexDef * ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
-												const char *indexSpecRepr,
-												bool ignoreUnknownIndexOptions,
-												bool buildAsUniqueForPrepareUnique);
 static void EnsureIndexDefDocFieldType(const bson_iter_t *indexDefDocIter,
 									   bson_type_t expectedType);
 static void EnsureIndexDefDocFieldConvertibleToBool(bson_iter_t *indexDefDocIter);
@@ -319,7 +315,8 @@ static char * GenerateIndexExprStr(const char *indexAmSuffix,
 								   bool useReducedWildcardTerms,
 								   const char *indexAmOpClassCatalogSchema,
 								   const char *indexAmOpClassInternalCatalogSchema,
-								   const char *collationString);
+								   const char *collationString,
+								   bool supportsMetadataBasedTracking);
 static char * Generate2dsphereIndexExprStr(const IndexDefKey *indexDefKey);
 static char * Generate2dsphereSparseExprStr(const IndexDefKey *indexDefKey);
 static char * GenerateIndexFilterStr(uint64 collectionId, Expr *indexDefPartFilterExpr);
@@ -1489,7 +1486,9 @@ ParseIndexDefDocument(const bson_iter_t *indexesArrayIter, bool ignoreUnknownInd
 	IndexDef *indexDef = NULL;
 	PG_TRY();
 	{
-		indexDef = ParseIndexDefDocumentInternal(indexesArrayIter,
+		bson_iter_t indexDefDocIter;
+		bson_iter_recurse(indexesArrayIter, &indexDefDocIter);
+		indexDef = ParseIndexDefDocumentInternal(&indexDefDocIter,
 												 indexSpecRepr,
 												 ignoreUnknownIndexOptions,
 												 buildAsUniqueForPrepareUnique);
@@ -1637,8 +1636,8 @@ ParseCustomIndexDefOption(const char *indexDefDocKey, bson_iter_t *indexDefDocIt
  * of pgbson iterator that points to the "indexes" field of "arg" document
  * passed to dbCommand/createIndexes.
  */
-static IndexDef *
-ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
+IndexDef *
+ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 							  const char *indexSpecRepr,
 							  bool ignoreUnknownIndexOptions,
 							  bool buildAsUniqueForPrepareUnique)
@@ -1661,8 +1660,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 	/* Set to 0 to denote sphere index not present */
 	indexDef->sphereIndexVersion = 0;
 
-	bson_iter_t indexDefDocIter;
-	bson_iter_recurse(indexesArrayIter, &indexDefDocIter);
+	bson_iter_t indexDefDocIter = *indexesDocIter;
 	while (bson_iter_next(&indexDefDocIter))
 	{
 		const char *indexDefDocKey = bson_iter_key(&indexDefDocIter);
@@ -2081,9 +2079,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 									errmsg(
 										"The 'storageEngine.%s' field is invalid for use in an index specification. "
 										"Full specification provided: %s",
-										key,
-										PgbsonIterDocumentToJsonForLogging(
-											indexesArrayIter))));
+										key, indexSpecRepr)));
 				}
 			}
 		}
@@ -2097,9 +2093,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDINDEXSPECIFICATIONOPTION),
 							errmsg(
 								"The field '%s' cannot be used in an index specification. Provided specification: %s",
-								indexDefDocKey,
-								PgbsonIterDocumentToJsonForLogging(
-									indexesArrayIter))));
+								indexDefDocKey, indexSpecRepr)));
 		}
 	}
 
@@ -5303,7 +5297,8 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 											  useReducedWildcardTermGeneration,
 											  indexAm->get_opclass_catalog_schema(),
 											  indexAm->get_opclass_internal_catalog_schema(),
-											  indexDef->collationString),
+											  indexDef->collationString,
+											  indexAm->get_opclass_metadata != NULL),
 						 indexDef->partialFilterExpr ? "WHERE (" : "",
 						 indexDef->partialFilterExpr ?
 						 GenerateIndexFilterStr(collectionId,
@@ -5455,7 +5450,8 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 											  useReducedWildcardTermGeneration,
 											  indexAm->get_opclass_catalog_schema(),
 											  indexAm->get_opclass_internal_catalog_schema(),
-											  indexDef->collationString),
+											  indexDef->collationString,
+											  indexAm->get_opclass_metadata != NULL),
 						 indexDef->partialFilterExpr ? "WHERE (" : "",
 						 indexDef->partialFilterExpr ?
 						 GenerateIndexFilterStr(collectionId,
@@ -5828,7 +5824,8 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 					 bool useReducedWildcardTerms,
 					 const char *indexAmOpClassCatalogSchema,
 					 const char *indexAmOpClassInternalCatalogSchema,
-					 const char *collationString)
+					 const char *collationString,
+					 bool supportsMetadataBasedTracking)
 {
 	StringInfo indexExprStr = makeStringInfo();
 
@@ -6159,10 +6156,16 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 		char *wildCardIndexPathLimit = "";
 		char *wildcardIndexString = "";
 		char *reducedCorrelatedTermString = "";
+		char *metadataPerPathTrackingString = "";
 
 		if (useReducedCorrelatedTerms)
 		{
 			reducedCorrelatedTermString = ",rct=true";
+		}
+
+		if (EnableIndexMetadataGlobalTracking && supportsMetadataBasedTracking)
+		{
+			metadataPerPathTrackingString = ",mkp=true";
 		}
 
 		if (wildcardTermIndex >= 0)
@@ -6176,7 +6179,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 		}
 
 		appendStringInfo(indexExprStr,
-						 "%s document %s.bson_%s_composite_path_ops(pathspec=%s%s%s%s%s%s)",
+						 "%s document %s.bson_%s_composite_path_ops(pathspec=%s%s%s%s%s%s%s)",
 						 firstColumnWritten ? "," : "",
 						 indexAmOpClassInternalCatalogSchema,
 						 indexAmSuffix,
@@ -6185,6 +6188,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 						 wildcardIndexString,
 						 wildCardIndexPathLimit,
 						 reducedCorrelatedTermString,
+						 metadataPerPathTrackingString,
 						 collationArg);
 
 		if (indexExprStr->len >= MAX_INDEX_OPTIONS_LENGTH)

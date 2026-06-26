@@ -24,6 +24,7 @@ PG_MODULE_MAGIC;
 void _PG_init(void);
 
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_get_multi_key_status);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_get_opclass_metadata);
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_update_multi_key_status);
 
 #ifndef RUM_BUILD_ONLY_CORE_RMGR
@@ -175,7 +176,7 @@ documentdb_rum_get_multi_key_status_core(Relation indexRelation)
 	LockBuffer(metabuffer, RUM_SHARE);
 	metapage = BufferGetPage(metabuffer);
 	metadata = RumPageGetMeta(metapage);
-	hasMultiKeyPaths = metadata->nPendingHeapTuples > 0;
+	hasMultiKeyPaths = (metadata->nPendingHeapTuples & 0x1) != 0;
 	UnlockReleaseBuffer(metabuffer);
 	return hasMultiKeyPaths;
 }
@@ -186,6 +187,14 @@ RMGR_PG_FUNCTION_DEF(documentdb_rum_get_multi_key_status)
 	Relation indexRelation = (Relation) PG_GETARG_POINTER(0);
 	bool hasMultiKeyPaths = documentdb_rum_get_multi_key_status_core(indexRelation);
 	PG_RETURN_BOOL(hasMultiKeyPaths);
+}
+
+
+RMGR_PG_FUNCTION_DEF(documentdb_rum_get_opclass_metadata)
+{
+	Relation indexRelation = (Relation) PG_GETARG_POINTER(0);
+	uint64_t opclassMetadata = rumGetOpclassMetadata(indexRelation);
+	PG_RETURN_UINT64(opclassMetadata);
 }
 
 
@@ -213,7 +222,7 @@ RMGR_PG_FUNCTION_DEF(documentdb_rum_update_multi_key_status)
 	metadata = RumPageGetMeta(metapage);
 
 	/* Set pending heap tuples to 1 to indicate this is a multi-key index */
-	metadata->nPendingHeapTuples = 1;
+	metadata->nPendingHeapTuples |= 1;
 
 	GenericXLogFinish(state);
 	UnlockReleaseBuffer(metaBuffer);

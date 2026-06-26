@@ -266,9 +266,19 @@
           "type": "boolean",
           "description": "Whether the index is a multikey index (indexes on array fields). Null/omitted if not applicable."
         },
+        "multiKeyPaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "For a composite index with per-path multikey tracking, the list of index paths observed to be multikey (indexed on array values). Null/omitted if not applicable."
+        },
         "hasTruncation": {
           "type": "boolean",
           "description": "Whether the composite index has truncated terms due to exceeding maximum term size. Null/omitted if not applicable."
+        },
+        "truncatedPaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "For a composite index with per-path truncation tracking, the list of index paths observed to have truncated terms (capped at the first 6 paths; truncation on later paths is reflected only by hasTruncation). Null/omitted if not applicable."
         },
         "bounds": {
           "type": "array",

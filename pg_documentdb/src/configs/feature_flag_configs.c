@@ -179,6 +179,15 @@ bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath =
 bool EnableCompositeReducedCorrelatedPrefixTrim =
 	DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_PREFIX_TRIM;
 
+/* Added in v115, Pending stabilization, enable in v121 */
+#define DEFAULT_ENABLE_INDEX_METADATA_GLOBAL_TRACKING false
+bool EnableIndexMetadataGlobalTracking = DEFAULT_ENABLE_INDEX_METADATA_GLOBAL_TRACKING;
+
+/* Added on v115, enabled on v115, remove after v118 */
+#define DEFAULT_ENABLE_PER_PATH_MULTI_KEY_SORT_PUSHDOWN true
+bool EnablePerPathMultiKeySortPushdown =
+	DEFAULT_ENABLE_PER_PATH_MULTI_KEY_SORT_PUSHDOWN;
+
 /* Longer term feature flag to track older cluster data: Move to testing_configs when convenient */
 /* Added in v109, enabled in v109, remove after v999 */
 #define DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS true
@@ -1067,6 +1076,22 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable prefix-group-aware trimming of secondary variable bounds for reduced correlated composite indexes."),
 		NULL, &EnableCompositeReducedCorrelatedPrefixTrim,
 		DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_PREFIX_TRIM,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableIndexMetadataGlobalTracking", newGucPrefix),
+		gettext_noop(
+			"Whether to enable tracking of index metadata in the index global metadata."),
+		NULL, &EnableIndexMetadataGlobalTracking,
+		DEFAULT_ENABLE_INDEX_METADATA_GLOBAL_TRACKING,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enablePerPathMultiKeySortPushdown", newGucPrefix),
+		gettext_noop(
+			"Whether to respect the per-path multi-key bitmask when deciding order-by pushdown for composite ordered indexes. When off, a multi-key index blocks order-by pushdown on any filtered sort column regardless of that column's per-path multi-key state."),
+		NULL, &EnablePerPathMultiKeySortPushdown,
+		DEFAULT_ENABLE_PER_PATH_MULTI_KEY_SORT_PUSHDOWN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

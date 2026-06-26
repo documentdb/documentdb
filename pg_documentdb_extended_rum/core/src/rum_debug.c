@@ -56,9 +56,9 @@ RMGR_PG_FUNCTION_DEF(documentdb_rum_get_meta_page_info)
 	Page meta_page = get_page_from_raw(page);
 
 	RumMetaPageData *pageData = RumPageGetMeta(meta_page);
-	int nargs = 5;
-	char *args[5] = { 0 };
-	JsonbValue values[5] = { 0 };
+	int nargs = 6;
+	char *args[6] = { 0 };
+	JsonbValue values[6] = { 0 };
 
 	if (pageData->rumVersion != RUM_CURRENT_VERSION)
 	{
@@ -88,6 +88,22 @@ RMGR_PG_FUNCTION_DEF(documentdb_rum_get_meta_page_info)
 	args[4] = "pendingHeapTuples";
 	values[4].type = jbvNumeric;
 	values[4].val.numeric = int64_to_numeric(pageData->nPendingHeapTuples);
+
+	args[5] = "pendingHeapTuplesHex";
+	if (pageData->nPendingHeapTuples != 0)
+	{
+		values[5].type = jbvString;
+		values[5].val.string.len = snprintf(NULL, 0, "0x%lx", (unsigned
+															   long) pageData->
+											nPendingHeapTuples);
+		values[5].val.string.val = palloc(values[5].val.string.len + 1);
+		snprintf(values[5].val.string.val, values[5].val.string.len + 1, "0x%lx",
+				 (unsigned long) pageData->nPendingHeapTuples);
+	}
+	else
+	{
+		values[5].type = jbvNull;
+	}
 
 	PG_RETURN_POINTER(GetResultJsonB(nargs, args, values));
 }

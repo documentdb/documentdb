@@ -45,6 +45,7 @@
 #include "rumbuild_tuplesort.h"
 
 extern int RumParallelIndexWorkersOverride;
+extern bool RumParallelIndexBuildLeaderParticipates;
 
 extern RMGR_FUNC_EXPORT(void, documentdb_rum_parallel_build_main, dsm_segment * seg,
 						shm_toc * toc);
@@ -101,6 +102,7 @@ typedef struct RumBuildShared
 	int nparticipantsdone;
 	double reltuples;
 	double indtuples;
+	uint64_t opClassMetadata;
 
 	/*
 	 * ParallelTableScanDescData data follows. Can't directly embed here, as
@@ -173,6 +175,9 @@ typedef struct
 	/* used to pass information from workers to leader */
 	double bs_numtuples;
 	double bs_reltuples;
+
+	/* Opclass metadata tracked during build state */
+	uint64_t bs_opClassMetadata;
 
 	/*
 	 * The sortstate is used by workers (including the leader). It has to be
@@ -484,7 +489,8 @@ rumHeapTupleBulkInsert(RumBuildState *buildstate, OffsetNumber attnum,
 					   Datum value, bool isNull,
 					   ItemPointer heapptr,
 					   Datum outerAddInfo,
-					   bool outerAddInfoIsNull)
+					   bool outerAddInfoIsNull,
+					   uint64_t *opClassMetadata)
 {
 	Datum *entries;
 	RumNullCategory *categories;
@@ -498,7 +504,8 @@ rumHeapTupleBulkInsert(RumBuildState *buildstate, OffsetNumber attnum,
 	entries = rumExtractEntries(buildstate->accum.rumstate, attnum,
 								value, isNull,
 								&nentries, &categories,
-								&addInfo, &addInfoIsNull);
+								&addInfo, &addInfoIsNull,
+								opClassMetadata);
 
 	if (attnum == buildstate->rumstate.attrnAddToColumn)
 	{
@@ -564,7 +571,8 @@ rumBuildCallback(Relation index, ItemPointer tid, Datum *values,
 		rumHeapTupleBulkInsert(buildstate, (OffsetNumber) (i + 1),
 							   values[i], isnull[i],
 							   tid,
-							   outerAddInfo, outerAddInfoIsNull);
+							   outerAddInfo, outerAddInfoIsNull,
+							   &buildstate->bs_opClassMetadata);
 	}
 
 	/* If we've maxed out our available memory, dump everything to the index */
@@ -713,7 +721,8 @@ rumBuildCallbackParallel(Relation index, ItemPointer tid, Datum *values,
 	for (i = 0; i < buildstate->rumstate.origTupdesc->natts; i++)
 	{
 		rumHeapTupleBulkInsert(buildstate, (OffsetNumber) (i + 1),
-							   values[i], isnull[i], tid, (Datum) 0, true);
+							   values[i], isnull[i], tid, (Datum) 0, true,
+							   &buildstate->bs_opClassMetadata);
 	}
 
 	/*
@@ -761,6 +770,7 @@ rumbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 	initRumState(&buildstate.rumstate, index);
 	buildstate.rumstate.isBuild = true;
 	buildstate.indtuples = 0;
+	buildstate.bs_opClassMetadata = 0;
 	memset(&buildstate.buildStats, 0, sizeof(RumStatsData));
 
 	/* Initialize fields for parallel build too. */
@@ -975,6 +985,13 @@ rumbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 	buildstate.buildStats.nTotalPages = RelationGetNumberOfBlocks(index);
 	rumUpdateStats(index, &buildstate.buildStats, true);
 
+	if (buildstate.rumstate.enableOpClassMetadataStorage &&
+		buildstate.bs_opClassMetadata != 0)
+	{
+		/* update the meta page with the opclass storage metadata */
+		rumUpdateOpclassMetadataInMetapage(index, buildstate.bs_opClassMetadata, true);
+	}
+
 	pgstat_progress_update_param(PROGRESS_CREATEIDX_SUBPHASE,
 								 PROGRESS_RUM_PHASE_WRITE_WAL);
 
@@ -1052,7 +1069,8 @@ rumHeapTupleInsert(RumState *rumstate, OffsetNumber attnum,
 				   Datum value, bool isNull,
 				   ItemPointer item,
 				   Datum outerAddInfo,
-				   bool outerAddInfoIsNull)
+				   bool outerAddInfoIsNull,
+				   uint64_t *opClassMetadata)
 {
 	Datum *entries;
 	RumNullCategory *categories;
@@ -1062,7 +1080,8 @@ rumHeapTupleInsert(RumState *rumstate, OffsetNumber attnum,
 	bool *addInfoIsNull;
 
 	entries = rumExtractEntries(rumstate, attnum, value, isNull,
-								&nentries, &categories, &addInfo, &addInfoIsNull);
+								&nentries, &categories, &addInfo, &addInfoIsNull,
+								opClassMetadata);
 
 	if (attnum == rumstate->attrnAddToColumn)
 	{
@@ -1116,6 +1135,7 @@ ruminsert(Relation index, Datum *values, bool *isnull,
 	int i;
 	Datum outerAddInfo = (Datum) 0;
 	bool outerAddInfoIsNull = true;
+	uint64_t opClassMetadata = 0;
 
 	/* Initialize RumState cache if first call in this statement */
 	if (rumstate == NULL)
@@ -1145,11 +1165,23 @@ ruminsert(Relation index, Datum *values, bool *isnull,
 	{
 		rumHeapTupleInsert(rumstate, (OffsetNumber) (i + 1),
 						   values[i], isnull[i], ht_ctid,
-						   outerAddInfo, outerAddInfoIsNull);
+						   outerAddInfo, outerAddInfoIsNull,
+						   &opClassMetadata);
 	}
 
 	MemoryContextSwitchTo(oldCtx);
 	MemoryContextDelete(insertCtx);
+
+	if (rumstate->enableOpClassMetadataStorage &&
+		opClassMetadata != 0)
+	{
+		/* Do something with the collected opclass metadata, e.g., store it in the index */
+		uint64_t currentMetadata = rumGetOpclassMetadata(index);
+		if (opClassMetadata != currentMetadata)
+		{
+			rumUpdateOpclassMetadataInMetapage(index, opClassMetadata, false);
+		}
+	}
 
 	return false;
 }
@@ -1185,7 +1217,7 @@ _rum_begin_parallel(RumBuildState *buildstate, Relation heap, Relation index,
 	RumLeader *rumleader = palloc0(sizeof(RumLeader));
 	WalUsage *walusage;
 	BufferUsage *bufferusage;
-	bool leaderparticipates = true;
+	bool leaderparticipates = RumParallelIndexBuildLeaderParticipates;
 	int querylen;
 
 #ifdef DISABLE_LEADER_PARTICIPATION
@@ -1287,6 +1319,7 @@ _rum_begin_parallel(RumBuildState *buildstate, Relation heap, Relation index,
 	rumshared->nparticipantsdone = 0;
 	rumshared->reltuples = 0.0;
 	rumshared->indtuples = 0.0;
+	rumshared->opClassMetadata = 0;
 
 	table_parallelscan_initialize(heap,
 								  ParallelTableScanFromRumBuildShared(rumshared),
@@ -2135,6 +2168,12 @@ _rum_merge_index_core(double reltuples, RumBuildState *state)
 
 	tuplesort_end(state->bs_sortstate);
 
+	/* Merge the worker state to the leader state*/
+	if (state->bs_leader)
+	{
+		state->bs_opClassMetadata |= state->bs_leader->rumshared->opClassMetadata;
+	}
+
 	return reltuples;
 }
 
@@ -2441,6 +2480,9 @@ _rum_parallel_scan_and_build(RumBuildState *state,
 	rumshared->nparticipantsdone++;
 	rumshared->reltuples += state->bs_reltuples;
 	rumshared->indtuples += state->bs_numtuples;
+
+	/* Merge opclass metadata with the shared state - assume bitwise or is sufficient */
+	rumshared->opClassMetadata |= state->bs_opClassMetadata;
 	SpinLockRelease(&rumshared->mutex);
 
 	/* Notify leader */
@@ -2505,6 +2547,7 @@ RMGR_FUNC_EXPORT(void, documentdb_rum_parallel_build_main, dsm_segment * seg, sh
 	initRumState(&buildstate.rumstate, indexRel);
 	buildstate.indtuples = 0;
 	buildstate.bs_reltuples = 0;
+	buildstate.bs_opClassMetadata = 0;
 	memset(&buildstate.buildStats, 0, sizeof(RumStatsData));
 	memset(&buildstate.tid, 0, sizeof(ItemPointerData));
 

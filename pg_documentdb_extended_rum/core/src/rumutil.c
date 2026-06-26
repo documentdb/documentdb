@@ -126,6 +126,7 @@ initRumState(RumState *state, Relation index)
 	state->attrnAttachColumn = InvalidAttrNumber;
 	state->attrnAddToColumn = InvalidAttrNumber;
 	state->fillFactor = RumDefaultPageFillFactor;
+	state->enableOpClassMetadataStorage = false;
 	if (index->rd_options)
 	{
 		RumOptions *options = (RumOptions *) index->rd_options;
@@ -213,6 +214,7 @@ initRumState(RumState *state, Relation index)
 		rumConfig->addInfoTypeOid = InvalidOid;
 		rumConfig->skipGenerateEmptyEntries = false;
 		rumConfig->compareFunctionHasRecheck = false;
+		rumConfig->enableOpClassMetadataStorage = false;
 
 		if (index_getprocid(index, i + 1, RUM_CONFIG_PROC) != InvalidOid)
 		{
@@ -221,6 +223,16 @@ initRumState(RumState *state, Relation index)
 						   CurrentMemoryContext);
 
 			FunctionCall1(&state->configFn[i], PointerGetDatum(rumConfig));
+		}
+
+		if (rumConfig->enableOpClassMetadataStorage)
+		{
+			if (state->enableOpClassMetadataStorage)
+			{
+				elog(ERROR, "only one opclass can have metadata storage enabled");
+			}
+
+			state->enableOpClassMetadataStorage = true;
 		}
 
 		if (state->attrnAddToColumn == i + 1)
@@ -785,7 +797,8 @@ Datum *
 rumExtractEntries(RumState *rumstate, OffsetNumber attnum,
 				  Datum value, bool isNull,
 				  int32 *nentries, RumNullCategory **categories,
-				  Datum **addInfo, bool **addInfoIsNull)
+				  Datum **addInfo, bool **addInfoIsNull,
+				  uint64_t *opClassMetadata)
 {
 	Datum *entries;
 	bool *nullFlags;
@@ -814,13 +827,14 @@ rumExtractEntries(RumState *rumstate, OffsetNumber attnum,
 	*addInfo = NULL;
 	*addInfoIsNull = NULL;
 	entries = (Datum *)
-			  DatumGetPointer(FunctionCall5Coll(&rumstate->extractValueFn[attnum - 1],
+			  DatumGetPointer(FunctionCall6Coll(&rumstate->extractValueFn[attnum - 1],
 												rumstate->supportCollation[attnum - 1],
 												value,
 												PointerGetDatum(nentries),
 												PointerGetDatum(&nullFlags),
 												PointerGetDatum(addInfo),
-												PointerGetDatum(addInfoIsNull)
+												PointerGetDatum(addInfoIsNull),
+												PointerGetDatum(opClassMetadata)
 												));
 
 	/*
@@ -1072,6 +1086,29 @@ rumGetStats(Relation index, RumStatsData *stats)
 }
 
 
+uint64_t
+rumGetOpclassMetadata(Relation index)
+{
+	Buffer metabuffer;
+	Page metapage;
+	RumMetaPageData *metadata;
+	uint64_t opClassMetadata;
+
+	metabuffer = ReadBuffer(index, RUM_METAPAGE_BLKNO);
+	LockBuffer(metabuffer, RUM_SHARE);
+	metapage = BufferGetPage(metabuffer);
+	metadata = RumPageGetMeta(metapage);
+	if (metadata->rumVersion != RUM_CURRENT_VERSION)
+	{
+		elog(ERROR, "unexpected RUM index version. Reindex");
+	}
+	opClassMetadata = (uint64) metadata->nPendingHeapTuples;
+
+	UnlockReleaseBuffer(metabuffer);
+	return opClassMetadata;
+}
+
+
 void
 rumValidateIndexVersion(Relation index)
 {
@@ -1129,6 +1166,66 @@ rumUpdateStats(Relation index, const RumStatsData *stats, bool isBuild)
 	if (isBuild)
 	{
 		MarkBufferDirty(metaBuffer);
+	}
+	else
+	{
+		GenericXLogFinish(state);
+	}
+
+	UnlockReleaseBuffer(metaBuffer);
+
+	if (isBuild)
+	{
+		END_CRIT_SECTION();
+	}
+}
+
+
+extern void
+rumUpdateOpclassMetadataInMetapage(Relation index, uint64_t opClassMetadata,
+								   bool isBuild)
+{
+	Buffer metaBuffer;
+	Page metapage;
+	RumMetaPageData *metadata;
+	GenericXLogState *state;
+	uint64_t originalMetadata = 0;
+
+	metaBuffer = ReadBuffer(index, RUM_METAPAGE_BLKNO);
+	LockBuffer(metaBuffer, RUM_EXCLUSIVE);
+
+	/* Check if we even need to write anything out */
+	if (isBuild)
+	{
+		metapage = BufferGetPage(metaBuffer);
+		START_CRIT_SECTION();
+	}
+	else
+	{
+		state = GenericXLogStart(index);
+		metapage = GenericXLogRegisterBuffer(state, metaBuffer, 0);
+	}
+	metadata = RumPageGetMeta(metapage);
+
+	if (isBuild)
+	{
+		metadata->nPendingHeapTuples = opClassMetadata;
+	}
+	else
+	{
+		originalMetadata = metadata->nPendingHeapTuples;
+		metadata->nPendingHeapTuples |= opClassMetadata;
+	}
+
+
+	if (isBuild)
+	{
+		MarkBufferDirty(metaBuffer);
+	}
+	else if (originalMetadata == metadata->nPendingHeapTuples)
+	{
+		/* No changes were made to the field - skip writing WAL */
+		GenericXLogAbort(state);
 	}
 	else
 	{

@@ -63,6 +63,14 @@ PGDLLEXPORT bool RumInjectPageSplitIncomplete =
 PGDLLEXPORT bool RumInjectSplitEntryInternalOnly =
 	RUM_DEFAULT_INJECT_SPLIT_ENTRY_INTERNAL_ONLY;
 
+/* TestingConfig: Controls whether the leader participates as a worker during a
+ * parallel index build. Defaults to true (matching the normal build behavior);
+ * tests set this to false to force all heap scanning onto parallel workers.
+ */
+#define RUM_DEFAULT_PARALLEL_INDEX_BUILD_LEADER_PARTICIPATES true
+PGDLLEXPORT bool RumParallelIndexBuildLeaderParticipates =
+	RUM_DEFAULT_PARALLEL_INDEX_BUILD_LEADER_PARTICIPATES;
+
 /* rumentrypage.c */
 /* SystemConfig */
 PGDLLEXPORT int RumDefaultPageFillFactor = RUM_DEFAULT_FILL_FACTOR;
@@ -289,6 +297,15 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&RumInjectSplitEntryInternalOnly,
 		RUM_DEFAULT_INJECT_SPLIT_ENTRY_INTERNAL_ONLY,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.parallel_index_build_leader_participates", documentDBRumGucPrefix),
+		"Test GUC - controls whether the leader participates as a worker during a parallel index build",
+		NULL,
+		&RumParallelIndexBuildLeaderParticipates,
+		RUM_DEFAULT_PARALLEL_INDEX_BUILD_LEADER_PARTICIPATES,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 

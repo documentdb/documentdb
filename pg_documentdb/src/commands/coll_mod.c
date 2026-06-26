@@ -57,6 +57,14 @@ typedef struct
 	bool prepareUnique;
 	bool unique;
 	bool reindex;
+
+	/*
+	 * When set alongside reindex, the index is rebuilt with index option/opclass
+	 * settings regenerated from the current configuration (e.g. picking up newly
+	 * enabled opclass options) rather than recreated as-is. Only valid together
+	 * with reindex.
+	 */
+	bool updateOptions;
 	int expireAfterSeconds;
 } CollModIndexOptions;
 
@@ -127,6 +135,9 @@ typedef enum CollModSpecFlags
 
 	/* change stream enable update description option */
 	HAS_ENABLE_UPDATE_DESCRIPTION = 1 << 13,
+
+	/* reindex sub-option: regenerate index options/opclass settings on rebuild */
+	HAS_INDEX_OPTION_UPDATE_OPTIONS = 1 << 14,
 
 	/* TODO: More OPTIONS to follow */
 } CollModSpecFlags;
@@ -547,13 +558,25 @@ ParseSpecSetCollModOptions(const pgbson *collModSpec,
 								"collMod.unique cannot be specified with other collMod options")));
 		}
 
-		/* reindex is mutually exclusive with other index modification options */
+		/*
+		 * reindex is mutually exclusive with other index modification options,
+		 * but may be paired with its updateOptions sub-option.
+		 */
 		if ((tmpFlags & HAS_INDEX_OPTION_REINDEX) != 0 &&
-			tmpFlags != HAS_INDEX_OPTION_REINDEX)
+			(tmpFlags & ~HAS_INDEX_OPTION_UPDATE_OPTIONS) != HAS_INDEX_OPTION_REINDEX)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
 							errmsg(
 								"reindex cannot be combined with other index options")));
+		}
+
+		/* updateOptions is only meaningful as a sub-option of reindex */
+		if ((tmpFlags & HAS_INDEX_OPTION_UPDATE_OPTIONS) != 0 &&
+			(tmpFlags & HAS_INDEX_OPTION_REINDEX) == 0)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
+							errmsg(
+								"collMod.updateOptions can only be specified together with reindex")));
 		}
 	}
 
@@ -656,6 +679,13 @@ ParseIndexSpecSetCollModOptions(bson_iter_t *indexSpecIter,
 								errmsg("collMod.reindex can only be set to true")));
 			}
 			*specFlags |= HAS_INDEX_OPTION_REINDEX;
+		}
+		else if (strcmp(key, "updateOptions") == 0)
+		{
+			EnsureTopLevelFieldIsBooleanLike("collMod.index.updateOptions",
+											 indexSpecIter);
+			collModIndexOptions->updateOptions = BsonValueAsBool(value);
+			*specFlags |= HAS_INDEX_OPTION_UPDATE_OPTIONS;
 		}
 		else
 		{
@@ -921,6 +951,34 @@ ModifyIndexSpecsInCollection(const MongoCollection *collection,
 								"cannot reindex an invalid index")));
 		}
 
+		if (indexOption->updateOptions &&
+			strcmp(indexDetails.indexSpec.indexName, "_id_") == 0)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
+							errmsg("updateOptions is not supported for reindex of %s",
+								   indexDetails.indexSpec.indexName)));
+		}
+
+		bool isBuildAsUnique = false;
+		bool currentPrepareUnique = false;
+		GetPrepareUniqueFlagsFromOptions(
+			indexDetails.indexSpec.indexOptions, &isBuildAsUnique,
+			&currentPrepareUnique);
+
+		if (isBuildAsUnique || currentPrepareUnique)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
+							errmsg(
+								"reindex index option is not supported for prepareUnique indexes")));
+		}
+
+		if (GetHiddenFlagFromOptions(indexDetails.indexSpec.indexOptions))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
+							errmsg(
+								"reindex index option is not supported for hidden indexes")));
+		}
+
 		/* Build the reindex spec: {"collection": "<name>", "indexes": [<indexId>]} */
 		pgbson_writer reindexSpecWriter;
 		PgbsonWriterInit(&reindexSpecWriter);
@@ -936,6 +994,12 @@ ModifyIndexSpecsInCollection(const MongoCollection *collection,
 		};
 		PgbsonArrayWriterWriteValue(&indexArrayWriter, &indexIdValue);
 		PgbsonWriterEndArray(&reindexSpecWriter, &indexArrayWriter);
+
+		if (indexOption->updateOptions)
+		{
+			PgbsonWriterAppendBool(&reindexSpecWriter, "updateOptions", 13,
+								   indexOption->updateOptions);
+		}
 
 		pgbson *reindexSpec = PgbsonWriterGetPgbson(&reindexSpecWriter);
 

@@ -52,6 +52,7 @@ static void LoadBaseIndexAmRoutine(void);
 extern PGDLLIMPORT Datum try_explain_documentdb_rum_index(PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum documentdb_rumhandler(PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum documentdb_rum_get_multi_key_status(PG_FUNCTION_ARGS);
+extern PGDLLIMPORT Datum documentdb_rum_get_opclass_metadata(PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum documentdb_rum_update_multi_key_status(PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum documentdb_rum_get_current_index_key(PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum documentdb_rum_skip_tids_on_current_entry(PG_FUNCTION_ARGS);
@@ -77,6 +78,7 @@ static BsonIndexAmEntry DocumentDBIndexAmEntry = {
 	.get_opclass_catalog_schema = GetDocumentDBCatalogSchema,
 	.get_opclass_internal_catalog_schema = GetDocumentDBCatalogSchema,
 	.get_multikey_status = documentdb_rum_get_multi_key_status,
+	.get_opclass_metadata = documentdb_rum_get_opclass_metadata,
 	.get_truncation_status = RumGetTruncationStatus,
 	.supports_ordered_operator_scans = true,
 	.create_indexes_support_funcs = NULL,

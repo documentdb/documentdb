@@ -144,7 +144,13 @@ BsonCompressableIndexTermSerialized SerializeCompositeBsonIndexTermWithCompressi
 
 typedef enum RootMetadataKind
 {
-	RootMetadataKind_CorrelatedRootArray = 1
+	RootMetadataKind_CorrelatedRootArray = 1,
+
+	/* A range of values for composite path multi-key terms - we reserve the
+	 * range 100 to 132
+	 */
+	RootMetadataKind_CompositePathMultiKeyMin = 100,
+	RootMetadataKind_CompositePathMultiKeyMax = 132
 } RootMetadataKind;
 
 Datum GenerateRootTerm(const IndexTermCreateMetadata *);

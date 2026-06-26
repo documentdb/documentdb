@@ -199,6 +199,9 @@ typedef struct
 	 * indexes.
 	 */
 	bool enableCompositeReducedCorrelatedTerms;
+
+	/* Whether or not to track per path multi-key terms*/
+	bool enableMetadataBasedTracking;
 } BsonGinCompositePathOptions;
 
 bool ValidateIndexForQualifierElement(bytea *indexOptions,

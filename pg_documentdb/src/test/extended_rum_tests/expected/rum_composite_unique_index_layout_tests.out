@@ -42,13 +42,13 @@ VACUUM (FREEZE ON, INDEX_CLEANUP ON) documentdb_data.documents_701;
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_702', 0));
                              documentdb_rum_get_meta_page_info                             
 -------------------------------------------------------------------------------------------
- {"entries": 20, "dataPages": 0, "entryPages": 1, "totalPages": 2, "pendingHeapTuples": 0}
+ {"entries": 20, "dataPages": 0, "entryPages": 1, "totalPages": 2, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
 (1 row)
 
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_703', 0));
                              documentdb_rum_get_meta_page_info                             
 -------------------------------------------------------------------------------------------
- {"entries": 30, "dataPages": 0, "entryPages": 1, "totalPages": 2, "pendingHeapTuples": 0}
+ {"entries": 30, "dataPages": 0, "entryPages": 1, "totalPages": 2, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
 (1 row)
 
 SELECT i, (entry->>'offset')::int8, (entry->>'attrNumber')::int8, (entry->>'firstEntry') FROM generate_series(1, 1) i JOIN LATERAL (
@@ -139,13 +139,13 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('uniquedb', '{ "c
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_704', 0));
                              documentdb_rum_get_meta_page_info                             
 -------------------------------------------------------------------------------------------
- {"entries": 20, "dataPages": 0, "entryPages": 1, "totalPages": 2, "pendingHeapTuples": 0}
+ {"entries": 20, "dataPages": 0, "entryPages": 1, "totalPages": 2, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
 (1 row)
 
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_705', 0));
                              documentdb_rum_get_meta_page_info                             
 -------------------------------------------------------------------------------------------
- {"entries": 20, "dataPages": 0, "entryPages": 1, "totalPages": 2, "pendingHeapTuples": 0}
+ {"entries": 20, "dataPages": 0, "entryPages": 1, "totalPages": 2, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
 (1 row)
 
 SELECT i, (entry->>'offset')::int8, (entry->>'attrNumber')::int8, (entry->>'firstEntry') FROM generate_series(1, 1) i JOIN LATERAL (
