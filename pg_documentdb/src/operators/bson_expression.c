@@ -1594,12 +1594,18 @@ ExpressionResultSetValueFromWriter(ExpressionResult *expressionResult)
 		expressionResult->isExpressionWriter = false;
 	}
 
-	if (!expressionResult->expressionResultPrivate.variableContext.hasSingleVariable &&
-		expressionResult->expressionResultPrivate.variableContext.context.table != NULL)
+	/* Some variable context tables (eg: from $let) are shared across every */
+	/* document/iteration, so skip destroying them when flagged to preserve; */
+	/* otherwise a later evaluation dereferences a freed table. */
+	ExpressionVariableContext *variableContext =
+		&expressionResult->expressionResultPrivate.variableContext;
+	bool destroyTable = !variableContext->preserveVariableTable &&
+						!variableContext->hasSingleVariable &&
+						variableContext->context.table != NULL;
+	if (destroyTable)
 	{
-		hash_destroy(
-			expressionResult->expressionResultPrivate.variableContext.context.table);
-		expressionResult->expressionResultPrivate.variableContext.context.table = NULL;
+		hash_destroy(variableContext->context.table);
+		variableContext->context.table = NULL;
 	}
 }
 
