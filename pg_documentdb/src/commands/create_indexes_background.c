@@ -197,7 +197,8 @@ static bool PruneSkippableIndexes(MemoryContext mcxt);
 static BackgroundIndexRunStatus build_index_concurrently_from_indexqueue_core(
 	MemoryContext stableContext);
 static Datum build_index_background_core(PG_FUNCTION_ARGS);
-static void PostProcessIndexForReIndex(int64 collectionId, IndexDetails *details);
+static void PostProcessIndexForReIndex(int64 collectionId, IndexDetails *details, bool
+									   isReindexViaCreate);
 static void PostProcessIndexForCreateUnique(int64 collectionId, IndexDetails *details);
 static bool IndexSpecsAreEquivalentForUniqueness(const IndexSpec *leftIndexSpec,
 												 const IndexSpec *rightIndexSpec);
@@ -562,8 +563,9 @@ build_index_concurrently_from_indexqueue_core(MemoryContext stableContext)
 					"Trying to post process index during reindex for index_id: %d and collectionId: "
 					UINT64_FORMAT,
 					indexDetails->indexId, collectionId);
+				bool isReindexViaCreate = strstr(indexCmdRequest->cmd, "CREATE INDEX");
 				PostProcessIndexForReIndex(indexCmdRequest->collectionId,
-										   indexDetails);
+										   indexDetails, isReindexViaCreate);
 			}
 			else if (indexCmdRequest->cmdType == CREATE_INDEX_COMMAND_TYPE)
 			{
@@ -908,7 +910,7 @@ command_create_indexes_background(PG_FUNCTION_ARGS)
 
 
 static List *
-ParseReindexSpec(pgbson *reindexSpec, char **collectionName)
+ParseReindexSpec(pgbson *reindexSpec, char **collectionName, bool *updateOptions)
 {
 	bson_iter_t reindexIter;
 	PgbsonInitIterator(reindexSpec, &reindexIter);
@@ -942,6 +944,18 @@ ParseReindexSpec(pgbson *reindexSpec, char **collectionName)
 				indexIdList = lappend_int(indexIdList, BsonValueAsInt32(indexValue));
 			}
 		}
+		else if (strcmp(key, "updateOptions") == 0)
+		{
+			const bson_value_t *value = bson_iter_value(&reindexIter);
+			if (value->value_type != BSON_TYPE_BOOL)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"reindex failed, 'updateOptions' field must be a boolean")));
+			}
+
+			*updateOptions = value->value.v_bool;
+		}
 		else
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
@@ -968,6 +982,36 @@ ParseReindexSpec(pgbson *reindexSpec, char **collectionName)
 }
 
 
+static char *
+GenerateIndexCreateSpecForUpdateOptions(IndexDetails *indexDef, bool
+										buildAsUniqueForPrepareUnique)
+{
+	/* First convert indexSpec to bson */
+	pgbson *indexSpecBson = IndexSpecAsBson(&indexDef->indexSpec);
+	const char *specJsonRepresentation = PgbsonToJsonForLogging(indexSpecBson);
+
+	/* Next take the bson and work through the logic of create indexes */
+	bson_iter_t indexSpecIter;
+	PgbsonInitIterator(indexSpecBson, &indexSpecIter);
+	bool ignoreUnknownIndexOptions = true;
+	IndexDef *indexDefinition = ParseIndexDefDocumentInternal(&indexSpecIter,
+															  specJsonRepresentation,
+															  ignoreUnknownIndexOptions,
+															  buildAsUniqueForPrepareUnique);
+
+	bool isBackgroundBuild = true;
+	bool createIndexesConcurrently = true;
+	bool isTempCollection = false;
+	char *indexBuildCmd = CreatePostgresIndexCreationCmd(indexDef->collectionId,
+														 indexDefinition,
+														 indexDef->indexId,
+														 createIndexesConcurrently,
+														 isTempCollection,
+														 isBackgroundBuild);
+	return indexBuildCmd;
+}
+
+
 Datum
 command_reindex_index_background_internal(PG_FUNCTION_ARGS)
 {
@@ -975,7 +1019,8 @@ command_reindex_index_background_internal(PG_FUNCTION_ARGS)
 	pgbson *reindexSpec = PG_GETARG_PGBSON(1);
 
 	char *collectionName = NULL;
-	List *indexIdList = ParseReindexSpec(reindexSpec, &collectionName);
+	bool updateOptions = false;
+	List *indexIdList = ParseReindexSpec(reindexSpec, &collectionName, &updateOptions);
 
 	MongoCollection *collection =
 		GetMongoCollectionByNameDatum(dbNameDatum, CStringGetTextDatum(collectionName),
@@ -1040,33 +1085,41 @@ command_reindex_index_background_internal(PG_FUNCTION_ARGS)
 									"reindex of unordered unique indexes is not supported")));
 			}
 
-			/* Reindex of a unique index requires creating a new index since PG can't reindex
-			 * exclusion constraints.
-			 * TODO: If possible reuse the create index path (except we need to refactor the indexdef
-			 * into a create index spec)
-			 */
-			char *indexName = psprintf(DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT,
-									   indexDef->indexId);
-			Oid indexOid = get_relname_relid(indexName, ApiDataNamespaceOid());
-
-			if (indexOid == InvalidOid)
+			char *indexBuildCmd;
+			if (updateOptions)
 			{
-				ereport(ERROR, (errmsg(
-									"reindex failed, unexpectedly got invalid Oid for index id: %d",
-									indexDef->indexId)));
+				bool buildAsUnique = true;
+				indexBuildCmd = GenerateIndexCreateSpecForUpdateOptions(indexDef,
+																		buildAsUnique);
 			}
+			else
+			{
+				/* Reindex of a unique index requires creating a new index since PG can't reindex
+				 * exclusion constraints.
+				 * TODO: If possible reuse the create index path (except we need to refactor the indexdef
+				 * into a create index spec)
+				 */
+				char *indexName = psprintf(DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT,
+										   indexDef->indexId);
+				Oid indexOid = get_relname_relid(indexName, ApiDataNamespaceOid());
 
-			/*
-			 * Reset search_path so that pg_get_indexdef_string produces fully qualified
-			 * type and function names. The generated command runs via libpq which has
-			 * the default search_path and would fail to resolve unqualified names.
-			 */
-			int savedGUCLevel = NewGUCNestLevel();
-			SetGUCLocally("search_path", "pg_catalog");
+				if (indexOid == InvalidOid)
+				{
+					ereport(ERROR, (errmsg(
+										"reindex failed, unexpectedly got invalid Oid for index id: %d",
+										indexDef->indexId)));
+				}
 
-			char *indexBuildCmd = pg_get_indexdef_string(indexOid);
-
-			RollbackGUCChange(savedGUCLevel);
+				/*
+				 * Reset search_path so that pg_get_indexdef_string produces fully qualified
+				 * type and function names. The generated command runs via libpq which has
+				 * the default search_path and would fail to resolve unqualified names.
+				 */
+				int savedGUCLevel = NewGUCNestLevel();
+				SetGUCLocally("search_path", "pg_catalog");
+				indexBuildCmd = pg_get_indexdef_string(indexOid);
+				RollbackGUCChange(savedGUCLevel);
+			}
 
 			/* The command above captures the original CREATE INDEX call including the name and options
 			 * We strip all the prefix leading to the term "USING" and append our new prefix.
@@ -1081,6 +1134,25 @@ command_reindex_index_background_internal(PG_FUNCTION_ARGS)
 			indexBuildCmd = suffix + strlen("USING");
 
 			/* Match the reindex index creation name */
+			appendStringInfo(cmdStr, "CREATE INDEX CONCURRENTLY "
+							 DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "_ccnew ON %s."
+							 DOCUMENT_DATA_TABLE_NAME_FORMAT " USING %s",
+							 indexId, ApiDataSchemaName, collectionId, indexBuildCmd);
+		}
+		else if (updateOptions)
+		{
+			bool buildAsUnique = false;
+			const char *indexBuildCmd = GenerateIndexCreateSpecForUpdateOptions(indexDef,
+																				buildAsUnique);
+
+			char *suffix = strstr(indexBuildCmd, "USING");
+			if (!suffix)
+			{
+				ereport(ERROR, (errmsg(
+									"Could not find a valid index definition for index")));
+			}
+
+			indexBuildCmd = suffix + strlen("USING");
 			appendStringInfo(cmdStr, "CREATE INDEX CONCURRENTLY "
 							 DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "_ccnew ON %s."
 							 DOCUMENT_DATA_TABLE_NAME_FORMAT " USING %s",
@@ -1628,7 +1700,8 @@ MarkIndexAsValid(int indexId)
 
 
 static void
-PostProcessIndexForReIndex(int64 collectionId, IndexDetails *details)
+PostProcessIndexForReIndex(int64 collectionId, IndexDetails *details, bool
+						   isReindexViaCreate)
 {
 	if (details == NULL)
 	{
@@ -1637,47 +1710,50 @@ PostProcessIndexForReIndex(int64 collectionId, IndexDetails *details)
 							UINT64_FORMAT, collectionId)));
 	}
 
-	if (details->indexSpec.indexUnique != BoolIndexOption_True)
+	if (details->indexSpec.indexUnique != BoolIndexOption_True && !isReindexViaCreate)
 	{
 		return;
 	}
 
-	/* Unique index being reindexed - need to update the constraint properties */
 	const char *base_indexname = psprintf(DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT,
 										  details->indexId);
 	const char *reindex_indexname = psprintf(
 		DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "_ccnew", details->indexId);
 	const char *old_indexname = psprintf(DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "_ccold",
 										 details->indexId);
-	Oid indexOid = get_relname_relid(reindex_indexname, ApiDataNamespaceOid());
-
-	List *indexOidList = list_make1_oid(indexOid);
-
-	/* Add any additional shard OIDs needed for this */
-	bool ignoreMissingShards = false;
-	indexOidList = list_concat(indexOidList,
-							   GetShardIndexOids(collectionId, indexOid,
-												 ignoreMissingShards));
-
-	/* Failure injection point 4: Before prepareUnique during reindex */
-	if (IndexBuildFailurePoint == 4)
+	if (details->indexSpec.indexUnique == BoolIndexOption_True)
 	{
-		ereport(ERROR, (errmsg(
-							"Injected failure point 4: before prepareUnique during reindex "
-							"for index_id: %d collectionId: " UINT64_FORMAT,
-							details->indexId, collectionId)));
-	}
+		/* Unique index being reindexed - need to update the constraint properties */
+		Oid indexOid = get_relname_relid(reindex_indexname, ApiDataNamespaceOid());
 
-	bool prepareUnique = true;
-	UpdatePostgresIndexesForPrepareUnique(indexOidList, prepareUnique);
+		List *indexOidList = list_make1_oid(indexOid);
 
-	/* Failure injection point 5: After prepareUnique, before first rename during reindex */
-	if (IndexBuildFailurePoint == 5)
-	{
-		ereport(ERROR, (errmsg(
-							"Injected failure point 5: after prepareUnique, before rename "
-							"for index_id: %d collectionId: " UINT64_FORMAT,
-							details->indexId, collectionId)));
+		/* Add any additional shard OIDs needed for this */
+		bool ignoreMissingShards = false;
+		indexOidList = list_concat(indexOidList,
+								   GetShardIndexOids(collectionId, indexOid,
+													 ignoreMissingShards));
+
+		/* Failure injection point 4: Before prepareUnique during reindex */
+		if (IndexBuildFailurePoint == 4)
+		{
+			ereport(ERROR, (errmsg(
+								"Injected failure point 4: before prepareUnique during reindex "
+								"for index_id: %d collectionId: " UINT64_FORMAT,
+								details->indexId, collectionId)));
+		}
+
+		bool prepareUnique = true;
+		UpdatePostgresIndexesForPrepareUnique(indexOidList, prepareUnique);
+
+		/* Failure injection point 5: After prepareUnique, before first rename during reindex */
+		if (IndexBuildFailurePoint == 5)
+		{
+			ereport(ERROR, (errmsg(
+								"Injected failure point 5: after prepareUnique, before rename "
+								"for index_id: %d collectionId: " UINT64_FORMAT,
+								details->indexId, collectionId)));
+		}
 	}
 
 	/* Rename the indexes now that we've upgraded to prepareUnique */
@@ -2350,25 +2426,75 @@ ComposeCheckIndexStatusResponse(FunctionCallInfo fcinfo, pgbson *bson, bool ok, 
 static void
 TryDropReindexedCollectionIndex(IndexDetails *indexDetails)
 {
+	if (indexDetails == NULL)
+	{
+		return;
+	}
+
 	if (SkipIndexCleanupOnReindex)
 	{
 		return;
 	}
 
+	/*
+	 * Clean up the old physical index left behind by a reindex-via-create.
+	 * Post-processing renamed the old index to its "_ccold" name and swapped the
+	 * rebuilt index into place, but on the success path those renames are still
+	 * uncommitted here.
+	 *
+	 * Whether the old index must be pre-committed before the drop depends on how
+	 * the drop is issued, which in turn depends on whether the "_ccold" index is
+	 * backed by a constraint:
+	 *
+	 *   - For a plain (non-constraint) index the drop below issues DROP INDEX
+	 *     CONCURRENTLY over a separate connection that cannot see the uncommitted
+	 *     rename and would report "_ccold" as missing and skip it, leaving the old
+	 *     index behind. Commit first so the rename is visible.
+	 *   - Constraint-backed indexes (unique and _id) are dropped via ALTER TABLE
+	 *     DROP CONSTRAINT through SPI in this same session, which sees the
+	 *     uncommitted rename, so they must NOT be pre-committed.
+	 *
+	 * Derive this from the physical catalog (the same get_index_constraint probe
+	 * DropPostgresIndexWithSuffix performs internally when it issues the drop)
+	 * rather than from the logical index spec. Using the spec's "unique" flag as a
+	 * proxy could disagree with the index's actual on-disk constraint state (e.g.
+	 * a unique build that failed before registering the constraint), and the
+	 * pre-commit decision must match exactly how the drop is issued or we risk
+	 * leaving the old index behind. The "_ccold" index is produced by an
+	 * in-session, still-uncommitted rename, so it is visible to get_relname_relid
+	 * in this session.
+	 */
+	bool isIdIndex = strncmp(indexDetails->indexSpec.indexName,
+							 ID_INDEX_NAME, strlen(ID_INDEX_NAME)) == 0;
+	bool isConstraintBacked = isIdIndex;
+	if (!isConstraintBacked)
+	{
+		const char *ccoldIndexName = psprintf(
+			DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "_ccold",
+			indexDetails->indexId);
+		Oid ccoldIndexOid = get_relname_relid(ccoldIndexName,
+											  ApiDataNamespaceOid());
+		isConstraintBacked = OidIsValid(ccoldIndexOid) &&
+							 OidIsValid(get_index_constraint(ccoldIndexOid));
+	}
+	if (!isConstraintBacked)
+	{
+		PopAllActiveSnapshots();
+		CommitTransactionCommand();
+		StartTransactionCommand();
+	}
+
 	PG_TRY();
 	{
-		if (indexDetails != NULL)
-		{
-			bool missingOk = true;
-			bool concurrently = true;
-			DropPostgresIndexWithSuffix(
-				indexDetails->collectionId, indexDetails,
-				concurrently, missingOk, "_ccnew");
+		bool missingOk = true;
+		bool concurrently = true;
+		DropPostgresIndexWithSuffix(
+			indexDetails->collectionId, indexDetails,
+			concurrently, missingOk, "_ccnew");
 
-			DropPostgresIndexWithSuffix(
-				indexDetails->collectionId, indexDetails,
-				concurrently, missingOk, "_ccold");
-		}
+		DropPostgresIndexWithSuffix(
+			indexDetails->collectionId, indexDetails,
+			concurrently, missingOk, "_ccold");
 	}
 	PG_CATCH();
 	{

@@ -1575,8 +1575,20 @@ fn write_query_planner_index_usage(detail: &IndexDetails, index_doc: &mut RawDoc
         index_doc.append("isMultiKey", multi_key_val);
     }
 
+    if let Some(multi_key_paths) = detail.multi_key_paths.as_ref() {
+        if !multi_key_paths.is_empty() {
+            index_doc.append("multiKeyPaths", truncated_string_array(multi_key_paths));
+        }
+    }
+
     if let Some(has_truncation_val) = detail.has_truncation {
         index_doc.append("hasTruncation", has_truncation_val);
+    }
+
+    if let Some(truncated_paths) = detail.truncated_paths.as_ref() {
+        if !truncated_paths.is_empty() {
+            index_doc.append("truncatedPaths", truncated_string_array(truncated_paths));
+        }
     }
 
     if let Some(index_bounds) = detail.index_bounds.as_ref() {

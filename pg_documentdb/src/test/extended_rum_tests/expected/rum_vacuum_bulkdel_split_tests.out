@@ -41,7 +41,7 @@ SELECT index_id AS vacuum_index_id FROM documentdb_api_catalog.collection_indexe
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_802', 0));
                              documentdb_rum_get_meta_page_info                              
 --------------------------------------------------------------------------------------------
- {"entries": 500, "dataPages": 0, "entryPages": 4, "totalPages": 5, "pendingHeapTuples": 0}
+ {"entries": 500, "dataPages": 0, "entryPages": 4, "totalPages": 5, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
 (1 row)
 
 -- insert many tuples at the end (this splits it to the higher pages)
@@ -64,7 +64,7 @@ VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON) documentdb_data.d
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_802', 0));
                                documentdb_rum_get_meta_page_info                               
 -----------------------------------------------------------------------------------------------
- {"entries": 5000, "dataPages": 0, "entryPages": 35, "totalPages": 36, "pendingHeapTuples": 0}
+ {"entries": 5000, "dataPages": 0, "entryPages": 35, "totalPages": 36, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
 (1 row)
 
 -- now delete the earlier rows in the tree (occupying the lower pages)
@@ -89,7 +89,7 @@ reset client_min_messages;
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_802', 0));
                                documentdb_rum_get_meta_page_info                               
 -----------------------------------------------------------------------------------------------
- {"entries": 2001, "dataPages": 0, "entryPages": 16, "totalPages": 36, "pendingHeapTuples": 0}
+ {"entries": 2001, "dataPages": 0, "entryPages": 16, "totalPages": 36, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
 (1 row)
 
 SELECT MIN(i), MAX(i), COUNT(*) FROM (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_802', i)) entry FROM generate_series(1, 35) i) AS q1
@@ -175,6 +175,6 @@ SELECT COUNT(*), MIN((entry->>'cycleId')::int4), MAX((entry->>'cycleId')::int4) 
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_802', 0));
                              documentdb_rum_get_meta_page_info                             
 -------------------------------------------------------------------------------------------
- {"entries": 2, "dataPages": 0, "entryPages": 3, "totalPages": 57, "pendingHeapTuples": 0}
+ {"entries": 2, "dataPages": 0, "entryPages": 3, "totalPages": 57, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
 (1 row)
 

@@ -429,7 +429,7 @@ VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) docum
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page(('documentdb_data.documents_rum_index_' || :vacuum_index_id), 0));
                                documentdb_rum_get_meta_page_info                               
 -----------------------------------------------------------------------------------------------
- {"entries": 1000, "dataPages": 14, "entryPages": 7, "totalPages": 22, "pendingHeapTuples": 0}
+ {"entries": 1000, "dataPages": 14, "entryPages": 7, "totalPages": 22, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
 (1 row)
 
 WITH r1 AS (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page(('documentdb_data.documents_rum_index_' || :vacuum_index_id), i)) AS entry FROM generate_series(1, 21) i)

@@ -25,6 +25,15 @@ Datum FormCompositeDatumFromQuals(List *indexQuals, bool isMultiKey,
 								  bool hasCorrelatedReducedTerm,
 								  bool supportsOperatorOrderedScans);
 char * SerializeCompositeIndexKeyForExplain(bytea *entry);
+
+void DecodeCompositeOpClassQueryMetadata(void *options, uint64_t opclassMetadata,
+										 bool *hasMultiKey, uint32_t *multiKeyPathBitmask,
+										 bool *hasCorrelatedReducedTerms,
+										 bool *hasTruncation);
+void DecodeCompositeOpClassMetadata(void *options, uint64_t opclassMetadata,
+									bool *hasMultiKey, List **multiKeyPerPathList,
+									bool *hasCorrelatedReducedTerms, bool *hasTruncation,
+									List **truncatedPerPathList);
 void SerializeCompositeIndexKeyForExplainToWriter(bytea *entry, pgbson_writer *writer);
 bool ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey
 									targetScanKey, bool hasArrayKeys, bool

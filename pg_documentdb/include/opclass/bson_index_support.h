@@ -120,6 +120,8 @@ void WalkRestrictionPathsForIndexOperations(List *restrictInfo,
 											List *joinInfo,
 											ReplaceExtensionFunctionContext *context);
 
+bool CompositeIndexOptInfoIsMultiKey(IndexOptInfo *indexOptInfo,
+									 uint32_t *multiKeyBitMask);
 bool IsBtreePrimaryKeyIndex(struct IndexOptInfo *indexInfo);
 bool IsOpExprShardKeyEquality(Expr *expr, int64 *shardKeyValue);
 bool InMatchIsEquvalentTo(ScalarArrayOpExpr *opExpr, const bson_value_t *arrayValue);

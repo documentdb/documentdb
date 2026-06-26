@@ -470,6 +470,7 @@ typedef struct RumState
 	bool isBuild;
 	bool oneCol;                /* true if single-column index */
 	bool useAlternativeOrder;
+	bool enableOpClassMetadataStorage;
 	AttrNumber attrnAttachColumn;
 	AttrNumber attrnAddToColumn;
 	int fillFactor;
@@ -549,16 +550,20 @@ extern int rumCompareAttEntries(RumState *rumstate,
 extern Datum * rumExtractEntries(RumState *rumstate, OffsetNumber attnum,
 								 Datum value, bool isNull,
 								 int32 *nentries, RumNullCategory **categories,
-								 Datum **addInfo, bool **addInfoIsNull);
+								 Datum **addInfo, bool **addInfoIsNull,
+								 uint64_t *opClassMetadata);
 
 extern OffsetNumber rumtuple_get_attrnum(RumState *rumstate, IndexTuple tuple);
 extern Datum rumtuple_get_key(RumState *rumstate, IndexTuple tuple,
 							  RumNullCategory *category);
 
 extern void rumGetStats(Relation index, RumStatsData *stats);
+extern uint64_t rumGetOpclassMetadata(Relation index);
 extern void rumValidateIndexVersion(Relation index);
 extern void rumUpdateStats(Relation index, const RumStatsData *stats,
 						   bool isBuild);
+extern void rumUpdateOpclassMetadataInMetapage(Relation index, uint64_t opClassMetadata,
+											   bool isBuild);
 
 /* ruminsert.c */
 extern BlockNumber rumCreatePostingTree(RumState *rumstate, OffsetNumber attnum,
@@ -1150,6 +1155,7 @@ extern PGDLLIMPORT bool RumEnableEntryPageStep;
 /* Gucs used by tests */
 extern PGDLLIMPORT bool RumForceOrderedIndexScan;
 extern PGDLLIMPORT int RumParallelIndexWorkersOverride;
+extern PGDLLIMPORT bool RumParallelIndexBuildLeaderParticipates;
 extern PGDLLIMPORT int RumDataPageIntermediateSplitSize;
 extern PGDLLIMPORT bool RumThrowErrorOnInvalidDataPage;
 extern PGDLLIMPORT bool RumInjectPageSplitIncomplete;

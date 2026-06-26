@@ -64,6 +64,9 @@ typedef struct
 	/* Optional function that handles getting multi-key status for an index */
 	PGFunction get_multikey_status;
 
+	/* Optional function that handles getting per-path multi-key status for an index */
+	PGFunction get_opclass_metadata;
+
 	/* Optional function to that returns the truncation status of an index */
 	GetTruncationStatusFunc get_truncation_status;
 

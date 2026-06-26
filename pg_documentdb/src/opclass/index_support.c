@@ -177,6 +177,7 @@ extern bool EnableExtendedIndexes;
 extern bool EnableDynamicCursors;
 extern bool EnableDistinctIndexPushdown;
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
+extern bool EnablePerPathMultiKeySortPushdown;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -3460,6 +3461,7 @@ static void
 ProcessOrderByStatements(PlannerInfo *root,
 						 IndexPath *path, int32_t minOrderByColumn,
 						 int32_t maxOrderByColumn, bool isMultiKeyIndex,
+						 uint32_t multiKeyBitMask,
 						 const char *queryOrderPaths[INDEX_MAX_KEYS],
 						 bool equalityPrefixes[INDEX_MAX_KEYS],
 						 bool nonEqualityPrefixes[INDEX_MAX_KEYS],
@@ -3502,8 +3504,18 @@ ProcessOrderByStatements(PlannerInfo *root,
 	{
 		if (isMultiKeyIndex)
 		{
+			/*
+			 * Respect the per-path multi-key bitmask when the feature flag is on:
+			 * only treat this order-by column as multi-key if its own path bit is
+			 * set (or the bitmask is unavailable). When the flag is off, fall back
+			 * to treating every order-by column of a multi-key index as multi-key.
+			 */
+			bool isMultiKeyPath = !EnablePerPathMultiKeySortPushdown ||
+								  multiKeyBitMask == 0 ||
+								  ((multiKeyBitMask & (UINT32_C(1) << i)) != 0);
+
 			/* For a multi-key index, all order by related paths must have no filter specifications */
-			if (nonEqualityPrefixes[i] || equalityPrefixes[i])
+			if (isMultiKeyPath && (nonEqualityPrefixes[i] || equalityPrefixes[i]))
 			{
 				break;
 			}
@@ -3929,23 +3941,11 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 	ListCell *cell;
 	bool firstFilterColumnFound = false;
 	bool indexCanOrder = false;
-	bool isMultiKeyIndex = false;
-	PGFunction getMultiKeyStatusFunc = GetMultiKeyStatusByRelAm(
-		indexPath->indexinfo->relam);
-
-	if (getMultiKeyStatusFunc != NULL &&
-		indexPath->indexinfo->amcanorderbyop &&
-		list_length(root->query_pathkeys) > 0)
-	{
-		Relation indexRel = index_open(indexPath->indexinfo->indexoid, NoLock);
-		isMultiKeyIndex = DatumGetBool(DirectFunctionCall1(getMultiKeyStatusFunc,
-														   PointerGetDatum(indexRel)));
-		index_close(indexRel, NoLock);
-	}
-
+	uint32_t multiKeyBitMask = 0;
+	bool isMultiKeyIndex = CompositeIndexOptInfoIsMultiKey(indexPath->indexinfo,
+														   &multiKeyBitMask);
 	bool indexSupportsOrderByDesc = GetIndexSupportsBackwardsScan(
 		indexPath->indexinfo->relam, &indexCanOrder);
-
 
 	bool indexOnlyScanPossible = EnableIndexOnlyScan &&
 								 enable_indexonlyscan &&
@@ -3954,8 +3954,8 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 								 IsQueryEligibleForIndexOnlyScan(root,
 																 indexPath->path.parent->
 																 relid, NULL) &&
-								 CompositeIndexSupportsIndexOnlyScan(indexPath) &&
-								 AreAllTargetsCoveredByIndex(root, indexPath);
+								 AreAllTargetsCoveredByIndex(root, indexPath) &&
+								 CompositeIndexSupportsIndexOnlyScan(indexPath);
 
 	bytea *indexOptions = indexPath->indexinfo->opclassoptions != NULL ?
 						  indexPath->indexinfo->opclassoptions[0] : NULL;
@@ -4054,6 +4054,7 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 	{
 		ProcessOrderByStatements(root, indexPath, minOrderByColumn,
 								 maxOrderByColumn, isMultiKeyIndex,
+								 multiKeyBitMask,
 								 queryOrderPaths, equalityPrefixes,
 								 nonEqualityPrefixes, pathSortOrders);
 

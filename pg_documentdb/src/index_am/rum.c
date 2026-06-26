@@ -61,7 +61,6 @@ static bool loaded_rum_routine = false;
 static bool loaded_documentdb_rum_routine = false;
 static IndexAmRoutine rum_index_routine = { 0 };
 
-static PGFunction rum_index_multi_key_get_func = NULL;
 static PGFunction rum_index_multi_key_update_func = NULL;
 
 typedef enum IndexMultiKeyStatus
@@ -189,6 +188,7 @@ typedef enum RumFunctionCatalog
 	RumFunction_Extract_Tsvector,
 	RumFunction_TryExplainRumIndex,
 	RumFunction_RumGetMultiKeyStatus,
+	RumFunction_RumGetOpClassMetadata,
 	RumFunction_RumUpdateMultiKeyStatus,
 	RumFunction_SetUnredactedLogHook,
 	RumFunction_RumOrderedCostEstimate,
@@ -210,6 +210,7 @@ static const char *RumFunctionArray[RumFunction_Max] =
 	[RumFunction_Extract_Tsvector] = "rum_extract_tsvector",
 	[RumFunction_TryExplainRumIndex] = "try_explain_rum_index",
 	[RumFunction_RumGetMultiKeyStatus] = "rum_get_multi_key_status",
+	[RumFunction_RumGetOpClassMetadata] = "rum_get_opclass_metadata",
 	[RumFunction_RumUpdateMultiKeyStatus] = "rum_update_multi_key_status",
 	[RumFunction_SetUnredactedLogHook] = "SetRumUnredactedLogEmitHook",
 	[RumFunction_RumOrderedCostEstimate] = "RumOrderedCostEstimate",
@@ -231,6 +232,7 @@ static const char *DocumentDBRumFunctionArray[RumFunction_Max] =
 	[RumFunction_Extract_Tsvector] = "documentdb_extended_rum_extract_tsvector",
 	[RumFunction_TryExplainRumIndex] = "try_explain_documentdb_rum_index",
 	[RumFunction_RumGetMultiKeyStatus] = "documentdb_rum_get_multi_key_status",
+	[RumFunction_RumGetOpClassMetadata] = "documentdb_rum_get_opclass_metadata",
 	[RumFunction_RumUpdateMultiKeyStatus] = "documentdb_rum_update_multi_key_status",
 	[RumFunction_SetUnredactedLogHook] = "DocumentDBSetRumUnredactedLogEmitHook",
 	[RumFunction_RumOrderedCostEstimate] = "DocumentDBRumOrderedCostEstimate",
@@ -255,7 +257,8 @@ PG_FUNCTION_INFO_V1(documentdb_rum_extract_tsvector);
 extern void SetDocumentDBFunctionNames(const char *explainRumIndexFunc,
 									   const char *getMultiKeyStatus,
 									   const char *updateMultiKeyStatus,
-									   const char *orderedCostEstimateFunc);
+									   const char *orderedCostEstimateFunc,
+									   const char *getOpClassMetadataFunc);
 
 static PGFunction RumOrderedCostEstimate = NULL;
 
@@ -336,12 +339,14 @@ void
 SetDocumentDBFunctionNames(const char *explainRumIndexFunc,
 						   const char *getMultiKeyStatus,
 						   const char *updateMultiKeyStatus,
-						   const char *orderedCostEstimateFunc)
+						   const char *orderedCostEstimateFunc,
+						   const char *getOpClassMetadataFunc)
 {
 	RumFunctionArray[RumFunction_TryExplainRumIndex] = explainRumIndexFunc;
 	RumFunctionArray[RumFunction_RumGetMultiKeyStatus] = getMultiKeyStatus;
 	RumFunctionArray[RumFunction_RumUpdateMultiKeyStatus] = updateMultiKeyStatus;
 	RumFunctionArray[RumFunction_RumOrderedCostEstimate] = orderedCostEstimateFunc;
+	RumFunctionArray[RumFunction_RumGetOpClassMetadata] = getOpClassMetadataFunc;
 }
 
 
@@ -575,7 +580,7 @@ LoadRumRoutine(void)
 		setRumUnredactedLogEmitHookFunc(unredacted_log_emit_hook);
 	}
 
-	rum_index_multi_key_get_func =
+	PGFunction rum_index_multi_key_get_func =
 		load_external_function(rumLibPath,
 							   functionCatalog[RumFunction_RumGetMultiKeyStatus],
 							   !missingOk,
@@ -590,6 +595,16 @@ LoadRumRoutine(void)
 		 * path and query the multi-key status
 		 */
 		RumIndexAmEntry.get_multikey_status = RumGetMultiKeyStatusSlow;
+	}
+
+	PGFunction rum_get_opclass_metadata_func =
+		load_external_function(rumLibPath,
+							   functionCatalog[RumFunction_RumGetOpClassMetadata],
+							   !missingOk,
+							   ignoreLibFileHandle);
+	if (rum_get_opclass_metadata_func != NULL)
+	{
+		RumIndexAmEntry.get_opclass_metadata = rum_get_opclass_metadata_func;
 	}
 
 	rum_index_multi_key_update_func =
@@ -811,11 +826,13 @@ CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath)
 {
 	PGFunction getMultiKeyStatusFunc = NULL;
 	GetTruncationStatusFunc getTruncationStatusFunc = NULL;
+	PGFunction getOpclassMetadataFunc = NULL;
 
 	bool supports = GetIndexAmSupportsIndexOnlyScan(indexPath->indexinfo->relam,
 													indexPath->indexinfo->opfamily[0],
 													&getMultiKeyStatusFunc,
-													&getTruncationStatusFunc);
+													&getTruncationStatusFunc,
+													&getOpclassMetadataFunc);
 
 	if (!supports || getMultiKeyStatusFunc == NULL || getTruncationStatusFunc == NULL)
 	{
@@ -849,11 +866,30 @@ CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath)
 		return false;
 	}
 
+	bool multiKeyStatus = false;
+	bool hasTruncatedTerms = false;
 	Relation indexRelation = index_open(indexPath->indexinfo->indexoid, NoLock);
-	bool multiKeyStatus = DatumGetBool(DirectFunctionCall1(getMultiKeyStatusFunc,
-														   PointerGetDatum(
-															   indexRelation)));
-	bool hasTruncatedTerms = getTruncationStatusFunc(indexRelation);
+
+	if (compositeOptions->enableMetadataBasedTracking && getOpclassMetadataFunc != NULL)
+	{
+		uint32_t multiKeyPerPathStatus = 0;
+		bool hasReducedCorrelatedTerms = false;
+		uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
+													  getOpclassMetadataFunc,
+													  PointerGetDatum(indexRelation)));
+		DecodeCompositeOpClassQueryMetadata(options, opclassMetadata, &multiKeyStatus,
+											&multiKeyPerPathStatus,
+											&hasReducedCorrelatedTerms,
+											&hasTruncatedTerms);
+	}
+	else
+	{
+		multiKeyStatus = DatumGetBool(DirectFunctionCall1(getMultiKeyStatusFunc,
+														  PointerGetDatum(
+															  indexRelation)));
+		hasTruncatedTerms = getTruncationStatusFunc(indexRelation);
+	}
+
 	index_close(indexRelation, NoLock);
 
 	/* can only support index only scan if the index is not multikey and there are no truncated terms. */
@@ -1171,8 +1207,10 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 {
 	bool supportsOrderedOperatorScans = false;
 	PGFunction multiKeyStatusFunc = NULL;
+	PGFunction getopclassMetadataFunc = NULL;
 	if (GetCompositeOpClassWithProps(scan->indexRelation,
-									 &supportsOrderedOperatorScans, &multiKeyStatusFunc))
+									 &supportsOrderedOperatorScans, &multiKeyStatusFunc,
+									 &getopclassMetadataFunc))
 	{
 		/* Copy the scan keys to our scan */
 		if (scankey && scan->numberOfKeys > 0)
@@ -1194,32 +1232,57 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 			scan->indexRelation->rd_opcoptions[0]);
 		if (outerScanState->multiKeyStatus == IndexMultiKeyStatus_Unknown)
 		{
-			if (multiKeyStatusFunc != NULL)
-			{
-				bool indexHasArrays =
-					DatumGetBool(DirectFunctionCall1(multiKeyStatusFunc,
-													 PointerGetDatum(
-														 scan->indexRelation)));
-				outerScanState->multiKeyStatus = indexHasArrays ?
-												 IndexMultiKeyStatus_HasArrays :
-												 IndexMultiKeyStatus_HasNoArrays;
-			}
-			else
-			{
-				outerScanState->multiKeyStatus =
-					CheckIndexHasArrays(scan->indexRelation, coreRoutine);
-			}
-
 			/* Check if we are producing reduced index terms in this index */
 			BsonGinCompositePathOptions *options =
 				(BsonGinCompositePathOptions *) scan->indexRelation->rd_opcoptions[0];
-			if (options->enableCompositeReducedCorrelatedTerms &&
-				outerScanState->multiKeyStatus == IndexMultiKeyStatus_HasArrays &&
-				numColumns > 1)
+
+			if (options->enableMetadataBasedTracking &&
+				getopclassMetadataFunc != NULL)
 			{
-				/* Check if we have correlated reduced terms */
-				outerScanState->hasCorrelatedReducedTerms = CheckIndexHasReducedTerms(
-					scan->indexRelation, coreRoutine);
+				uint32_t multiKeyPerPathStatus = 0;
+				bool hasReducedCorrelatedTerms = false;
+				bool indexHasArrays = false;
+				bool indexHasTruncation = false;
+				uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
+															  getopclassMetadataFunc,
+															  PointerGetDatum(
+																  scan->indexRelation)));
+				DecodeCompositeOpClassQueryMetadata(options, opclassMetadata,
+													&indexHasArrays,
+													&multiKeyPerPathStatus,
+													&hasReducedCorrelatedTerms,
+													&indexHasTruncation);
+				outerScanState->multiKeyStatus = indexHasArrays ?
+												 IndexMultiKeyStatus_HasArrays :
+												 IndexMultiKeyStatus_HasNoArrays;
+				outerScanState->hasCorrelatedReducedTerms = hasReducedCorrelatedTerms;
+			}
+			else
+			{
+				if (multiKeyStatusFunc != NULL)
+				{
+					bool indexHasArrays =
+						DatumGetBool(DirectFunctionCall1(multiKeyStatusFunc,
+														 PointerGetDatum(
+															 scan->indexRelation)));
+					outerScanState->multiKeyStatus = indexHasArrays ?
+													 IndexMultiKeyStatus_HasArrays :
+													 IndexMultiKeyStatus_HasNoArrays;
+				}
+				else
+				{
+					outerScanState->multiKeyStatus =
+						CheckIndexHasArrays(scan->indexRelation, coreRoutine);
+				}
+
+				if (options->enableCompositeReducedCorrelatedTerms &&
+					outerScanState->multiKeyStatus == IndexMultiKeyStatus_HasArrays &&
+					numColumns > 1)
+				{
+					/* Check if we have correlated reduced terms */
+					outerScanState->hasCorrelatedReducedTerms = CheckIndexHasReducedTerms(
+						scan->indexRelation, coreRoutine);
+				}
 			}
 		}
 
@@ -1311,34 +1374,57 @@ extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nsc
 {
 	bool supportsOrderedOperatorScans = false;
 	PGFunction multiKeyStatusFunc = NULL;
+	PGFunction getopclassMetadataFunc = NULL;
 	if (IsCompositeScanEligible(scankey, nscankeys) &&
 		GetCompositeOpClassWithProps(scan->indexRelation,
-									 &supportsOrderedOperatorScans, &multiKeyStatusFunc))
+									 &supportsOrderedOperatorScans, &multiKeyStatusFunc,
+									 &getopclassMetadataFunc))
 	{
-		int numColumns = GetCompositeOpClassPathCount(
-			scan->indexRelation->rd_opcoptions[0]);
+		BsonGinCompositePathOptions *options =
+			(BsonGinCompositePathOptions *) scan->indexRelation->rd_opcoptions[0];
 		IndexMultiKeyStatus indexHasArrays = IndexMultiKeyStatus_Unknown;
 		bool hasCorrelatedReducedTerms = false;
-		if (multiKeyStatusFunc != NULL)
+		if (options->enableMetadataBasedTracking)
 		{
-			indexHasArrays = DatumGetBool(DirectFunctionCall1(multiKeyStatusFunc,
-															  PointerGetDatum(
-																  scan->indexRelation)));
+			uint32_t multiKeyPerPathStatus = 0;
+			bool indexHasArraysBool = false;
+			bool indexHasTruncation = false;
+			uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
+														  getopclassMetadataFunc,
+														  PointerGetDatum(
+															  scan->indexRelation)));
+			DecodeCompositeOpClassQueryMetadata(options, opclassMetadata,
+												&indexHasArraysBool,
+												&multiKeyPerPathStatus,
+												&hasCorrelatedReducedTerms,
+												&indexHasTruncation);
+			indexHasArrays = indexHasArraysBool ? IndexMultiKeyStatus_HasArrays :
+							 IndexMultiKeyStatus_HasNoArrays;
 		}
 		else
 		{
-			indexHasArrays = CheckIndexHasArrays(scan->indexRelation, coreRoutine);
-		}
+			if (multiKeyStatusFunc != NULL)
+			{
+				indexHasArrays = DatumGetBool(DirectFunctionCall1(multiKeyStatusFunc,
+																  PointerGetDatum(
+																	  scan->indexRelation)));
+			}
+			else
+			{
+				indexHasArrays = CheckIndexHasArrays(scan->indexRelation, coreRoutine);
+			}
 
-		/* Check if we are producing reduced index terms in this index */
-		BsonGinCompositePathOptions *options =
-			(BsonGinCompositePathOptions *) scan->indexRelation->rd_opcoptions[0];
-		if (options->enableCompositeReducedCorrelatedTerms &&
-			indexHasArrays == IndexMultiKeyStatus_HasArrays && numColumns > 1)
-		{
-			/* Check if we have correlated reduced terms */
-			hasCorrelatedReducedTerms = CheckIndexHasReducedTerms(
-				scan->indexRelation, coreRoutine);
+			/* Check if we are producing reduced index terms in this index */
+
+			int numColumns = GetCompositeOpClassPathCount(
+				scan->indexRelation->rd_opcoptions[0]);
+			if (options->enableCompositeReducedCorrelatedTerms &&
+				indexHasArrays == IndexMultiKeyStatus_HasArrays && numColumns > 1)
+			{
+				/* Check if we have correlated reduced terms */
+				hasCorrelatedReducedTerms = CheckIndexHasReducedTerms(
+					scan->indexRelation, coreRoutine);
+			}
 		}
 
 		/* There are 2 paths here, regular queries, or unique order by
@@ -1492,10 +1578,25 @@ extension_rumbuild_core(Relation heapRelation, Relation indexRelation,
 	 */
 	if (IsCompositeOpClass(indexRelation))
 	{
-		IndexMultiKeyStatus status = CheckIndexHasArrays(indexRelation, coreRoutine);
-		if (status == IndexMultiKeyStatus_HasArrays && updateMultikeyStatus != NULL)
+		BsonGinCompositePathOptions *options =
+			(BsonGinCompositePathOptions *) indexRelation->rd_opcoptions[0];
+
+		/* In metadata based tracking mode the multi-key (and per-path) status is
+		 * written directly into the opclass metadata blob during the build itself,
+		 * so the post-build term scan is unnecessary. It is also unsupported in this
+		 * mode (the IS_MULTIKEY term strategy errors), so skip it.
+		 */
+		if (options != NULL && options->enableMetadataBasedTracking)
 		{
-			DirectFunctionCall1(updateMultikeyStatus, PointerGetDatum(indexRelation));
+			/* nothing to do - metadata was written during the build */
+		}
+		else if (updateMultikeyStatus != NULL)
+		{
+			IndexMultiKeyStatus status = CheckIndexHasArrays(indexRelation, coreRoutine);
+			if (status == IndexMultiKeyStatus_HasArrays)
+			{
+				DirectFunctionCall1(updateMultikeyStatus, PointerGetDatum(indexRelation));
+			}
 		}
 	}
 	else if (RumHasMultiKeyPaths && updateMultikeyStatus != NULL)
@@ -1688,28 +1789,57 @@ GetIndexBoundsForExplain(Relation index_rel, Datum compositeArgDatum,
 
 static void
 ExplainCompositeProperties(void *state, PGFunction multiKeyStatusFunc,
-						   Relation index_rel, bool enableCompositeReducedCorrelatedTerms,
-						   List *indexQuals, List *indexOrderBy, bool
-						   supportsOrderedOperatorScans,
+						   Relation index_rel, BsonGinCompositePathOptions *options,
+						   List *indexQuals, List *indexOrderBy,
+						   bool supportsOrderedOperatorScans,
+						   PGFunction getOpclassMetadataFunc,
 						   void (*writeBoolFunc)(const char *, bool, void *),
 						   void (*writeStringListFunc)(const char *, List *, void *),
 						   void (*writeStringFunc)(const char *, const char *, void *))
 {
-	if (!multiKeyStatusFunc)
+	bool isMultiKey;
+	List *multiKeyPerPathList = NIL;
+	bool hasCorrelatedTerms = false;
+	bool isTruncated = false;
+	List *truncatedPerPathList = NIL;
+	if (getOpclassMetadataFunc != NULL && options != NULL &&
+		options->enableMetadataBasedTracking)
 	{
-		multiKeyStatusFunc = RumGetMultiKeyStatusSlow;
+		uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
+													  getOpclassMetadataFunc,
+													  PointerGetDatum(
+														  index_rel)));
+		DecodeCompositeOpClassMetadata(options, opclassMetadata, &isMultiKey,
+									   &multiKeyPerPathList,
+									   &hasCorrelatedTerms, &isTruncated,
+									   &truncatedPerPathList);
+	}
+	else
+	{
+		if (!multiKeyStatusFunc)
+		{
+			multiKeyStatusFunc = RumGetMultiKeyStatusSlow;
+		}
+
+		isMultiKey = DatumGetBool(DirectFunctionCall1(multiKeyStatusFunc,
+													  PointerGetDatum(index_rel)));
+
+		if (options != NULL && options->enableCompositeReducedCorrelatedTerms &&
+			isMultiKey)
+		{
+			/* Check if we have correlated reduced terms */
+			EnsureRumLibLoaded();
+			hasCorrelatedTerms = CheckIndexHasReducedTerms(index_rel, &rum_index_routine);
+		}
+
+		isTruncated = RumGetTruncationStatus(index_rel);
 	}
 
-	bool isMultiKey = DatumGetBool(DirectFunctionCall1(multiKeyStatusFunc,
-													   PointerGetDatum(index_rel)));
-	writeBoolFunc("isMultiKey", isMultiKey, state);
 
-	bool hasCorrelatedTerms = false;
-	if (enableCompositeReducedCorrelatedTerms && isMultiKey)
+	writeBoolFunc("isMultiKey", isMultiKey, state);
+	if (multiKeyPerPathList != NIL)
 	{
-		/* Check if we have correlated reduced terms */
-		EnsureRumLibLoaded();
-		hasCorrelatedTerms = CheckIndexHasReducedTerms(index_rel, &rum_index_routine);
+		writeStringListFunc("multiKeyPaths", multiKeyPerPathList, state);
 	}
 
 	if (hasCorrelatedTerms)
@@ -1717,10 +1847,14 @@ ExplainCompositeProperties(void *state, PGFunction multiKeyStatusFunc,
 		writeBoolFunc("hasCorrelatedTerms", true, state);
 	}
 
-	bool isTruncated = RumGetTruncationStatus(index_rel);
 	if (isTruncated)
 	{
 		writeBoolFunc("hasTruncation", true, state);
+	}
+
+	if (truncatedPerPathList != NIL)
+	{
+		writeStringListFunc("truncatedPaths", truncatedPerPathList, state);
 	}
 
 	Datum compositeDatum = FormCompositeDatumFromQuals(indexQuals,
@@ -1849,30 +1983,29 @@ ExplainRawCompositeScanToWriter(Relation index_rel, List *indexQuals, List *inde
 {
 	bool supportsOrderedOperatorScans = false;
 	PGFunction multiKeyStatusFunc = NULL;
+	PGFunction getopclassMetadataFunc = NULL;
 	if (!GetCompositeOpClassWithProps(index_rel, &supportsOrderedOperatorScans,
-									  &multiKeyStatusFunc))
+									  &multiKeyStatusFunc, &getopclassMetadataFunc))
 	{
 		return;
 	}
 
-	bool enableCompositeReducedCorrelatedTerms = false;
+	BsonGinCompositePathOptions *options = NULL;
 	if (index_rel->rd_opcoptions != NULL)
 	{
-		BsonGinCompositePathOptions *options =
-			(BsonGinCompositePathOptions *) index_rel->rd_opcoptions[0];
+		options = (BsonGinCompositePathOptions *) index_rel->rd_opcoptions[0];
 		pgbson_writer keyWriter;
 		PgbsonWriterStartDocument(writer, "keyPattern", -1, &keyWriter);
 		SerializeCompositeIndexKeyForExplainToWriter(
 			index_rel->rd_opcoptions[0], &keyWriter);
 		PgbsonWriterEndDocument(writer, &keyWriter);
-		enableCompositeReducedCorrelatedTerms =
-			options->enableCompositeReducedCorrelatedTerms;
 	}
 
 	ExplainCompositeProperties(writer, multiKeyStatusFunc, index_rel,
-							   enableCompositeReducedCorrelatedTerms, indexQuals,
+							   options, indexQuals,
 							   indexOrderBy,
 							   supportsOrderedOperatorScans,
+							   getopclassMetadataFunc,
 							   PgbsonExplainWriterWriteBool,
 							   PgbsonExplainWriterWriteStringList,
 							   PgbsonExplainWriterWriteString);
@@ -1885,28 +2018,27 @@ ExplainRawCompositeScan(Relation index_rel, List *indexQuals, List *indexOrderBy
 {
 	bool supportsOrderedOperatorScans = false;
 	PGFunction multiKeyStatusFunc = NULL;
+	PGFunction getopclassMetadataFunc = NULL;
 	if (!GetCompositeOpClassWithProps(index_rel, &supportsOrderedOperatorScans,
-									  &multiKeyStatusFunc))
+									  &multiKeyStatusFunc, &getopclassMetadataFunc))
 	{
 		return;
 	}
 
-	bool enableCompositeReducedCorrelatedTerms = false;
+	BsonGinCompositePathOptions *options = NULL;
 	if (index_rel->rd_opcoptions != NULL)
 	{
-		BsonGinCompositePathOptions *options =
-			(BsonGinCompositePathOptions *) index_rel->rd_opcoptions[0];
+		options = (BsonGinCompositePathOptions *) index_rel->rd_opcoptions[0];
 		const char *keyString = SerializeCompositeIndexKeyForExplain(
 			index_rel->rd_opcoptions[0]);
 		ExplainPropertyText("indexKey", keyString, es);
-		enableCompositeReducedCorrelatedTerms =
-			options->enableCompositeReducedCorrelatedTerms;
 	}
 
 	ExplainCompositeProperties(es, multiKeyStatusFunc, index_rel,
-							   enableCompositeReducedCorrelatedTerms, indexQuals,
+							   options, indexQuals,
 							   indexOrderBy,
 							   supportsOrderedOperatorScans,
+							   getopclassMetadataFunc,
 							   ExplainWriterWriteBool, ExplainWriterWriteStringList,
 							   ExplainWriterWriteString);
 }
@@ -1916,29 +2048,68 @@ static void
 ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 						 ExplainWriterFuncs *writerFuncs)
 {
-	bool hasMultiKey = DatumGetBool(DirectFunctionCall1(RumGetMultiKeyStatusSlow,
-														PointerGetDatum(
-															scan->indexRelation)));
-
-	writerFuncs->writeBool("isMultiKey", hasMultiKey, state);
-
 	BsonGinCompositePathOptions *options =
 		(BsonGinCompositePathOptions *) scan->indexRelation->rd_opcoptions[0];
-	if (options->enableCompositeReducedCorrelatedTerms && hasMultiKey)
+
+	bool hasMultiKey = false;
+	List *multiKeyPerPathList = NIL;
+	bool hasCorrelatedReducedTerms = false;
+	bool hasTruncation = false;
+	List *truncatedPerPathList = NIL;
+
+	bool supportsOrderedOperatorScans = false;
+	PGFunction multiKeyStatusFunc = NULL;
+	PGFunction getopclassMetadataFunc = NULL;
+	GetCompositeOpClassWithProps(scan->indexRelation, &supportsOrderedOperatorScans,
+								 &multiKeyStatusFunc, &getopclassMetadataFunc);
+
+	if (getopclassMetadataFunc != NULL && options != NULL &&
+		options->enableMetadataBasedTracking)
 	{
-		/* Check if we have correlated reduced terms */
-		bool hasCorrelatedReducedTerms = CheckIndexHasReducedTerms(
-			scan->indexRelation, &rum_index_routine);
-		if (hasCorrelatedReducedTerms)
+		uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
+													  getopclassMetadataFunc,
+													  PointerGetDatum(
+														  scan->indexRelation)));
+
+		DecodeCompositeOpClassMetadata(options, opclassMetadata, &hasMultiKey,
+									   &multiKeyPerPathList,
+									   &hasCorrelatedReducedTerms, &hasTruncation,
+									   &truncatedPerPathList);
+	}
+	else
+	{
+		hasMultiKey = DatumGetBool(DirectFunctionCall1(RumGetMultiKeyStatusSlow,
+													   PointerGetDatum(
+														   scan->indexRelation)));
+		if (options->enableCompositeReducedCorrelatedTerms && hasMultiKey)
 		{
-			writerFuncs->writeBool("hasCorrelatedTerms", true, state);
+			/* Check if we have correlated reduced terms */
+			hasCorrelatedReducedTerms = CheckIndexHasReducedTerms(
+				scan->indexRelation, &rum_index_routine);
 		}
+
+		hasTruncation = RumGetTruncationStatus(scan->indexRelation);
 	}
 
-	bool hasTruncation = RumGetTruncationStatus(scan->indexRelation);
+	writerFuncs->writeBool("isMultiKey", hasMultiKey, state);
+	if (multiKeyPerPathList != NIL)
+	{
+		writerFuncs->writeStringList("multiKeyPaths", multiKeyPerPathList, state);
+	}
+
+	if (hasCorrelatedReducedTerms)
+	{
+		writerFuncs->writeBool("hasCorrelatedTerms", true, state);
+	}
+
 	if (hasTruncation)
 	{
 		writerFuncs->writeBool("hasTruncation", true, state);
+	}
+
+	if (truncatedPerPathList != NIL)
+	{
+		writerFuncs->writeStringList("truncatedPaths", truncatedPerPathList, state);
 	}
 
 	Datum compositeKey = (Datum) 0;

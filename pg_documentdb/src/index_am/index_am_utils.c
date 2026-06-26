@@ -53,6 +53,7 @@ BsonIndexAmEntry RumIndexAmEntry = {
 	.get_opclass_catalog_schema = GetRumCatalogSchema,
 	.get_opclass_internal_catalog_schema = GetRumInternalSchemaV2,
 	.get_multikey_status = NULL,
+	.get_opclass_metadata = NULL,
 	.get_truncation_status = RumGetTruncationStatus,
 	.supports_ordered_operator_scans = false,
 	.create_indexes_support_funcs = NULL,
@@ -138,7 +139,8 @@ GetBsonIndexAmEntryByIndexOid(Oid indexAm)
 bool
 GetIndexAmSupportsIndexOnlyScan(Oid indexAm, Oid opFamilyOid,
 								PGFunction *getMultiKeyStatus,
-								GetTruncationStatusFunc *getTruncationStatus)
+								GetTruncationStatusFunc *getTruncationStatus,
+								PGFunction *getOpclassMetadata)
 {
 	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(indexAm);
 	if (amEntry == NULL)
@@ -154,6 +156,11 @@ GetIndexAmSupportsIndexOnlyScan(Oid indexAm, Oid opFamilyOid,
 	if (getTruncationStatus != NULL)
 	{
 		*getTruncationStatus = amEntry->get_truncation_status;
+	}
+
+	if (getOpclassMetadata != NULL)
+	{
+		*getOpclassMetadata = amEntry->get_opclass_metadata;
 	}
 
 	return amEntry->is_index_only_scan_supported &&
@@ -505,19 +512,6 @@ IsOrderBySupportedOnOpClass(Oid indexAm, Oid columnOpFamilyAm)
 }
 
 
-PGFunction
-GetMultiKeyStatusByRelAm(Oid relam)
-{
-	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(relam);
-	if (amEntry == NULL)
-	{
-		return NULL;
-	}
-
-	return amEntry->get_multikey_status;
-}
-
-
 bool
 GetIndexSupportsBackwardsScan(Oid relam, bool *indexCanOrder)
 {
@@ -576,9 +570,34 @@ GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily, bool *pathKeySummarizatio
 
 
 bool
+GetCompositeOpClassPropsByOid(Oid relAm, Oid opFamilyOid,
+							  bool *supportsOrderedOperatorScans,
+							  PGFunction *multiKeyStatusFunc,
+							  PGFunction *getOpclassMetadata)
+{
+	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(relAm);
+	if (amEntry == NULL)
+	{
+		return false;
+	}
+
+	if (opFamilyOid == amEntry->get_composite_path_op_family_oid())
+	{
+		*supportsOrderedOperatorScans = amEntry->supports_ordered_operator_scans;
+		*multiKeyStatusFunc = amEntry->get_multikey_status;
+		*getOpclassMetadata = amEntry->get_opclass_metadata;
+		return true;
+	}
+
+	return false;
+}
+
+
+bool
 GetCompositeOpClassWithProps(Relation indexRelation,
 							 bool *supportsOrderedOperatorScans,
-							 PGFunction *multiKeyStatusFunc)
+							 PGFunction *multiKeyStatusFunc,
+							 PGFunction *getOpclassMetadata)
 {
 	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(
 		indexRelation->rd_rel->relam);
@@ -599,6 +618,7 @@ GetCompositeOpClassWithProps(Relation indexRelation,
 	{
 		*supportsOrderedOperatorScans = amEntry->supports_ordered_operator_scans;
 		*multiKeyStatusFunc = amEntry->get_multikey_status;
+		*getOpclassMetadata = amEntry->get_opclass_metadata;
 		return true;
 	}
 
