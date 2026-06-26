@@ -1,6 +1,6 @@
 -- Core correctness tests for composite group-by.
 -- Included by wrapper test files that set GUC combinations for
--- enableGroupByCompoundIdIndexPushdown and enableGroupSubqueryElimination.
+-- enableGroupByCompoundIdIndexPushdown.
 
 -- if documentdb_extended_rum exists, set alternate index handler
 SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extended_rum', false), extname FROM pg_extension WHERE extname = 'documentdb_extended_rum';

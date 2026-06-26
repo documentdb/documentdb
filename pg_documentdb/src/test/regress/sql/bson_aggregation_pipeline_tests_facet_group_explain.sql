@@ -62,8 +62,3 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 
 -- Constant _id: subquery eliminated
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ { "a": 1 }, { "a": 2 } ] }, { "$group": { "_id": "1", "c": { "$count": {} } } } ], "cursor": {}}');
-
--- Legacy path with enableGroupSubqueryElimination = off (should show Subquery Scan)
-SET documentdb.enableGroupSubqueryElimination TO off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ { "a": 1 }, { "a": 2 } ] }, { "$group": { "_id": "$a", "c": { "$count": {} } } } ], "cursor": {}}');
-SET documentdb.enableGroupSubqueryElimination TO on;
