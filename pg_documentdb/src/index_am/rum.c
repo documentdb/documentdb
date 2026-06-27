@@ -1346,7 +1346,7 @@ IsCompositeScanEligible(ScanKey scanKey, int nscankeys)
 {
 	if (nscankeys == 0)
 	{
-		return false;
+		return true;
 	}
 
 	/* the runtime will order scan keys by attnum
@@ -1445,8 +1445,11 @@ extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nsc
 			/* scan->scanKeyData[0] will now be the composite keys - copy the remaining from 1-> N
 			 * This is fine since we requested 1 extra key on beginscan
 			 */
-			memmove(&scan->keyData[1], scankey,
-					nscankeys * sizeof(ScanKeyData));
+			if (nscankeys > 0)
+			{
+				memmove(&scan->keyData[1], scankey,
+						nscankeys * sizeof(ScanKeyData));
+			}
 		}
 		else
 		{
