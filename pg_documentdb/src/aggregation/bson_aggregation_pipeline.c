@@ -5642,8 +5642,7 @@ HandleSort(const bson_value_t *existingValue, Query *query,
 				ReportFeatureUsage(FEATURE_STAGE_SORT_BY_ID);
 			}
 
-			bool isOrderByIndexTerm = EnableOrderByIndexTerm && !isSortByMeta &&
-									  IsClusterVersionAtleast(DocDB_V0, 111, 0);
+			bool isOrderByIndexTerm = EnableOrderByIndexTerm && !isSortByMeta;
 			SortBy *sortBy = makeNode(SortBy);
 			SortByNulls sortByNulls = isAscending ? SORTBY_NULLS_FIRST :
 									  SORTBY_NULLS_LAST;
@@ -6331,8 +6330,7 @@ SetAccumulatorSortOrder(TargetEntry *accumulatorTle, Expr *documentExpr,
 		pgbson *sortDoc = PgbsonElementToPgbson(&element);
 		bool isAscending = ValidateOrderbyExpressionAndGetIsAscending(sortDoc);
 
-		bool isOrderByIndexTerm = EnableOrderByIndexTerm &&
-								  IsClusterVersionAtleast(DocDB_V0, 111, 0);
+		bool isOrderByIndexTerm = EnableOrderByIndexTerm;
 
 		Oid funcOid = BsonOrderByFunctionOid();
 		Oid funcReturnType = BsonTypeId();

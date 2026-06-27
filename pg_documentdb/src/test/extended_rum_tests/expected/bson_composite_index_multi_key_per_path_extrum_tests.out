@@ -1,7 +1,6 @@
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 13000;
 SET documentdb.next_collection_index_id TO 13000;
-set documentdb.enableCompositeReducedCorrelatedTerms to on;
 -- Enable per-path multi-key term tracking: each multi-key path is tracked with
 -- its own metadata term instead of a single root multi-key term.
 set documentdb.enableIndexMetadataGlobalTracking to on;
@@ -785,7 +784,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
    indexKey: {"p0": 1,"p1": 1,"p2": 1,"p3": 1,"p4": 1,"p5": 1,"p6": 1,"p7": 1,"p8": 1,"p9": 1,"p10": 1,"p11": 1,"p12": 1,"p13": 1,"p14": 1,"p15": 1,"p16": 1,"p17": 1,"p18": 1,"p19": 1}
    isMultiKey: true
    multiKeyPaths: p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19
-   hasCorrelatedTerms: true
    hasTruncation: true
    truncatedPaths: p0, p1, p2, p3, p4, p5
    indexBounds: ["p0": [MinKey, MaxKey], "p1": [MinKey, MaxKey], "p2": (MinKey, MaxKey), "p3": (MinKey, MaxKey), "p4": (MinKey, MaxKey), "p5": (MinKey, MaxKey), "p6": (MinKey, MaxKey), "p7": (MinKey, MaxKey), "p8": (MinKey, MaxKey), "p9": (MinKey, MaxKey), "p10": (MinKey, MaxKey), "p11": (MinKey, MaxKey), "p12": (MinKey, MaxKey), "p13": (MinKey, MaxKey), "p14": (MinKey, MaxKey), "p15": (MinKey, MaxKey), "p16": (MinKey, MaxKey), "p17": (MinKey, MaxKey), "p18": (MinKey, MaxKey), "p19": (MinKey, MaxKey)]
@@ -794,7 +792,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
    ->  Index Scan using wide_20 on documents_13012 collection (actual rows=1 loops=1)
          Index Cond: ((document @>= '{ "p0" : { "$minKey" : 1 } }'::bson) AND (document @>= '{ "p1" : { "$minKey" : 1 } }'::bson))
-(15 rows)
+(14 rows)
 
 RESET documentdb.indexTermLimitOverride;
 -- ---------------------------------------------------------------------------

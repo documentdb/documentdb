@@ -92,7 +92,6 @@ EnablePlannerCostSelectivityFromRelOptInfoCore(PlannerInfo *planner, RelOptInfo 
 	*isPerCollectionStatsEnabled = false;
 	bool enableOperatorSelectivity = EnableCompositeIndexPlanner;
 	if (EnablePerCollectionPlannerStatistics &&
-		IsClusterVersionAtleast(DocDB_V0, 111, 0) &&
 		rel != NULL)
 	{
 		*isPerCollectionStatsEnabled = list_length(rel->statlist) > 0;
@@ -119,7 +118,6 @@ EnablePlannerCostSelectivityExtended(PlannerInfo *planner, List *args,
 {
 	RelOptInfo *rel = NULL;
 	if (EnablePerCollectionPlannerStatistics &&
-		IsClusterVersionAtleast(DocDB_V0, 111, 0) &&
 		list_length(args) > 0)
 	{
 		Expr *firstArg = linitial(args);

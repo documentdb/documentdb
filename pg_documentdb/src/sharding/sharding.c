@@ -1637,7 +1637,7 @@ ShardCollectionCore(ShardCollectionArgs *args)
 	ExtensionExecuteQueryViaSPI(queryInfo->data, readOnly, SPI_OK_UTILITY, &isNull);
 
 	/* TODO: Remove GUC before migrating ownership of old documents to to documentdb_readwrite_role*/
-	if (EnableRbacCompliantSchemas && IsClusterVersionAtleast(DocDB_V0, 110, 0))
+	if (EnableRbacCompliantSchemas)
 	{
 		/* Update new table owner to readwrite role */
 		resetStringInfo(queryInfo);
@@ -1660,9 +1660,7 @@ ShardCollectionCore(ShardCollectionArgs *args)
 	bool isPrepareUniqueArrayNull = true;
 	Datum prepareUniqueNamesArray = (Datum) 0;
 
-	bool isPrepareUniqueSupported = EnablePrepareUnique &&
-									IsClusterVersionAtleast(DocDB_V0, 109, 0);
-	if (isPrepareUniqueSupported)
+	if (EnablePrepareUnique)
 	{
 		/* Get prepareUnique index names that need to be converted after rebuilt. */
 		resetStringInfo(queryInfo);
@@ -1765,7 +1763,7 @@ ShardCollectionCore(ShardCollectionArgs *args)
 		int savedGUCLevel = NewGUCNestLevel();
 		SetGUCLocally(psprintf("%s.defaultUseCompositeOpClass", ApiGucPrefixV2), "false");
 
-		bool buildAsUniqueForPrepareUnique = isPrepareUniqueSupported;
+		bool buildAsUniqueForPrepareUnique = EnablePrepareUnique;
 		CreateIndexesArg createIndexesArg = ParseCreateIndexesArg(&databaseDatum,
 																  createIndexesMsg,
 																  buildAsUniqueForPrepareUnique);

@@ -166,8 +166,6 @@ extern bool DefaultEnableLargeUniqueIndexKeys;
 extern bool ForceWildcardReducedTerm;
 extern bool EnableCompositeUniqueHash;
 extern bool CreateTTLIndexAsCompositeByDefault;
-extern bool EnableCompositeReducedCorrelatedTerms;
-extern bool EnableUniqueCompositeReducedCorrelatedTerms;
 extern bool EnableCompositeShardDocumentTerms;
 extern bool EnablePerCollectionPlannerStatistics;
 extern bool EnablePlannerStatisticsNewCollections;
@@ -5779,7 +5777,7 @@ AppendUniqueColumnExpr(StringInfo indexExprStr, IndexDefKey *indexDefKey,
 					   bool generateCompositeHash)
 {
 	const char *generateCompositeTermString = "";
-	if (generateCompositeHash && IsClusterVersionAtleast(DocDB_V0, 109, 0) &&
+	if (generateCompositeHash &&
 		EnableCompositeShardDocumentTerms)
 	{
 		generateCompositeTermString = ", true";
@@ -6034,14 +6032,6 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 		PgbsonWriterStartArray(&elementListWriter, "", 0, &arrayWriter);
 
 		bool useReducedCorrelatedTerms = false;
-
-		bool isUniqueStyleIndex = unique || buildAsUnique;
-		if (list_length(indexDefKey->keyPathList) > 1 &&
-			((EnableCompositeReducedCorrelatedTerms && !isUniqueStyleIndex) ||
-			 (EnableUniqueCompositeReducedCorrelatedTerms && isUniqueStyleIndex)))
-		{
-			useReducedCorrelatedTerms = true;
-		}
 
 		int32_t wildcardTermIndex = -1;
 		int32_t numPathsWithCommonPrefix = 0;
@@ -6424,8 +6414,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 
 	if (usingNewUniqueIndexOpClass && isUsingCompositeOpClass)
 	{
-		bool generateCompositeHash = EnableCompositeUniqueHash && IsClusterVersionAtleast(
-			DocDB_V0, 109, 0);
+		bool generateCompositeHash = EnableCompositeUniqueHash;
 		AppendUniqueColumnExpr(indexExprStr, indexDefKey, sparse, indexAmSuffix,
 							   indexAmOpClassInternalCatalogSchema, firstColumnWritten,
 							   buildAsUnique, generateCompositeHash);

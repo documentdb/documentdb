@@ -158,17 +158,6 @@ bool EnableIndexOnlyScanForFindProject = DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND
 bool EmitEnableOrderedIndexFalseInResponse =
 	DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE;
 
-/* Added in v109, Pending stabilization, enable in v120 */
-/* Remove if EnableCompositeReducedCorrelatedTermsOnCommonSubPath becomes stabilized */
-#define DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS false
-bool EnableCompositeReducedCorrelatedTerms = DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS;
-
-/* Added in v109, Pending stabilization, enable in v120 */
-/* Remove if EnableCompositeReducedCorrelatedTermsOnCommonSubPath becomes stabilized */
-#define DEFAULT_ENABLE_UNIQUE_REDUCED_CORRELATED_TERMS false
-bool EnableUniqueCompositeReducedCorrelatedTerms =
-	DEFAULT_ENABLE_UNIQUE_REDUCED_CORRELATED_TERMS;
-
 /* Added in v111, enabled in v111, remove after v115 */
 #define DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS_ON_COMMON_SUBPATH true
 bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath =
@@ -215,11 +204,11 @@ bool EnableRegexPrefixIndexBounds = DEFAULT_ENABLE_REGEX_PREFIX_INDEX_BOUNDS;
 #define DEFAULT_ENABLE_EXTENDED_INDEXES false
 bool EnableExtendedIndexes = DEFAULT_ENABLE_EXTENDED_INDEXES;
 
-/* Added in v111, Pending stabilization, enable in v116 */
+/* Added in v111, Pending stabilization, enable in v118 */
 #define DEFAULT_ENABLE_COMPARABLE_TERMS false
 bool EnableComparableTerms = DEFAULT_ENABLE_COMPARABLE_TERMS;
 
-/* Added in v111, Pending stabilization, enable in v115 */
+/* Added in v111, Pending stabilization, enable in v118 */
 #define DEFAULT_ENABLE_ORDER_BY_INDEX_TERM false
 bool EnableOrderByIndexTerm = DEFAULT_ENABLE_ORDER_BY_INDEX_TERM;
 
@@ -302,7 +291,7 @@ bool EnableDistinctScanForGroupFirst = DEFAULT_ENABLE_DISTINCT_SCAN_FOR_GROUP_FI
 #define DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN true
 bool EnablePrimaryKeyCursorScan = DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN;
 
-/* Added in v110, Pending stabilization, enable in v114 */
+/* Added in v110, Pending stabilization, enable in v117 */
 #define DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP false
 bool EnableContinuationFastBitmapLookup = DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP;
 
@@ -387,7 +376,7 @@ bool EnableObjectIdFuncExprConversion = DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVER
 #define DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED true
 bool EnableSampleScanFixOnSharded = DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED;
 
-/* Added in v115, Pending stabilization, enable in v118 */
+/* Added in v115, Pending stabilization, enable in v119 */
 #define DEFAULT_ENABLE_ADD_SHARD_KEY_ONLY_ON_PRIMARY_KEY_FILTERS false
 bool EnableAddShardKeyOnlyOnPrimaryKeyFilters =
 	DEFAULT_ENABLE_ADD_SHARD_KEY_ONLY_ON_PRIMARY_KEY_FILTERS;
@@ -1032,22 +1021,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to enable index only scan for find with project operations."),
 		NULL, &EnableIndexOnlyScanForFindProject,
 		DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableCompositeReducedCorrelatedTerms", newGucPrefix),
-		gettext_noop(
-			"Whether to enable reduced term generation for correlated composite paths."),
-		NULL, &EnableCompositeReducedCorrelatedTerms,
-		DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableUniqueCompositeReducedCorrelatedTerms", newGucPrefix),
-		gettext_noop(
-			"Whether to enable reduced term generation for correlated composite paths for unique indexes."),
-		NULL, &EnableUniqueCompositeReducedCorrelatedTerms,
-		DEFAULT_ENABLE_UNIQUE_REDUCED_CORRELATED_TERMS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

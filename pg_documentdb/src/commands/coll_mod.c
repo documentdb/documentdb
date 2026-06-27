@@ -311,8 +311,7 @@ command_coll_mod(PG_FUNCTION_ARGS)
 							errmsg("Cannot specify planner statistics on a view")));
 		}
 
-		if (!EnablePerCollectionPlannerStatistics ||
-			!IsClusterVersionAtleast(DocDB_V0, 111, 0))
+		if (!EnablePerCollectionPlannerStatistics)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 							errmsg("Per-collection planner statistics is not enabled")));
@@ -843,7 +842,7 @@ ModifyIndexSpecsInCollection(const MongoCollection *collection,
 
 	if ((*specFlags & HAS_INDEX_OPTION_PREPARE_UNIQUE) == HAS_INDEX_OPTION_PREPARE_UNIQUE)
 	{
-		if (!EnablePrepareUnique || !IsClusterVersionAtleast(DocDB_V0, 109, 0))
+		if (!EnablePrepareUnique)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
 							errmsg("prepareUnique index option is not supported yet")));
@@ -903,7 +902,7 @@ ModifyIndexSpecsInCollection(const MongoCollection *collection,
 
 	if ((*specFlags & HAS_INDEX_OPTION_UNIQUE) == HAS_INDEX_OPTION_UNIQUE)
 	{
-		if (!EnableCollModUnique || !IsClusterVersionAtleast(DocDB_V0, 109, 0))
+		if (!EnableCollModUnique)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
 							errmsg("unique index option is not supported yet")));

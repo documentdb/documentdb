@@ -153,12 +153,10 @@ RESET documentdb.indexTermLimitOverride;
 -- sentinel term under metadata tracking; instead bit34 is set in the blob. The
 -- multi-key bits for the two object sub-paths are also set, giving 0x400000007.
 -- ---------------------------------------------------------------------------
-SET documentdb.enableCompositeReducedCorrelatedTerms TO on;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mpc_db', '{ "createIndexes": "c_reduced", "indexes": [ { "key": { "a.b": 1, "a.c": 1 }, "name": "ab_ac_1", "enableOrderedIndex": 1 } ] }');
 SELECT documentdb_api.insert_one('mpc_db', 'c_reduced', '{ "_id": 1, "a": [ { "b": 1, "c": 2 }, { "b": 3, "c": 4 } ] }');
 -- Expected: bit34 | bit0 | bit1 | bit2 -> 0x400000007
 SELECT documentdb_api_internal.composite_metapage_blob('mpc_db', 'c_reduced', 'ab_ac_1');
-RESET documentdb.enableCompositeReducedCorrelatedTerms;
 
 -- ---------------------------------------------------------------------------
 -- The blob is persisted on the metapage and survives a VACUUM (it is not a

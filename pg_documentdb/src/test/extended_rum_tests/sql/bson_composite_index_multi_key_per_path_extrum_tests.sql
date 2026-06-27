@@ -3,8 +3,6 @@ SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 13000;
 SET documentdb.next_collection_index_id TO 13000;
 
-set documentdb.enableCompositeReducedCorrelatedTerms to on;
-
 -- Enable per-path multi-key term tracking: each multi-key path is tracked with
 -- its own metadata term instead of a single root multi-key term.
 set documentdb.enableIndexMetadataGlobalTracking to on;

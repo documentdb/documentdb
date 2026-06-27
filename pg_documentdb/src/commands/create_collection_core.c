@@ -151,8 +151,7 @@ InsertMetadataIntoCollections(text *databaseDatum, text *collectionDatum,
 	 * take an ExclusiveLock on the Citus reference table shard.
 	 */
 	pgbson *volatile initialOptions = NULL;
-	if (EnablePlannerStatisticsNewCollections &&
-		IsClusterVersionAtleast(DocDB_V0, 111, 0))
+	if (EnablePlannerStatisticsNewCollections)
 	{
 		pgbson_writer optionWriter;
 		PgbsonWriterInit(&optionWriter);
@@ -267,7 +266,7 @@ CreatePostgresDataTable(uint64_t collectionId, const char *colocateWith, const
 	resetStringInfo(createTableStringInfo);
 
 	/* TODO: Remove GUC before migrating ownership of old documents to to documentdb_readwrite_role*/
-	if (EnableRbacCompliantSchemas && IsClusterVersionAtleast(DocDB_V0, 110, 0))
+	if (EnableRbacCompliantSchemas)
 	{
 		appendStringInfo(createTableStringInfo,
 						 "ALTER TABLE %s OWNER TO %s",
@@ -355,7 +354,7 @@ CreateRetryTable(char *retryTableName, char *colocateWith, const
 								&isNull);
 
 	resetStringInfo(queryStringInfo);
-	if (EnableRbacCompliantSchemas && IsClusterVersionAtleast(DocDB_V0, 110, 0))
+	if (EnableRbacCompliantSchemas)
 	{
 		/* Change the owner to the ApiReadWriteRole */
 		appendStringInfo(queryStringInfo,
