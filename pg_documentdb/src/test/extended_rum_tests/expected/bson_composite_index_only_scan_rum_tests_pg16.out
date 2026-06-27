@@ -2339,8 +2339,8 @@ SET documentdb.enableIndexOnlyScanForCoveredAggregateTargets TO on;
 -- new with-expr accumulator path; both runs should produce the same counts.
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate": "sum_const_test", "pipeline": [ { "$match": { "region": 100, "dept": 20, "level": 5 } }, { "$group": { "_id": "$tag", "count": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "cursor": {}, "hint": "region_1_dept_1_level_1_tag_1" }');
-                          document                          
-------------------------------------------------------------
+                        document                        
+--------------------------------------------------------
  { "_id" : "tag-0", "count" : { "$numberInt" : "33" } }
  { "_id" : "tag-1", "count" : { "$numberInt" : "34" } }
  { "_id" : "tag-2", "count" : { "$numberInt" : "33" } }
@@ -2348,8 +2348,8 @@ SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate": "sum
 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate": "sum_const_test", "pipeline": [ { "$match": { "region": 100, "dept": 20, "level": 5 } }, { "$group": { "_id": "$tag", "count": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "cursor": {}, "hint": "region_1_dept_1_level_1_tag_1" }');
-                          document                          
-------------------------------------------------------------
+                        document                        
+--------------------------------------------------------
  { "_id" : "tag-0", "count" : { "$numberInt" : "33" } }
  { "_id" : "tag-1", "count" : { "$numberInt" : "34" } }
  { "_id" : "tag-2", "count" : { "$numberInt" : "33" } }
@@ -2371,6 +2371,51 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 RESET documentdb.enableIndexOnlyScanForCoveredAggregateTargets;
 RESET documentdb.enableNewWithExprAccumulators;
 SELECT documentdb_api.drop_collection('iosdb_rum', 'sum_const_test');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- Test: Partial composite index with 0 scan keys should not crash
+-- This reproduces a SIGSEGV that occurred when a partial composite RUM index
+-- is chosen for an index-only scan with no index conditions (0 scan keys).
+-- The partial index predicate satisfies the query filter, so PG chooses it,
+-- but no index scan keys are generated.
+SELECT documentdb_api.insert_one('iosdb_rum', 'partial_zero_keys', '{"_id": 1, "a": 1, "b": 10}');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one('iosdb_rum', 'partial_zero_keys', FORMAT('{"_id": %s, "a": %s, "b": %s}', i, i, i * 10)::documentdb_core.bson)) FROM generate_series(2, 50) i;
+ count 
+-------
+    49
+(1 row)
+
+-- Create a partial composite index with a filter on "a > 0"
+SELECT documentdb_api_internal.create_indexes_non_concurrently('iosdb_rum', '{ "createIndexes": "partial_zero_keys", "indexes": [{ "key": { "a": 1, "b": -1 }, "name": "partial_a_1_b_-1", "partialFilterExpression": { "a": { "$gt": 0 } } }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Force the partial index to be chosen (disable seq and bitmap scans)
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+-- This query matches the partial index predicate (a > 0) and should use
+-- the partial index for an index-only scan with 0 scan keys.
+-- Before the fix, this would SIGSEGV.
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate": "partial_zero_keys", "pipeline": [{ "$match": { "a": { "$gt": 0 } } }, { "$count": "n" }], "cursor": {} }');
+             document              
+-----------------------------------
+ { "n" : { "$numberInt" : "50" } }
+(1 row)
+
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+SELECT documentdb_api.drop_collection('iosdb_rum', 'partial_zero_keys');
  drop_collection 
 -----------------
  t
