@@ -28,15 +28,6 @@ pub async fn process_create_indexes(
     dynamic_config: &Arc<dyn DynamicConfiguration>,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let db = request_context.request().db();
-
-    if !dynamic_config.enable_new_namespace_validation() && (db == "config" || db == "admin") {
-        return Err(DocumentDBError::documentdb_error(
-            ErrorCode::IllegalOperation,
-            "Creating indexes in the \"config\" or \"admin\" databases is not allowed".to_owned(),
-        ));
-    }
-
     let create_indexes_rows = pg_data_client
         .execute_create_indexes(request_context, connection_context)
         .await?;

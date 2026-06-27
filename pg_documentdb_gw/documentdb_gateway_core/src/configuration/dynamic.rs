@@ -152,10 +152,6 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
         self.get_u64("slowQueryLogIntervalInMilliseconds", 0)
     }
 
-    fn enable_new_namespace_validation(&self) -> bool {
-        self.get_bool("enableNewNamespaceValidation", false)
-    }
-
     /// # Errors
     ///
     /// Returns an error if the operation fails.

@@ -1,8 +1,6 @@
 SET search_path TO documentdb_core, documentdb_api, documentdb_api_internal, public;
 SET documentdb.next_collection_id TO 25708000;
 SET documentdb.next_collection_index_id TO 25708000;
--- Ensure the feature flag is on
-SET documentdb.enableNewNamespaceValidation TO on;
 -- ===================================================================
 -- 1. createCollection on config database - restricted collections
 -- ===================================================================
@@ -64,13 +62,25 @@ NOTICE:  creating collection
 -- ===================================================================
 -- 3. dropCollection on config database
 -- ===================================================================
--- restricted collections should fail
+-- drop_collection on reserved names is not restricted; returns false (no-op) if collection does not exist
 SELECT documentdb_api.drop_collection('config', 'chunks');
-ERROR:  The namespace config.chunks is reserved and cannot be used
+ drop_collection 
+-----------------
+ f
+(1 row)
+
 SELECT documentdb_api.drop_collection('config', '_shards');
-ERROR:  The namespace config._shards is reserved and cannot be used
+ drop_collection 
+-----------------
+ f
+(1 row)
+
 SELECT documentdb_api.drop_collection('config', 'version');
-ERROR:  The namespace config.version is reserved and cannot be used
+ drop_collection 
+-----------------
+ f
+(1 row)
+
 -- dropping non-restricted config collections should succeed
 SELECT documentdb_api.drop_collection('config', 'my_config_coll');
  drop_collection 
@@ -159,16 +169,12 @@ NOTICE:  creating collection
 -- rename to restricted collection should fail
 SELECT documentdb_api.rename_collection('config', 'rename_source', 'chunks');
 ERROR:  The namespace config.chunks is reserved and cannot be used
-CONTEXT:  SQL statement "UPDATE documentdb_api_catalog.collections SET collection_name = $1 WHERE database_name = $2 AND collection_name = $3"
 SELECT documentdb_api.rename_collection('config', 'rename_source', '_shards');
 ERROR:  The namespace config._shards is reserved and cannot be used
-CONTEXT:  SQL statement "UPDATE documentdb_api_catalog.collections SET collection_name = $1 WHERE database_name = $2 AND collection_name = $3"
 SELECT documentdb_api.rename_collection('config', 'rename_source', 'version');
 ERROR:  The namespace config.version is reserved and cannot be used
-CONTEXT:  SQL statement "UPDATE documentdb_api_catalog.collections SET collection_name = $1 WHERE database_name = $2 AND collection_name = $3"
 SELECT documentdb_api.rename_collection('config', 'rename_source', 'databases');
 ERROR:  The namespace config.databases is reserved and cannot be used
-CONTEXT:  SQL statement "UPDATE documentdb_api_catalog.collections SET collection_name = $1 WHERE database_name = $2 AND collection_name = $3"
 -- rename to non-restricted collection should succeed
 SELECT documentdb_api.rename_collection('config', 'rename_source', 'rename_target');
  rename_collection 
@@ -258,18 +264,39 @@ SELECT documentdb_api.create_collection('config', 'system.preimages');
 ERROR:  System namespace provided is invalid: config.system.preimages
 CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
 -- ===================================================================
--- 9. drop_collection on reserved system namespaces should fail
+-- 9. drop_collection on reserved system namespaces is not restricted;
+--    returns false (no-op) if collection does not exist
 -- ===================================================================
 SELECT documentdb_api.drop_collection('admin', 'system.roles');
-ERROR:  System namespace provided is invalid: admin.system.roles
+ drop_collection 
+-----------------
+ f
+(1 row)
+
 SELECT documentdb_api.drop_collection('admin', 'system.users');
-ERROR:  Unable to write data to specified location admin.system.users
+ drop_collection 
+-----------------
+ f
+(1 row)
+
 SELECT documentdb_api.drop_collection('admin', 'system.version');
-ERROR:  System namespace provided is invalid: admin.system.version
+ drop_collection 
+-----------------
+ f
+(1 row)
+
 SELECT documentdb_api.drop_collection('config', 'system.indexBuilds');
-ERROR:  System namespace provided is invalid: config.system.indexBuilds
+ drop_collection 
+-----------------
+ f
+(1 row)
+
 SELECT documentdb_api.drop_collection('config', 'system.preimages');
-ERROR:  System namespace provided is invalid: config.system.preimages
+ drop_collection 
+-----------------
+ f
+(1 row)
+
 -- ===================================================================
 -- 10. create_indexes_background on reserved namespaces should fail
 -- ===================================================================
@@ -335,3 +362,352 @@ SELECT documentdb_api.delete('config', '{"delete": "system.indexBuilds", "delete
 ERROR:  System namespace provided is invalid: config.system.indexBuilds
 SELECT documentdb_api.delete('config', '{"delete": "system.preimages", "deletes": [{"q": {}, "limit": 0}]}');
 ERROR:  System namespace provided is invalid: config.system.preimages
+-- ===================================================================
+-- 13. createCollection on newly added config reserved names should fail
+-- ===================================================================
+SELECT documentdb_api.create_collection('config', 'changelog');
+ERROR:  The namespace config.changelog is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+SELECT documentdb_api.create_collection('config', 'tags');
+ERROR:  The namespace config.tags is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+SELECT documentdb_api.create_collection('config', 'placementHistory');
+ERROR:  The namespace config.placementHistory is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+SELECT documentdb_api.create_collection('config', 'mongos');
+ERROR:  The namespace config.mongos is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+SELECT documentdb_api.create_collection('config', 'transactions');
+ERROR:  The namespace config.transactions is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+SELECT documentdb_api.create_collection('config', 'locks');
+ERROR:  The namespace config.locks is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+SELECT documentdb_api.create_collection('config', 'lockpings');
+ERROR:  The namespace config.lockpings is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+SELECT documentdb_api.create_collection('config', 'migrations');
+ERROR:  The namespace config.migrations is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+SELECT documentdb_api.create_collection('config', 'migrationCoordinators');
+ERROR:  The namespace config.migrationCoordinators is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+SELECT documentdb_api.create_collection('config', 'rangeDeletions');
+ERROR:  The namespace config.rangeDeletions is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+SELECT documentdb_api.create_collection('config', 'reshardingOperations');
+ERROR:  The namespace config.reshardingOperations is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+SELECT documentdb_api.create_collection('config', 'cache.collections');
+ERROR:  The namespace config.cache.collections is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+SELECT documentdb_api.create_collection('config', 'cache.databases');
+ERROR:  The namespace config.cache.databases is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+-- ===================================================================
+-- 14. createCollection on local reserved names should fail
+-- (only non-"system.*" names; "system.*" names are already covered by
+--  ValidateCollectionNameForValidSystemNamespace and tested above.)
+-- ===================================================================
+SELECT documentdb_api.create_collection('local', 'oplog.rs');
+ERROR:  The namespace local.oplog.rs is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+SELECT documentdb_api.create_collection('local', 'startup_log');
+ERROR:  The namespace local.startup_log is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+SELECT documentdb_api.create_collection('local', 'replset.election');
+ERROR:  The namespace local.replset.election is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+SELECT documentdb_api.create_collection('local', 'replset.minvalid');
+ERROR:  The namespace local.replset.minvalid is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+SELECT documentdb_api.create_collection('local', 'replset.initialSyncId');
+ERROR:  The namespace local.replset.initialSyncId is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+SELECT documentdb_api.create_collection('local', 'replset.oplogTruncateAfterPoint');
+ERROR:  The namespace local.replset.oplogTruncateAfterPoint is reserved and cannot be used
+CONTEXT:  SQL statement "INSERT INTO documentdb_api_catalog.collections ( database_name, collection_name, collection_uuid ) VALUES ($1, $2, gen_random_uuid()) RETURNING collection_id"
+-- non-reserved local collection should succeed
+SELECT documentdb_api.create_collection('local', 'my_local_coll');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+-- ===================================================================
+-- 15. drop on local reserved names is not restricted (no-op if absent);
+--     rename to local reserved names should fail
+-- ===================================================================
+SELECT documentdb_api.drop_collection('local', 'oplog.rs');
+ drop_collection 
+-----------------
+ f
+(1 row)
+
+SELECT documentdb_api.rename_collection('local', 'my_local_coll', 'oplog.rs');
+ERROR:  The namespace local.oplog.rs is reserved and cannot be used
+-- cleanup
+SELECT documentdb_api.drop_collection('local', 'my_local_coll');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- ===================================================================
+-- 16. drop_collection on newly-added config reserved names is not
+--     restricted; returns false (no-op) if collection does not exist
+--     (covers the names added by this branch; section 3 only covers
+--      chunks/_shards/version.)
+-- ===================================================================
+SELECT documentdb_api.drop_collection('config', 'cache.collections');
+ drop_collection 
+-----------------
+ f
+(1 row)
+
+SELECT documentdb_api.drop_collection('config', 'migrations');
+ drop_collection 
+-----------------
+ f
+(1 row)
+
+SELECT documentdb_api.drop_collection('config', 'locks');
+ drop_collection 
+-----------------
+ f
+(1 row)
+
+SELECT documentdb_api.drop_collection('config', 'mongos');
+ drop_collection 
+-----------------
+ f
+(1 row)
+
+SELECT documentdb_api.drop_collection('config', 'transactions');
+ drop_collection 
+-----------------
+ f
+(1 row)
+
+-- ===================================================================
+-- 17. Regression: non-reserved admin/local collections should still work
+--     (guards against accidentally blocking the entire admin/local db.)
+-- ===================================================================
+SELECT documentdb_api.create_collection('admin', 'my_admin_coll');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('admin', 'my_admin_coll');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.create_collection('local', 'my_other_local_coll');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('local', 'my_other_local_coll');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- ===================================================================
+-- 18. $out / $merge into admin and local should be blocked
+--     (sections 4-5 only cover config; admin/local are also blocked
+--      by ValidateTargetNameSpaceForOutputStage.)
+-- ===================================================================
+SELECT documentdb_api.create_collection('testdb', 'agg_source');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.insert_one('testdb', 'agg_source', '{"_id": 1, "a": 1}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- $out to admin / local should fail (internal database resource)
+SELECT * FROM aggregate_cursor_first_page('testdb', '{ "aggregate": "agg_source", "pipeline": [{"$out": {"db": "admin", "coll": "anycoll"}}], "cursor": {"batchSize": 1} }', 4294967294);
+ERROR:  Unable to $out into internal database resource: admin
+SELECT * FROM aggregate_cursor_first_page('testdb', '{ "aggregate": "agg_source", "pipeline": [{"$out": {"db": "local", "coll": "anycoll"}}], "cursor": {"batchSize": 1} }', 4294967294);
+ERROR:  Unable to $out into internal database resource: local
+-- $merge to admin / local should fail (internal database resource)
+SELECT * FROM aggregate_cursor_first_page('testdb', '{ "aggregate": "agg_source", "pipeline": [{"$merge": {"into": {"db": "admin", "coll": "anycoll"}}}], "cursor": {"batchSize": 1} }', 4294967294);
+ERROR:  Unable to $merge into internal database resource: admin
+SELECT * FROM aggregate_cursor_first_page('testdb', '{ "aggregate": "agg_source", "pipeline": [{"$merge": {"into": {"db": "local", "coll": "anycoll"}}}], "cursor": {"batchSize": 1} }', 4294967294);
+ERROR:  Unable to $merge into internal database resource: local
+-- cleanup
+SELECT documentdb_api.drop_collection('testdb', 'agg_source');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- ===================================================================
+-- 19. Flag-off behaviour: gate disengaged for config/local reserved names
+-- ===================================================================
+SET documentdb.enableNewNamespaceValidation TO off;
+-- Reserved names should now be allowed because the gate is off.
+SELECT documentdb_api.create_collection('local', 'oplog.rs');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('local', 'oplog.rs');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.create_collection('config', 'locks');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('config', 'locks');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+RESET documentdb.enableNewNamespaceValidation;
+-- ===================================================================
+-- 20. create_indexes_non_concurrently on reserved namespaces should fail
+--     (covers the second of three createIndexes entry points; the third
+--      entry point is the utility-hook CALL path -- exercised in
+--      production via the gateway, not reachable from regress.)
+-- ===================================================================
+-- reserved config collection should fail
+SELECT documentdb_api_internal.create_indexes_non_concurrently('config', '{"createIndexes": "chunks", "indexes": [{"key": {"a": 1}, "name": "nci_idx_1"}]}');
+ERROR:  The namespace config.chunks is reserved and cannot be used
+SELECT documentdb_api_internal.create_indexes_non_concurrently('config', '{"createIndexes": "transactions", "indexes": [{"key": {"a": 1}, "name": "nci_idx_2"}]}');
+ERROR:  The namespace config.transactions is reserved and cannot be used
+-- reserved system namespace should fail
+SELECT documentdb_api_internal.create_indexes_non_concurrently('admin', '{"createIndexes": "system.roles", "indexes": [{"key": {"a": 1}, "name": "nci_idx_3"}]}');
+ERROR:  System namespace provided is invalid: admin.system.roles
+SELECT documentdb_api_internal.create_indexes_non_concurrently('config', '{"createIndexes": "system.indexBuilds", "indexes": [{"key": {"a": 1}, "name": "nci_idx_4"}]}');
+ERROR:  System namespace provided is invalid: config.system.indexBuilds
+-- reserved local collection should fail
+SELECT documentdb_api_internal.create_indexes_non_concurrently('local', '{"createIndexes": "oplog.rs", "indexes": [{"key": {"a": 1}, "name": "nci_idx_5"}]}');
+ERROR:  The namespace local.oplog.rs is reserved and cannot be used
+-- ===================================================================
+-- 21. Error-precedence edge case: empty indexes:[] on a reserved
+--     namespace must throw IllegalOperation BEFORE the parser throws
+--     BadValue. Covered for both reachable entry points.
+-- ===================================================================
+-- background path
+SELECT * FROM documentdb_api.create_indexes_background('config', '{"createIndexes": "transactions", "indexes": []}');
+                                                                                                          retval                                                                                                           | ok | requests 
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----+----------
+ { "raw" : { "defaultShard" : { "ok" : { "$numberInt" : "0" }, "errmsg" : "The namespace config.transactions is reserved and cannot be used", "code" : { "$numberInt" : "100663325" } } }, "ok" : { "$numberInt" : "0" } } | f  | { }
+(1 row)
+
+-- non-concurrent path
+SELECT documentdb_api_internal.create_indexes_non_concurrently('config', '{"createIndexes": "chunks", "indexes": []}');
+ERROR:  The namespace config.chunks is reserved and cannot be used
+-- Sanity: empty indexes:[] on a non-reserved namespace still produces
+-- the parser's error (validator must not over-trigger).
+SELECT * FROM documentdb_api.create_indexes_background('config', '{"createIndexes": "non_reserved_user_coll", "indexes": []}');
+                                                                                                            retval                                                                                                             | ok | requests 
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----+----------
+ { "raw" : { "defaultShard" : { "ok" : { "$numberInt" : "0" }, "errmsg" : "You must provide at least one index in order to proceed with creation", "code" : { "$numberInt" : "16777245" } } }, "ok" : { "$numberInt" : "0" } } | f  | { }
+(1 row)
+
+-- ===================================================================
+-- 22. GUC-off behavior for createIndexes: fallback blocks ALL admin
+--     and config createIndexes (matches legacy gateway pre-check
+--     behavior so that turning the GUC off is a clean revert).
+-- ===================================================================
+SET documentdb.enableNewNamespaceValidation TO off;
+-- With GUC off, createIndexes on ANY config/admin collection is blocked
+-- by the fallback (regardless of whether the name is reserved).
+SELECT * FROM documentdb_api.create_indexes_background('config', '{"createIndexes": "transactions", "indexes": []}');
+                                                                                                   retval                                                                                                    | ok | requests 
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----+----------
+ { "raw" : { "defaultShard" : { "ok" : { "$numberInt" : "0" }, "errmsg" : "Cannot create indexes in config or admin databases", "code" : { "$numberInt" : "100663325" } } }, "ok" : { "$numberInt" : "0" } } | f  | { }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('config', '{"createIndexes": "chunks", "indexes": []}');
+ERROR:  Cannot create indexes in config or admin databases
+SELECT * FROM documentdb_api.create_indexes_background('config', '{"createIndexes": "guc_off_user_coll", "indexes": [{"key": {"a": 1}, "name": "guc_off_idx_1"}]}');
+                                                                                                   retval                                                                                                    | ok | requests 
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----+----------
+ { "raw" : { "defaultShard" : { "ok" : { "$numberInt" : "0" }, "errmsg" : "Cannot create indexes in config or admin databases", "code" : { "$numberInt" : "100663325" } } }, "ok" : { "$numberInt" : "0" } } | f  | { }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('admin', '{"createIndexes": "user_coll", "indexes": [{"key": {"a": 1}, "name": "guc_off_idx_2"}]}');
+ERROR:  Cannot create indexes in config or admin databases
+-- With GUC off, createIndexes on a normal database still works.
+SELECT documentdb_api.create_collection('testdb', 'guc_off_normal_coll');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT * FROM documentdb_api.create_indexes_background('testdb', '{"createIndexes": "guc_off_normal_coll", "indexes": [{"key": {"a": 1}, "name": "guc_off_idx_3"}]}');
+                                                                                                                retval                                                                                                                | ok |                                      requests                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----+-------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } } | t  | { "indexRequest" : { "cmdType" : "C", "ids" : [ { "$numberInt" : "25708038" } ] } }
+(1 row)
+
+SELECT documentdb_api.drop_collection('testdb', 'guc_off_normal_coll');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- ===================================================================
+-- 23. We should always allow drop on system collection and config and chunks collections for compat
+-- ===================================================================
+SELECT documentdb_api.drop_collection('db', 'system.collection');
+ drop_collection 
+-----------------
+ f
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'system.views');
+ drop_collection 
+-----------------
+ f
+(1 row)
+
+SELECT documentdb_api.drop_collection('config', 'chunks');
+ drop_collection 
+-----------------
+ f
+(1 row)
+
+BEGIN;
+SET LOCAL documentdb.enableNewNamespaceValidation TO off;
+SELECT documentdb_api.create_collection('config','chunks');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('config', 'chunks');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+ROLLBACK;
+RESET documentdb.enableNewNamespaceValidation;
