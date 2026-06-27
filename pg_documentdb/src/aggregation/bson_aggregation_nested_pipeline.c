@@ -461,8 +461,7 @@ CanInlineLookupWithUnwind(const bson_value_t *lookUpStageValue,
 						  const bson_value_t *unwindStageValue,
 						  bool *isPreserveEmptyAndNullArrays)
 {
-	LookupArgs lookupArgs;
-	memset(&lookupArgs, 0, sizeof(LookupArgs));
+	LookupArgs lookupArgs = { 0 };
 	ParseLookupStage(lookUpStageValue, &lookupArgs);
 
 	if (lookupArgs.lookupAs.length == 0)
@@ -481,62 +480,32 @@ CanInlineLookupWithUnwind(const bson_value_t *lookUpStageValue,
 		return false;
 	}
 
-	StringView unwindPath = { 0 };
-
-	/* If the unwind has options don't inline */
-	if (unwindStageValue->value_type == BSON_TYPE_DOCUMENT ||
-		unwindStageValue->value_type == BSON_TYPE_UTF8)
+	UnwindArgs unwindArgs = { 0 };
+	UnwindParseErrorHandler onErrorIgnored = NULL;
+	if (!TryParseUnwindStage(unwindStageValue, &unwindArgs, onErrorIgnored))
 	{
-		if (unwindStageValue->value_type == BSON_TYPE_DOCUMENT)
-		{
-			bson_iter_t iter;
-			BsonValueInitIterator(unwindStageValue, &iter);
-			while (bson_iter_next(&iter))
-			{
-				const char *key = bson_iter_key(&iter);
-				if (strcmp(key, "includeArrayIndex") == 0)
-				{
-					/* We can't inline the documents need to be rewritten with the array index */
-					return false;
-				}
-				else if (strcmp("preserveNullAndEmptyArrays", key) == 0)
-				{
-					if (BSON_ITER_HOLDS_BOOL(&iter))
-					{
-						*isPreserveEmptyAndNullArrays = bson_iter_as_bool(&iter);
-					}
-					else
-					{
-						/* Don't inline so that invalid specs are caught and error is thrown */
-						return false;
-					}
-				}
-				else if (strcmp(key, "path") == 0 && BSON_ITER_HOLDS_UTF8(&iter))
-				{
-					unwindPath.string = bson_iter_utf8(&iter, &unwindPath.length);
-				}
-			}
-		}
-		else
-		{
-			unwindPath.string = unwindStageValue->value.v_utf8.str;
-			unwindPath.length = unwindStageValue->value.v_utf8.len;
-			*isPreserveEmptyAndNullArrays = false;
-		}
-	}
-	else
-	{
-		/* Any other unwind value is invalid */
 		return false;
 	}
 
-	if (unwindPath.length > 1 && StringViewStartsWith(&unwindPath, '$') &&
-		strcmp(unwindPath.string + 1, lookupArgs.lookupAs.string) == 0)
+	/* includeArrayIndex requires synthesizing an extra field per row;
+	 * the fused op has no place to put it. */
+	if (unwindArgs.includeArrayIndex.length > 0)
 	{
-		return true;
+		return false;
 	}
 
-	return false;
+	*isPreserveEmptyAndNullArrays = unwindArgs.preserveNullAndEmptyArrays;
+
+	/* TryParseUnwindStage guarantees the path is "$<field>", but validate
+	 * defensively before skipping the leading '$' for the comparison. */
+	const char *unwindPath = unwindArgs.pathValue.value.v_utf8.str;
+	if (unwindPath == NULL || unwindPath[0] != '$')
+	{
+		return false;
+	}
+
+	/* Compare the trailing field name to the lookup's "as" target. */
+	return strcmp(unwindPath + 1, lookupArgs.lookupAs.string) == 0;
 }
 
 

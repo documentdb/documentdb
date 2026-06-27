@@ -489,6 +489,8 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_STAGE_OUT] = "out",
 	[FEATURE_STAGE_PROJECT] = "project",
 	[FEATURE_STAGE_PROJECT_FIND] = "project_find",
+	[FEATURE_STAGE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP] =
+		"project_pushup_before_unwind_with_group",
 	[FEATURE_STAGE_REDACT] = "redact",
 	[FEATURE_STAGE_REPLACE_ROOT] = "replace_root",
 	[FEATURE_STAGE_REPLACE_WITH] = "replace_with",

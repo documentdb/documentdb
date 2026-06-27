@@ -351,6 +351,11 @@ bool FailOnNonEmptyGroupCountArg = DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG;
 #define DEFAULT_ENABLE_SORT_GROUP_STAGE true
 bool EnableSortGroupStage = DEFAULT_ENABLE_SORT_GROUP_STAGE;
 
+/* Added in v115, Pending stabilization, enable in v117.*/
+#define DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP false
+bool EnableProjectPushUpBeforeUnwindWithGroup =
+	DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP;
+
 /* Added in v113, Pending stabilization, enable in v115 */
 #define DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR_WITH_PREFIX false
 bool EnableSortPushToAccumulatorWithPrefix =
@@ -970,6 +975,16 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Whether to enable the $sortGroup stage."),
 		NULL, &EnableSortGroupStage, DEFAULT_ENABLE_SORT_GROUP_STAGE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableProjectPushUpBeforeUnwindWithGroup", newGucPrefix),
+		gettext_noop(
+			"Whether to inject a synthetic $project before $unwind when the "
+			"pipeline ends with a $group, keeping only the top-level fields "
+			"that are referenced downstream so the unwound rows are smaller."),
+		NULL, &EnableProjectPushUpBeforeUnwindWithGroup,
+		DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
