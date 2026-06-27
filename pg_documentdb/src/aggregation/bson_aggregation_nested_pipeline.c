@@ -56,7 +56,6 @@
 const int MaximumLookupPipelineDepth = 20;
 extern bool EnableLookupIdJoinOptimizationOnCollation;
 extern bool EnableOperatorVariablesInLookup;
-extern bool EnableUseForeignKeyLookupInline;
 
 /*
  * Struct having parsed view of the
@@ -2210,13 +2209,7 @@ OptimizeLookup(LookupArgs *lookupArgs,
 	}
 	else
 	{
-		StringView lookupJoinPipelineField = lookupArgs->localField;
-
-		/* This fix is controlled by a GUC so we can safely falback to existing path by disabling it */
-		if (EnableUseForeignKeyLookupInline)
-		{
-			lookupJoinPipelineField = lookupArgs->foreignField;
-		}
+		StringView lookupJoinPipelineField = lookupArgs->foreignField;
 
 		StringView prefix = StringViewFindPrefix(&lookupJoinPipelineField, '.');
 		if (prefix.length != 0)

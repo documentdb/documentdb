@@ -3214,38 +3214,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
--- Buggy case which should fixed by enableUseForeignKeyLookupInline it on;
 BEGIN;
-SET LOCAL documentdb.enableUseForeignKeyLookupInline to off;
--- Test $addFields modifying the foreignField in lookup pipeline
-SELECT document FROM bson_aggregation_pipeline('dbAddField', 
-    '{ "aggregate": "users", "pipeline": [
-      {
-        "$lookup": {
-          "from": "orders",
-          "localField": "_id",
-          "foreignField": "userId",
-          "as": "userOrders",
-          "pipeline": [
-            {
-              "$addFields": {
-                "userId": 100
-              }
-            }
-          ]
-        }
-      }
-    ], "cursor": {} }');
-                                                  document                                                  
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "1" }, "name" : "user1", "age" : { "$numberInt" : "28" }, "userOrders" : [  ] }
- { "_id" : { "$numberInt" : "2" }, "name" : "user2", "age" : { "$numberInt" : "27" }, "userOrders" : [  ] }
-(2 rows)
-
-ROLLBACK;
--- this fixes above issue
-BEGIN;
-SET LOCAL documentdb.enableUseForeignKeyLookupInline to on;
 SELECT document FROM bson_aggregation_pipeline('dbAddField', 
     '{ "aggregate": "users", "pipeline": [
       {
