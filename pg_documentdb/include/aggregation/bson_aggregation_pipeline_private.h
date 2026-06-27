@@ -101,6 +101,35 @@ typedef enum JoinStageStatus
 
 
 /*
+ * Parsed representation of a $unwind stage spec. Populated by
+ * TryParseUnwindStage.
+ */
+typedef struct UnwindArgs
+{
+	/* The path value from either the shorthand "$path" form or the
+	 * { path: "$path", ... } document form. BSON_TYPE_EOD if absent. */
+	bson_value_t pathValue;
+
+	/* Value of the optional "includeArrayIndex" field, zero-length if
+	 * absent. Validated to be a non-empty UTF8 with no '$' prefix. */
+	StringView includeArrayIndex;
+
+	/* Value of the optional "preserveNullAndEmptyArrays" field. */
+	bool preserveNullAndEmptyArrays;
+
+	/* True iff the input spec was a document (not the shorthand string). */
+	bool hasOptions;
+} UnwindArgs;
+
+
+/*
+ * Callback invoked by TryParseUnwindStage when a spec fails validation.
+ */
+typedef void (*UnwindParseErrorHandler)(int errCode, const char *errMessage,
+										const char *errArg);
+
+
+/*
  * Shared context during aggregation pipeline build phase.
  */
 typedef struct
@@ -318,6 +347,9 @@ bool CanInlineLookupStageLookup(const bson_value_t *lookupStage,
 bool CanInlineLookupWithUnwind(const bson_value_t *lookUpStageValue,
 							   const bson_value_t *unwindStageValue,
 							   bool *isPreserveNullAndEmptyArrays);
+
+bool TryParseUnwindStage(const bson_value_t *unwindStageValue, UnwindArgs *args,
+						 UnwindParseErrorHandler onError);
 
 /* vector search related aggregation stages */
 Query * HandleSearch(const bson_value_t *existingValue, Query *query,

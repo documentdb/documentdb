@@ -1,0 +1,905 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+
+SET documentdb.next_collection_id TO 87000;
+SET documentdb.next_collection_index_id TO 87000;
+
+-- ============================================================================
+-- Project push-up before $unwind (with $group) — single-node tests
+--
+-- Covers:
+--   Section 1 — positive trigger cases (rewrite fires, result equality,
+--               EXPLAIN shows the synthetic $project with the expected fields)
+--   Section 2 — bail-out cases (rewrite must NOT fire)
+--   Section 4 — telemetry (applicability counter)
+--   Section 5 — index-pushdown preservation
+--
+-- The synthetic $project, when emitted, looks like:
+--   bson_dollar_project(collection.document,
+--                       '{ "<f1>" : 1, ..., "_id" : <0|1> }'::bson, ...)
+-- and sits immediately under bson_dollar_unwind in the plan.
+-- ============================================================================
+
+
+-- ----------------------------------------------------------------------------
+-- Setup: dataset
+-- ----------------------------------------------------------------------------
+
+-- Each document has:
+--   regionId    — a top-level scalar (used by upstream $match)
+--   ownerId     — a top-level scalar (used by downstream $group)
+--   noise       — a wide payload field that the synthetic project should drop
+--   items       — an array of sub-documents (the $unwind target)
+--   tag         — used to test field-prefix dedup interaction
+SELECT documentdb_api.insert_one('proj_pushup_db', 'orders_coll',
+    '{ "_id": 1, "regionId": "north", "ownerId": "A",
+       "noise": "wide-payload-aaaaa",
+       "tag": "t1",
+       "items": [ {"kind": "x", "qty": 1}, {"kind": "y", "qty": 2} ] }', NULL);
+SELECT documentdb_api.insert_one('proj_pushup_db', 'orders_coll',
+    '{ "_id": 2, "regionId": "north", "ownerId": "B",
+       "noise": "wide-payload-bbbbb",
+       "tag": "t2",
+       "items": [ {"kind": "x", "qty": 3} ] }', NULL);
+SELECT documentdb_api.insert_one('proj_pushup_db', 'orders_coll',
+    '{ "_id": 3, "regionId": "south", "ownerId": "A",
+       "noise": "wide-payload-ccccc",
+       "tag": "t3",
+       "items": [ {"kind": "x", "qty": 4}, {"kind": "z", "qty": 5} ] }', NULL);
+SELECT documentdb_api.insert_one('proj_pushup_db', 'orders_coll',
+    '{ "_id": 4, "regionId": "north", "ownerId": "B",
+       "noise": "wide-payload-ddddd",
+       "tag": "t4",
+       "items": [ {"kind": "y", "qty": 6}, {"kind": "x", "qty": 7} ] }', NULL);
+
+-- Index on regionId, used by Section 5 to assert the pre-unwind $match still
+-- pushes to the index after our $project is injected above $unwind.
+SET client_min_messages TO WARNING;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('proj_pushup_db',
+    '{ "createIndexes": "orders_coll", "indexes": [ { "key": { "regionId": 1 }, "name": "regionId_1" } ] }',
+    true);
+RESET client_min_messages;
+
+
+-- ============================================================================
+-- Section 1 — positive trigger cases
+--
+-- For each: run the pipeline with the GUC off (baseline) and then on (so the
+-- result rows in the two outputs are identical, proving result equivalence)
+-- and inspect the GUC-on EXPLAIN to confirm the synthetic project's field
+-- list. A $sort at the tail keeps row ordering deterministic.
+-- ============================================================================
+
+
+-- 1.1 Canonical shape: $match -> $unwind -> $match -> $group
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO off;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": "$items" },
+        { "$match": { "items.kind": "x" } },
+        { "$group": { "_id": "$ownerId" } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO on;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": "$items" },
+        { "$match": { "items.kind": "x" } },
+        { "$group": { "_id": "$ownerId" } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": "$items" },
+        { "$match": { "items.kind": "x" } },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 1.2 Accumulator with a "$path" argument — accumulator's source field is
+-- carried through. items is already in the set (from unwind) so no duplicate.
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 1.3 Accumulator with a constant argument — contributes no field reference;
+-- the project list contains only the unwind path + group _id top-level.
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId", "n": { "$sum": 1 } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId", "n": { "$sum": 1 } } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 1.4 Compound _id — every key in the _id document contributes its top-level.
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$group": { "_id": { "owner": "$ownerId", "region": "$regionId" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$group": { "_id": { "owner": "$ownerId", "region": "$regionId" } } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 1.5 $group references _id ($_id) — synthetic project keeps _id (_id: 1).
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$_id" } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$_id" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 1.6 $match between $unwind and $group references _id — project keeps _id.
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "_id": { "$gte": 2 } } },
+        { "$group": { "_id": "$ownerId" } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "_id": { "$gte": 2 } } },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 1.7 Group accumulator references _id ($first: "$_id") — project keeps _id.
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId", "firstId": { "$first": "$_id" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId", "firstId": { "$first": "$_id" } } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 1.8 $unwind in document form, with preserveNullAndEmptyArrays — the option
+-- does not affect what source fields are needed; rewrite still fires.
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": { "path": "$items", "preserveNullAndEmptyArrays": true } },
+        { "$group": { "_id": "$ownerId" } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": { "path": "$items", "preserveNullAndEmptyArrays": true } },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 1.9 $match using dotted paths — project list keeps only top-level "items".
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "items.qty": { "$gte": 4 } } },
+        { "$group": { "_id": "$ownerId" } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "items.qty": { "$gte": 4 } } },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 1.10 $match with $and / $or logical operators — recursive walk
+-- handles nested logical subdocs and dotted paths.
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$match": { "$and": [ { "regionId": "north" }, { "$or": [ { "ownerId": "A" }, { "tag": "t4" } ] } ] } },
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId" } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "$and": [ { "items.kind": "x" }, { "$or": [ { "items.qty": 1 }, { "items.qty": 7 } ] } ] } },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 1.11 Multiple $match stages between $unwind and $group — every match's
+-- top-levels are accumulated into the consumed set.
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "items.kind": "x" } },
+        { "$match": { "ownerId": "A" } },
+        { "$group": { "_id": "$tag" } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "items.kind": "x" } },
+        { "$match": { "ownerId": "A" } },
+        { "$group": { "_id": "$tag" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 1.12 Tail stages after $group ($sort, $limit) don't block the rewrite —
+-- they execute after the group and don't reference new source-doc fields.
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId", "n": { "$sum": 1 } } },
+        { "$sort": { "_id": 1 } },
+        { "$limit": 5 }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId", "n": { "$sum": 1 } } },
+        { "$sort": { "_id": 1 } },
+        { "$limit": 5 }
+    ],
+    "cursor": {}
+}');
+
+
+-- 1.13 $unwind on a nested path ("$items.qty") — only the top-level "items"
+-- is added to the project.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items.qty" },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 1.14 $match with $nor logical operator — recursive walk extracts the
+-- top-level field references from the negated subdocs.
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$match": { "$nor": [ { "regionId": "south" }, { "tag": "t2" } ] } },
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId" } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$match": { "$nor": [ { "regionId": "south" }, { "tag": "t2" } ] } },
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 1.15 Multiple accumulators in one $group (incl. $push which returns an
+-- array). Each accumulator's $path arg contributes its top-level to the
+-- consumed set; constants contribute nothing. items is already present
+-- (from the unwind), so $sum:"$items.qty" doesn't add a duplicate.
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$group": {
+            "_id": "$ownerId",
+            "n": { "$sum": 1 },
+            "total": { "$sum": "$items.qty" },
+            "firstTag": { "$first": "$tag" },
+            "kinds": { "$push": "$items.kind" }
+        } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$group": {
+            "_id": "$ownerId",
+            "n": { "$sum": 1 },
+            "total": { "$sum": "$items.qty" },
+            "firstTag": { "$first": "$tag" },
+            "kinds": { "$push": "$items.kind" }
+        } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 1.16 $group _id is a constant (null, scalar, literal string, or empty
+-- doc) — groups every row into a single bucket and references no source
+-- fields. The synthetic project keeps only the unwind-path top-level.
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$group": { "_id": null, "n": { "$sum": 1 } } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$group": { "_id": null, "n": { "$sum": 1 } } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 1.17 $match with top-level $comment — $comment is a pure metadata no-op,
+-- so the optimizer skips it in the walk instead of bailing. The remaining
+-- field references (e.g. ownerId) populate the consumed set.
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "$comment": "trace-tag-xyz", "ownerId": "A" } },
+        { "$group": { "_id": "$ownerId" } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "$comment": "trace-tag-xyz", "ownerId": "A" } },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 1.18 Accumulator argument is an empty document (canonical for $count).
+-- An empty BSON document references no source fields, so it contributes
+-- nothing to the consumed set and is treated equivalently to a constant.
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId", "n": { "$count": {} } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId", "n": { "$count": {} } } }
+    ],
+    "cursor": {}
+}');
+
+
+-- ============================================================================
+-- Section 2 — bail-out cases
+--
+-- For each: GUC is ON, but the pipeline shape (or downstream stage) must
+-- prevent the rewrite from firing. EXPLAIN must not show bson_dollar_project
+-- between the collection scan and bson_dollar_unwind (or above the scan in
+-- "no unwind" cases).
+-- ============================================================================
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO on;
+
+
+-- 2.1 No $unwind in pipeline — nothing to do.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 2.2 $unwind but no $group after it.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": "$items" }
+    ],
+    "cursor": {}
+}');
+
+
+-- 2.3 $addFields between $unwind and $group — not an allowed intermediate
+-- stage, so bail.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$addFields": { "extra": 1 } },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 2.4 $project between $unwind and $group — not an allowed intermediate
+-- stage, so bail.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$project": { "ownerId": 1, "items": 1 } },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 2.5 $sort between $unwind and $group — not an allowed intermediate
+-- stage, so bail. (Logically safe to support: $sort just reorders rows.
+-- Deferred — see plan.md.)
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$sort": { "items.qty": 1 } },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 2.6 $group _id is $$ROOT — the rewrite cannot infer a safe projection.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$$ROOT" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 2.7 $group _id is a complex expression — TryExtractGroupByFieldPaths
+-- returns false, we bail (the simple-paths-only constant special case in
+-- ValueReferencesNoSourceFields does not match arbitrary expression docs).
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$group": { "_id": { "$concat": [ "$ownerId", "$regionId" ] } } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 2.8 Accumulator argument is a complex expression — out of scope; bail.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId", "z": { "$sum": { "$multiply": [ "$items.qty", 2 ] } } } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 2.9 Accumulator argument is $$ROOT — out of scope; bail.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId", "snap": { "$first": "$$ROOT" } } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 2.10 $match with $expr — special top-level operator; bail.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "$expr": { "$eq": [ "$ownerId", "A" ] } } },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 2.11 $match with $jsonSchema — special top-level operator; bail.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "$jsonSchema": { "required": [ "ownerId" ] } } },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 2.12 Pipeline contains $lookup (joinStatus = HasJoinsOrUnions) — bail
+-- even though the unwind/group pair downstream looks otherwise eligible.
+SELECT documentdb_api.insert_one('proj_pushup_db', 'lookup_target',
+    '{ "_id": 1, "ownerId": "A", "name": "Alice" }', NULL);
+SELECT documentdb_api.insert_one('proj_pushup_db', 'lookup_target',
+    '{ "_id": 2, "ownerId": "B", "name": "Bob" }', NULL);
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$lookup": { "from": "lookup_target", "localField": "ownerId", "foreignField": "ownerId", "as": "owner_doc" } },
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 2.13 Pipeline contains $unionWith — same bail reason as 2.12.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unionWith": { "coll": "lookup_target" } },
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 2.14 Match references more distinct top-level fields than the optimizer's
+-- PROJECT_PUSHUP_MAX_FIELDS cap (64). AddTopLevelFieldToSet returns false on
+-- overflow → CollectMatchTopLevelPaths returns false → the rewrite bails.
+-- The counter still bumps for the candidate unwind/group shape. We exercise this with a $and of 70
+-- single-field subdocs (f1..f70), and use a DO block + counter assertion to
+-- avoid embedding the 70-field JSON in the EXPLAIN output.
+SELECT count(*) * 0 AS reset
+FROM documentdb_api_internal.command_feature_counter_stats(true);
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO on;
+DO $body$
+DECLARE
+    j text;
+    i int;
+BEGIN
+    j := '{"$and":[';
+    FOR i IN 1..70 LOOP
+        IF i > 1 THEN
+            j := j || ',';
+        END IF;
+        j := j || format('{"f%s":%s}', i, i);
+    END LOOP;
+    j := j || ']}';
+    PERFORM document FROM bson_aggregation_pipeline(
+        'proj_pushup_db'::text,
+        ('{"aggregate":"orders_coll","pipeline":[{"$unwind":"$items"},{"$match":' || j || '},{"$group":{"_id":"$ownerId"}}],"cursor":{}}')::documentdb_core.bson
+    );
+END $body$;
+
+-- Counter must bump: the consumed-field-set overflow prevents the rewrite,
+-- but the pipeline is still a candidate unwind/group shape for telemetry.
+SELECT feature_name, usage_count
+FROM documentdb_api_internal.command_feature_counter_stats(false)
+WHERE feature_name = 'project_pushup_before_unwind_with_group';
+
+
+-- 2.15 $unwind with includeArrayIndex — the synthesized index field is
+-- created post-unwind, so the optimization does not apply. No synthetic
+-- $project is injected before the $unwind.
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": { "path": "$items", "includeArrayIndex": "ix" } },
+        { "$group": { "_id": "$ownerId", "maxIdx": { "$max": "$ix" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": { "path": "$items", "includeArrayIndex": "ix" } },
+        { "$group": { "_id": "$ownerId", "maxIdx": { "$max": "$ix" } } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 2.16 includeArrayIndex name equals the unwind path's top-level. The
+-- optimization is disabled whenever includeArrayIndex is present, so no
+-- synthetic $project is injected before the $unwind.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$unwind": { "path": "$items", "includeArrayIndex": "items" } },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- ============================================================================
+-- Section 4 — telemetry (applicability counter)
+--
+-- The FEATURE_STAGE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP counter is bumped
+-- when the pipeline shape matches the optimization's trigger, regardless of
+-- whether the GUC is on. That gives operators prevalence data for rollout
+-- decisions even before they flip the GUC.
+--
+-- DO blocks (PERFORM) are used to execute the pipeline without an outer
+-- aggregate / projection; SELECT count(*) FROM bson_aggregation_pipeline(...)
+-- trips the "Projector must be a single column" validator before planning
+-- reaches our optimizer, so the counter wouldn't get a chance to bump.
+-- ============================================================================
+
+-- Reset all feature counters.
+SELECT count(*) * 0 AS reset
+FROM documentdb_api_internal.command_feature_counter_stats(true);
+
+
+-- 4.1 Bail-out shape with GUC on — counter still bumps for telemetry.
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO on;
+DO $body$
+BEGIN
+    PERFORM document FROM bson_aggregation_pipeline(
+        'proj_pushup_db',
+        '{ "aggregate": "orders_coll", "pipeline": [ { "$unwind": "$items" }, { "$group": { "_id": "$$ROOT" } } ], "cursor": {} }'
+    );
+END $body$;
+
+SELECT feature_name, usage_count
+FROM documentdb_api_internal.command_feature_counter_stats(false)
+WHERE feature_name = 'project_pushup_before_unwind_with_group';
+
+
+-- 4.2 Applicable shape with GUC OFF — counter MUST bump (applicability
+-- semantics, independent of GUC).
+SELECT count(*) * 0 AS reset
+FROM documentdb_api_internal.command_feature_counter_stats(true);
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO off;
+DO $body$
+BEGIN
+    PERFORM document FROM bson_aggregation_pipeline(
+        'proj_pushup_db',
+        '{ "aggregate": "orders_coll", "pipeline": [ { "$unwind": "$items" }, { "$group": { "_id": "$ownerId" } } ], "cursor": {} }'
+    );
+END $body$;
+
+SELECT feature_name, usage_count
+FROM documentdb_api_internal.command_feature_counter_stats(false)
+WHERE feature_name = 'project_pushup_before_unwind_with_group';
+
+
+-- 4.3 Multiple applicable invocations bump the counter monotonically.
+SELECT count(*) * 0 AS reset
+FROM documentdb_api_internal.command_feature_counter_stats(true);
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO on;
+DO $body$
+BEGIN
+    PERFORM document FROM bson_aggregation_pipeline(
+        'proj_pushup_db',
+        '{ "aggregate": "orders_coll", "pipeline": [ { "$unwind": "$items" }, { "$group": { "_id": "$ownerId" } } ], "cursor": {} }'
+    );
+    PERFORM document FROM bson_aggregation_pipeline(
+        'proj_pushup_db',
+        '{ "aggregate": "orders_coll", "pipeline": [ { "$unwind": "$items" }, { "$group": { "_id": "$tag" } } ], "cursor": {} }'
+    );
+    PERFORM document FROM bson_aggregation_pipeline(
+        'proj_pushup_db',
+        '{ "aggregate": "orders_coll", "pipeline": [ { "$unwind": "$items" }, { "$group": { "_id": "$regionId" } } ], "cursor": {} }'
+    );
+END $body$;
+
+SELECT feature_name, usage_count
+FROM documentdb_api_internal.command_feature_counter_stats(false)
+WHERE feature_name = 'project_pushup_before_unwind_with_group';
+
+
+-- ============================================================================
+-- Section 5 — index-pushdown preservation
+--
+-- The synthetic $project sits ABOVE the pre-unwind $match in the pipeline, so
+-- when an index exists on the pre-unwind match's field, the index scan must
+-- still appear in the plan with the GUC on. This guards against accidentally
+-- breaking index pushdown for upstream filters.
+--
+-- The dataset is tiny so the planner would normally prefer a Seq Scan; we
+-- disable Seq Scan locally to force the index path so we can observe that
+-- the filter still binds to the indexed column (not to a derived FuncExpr).
+-- ============================================================================
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO on;
+SET enable_seqscan TO off;
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+RESET enable_seqscan;
+
+
+-- 5.2 An index on the $group key (ownerId) cannot drive a GroupAggregate
+-- pushdown when there's a $unwind in the pipeline: $unwind produces a
+-- ProjectSet that breaks the ordering invariant GroupAggregate-from-index
+-- requires. So the plan must fall back to HashAggregate regardless of our
+-- GUC; the only structural difference between GUC-off and GUC-on should be
+-- the synthetic project. This guards against accidentally regressing (or
+-- spuriously triggering) any future group-by-index path through this shape.
+SET client_min_messages TO WARNING;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('proj_pushup_db',
+    '{ "createIndexes": "orders_coll", "indexes": [ { "key": { "ownerId": 1 }, "name": "ownerId_1" } ] }',
+    true);
+RESET client_min_messages;
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "orders_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": "$items" },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- ============================================================================
+-- Clean up
+-- ============================================================================
+
+SELECT documentdb_api.drop_collection('proj_pushup_db', 'orders_coll');
+SELECT documentdb_api.drop_collection('proj_pushup_db', 'lookup_target');

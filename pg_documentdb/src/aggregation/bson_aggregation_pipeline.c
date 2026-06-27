@@ -50,6 +50,7 @@
 #include "metadata/metadata_cache.h"
 #include "query/query_operator.h"
 #include "planner/documentdb_planner.h"
+#include "planner/mongo_query_operator.h"
 #include "aggregation/bson_aggregation_pipeline.h"
 #include "aggregation/bson_aggregation_window_operators.h"
 #include "commands/parse_error.h"
@@ -73,6 +74,7 @@
 #include "geospatial/bson_geospatial_geonear.h"
 #include "aggregation/bson_densify.h"
 #include "collation/collation.h"
+#include "utils/hashset_utils.h"
 #include "api_hooks.h"
 
 extern bool EnableCursorsOnAggregationQueryRewrite;
@@ -89,6 +91,7 @@ extern bool RemoveMatchNamespaceFilters;
 extern bool EnableOrderByIndexTerm;
 extern bool EnableGroupByCompoundIdIndexPushdown;
 extern bool EnableSortGroupStage;
+extern bool EnableProjectPushUpBeforeUnwindWithGroup;
 extern bool EnableSortPushToAccumulatorWithPrefix;
 extern bool EnableSampleScanFixOnSharded;
 extern bool EnableDistinctIndexPushdown;
@@ -274,6 +277,11 @@ typedef struct FindQueryPlan
 
 #define MAX_SUFFIX_SORT_GROUP_KEYS (INDEX_MAX_KEYS * 2)
 
+/* Cap on distinct top-level fields in the synthetic $project. Avoids
+ * defeating the optimization by emitting a project that retains the whole
+ * document. */
+#define PROJECT_PUSHUP_MAX_FIELDS 64
+
 static void AddCursorFunctionsToQuery(Query *query, Query *baseQuery,
 									  QueryData *queryData,
 									  AggregationPipelineBuildContext *context,
@@ -380,10 +388,22 @@ static void RewriteFillToSetWindowFieldsSpec(const bson_value_t *fillSpec,
 											 bson_value_t *addFieldsForValueFill,
 											 bson_value_t *setWindowFieldsSpec,
 											 bson_value_t *partitionByFields);
-static void TryOptimizeAggregationPipelines(List **aggregationStages,
-											AggregationPipelineBuildContext *context);
+static List * TryOptimizeAggregationPipelines(List *aggregationStages,
+											  AggregationPipelineBuildContext *context);
 static bool IsPipelineStageFollowedByOtherStage(Stage firstStage, Stage secondStage,
 												int curIndx, List *stagesList);
+static List * TryInjectProjectBeforeUnwindForGroup(List *aggregationStages,
+												   int unwindIdx, int groupIdx,
+												   AggregationPipelineBuildContext *
+												   context);
+static List * TryInjectProjectBeforeUnwindForGroupCore(List *aggregationStages,
+													   int unwindIdx, int groupIdx,
+													   AggregationPipelineBuildContext *
+													   context,
+													   HTAB *consumedFields);
+static AggregationStage * BuildSyntheticInclusionProjectStage(HTAB *consumedFields,
+															  bool includeId);
+static bool ValueReferencesNoSourceFields(const bson_value_t *value);
 static bool TryInlineChangeStreamNamespaceFilters(AggregationStage *changeStreamStage,
 												  AggregationStage *matchStage,
 												  bool *inlinedCompletely);
@@ -454,6 +474,28 @@ static const AggregationStageDefinition SortGroupStageDefinition = {
 	.pipelineCheckFunc = NULL,
 	.allowBaseShardTablePushdown = true,
 	.stageEnum = Stage_SortGroup,
+};
+
+/*
+ * Synthetic $project stage definition used when the pipeline optimizer injects
+ * an inclusion projection (see BuildSyntheticInclusionProjectStage). Mirrors the
+ * $project entry.
+ */
+static const AggregationStageDefinition ProjectStageDefinition = {
+	.stage = "$project",
+	.mutateFunc = &HandleProject,
+	.requiresPersistentCursor = &RequiresPersistentCursorFalse,
+	.canInlineLookupStageFunc = &CanInlineLookupStageProject,
+
+	/* Project does not change the output format */
+	.preservesStableSortOrder = true,
+	.canHandleAgnosticQueries = false,
+	.isProjectTransform = true,
+	.isOutputStage = false,
+	.isMultiJoinUnionStage = false,
+	.pipelineCheckFunc = NULL,
+	.allowBaseShardTablePushdown = true,
+	.stageEnum = Stage_Project,
 };
 
 /* Stages and their definitions sorted by name.
@@ -4939,6 +4981,196 @@ HandleUnset(const bson_value_t *existingValue, Query *query,
 
 
 /*
+ * Error handler that raises the diagnostic reported by TryParseUnwindStage on
+ * the throwing $unwind parse path.
+ */
+static void
+ThrowUnwindParseError(int errCode, const char *errMessage, const char *errArg)
+{
+	ereport(ERROR, (errcode(errCode), errmsg(errMessage, errArg)));
+}
+
+
+/*
+ * Parses & validates a $unwind stage spec. On failure invokes onError (when
+ * non-NULL) with the mongo-compatible errcode/message and returns false; lets
+ * predicate-style callers reject a spec without raising. Passing NULL skips
+ * the error callback entirely, avoiding any errArg allocation on that path.
+ * Pass ThrowUnwindParseError to raise on invalid input.
+ */
+bool
+TryParseUnwindStage(const bson_value_t *unwindStageValue, UnwindArgs *args,
+					UnwindParseErrorHandler onError)
+{
+	*args = (UnwindArgs) {
+		0
+	};
+
+	switch (unwindStageValue->value_type)
+	{
+		case BSON_TYPE_UTF8:
+		{
+			args->pathValue = *unwindStageValue;
+			break;
+		}
+
+		case BSON_TYPE_DOCUMENT:
+		{
+			args->hasOptions = true;
+			bson_iter_t optionsDocIter;
+			BsonValueInitIterator(unwindStageValue, &optionsDocIter);
+			while (bson_iter_next(&optionsDocIter))
+			{
+				const char *key = bson_iter_key(&optionsDocIter);
+				const bson_value_t *value = bson_iter_value(&optionsDocIter);
+				if (strcmp(key, "path") == 0)
+				{
+					args->pathValue = *value;
+				}
+				else if (strcmp(key, "includeArrayIndex") == 0)
+				{
+					if (value->value_type != BSON_TYPE_UTF8)
+					{
+						if (onError != NULL)
+						{
+							onError(ERRCODE_DOCUMENTDB_LOCATION28810,
+									"A non-empty string value was expected for the includeArrayIndex option in the $unwind stage.",
+									NULL);
+						}
+						return false;
+					}
+
+					StringView includeArrayIndexView = (StringView) {
+						.string = value->value.v_utf8.str,
+						.length = value->value.v_utf8.len
+					};
+
+					if (includeArrayIndexView.length == 0)
+					{
+						if (onError != NULL)
+						{
+							onError(ERRCODE_DOCUMENTDB_LOCATION28810,
+									"A non-empty string value was expected for the includeArrayIndex option in the $unwind stage.",
+									NULL);
+						}
+						return false;
+					}
+
+					if (StringViewStartsWith(&includeArrayIndexView, '$'))
+					{
+						if (onError != NULL)
+						{
+							onError(ERRCODE_DOCUMENTDB_LOCATION28822,
+									"The includeArrayIndex option used in the $unwind stage must not have a '$' operator at the beginning: %s",
+									CreateStringFromStringView(
+										&includeArrayIndexView));
+						}
+						return false;
+					}
+
+					args->includeArrayIndex = includeArrayIndexView;
+				}
+				else if (strcmp(key, "preserveNullAndEmptyArrays") == 0)
+				{
+					if (value->value_type != BSON_TYPE_BOOL)
+					{
+						if (onError != NULL)
+						{
+							onError(ERRCODE_DOCUMENTDB_LOCATION28809,
+									"A boolean value was expected for the preserveNullAndEmptyArrays option used in the $unwind stage.",
+									NULL);
+						}
+						return false;
+					}
+
+					args->preserveNullAndEmptyArrays = value->value.v_bool;
+				}
+				else
+				{
+					if (onError != NULL)
+					{
+						onError(ERRCODE_DOCUMENTDB_LOCATION28811,
+								"Invalid option specified for $unwind stage", NULL);
+					}
+					return false;
+				}
+			}
+
+			break;
+		}
+
+		default:
+		{
+			if (onError != NULL)
+			{
+				onError(ERRCODE_DOCUMENTDB_LOCATION15981,
+						"A string or an object was expected as the specification for the $unwind stage, but instead received %s.",
+						pstrdup(BsonTypeName(unwindStageValue->value_type)));
+			}
+			return false;
+		}
+	}
+
+	if (args->pathValue.value_type == BSON_TYPE_EOD)
+	{
+		if (onError != NULL)
+		{
+			onError(ERRCODE_DOCUMENTDB_LOCATION28812,
+					"No path provided for $unwind stage", NULL);
+		}
+		return false;
+	}
+	if (args->pathValue.value_type != BSON_TYPE_UTF8)
+	{
+		if (onError != NULL)
+		{
+			onError(ERRCODE_DOCUMENTDB_LOCATION28808,
+					"A string value was expected as the path in the $unwind stage, but received %s.",
+					pstrdup(BsonTypeName(args->pathValue.value_type)));
+		}
+		return false;
+	}
+
+	StringView pathView = {
+		.string = args->pathValue.value.v_utf8.str,
+		.length = args->pathValue.value.v_utf8.len
+	};
+	if (pathView.length == 0)
+	{
+		if (onError != NULL)
+		{
+			onError(ERRCODE_DOCUMENTDB_LOCATION28812,
+					"No path provided for $unwind stage", NULL);
+		}
+		return false;
+	}
+
+	if (!StringViewStartsWith(&pathView, '$') || pathView.length == 1)
+	{
+		if (onError != NULL)
+		{
+			onError(ERRCODE_DOCUMENTDB_LOCATION28818,
+					"The path option provided to the $unwind stage must start with the '$' symbol: %s",
+					CreateStringFromStringView(&pathView));
+		}
+		return false;
+	}
+
+	if (pathView.string[1] == '$')
+	{
+		if (onError != NULL)
+		{
+			onError(ERRCODE_DOCUMENTDB_LOCATION16410,
+					"FieldPath field names cannot begin with the symbol '$'.", NULL);
+		}
+		return false;
+	}
+
+	return true;
+}
+
+
+/*
  * Applies the Unwind operator to the query.
  * Requests a new subquery stage (since we process unwind as an SRF)
  * after the unwind to ensure subsequent stages can process it on a
@@ -4949,131 +5181,16 @@ HandleUnwind(const bson_value_t *existingValue, Query *query,
 			 AggregationPipelineBuildContext *context)
 {
 	ReportFeatureUsage(FEATURE_STAGE_UNWIND);
-	bson_value_t pathValue = { 0 };
-	bool hasOptions = false;
-	switch (existingValue->value_type)
-	{
-		case BSON_TYPE_UTF8:
-		{
-			pathValue = *existingValue;
-			break;
-		}
 
-		case BSON_TYPE_DOCUMENT:
-		{
-			hasOptions = true;
-			bson_iter_t optionsDocIter;
-			BsonValueInitIterator(existingValue, &optionsDocIter);
-			while (bson_iter_next(&optionsDocIter))
-			{
-				const char *key = bson_iter_key(&optionsDocIter);
-				const bson_value_t *value = bson_iter_value(&optionsDocIter);
-				if (strcmp(key, "path") == 0)
-				{
-					pathValue = *value;
-				}
-				else if (strcmp(key, "includeArrayIndex") == 0)
-				{
-					if (value->value_type != BSON_TYPE_UTF8)
-					{
-						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28810),
-										errmsg(
-											"A non-empty string value was expected for the includeArrayIndex option in the $unwind stage.")));
-					}
-
-					StringView includeArrayIndexView = (StringView) {
-						.string = value->value.v_utf8.str,
-						.length = value->value.v_utf8.len
-					};
-
-					if (includeArrayIndexView.length == 0)
-					{
-						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28810),
-										errmsg(
-											"A non-empty string value was expected for the includeArrayIndex option in the $unwind stage.")));
-					}
-
-					if (StringViewStartsWith(&includeArrayIndexView, '$'))
-					{
-						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28822),
-										errmsg(
-											"The includeArrayIndex option used in the $unwind stage must not have a '$' operator at the beginning: %s",
-											includeArrayIndexView.string)));
-					}
-				}
-				else if (strcmp(key, "preserveNullAndEmptyArrays") == 0)
-				{
-					if (value->value_type != BSON_TYPE_BOOL)
-					{
-						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28809),
-										errmsg(
-											"A boolean value was expected for the preserveNullAndEmptyArrays option used in the $unwind stage.")));
-					}
-				}
-				else
-				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28811),
-									errmsg(
-										"Invalid option specified for $unwind stage")));
-				}
-			}
-
-			break;
-		}
-
-		default:
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION15981),
-							errmsg(
-								"A string or an object was expected as the specification for the $unwind stage, but instead received %s.",
-								BsonTypeName(existingValue->value_type))));
-		}
-	}
-
-	if (pathValue.value_type == BSON_TYPE_EOD)
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28812),
-						errmsg("No path provided for $unwind stage")));
-	}
-	if (pathValue.value_type != BSON_TYPE_UTF8)
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28808),
-						errmsg(
-							"A string value was expected as the path in the $unwind stage, but received %s.",
-							BsonTypeName(pathValue.value_type))));
-	}
-
-	StringView pathView = {
-		.string = pathValue.value.v_utf8.str,
-		.length = pathValue.value.v_utf8.len
-	};
-	if (pathView.length == 0)
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28812),
-						errmsg("No path provided for $unwind stage")));
-	}
-
-	if (!StringViewStartsWith(&pathView, '$') || pathView.length == 1)
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28818),
-						errmsg(
-							"The path option provided to the $unwind stage must start with the '$' symbol: %.*s",
-							pathView.length, pathView.string)));
-	}
-
-	if (pathView.string[1] == '$')
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION16410),
-						errmsg(
-							"FieldPath field names cannot begin with the symbol '$'.")));
-	}
+	UnwindArgs unwindArgs;
+	TryParseUnwindStage(existingValue, &unwindArgs, ThrowUnwindParseError);
 
 	FuncExpr *resultExpr;
 
 	/* The first projector is the document */
 	TargetEntry *firstEntry = linitial(query->targetList);
 	Expr *currentProjection = firstEntry->expr;
-	if (hasOptions)
+	if (unwindArgs.hasOptions)
 	{
 		Const *unwindValue = MakeBsonConst(PgbsonInitFromDocumentBsonValue(
 											   existingValue));
@@ -8645,7 +8762,7 @@ ExtractAggregationStages(const bson_value_t *pipelineValue,
 
 	if (context->optimizePipelineStages)
 	{
-		TryOptimizeAggregationPipelines(&aggregationStages, context);
+		aggregationStages = TryOptimizeAggregationPipelines(aggregationStages, context);
 	}
 
 	if (context->joinStatus == JoinStageStatus_Unknown)
@@ -9840,14 +9957,14 @@ HandleMatchAggregationStage(const bson_value_t *existingValue, Query *query,
  * 2- Improve match stage if preceded by a projection stage and the filter is on a renamed field which could
  *    potentially use index.
  */
-static void
-TryOptimizeAggregationPipelines(List **aggregationStages,
+static List *
+TryOptimizeAggregationPipelines(List *aggregationStages,
 								AggregationPipelineBuildContext *context)
 {
-	List *stagesList = *aggregationStages;
+	List *stagesList = aggregationStages;
 	if (stagesList == NIL || list_length(stagesList) == 0)
 	{
-		return;
+		return stagesList;
 	}
 
 	/* Whether or not we can safely push the aggregation pipeline query to the shard table directly depends on
@@ -9857,6 +9974,17 @@ TryOptimizeAggregationPipelines(List **aggregationStages,
 	bool allowShardBaseTable = true;
 	int nextIndex = 0;
 	int currentIndex = 0;
+
+	/* Project-pushup-before-unwind-with-group state. The per-stage walk
+	 * below detects the $unwind ... $match* ... $group shape: unwindIdx is
+	 * set on the first $unwind, groupIdx on the first $group after it.
+	 * projectPushupDisqualified flips true on a non-$match between them or
+	 * a second $unwind, suppressing the rewrite for the whole pipeline. The
+	 * rewrite is applied after the loop, so foreach_delete_current calls in
+	 * the merge cases can't invalidate the recorded indices. */
+	int unwindIdx = -1;
+	int groupIdx = -1;
+	bool projectPushupDisqualified = false;
 
 	ListCell *cell;
 	foreach(cell, stagesList)
@@ -9881,8 +10009,51 @@ TryOptimizeAggregationPipelines(List **aggregationStages,
 			allowShardBaseTable = false;
 		}
 
-		switch (stage->stageDefinition->stageEnum)
+		Stage stageEnum = stage->stageDefinition->stageEnum;
+
+		/* Project-pushup disqualifier: any non-Unwind/Match/Group
+		 * stage inside the tracking window kills the rewrite. */
+		if (unwindIdx >= 0 && groupIdx < 0 &&
+			stageEnum != Stage_Unwind &&
+			stageEnum != Stage_Match &&
+			stageEnum != Stage_Group)
 		{
+			projectPushupDisqualified = true;
+		}
+
+		switch (stageEnum)
+		{
+			case Stage_Unwind:
+			{
+				/* second $unwind in the window disqualifies */
+				if (unwindIdx < 0)
+				{
+					unwindIdx = currentIndex;
+				}
+				else if (groupIdx < 0)
+				{
+					projectPushupDisqualified = true;
+				}
+				continue;
+			}
+
+			case Stage_Match:
+			{
+				/* Allowed inside the project-pushup tracking window. */
+				continue;
+			}
+
+			case Stage_Group:
+			{
+				/* Completes the $unwind ... $match* ... $group shape if
+				 * we're tracking a $unwind. */
+				if (unwindIdx >= 0 && groupIdx < 0)
+				{
+					groupIdx = currentIndex;
+				}
+				continue;
+			}
+
 			case Stage_Lookup:
 			{
 				if (IsPipelineStageFollowedByOtherStage(Stage_Lookup, Stage_Unwind,
@@ -9914,7 +10085,7 @@ TryOptimizeAggregationPipelines(List **aggregationStages,
 						lookupUnwindStage->stageDefinition = &LookupUnwindStageDefinition;
 
 						context->joinStatus = JoinStageStatus_HasJoinsOrUnions;
-						*aggregationStages = foreach_delete_current(stagesList, cell);
+						stagesList = foreach_delete_current(stagesList, cell);
 					}
 				}
 
@@ -9939,7 +10110,7 @@ TryOptimizeAggregationPipelines(List **aggregationStages,
 					nextStage->stageValue = ConvertPgbsonToBsonValue(
 						PgbsonWriterGetPgbson(&writer));
 					nextStage->stageDefinition = &SortGroupStageDefinition;
-					*aggregationStages = foreach_delete_current(stagesList, cell);
+					stagesList = foreach_delete_current(stagesList, cell);
 				}
 
 				continue;
@@ -9964,7 +10135,7 @@ TryOptimizeAggregationPipelines(List **aggregationStages,
 							memcpy(matchStage, stage, sizeof(AggregationStage));
 
 							/* delete the current stage */
-							*aggregationStages = foreach_delete_current(stagesList, cell);
+							stagesList = foreach_delete_current(stagesList, cell);
 						}
 					}
 				}
@@ -9980,6 +10151,33 @@ TryOptimizeAggregationPipelines(List **aggregationStages,
 	}
 
 	context->allowShardBaseTable = allowShardBaseTable;
+
+	/* The rewrite can fire iff no disqualifying event was seen and the
+	 * per-stage walk found the complete $unwind ... $match* ... $group
+	 * shape.
+	 * The groupIdx > unwindIdx check is defensive: the walk already
+	 * guarantees the $group is recorded after the $unwind. */
+	bool canPushProject = !projectPushupDisqualified &&
+						  unwindIdx >= 0 && groupIdx >= 0 &&
+						  groupIdx > unwindIdx;
+
+	if (canPushProject)
+	{
+		/* The $unwind ... $match* ... $group shape is detected purely from
+		 * the stages' state, so we know this pipeline is a candidate before
+		 * the deeper spec validation runs.
+		 */
+		ReportFeatureUsage(FEATURE_STAGE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP);
+
+		if (EnableProjectPushUpBeforeUnwindWithGroup)
+		{
+			stagesList = TryInjectProjectBeforeUnwindForGroup(stagesList,
+															  unwindIdx, groupIdx,
+															  context);
+		}
+	}
+
+	return stagesList;
 }
 
 
@@ -10118,4 +10316,618 @@ TryInlineChangeStreamNamespaceFilters(AggregationStage *changeStreamStage,
 	}
 
 	return true;
+}
+
+
+/*
+ * Adds topLevel to consumedFields if not already present. Empty views are
+ * ignored. Returns false when the set is already at
+ * PROJECT_PUSHUP_MAX_FIELDS and topLevel would be a new entry.
+ */
+static bool
+AddTopLevelFieldToSet(HTAB *consumedFields, StringView topLevel)
+{
+	if (topLevel.length == 0)
+	{
+		return true;
+	}
+
+	bool found = false;
+	hash_search(consumedFields, &topLevel, HASH_FIND, &found);
+	if (found)
+	{
+		return true;
+	}
+
+	if (hash_get_num_entries(consumedFields) >= PROJECT_PUSHUP_MAX_FIELDS)
+	{
+		return false;
+	}
+
+	hash_search(consumedFields, &topLevel, HASH_ENTER, NULL);
+	return true;
+}
+
+
+/*
+ * Extracts the top-level component of an already-dollar-stripped field path
+ * (the segment up to the first '.', or the whole path if there's no dot).
+ * Returns false for empty paths or paths with a leading '.', which have no
+ * usable top-level field.
+ */
+static bool
+ExtractTopLevelFieldPrefix(StringView fieldPath, StringView *outTopLevel)
+{
+	outTopLevel->string = NULL;
+	outTopLevel->length = 0;
+	if (fieldPath.length == 0 || fieldPath.string[0] == '.')
+	{
+		return false;
+	}
+
+	/* Prefix up to the first '.'; an empty result means no '.' was found, so
+	 * the whole path is the top-level field. */
+	StringView topLevel = StringViewFindPrefix(&fieldPath, '.');
+	*outTopLevel = topLevel.length == 0 ? fieldPath : topLevel;
+	return true;
+}
+
+
+/*
+ * Adds the top-level component of fieldPath (up to the first '.') to the
+ * set and returns it via *outTopLevel for caller-side semantic checks
+ * (e.g. _id detection). Returns false (bailing the rewrite) on set overflow
+ * or on paths with no usable top-level field (empty or leading '.').
+ */
+static bool
+AddFieldPathTopLevelToSet(HTAB *consumedFields,
+						  StringView fieldPath, StringView *outTopLevel)
+{
+	if (!ExtractTopLevelFieldPrefix(fieldPath, outTopLevel))
+	{
+		/* Empty or leading-'.' paths reference an empty-named top-level field
+		 * (e.g. { "": 5 } or { ".foo": 5 }) that we can't represent in the
+		 * consumed-field set. Recording nothing here would let the synthetic
+		 * inclusion $project strip a field the query actually references, so
+		 * bail the rewrite defensively. */
+		return false;
+	}
+
+	return AddTopLevelFieldToSet(consumedFields, *outTopLevel);
+}
+
+
+/*
+ * Adds the top-level of every field path in a $match filter to the set,
+ * recursing into $and/$or/$nor. Sets *outReferencesId if any top-level is
+ * "_id". Returns false on any operator we can't statically analyze, or on
+ * set overflow.
+ */
+static bool
+CollectMatchTopLevelPaths(const bson_value_t *filterValue,
+						  HTAB *consumedFields,
+						  bool *outReferencesId)
+{
+	check_stack_depth();
+	CHECK_FOR_INTERRUPTS();
+
+	*outReferencesId = false;
+
+	if (filterValue->value_type != BSON_TYPE_DOCUMENT)
+	{
+		return false;
+	}
+
+	bson_iter_t filterIter;
+	BsonValueInitIterator(filterValue, &filterIter);
+	while (bson_iter_next(&filterIter))
+	{
+		const char *key = bson_iter_key(&filterIter);
+
+		/* Example: { $match: { "customer.region": "US" } }
+		 * Non-$ keys are field paths (e.g. "customer.region"); record the
+		 * top-level component. */
+		if (key[0] != '$')
+		{
+			StringView fieldPath = { .string = key, .length = strlen(key) };
+			StringView topLevel;
+			if (!AddFieldPathTopLevelToSet(consumedFields, fieldPath, &topLevel))
+			{
+				return false;
+			}
+			if (StringViewEquals(&topLevel, &IdFieldStringView))
+			{
+				/* Example: { $match: { _id: 2 } } */
+				*outReferencesId = true;
+			}
+			continue;
+		}
+
+		/* $-prefixed key: classify via the central operator registry so
+		 * we don't have to maintain our own string list. */
+		const MongoQueryOperator *queryOp =
+			GetMongoQueryOperatorByMongoOpName(key, MongoQueryOperatorInputType_Bson);
+
+		switch (queryOp->operatorType)
+		{
+			case QUERY_OPERATOR_AND:
+			case QUERY_OPERATOR_OR:
+			case QUERY_OPERATOR_NOR:
+			{
+				/* Example: { $match: { $or: [ { a: 1 }, { b: 2 } ] } }
+				 * Recurse into every branch — we need fields touched
+				 * anywhere in the predicate, not just equality predicates.
+				 * (TraverseQueryDocumentAndProcess recurses differently.) */
+				const bson_value_t *arrayValue = bson_iter_value(&filterIter);
+				if (arrayValue->value_type != BSON_TYPE_ARRAY)
+				{
+					return false;
+				}
+
+				bson_iter_t arrayIter;
+				BsonValueInitIterator(arrayValue, &arrayIter);
+				while (bson_iter_next(&arrayIter))
+				{
+					if (!BSON_ITER_HOLDS_DOCUMENT(&arrayIter))
+					{
+						return false;
+					}
+					bool subReferencesId = false;
+					if (!CollectMatchTopLevelPaths(bson_iter_value(&arrayIter),
+												   consumedFields,
+												   &subReferencesId))
+					{
+						return false;
+					}
+					*outReferencesId = *outReferencesId || subReferencesId;
+				}
+				continue;
+			}
+
+			case QUERY_OPERATOR_COMMENT:
+			{
+				/* Example: { $match: { $comment: "note" } } — metadata only */
+				continue;
+			}
+
+			default:
+			{
+				/* Example: { $match: { $expr: { $gt: ["$a", "$b"] } } }
+				 * $expr, $where, $jsonSchema, $text, $sampleRate, etc.
+				 * May reference fields we can't statically analyze. */
+				return false;
+			}
+		}
+	}
+
+	return true;
+}
+
+
+/*
+ * Handles a single accumulator argument. Simple "$path" strings add their
+ * top-level to the set; pure scalar constants and empty docs contribute
+ * nothing. Sets *outReferencesId if the path's top-level is "_id". Returns
+ * false on $$ROOT/$$CURRENT, sub-expressions, or arrays.
+ */
+static bool
+CollectAccumulatorArgPath(const bson_value_t *argValue,
+						  HTAB *consumedFields,
+						  bool *outReferencesId)
+{
+	*outReferencesId = false;
+
+	switch (argValue->value_type)
+	{
+		case BSON_TYPE_UTF8:
+		{
+			const char *path = argValue->value.v_utf8.str;
+			uint32_t pathLen = argValue->value.v_utf8.len;
+			if (pathLen > 0 && path[0] == '$')
+			{
+				if (pathLen < 2 || path[1] == '$')
+				{
+					/* Example: { $first: "$$ROOT" } — "$$ROOT", "$$CURRENT",
+					 * and similar variable refs. */
+					return false;
+				}
+
+				/* Example: { $sum: "$price" } */
+				StringView fieldPath = {
+					.string = path + 1, .length = pathLen - 1
+				};
+				StringView topLevel;
+				if (!AddFieldPathTopLevelToSet(consumedFields, fieldPath, &topLevel))
+				{
+					return false;
+				}
+
+				if (StringViewEquals(&topLevel, &IdFieldStringView))
+				{
+					*outReferencesId = true;
+				}
+				return true;
+			}
+
+			/* Literal non-'$' string (e.g. { $sum: "label" }): not an
+			 * accumulator path, so fall through to the shared classifier
+			 * below rather than deciding it here. */
+			break;
+		}
+
+		default:
+		{
+			/* Scalars, {}, arrays, non-empty docs: no accumulator-specific
+			 * handling; fall through to the shared classifier below. */
+			break;
+		}
+	}
+
+	/* "$path" extraction above is the only behavior unique to accumulators.
+	 * Everything else — scalars, literal strings, {} (e.g. { $count: {} }) —
+	 * references no source fields and needs nothing collected; non-empty docs
+	 * (sub-expression trees) and arrays may reference fields and bail. */
+	return ValueReferencesNoSourceFields(argValue);
+}
+
+
+/*
+ * Given a $unwind path value (a UTF8 string of the form "$field" or
+ * "$field.sub.path"), extracts the top-level field name (the segment
+ * between the leading '$' and the first '.', or the full remainder if
+ * there's no dot). Returns false if the value is not a usable path
+ * ($$-variables, empty after '$', non-UTF8).
+ */
+static bool
+ExtractTopLevelFieldFromDollarPath(const bson_value_t *pathValue,
+								   StringView *outTopLevel)
+{
+	if (pathValue->value_type != BSON_TYPE_UTF8 ||
+		pathValue->value.v_utf8.len < 2 ||
+		pathValue->value.v_utf8.str[0] != '$' ||
+		pathValue->value.v_utf8.str[1] == '$')
+	{
+		return false;
+	}
+
+	StringView fieldPath = {
+		.string = pathValue->value.v_utf8.str + 1,
+		.length = pathValue->value.v_utf8.len - 1
+	};
+	return ExtractTopLevelFieldPrefix(fieldPath, outTopLevel);
+}
+
+
+/*
+ * Extracts the $unwind path's top-level field name and whether the path's
+ * top-level is "_id". Returns false if the path is unusable here
+ * ($$-variables, etc), or if the $unwind specifies includeArrayIndex (the
+ * synthesized index field is not safe to push the optimization across).
+ * preserveNullAndEmptyArrays doesn't affect required source fields.
+ */
+static bool
+ExtractUnwindInfo(const bson_value_t *unwindStageValue,
+				  StringView *outTopLevel,
+				  bool *outReferencesId)
+{
+	*outReferencesId = false;
+
+	UnwindArgs unwindArgs;
+	UnwindParseErrorHandler onErrorIgnored = NULL;
+	if (!TryParseUnwindStage(unwindStageValue, &unwindArgs, onErrorIgnored))
+	{
+		return false;
+	}
+
+	if (unwindArgs.includeArrayIndex.length > 0)
+	{
+		return false;
+	}
+
+	if (!ExtractTopLevelFieldFromDollarPath(&unwindArgs.pathValue, outTopLevel))
+	{
+		return false;
+	}
+
+	*outReferencesId = StringViewEquals(outTopLevel, &IdFieldStringView);
+	return true;
+}
+
+
+/*
+ * True if value provably references no source fields: null, scalars, literal
+ * (no leading '$') strings, and the empty document. UTF8 starting with '$'
+ * (path or $$-variable), non-empty documents, and arrays may reference fields
+ * and return false; the callers handle those role-specific cases themselves.
+ *
+ * For a $group (context for callers): _id this also means "constant key": such an _id groups every
+ * input row into a single bucket. For an accumulator argument it means the
+ * arg is trivially accounted for and needs nothing collected.
+ */
+static bool
+ValueReferencesNoSourceFields(const bson_value_t *value)
+{
+	switch (value->value_type)
+	{
+		case BSON_TYPE_NULL:
+		case BSON_TYPE_INT32:
+		case BSON_TYPE_INT64:
+		case BSON_TYPE_DOUBLE:
+		case BSON_TYPE_DECIMAL128:
+		case BSON_TYPE_BOOL:
+		case BSON_TYPE_DATE_TIME:
+		case BSON_TYPE_TIMESTAMP:
+		case BSON_TYPE_OID:
+		{
+			/* Examples: { $group: { _id: 42 } }, { $sum: 1 } */
+			return true;
+		}
+
+		case BSON_TYPE_UTF8:
+		{
+			const char *s = value->value.v_utf8.str;
+			uint32_t len = value->value.v_utf8.len;
+
+			/* Examples: { _id: "label" } / { $sum: "label" } reference nothing;
+			 * { _id: "$region" } / { $sum: "$price" } reference a field. */
+			return len == 0 || s[0] != '$';
+		}
+
+		case BSON_TYPE_DOCUMENT:
+		{
+			/* Empty document references nothing ({ _id: {} }, { $count: {} }).
+			 * Non-empty documents are compound _id specs / sub-expression
+			 * trees that may reference fields.
+			 * Example: { _id: { region: "$region" } } */
+			return IsBsonValueEmptyDocument(value);
+		}
+
+		default:
+
+			/* Example: { _id: [ "$region" ] } — arrays may reference fields. */
+			return false;
+	}
+}
+
+
+/*
+ * Adds the top-level fields referenced by the $group _id and accumulator
+ * args to the set. Sets *outReferencesId if any reference's top-level is
+ * "_id". Returns false on unsupported shapes (duplicate _id, non-document
+ * accumulator spec, complex accumulator arg, complex _id expression).
+ */
+static bool
+CollectGroupReferencedPaths(const bson_value_t *groupStageValue,
+							HTAB *consumedFields,
+							bool *outReferencesId)
+{
+	*outReferencesId = false;
+
+	if (groupStageValue->value_type != BSON_TYPE_DOCUMENT)
+	{
+		return false;
+	}
+
+	bson_iter_t groupIter;
+	BsonValueInitIterator(groupStageValue, &groupIter);
+
+	bson_value_t idValue = { 0 };
+	bool sawId = false;
+	while (bson_iter_next(&groupIter))
+	{
+		StringView keyView = bson_iter_key_string_view(&groupIter);
+		if (StringViewEquals(&keyView, &IdFieldStringView))
+		{
+			if (sawId)
+			{
+				/* Example: { $group: { _id: "$a", _id: "$b" } } */
+				return false;
+			}
+			idValue = *bson_iter_value(&groupIter);
+			sawId = true;
+			continue;
+		}
+
+		const bson_value_t *accSpec = bson_iter_value(&groupIter);
+		if (accSpec->value_type != BSON_TYPE_DOCUMENT)
+		{
+			/* Example: { $group: { _id: "$a", total: 5 } } */
+			return false;
+		}
+
+		/* Every accumulator must be a single-key document like { $sum: ... }.
+		 * Example: { total: { $sum: "$qty" } } is fine;
+		 * { total: { $sum: "$a", $avg: "$b" } } bails.
+		 * TryGetSinglePgbsonElementFromBsonIterator is the canonical helper
+		 * for "this BSON must have exactly one element".
+		 */
+		bson_iter_t accIter;
+		BsonValueInitIterator(accSpec, &accIter);
+		pgbsonelement accElement;
+		if (!TryGetSinglePgbsonElementFromBsonIterator(&accIter, &accElement))
+		{
+			return false;
+		}
+		bool accReferencesId = false;
+		if (!CollectAccumulatorArgPath(&accElement.bsonValue,
+									   consumedFields,
+									   &accReferencesId))
+		{
+			return false;
+		}
+		*outReferencesId = *outReferencesId || accReferencesId;
+	}
+
+	if (!sawId)
+	{
+		return false;
+	}
+
+	/* Constant _id values ($group{_id:null}, {_id:42}, {_id:"label"} without
+	 * a leading '$', or {_id:{}}) group every input row into a single bucket
+	 * and reference no source fields, so they contribute nothing to the
+	 * consumed-field set. Skip TryExtractGroupByFieldPaths in that case —
+	 * it would otherwise reject these forms and bail the whole rewrite. */
+	if (!ValueReferencesNoSourceFields(&idValue))
+	{
+		StringView idKeys[INDEX_MAX_KEYS] = { 0 };
+		int numIdKeys = 0;
+		if (!TryExtractGroupByFieldPaths(&idValue, idKeys, INDEX_MAX_KEYS,
+										 &numIdKeys))
+		{
+			return false;
+		}
+
+		for (int i = 0; i < numIdKeys; i++)
+		{
+			StringView topLevel;
+			if (!AddFieldPathTopLevelToSet(consumedFields, idKeys[i],
+										   &topLevel))
+			{
+				return false;
+			}
+			if (StringViewEquals(&topLevel, &IdFieldStringView))
+			{
+				*outReferencesId = true;
+			}
+		}
+	}
+
+	return true;
+}
+
+
+/*
+ * Splices a synthetic $project before stages[unwindIdx] that keeps only
+ * the top-level fields referenced by the $unwind, any $match stages
+ * between it and stages[groupIdx], and the $group itself. Bails on
+ * anything not provably safe to push across (complex match operators,
+ * complex group accumulators, $$ROOT/$$CURRENT, joins/unions).
+ *
+ * Caller is responsible for detecting the eligible $unwind/$group shape.
+ */
+static List *
+TryInjectProjectBeforeUnwindForGroup(List *aggregationStages,
+									 int unwindIdx, int groupIdx,
+									 AggregationPipelineBuildContext *context)
+{
+	HTAB *consumedFields = CreateStringViewHashSet();
+
+	List *stages = TryInjectProjectBeforeUnwindForGroupCore(aggregationStages,
+															unwindIdx, groupIdx,
+															context, consumedFields);
+
+	hash_destroy(consumedFields);
+
+	return stages;
+}
+
+
+/*
+ * Core implementation of TryInjectProjectBeforeUnwindForGroup. The caller owns
+ * the consumedFields hashset and is responsible for destroying it; this lets
+ * the various early-return bail-out paths below avoid freeing it individually.
+ */
+static List *
+TryInjectProjectBeforeUnwindForGroupCore(List *aggregationStages,
+										 int unwindIdx, int groupIdx,
+										 AggregationPipelineBuildContext *context,
+										 HTAB *consumedFields)
+{
+	List *stages = aggregationStages;
+
+	/* Joined/nested downstream stages may need fields the project would
+	 * strip. */
+	if (context->joinStatus == JoinStageStatus_HasJoinsOrUnions)
+	{
+		return stages;
+	}
+
+	AggregationStage *unwindStage = (AggregationStage *) list_nth(stages, unwindIdx);
+	AggregationStage *groupStage = (AggregationStage *) list_nth(stages, groupIdx);
+
+	/* Synthetic $project keeps _id iff any of the unwind/match/group
+	 * analyses below reports a reference to it. */
+	bool includeId = false;
+
+	StringView unwindTopLevel = { 0 };
+	bool unwindReferencesId = false;
+	if (!ExtractUnwindInfo(&unwindStage->stageValue, &unwindTopLevel,
+						   &unwindReferencesId))
+	{
+		return stages;
+	}
+	includeId = includeId || unwindReferencesId;
+
+	if (!AddTopLevelFieldToSet(consumedFields, unwindTopLevel))
+	{
+		return stages;
+	}
+
+	for (int i = unwindIdx + 1; i < groupIdx; i++)
+	{
+		AggregationStage *interMatch = (AggregationStage *) list_nth(stages, i);
+		bool matchReferencesId = false;
+		if (!CollectMatchTopLevelPaths(&interMatch->stageValue,
+									   consumedFields,
+									   &matchReferencesId))
+		{
+			return stages;
+		}
+		includeId = includeId || matchReferencesId;
+	}
+
+	bool groupReferencesId = false;
+	if (!CollectGroupReferencedPaths(&groupStage->stageValue,
+									 consumedFields,
+									 &groupReferencesId))
+	{
+		return stages;
+	}
+	includeId = includeId || groupReferencesId;
+
+	if (hash_get_num_entries(consumedFields) == 0)
+	{
+		return stages;
+	}
+
+	AggregationStage *projStage = BuildSyntheticInclusionProjectStage(
+		consumedFields, includeId);
+
+	return list_insert_nth(stages, unwindIdx, projStage);
+}
+
+
+/*
+ * Builds a synthetic $project stage with inclusion spec
+ * { <field>: 1, ..., _id: <0|1> } from the consumed-field hashset.
+ */
+static AggregationStage *
+BuildSyntheticInclusionProjectStage(HTAB *consumedFields, bool includeId)
+{
+	pgbson_writer projWriter;
+	PgbsonWriterInit(&projWriter);
+
+	HASH_SEQ_STATUS seqStatus;
+	hash_seq_init(&seqStatus, consumedFields);
+	StringView *field;
+	while ((field = (StringView *) hash_seq_search(&seqStatus)) != NULL)
+	{
+		if (StringViewEquals(field, &IdFieldStringView))
+		{
+			/* _id is emitted out-of-band below to honor includeId; skip
+			 * here to avoid a duplicate key. */
+			continue;
+		}
+		PgbsonWriterAppendInt32(&projWriter, field->string, field->length, 1);
+	}
+
+	PgbsonWriterAppendInt32(&projWriter, IdFieldStringView.string,
+							IdFieldStringView.length, includeId ? 1 : 0);
+
+	AggregationStage *projStage = palloc0(sizeof(AggregationStage));
+	projStage->stageDefinition = (AggregationStageDefinition *) &ProjectStageDefinition;
+	projStage->stageValue = ConvertPgbsonToBsonValue(
+		PgbsonWriterGetPgbson(&projWriter));
+	return projStage;
 }
