@@ -32,8 +32,6 @@
 
 #include "api_hooks.h"
 
-extern bool EnableNewNamespaceValidation;
-
 static char * ConstructDropCommandCstr(char *databaseName, char *collectionName,
 									   pgbson *writeConcern, char *uuid, bool
 									   trackChanges);
@@ -60,11 +58,6 @@ command_drop_collection(PG_FUNCTION_ARGS)
 	char *databaseName = TextDatumGetCString(databaseNameDatum);
 	char *collectionName = TextDatumGetCString(collectionNameDatum);
 
-	if (EnableNewNamespaceValidation)
-	{
-		StringView collectionView = CreateStringViewFromString(collectionName);
-		ValidateCollectionNameForValidSystemNamespace(&collectionView, databaseNameDatum);
-	}
 
 	MongoCollection *collection =
 		GetMongoCollectionOrViewByNameDatum(databaseNameDatum,

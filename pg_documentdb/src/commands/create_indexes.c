@@ -172,6 +172,7 @@ extern bool EnablePlannerStatisticsNewCollections;
 extern bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath;
 extern bool EnableIndexMetadataGlobalTracking;
 extern bool EnableDottedValueTextIndexTerms;
+extern bool EnableNewNamespaceValidation;
 
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool SkipFailOnCollation;
@@ -1450,6 +1451,31 @@ ParseCreateIndexesArg(Datum *dbNameDatum, pgbson *arg, bool buildAsUniqueForPrep
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
 						errmsg("The specified namespace is invalid: '%s'.",
 							   TextDatumGetCString(*dbNameDatum))));
+	}
+
+	if (EnableNewNamespaceValidation)
+	{
+		StringView collectionView = CreateStringViewFromString(
+			createIndexesArg.collectionName);
+		ValidateCollectionNameForValidSystemNamespace(&collectionView,
+													  *dbNameDatum);
+	}
+	else
+	{
+		/*
+		 * Fallback when the new namespace validation GUC is off: preserve the
+		 * legacy gateway behavior of blocking createIndexes on the 'admin'
+		 * and 'config' databases entirely. This restores the pre-feature-flag
+		 * safety net so that turning the GUC off becomes a clean revert.
+		 */
+		char *databaseName = TextDatumGetCString(*dbNameDatum);
+		if (strcmp(databaseName, "admin") == 0 ||
+			strcmp(databaseName, "config") == 0)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_ILLEGALOPERATION),
+							errmsg(
+								"Cannot create indexes in config or admin databases")));
+		}
 	}
 
 	if (list_length(createIndexesArg.indexDefList) == 0)
