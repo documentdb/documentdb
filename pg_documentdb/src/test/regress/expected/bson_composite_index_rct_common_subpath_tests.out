@@ -1,9 +1,6 @@
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 1700;
 SET documentdb.next_collection_index_id TO 1700;
--- Ensure old RCT flags are off, and only the new common-sub-path flag is on (the default).
-SET documentdb.enableCompositeReducedCorrelatedTerms TO off;
-SET documentdb.enableUniqueCompositeReducedCorrelatedTerms TO off;
 SET documentdb.enableCompositeReducedCorrelatedTermsOnCommonSubPath TO on;
 -- =====================================================================
 -- 1) Common prefix: a.b, a.c → both share prefix "a" → rct=true

@@ -2,11 +2,9 @@
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 1000;
 SET documentdb.next_collection_index_id TO 1000;
-set documentdb.enableCompositeReducedCorrelatedTerms to on;
-set documentdb.enableUniqueCompositeReducedCorrelatedTerms to on;
 -- now test query path pushdown
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkey_db', '{ "createIndexes": "mkey_coll", "indexes": [ { "key": { "a.b": 1, "a.c": 1 }, "name": "a_b_c_1", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_extrum_tests.sql:10: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_extrum_tests.sql:7: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -105,7 +103,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 
 -- multikey on a.b - query on a.c can be pushed
 TRUNCATE documentdb_data.documents_801;
-psql:sql/bson_composite_index_multi_key_extrum_tests.sql:30: ERROR:  relation "documentdb_data.documents_801" does not exist
+psql:sql/bson_composite_index_multi_key_extrum_tests.sql:27: ERROR:  relation "documentdb_data.documents_801" does not exist
 SELECT documentdb_api.insert_one('mkey_db', 'mkey_coll', '{ "_id": 1, "a": { "b": [ 1, 2 ], "c": 2 } }');
                                                                                                                        insert_one                                                                                                                        
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

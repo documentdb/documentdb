@@ -3,7 +3,6 @@ NOTICE:  identifier "pg_regress/bson_composite_index_multi_key_per_path_extrum_t
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 13000;
 SET documentdb.next_collection_index_id TO 13000;
-set documentdb.enableCompositeReducedCorrelatedTerms to on;
 -- Enable per-path multi-key term tracking: each multi-key path is tracked with
 -- its own metadata term instead of a single root multi-key term.
 set documentdb.enableIndexMetadataGlobalTracking to on;
@@ -19,7 +18,7 @@ set enable_seqscan to off;
 set log_temp_files to -1;
 -- Create an ordered composite index with per-path multi-key tracking enabled.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkp_db', '{ "createIndexes": "mkp_coll", "indexes": [ { "key": { "a.b": 1, "a.c": 1 }, "name": "a_b_c_1", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:24: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:22: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -261,7 +260,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 -- argument skips the empty-collection check). The build path unions the per-path bits, so
 -- explain reports "multiKeyPaths: a.b, a.c".
 SELECT documentdb_api.insert_one('mkp_db', 'mkp_build_coll', '{ "_id": 1, "a": { "b": 1, "c": [ 1, 2 ] } }');
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:91: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:89: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -318,7 +317,7 @@ SELECT COUNT(documentdb_api.insert_one('mkp_db', 'mkp_parallel_coll',
          ELSE FORMAT('{ "_id": %s, "a": { "b": [ %s, %s ], "c": %s } }', i, i, -i, i)::bson
     END))
 FROM generate_series(1, 2000) AS i;
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:117: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:115: NOTICE:  creating collection
  count 
 -------
   2000
@@ -326,17 +325,17 @@ psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:117: NOTICE:  
 
 set client_min_messages to DEBUG1;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkp_db', '{ "createIndexes": "mkp_parallel_coll", "indexes": [ { "key": { "a.b": 1, "a.c": 1 }, "name": "a_b_c_1", "enableOrderedIndex": 1 } ] }', TRUE);
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:120: DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id), index_is_valid FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND (index_spec).index_name = $2 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:120: DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id), index_is_valid FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND documentdb_api_internal.index_spec_options_are_equivalent(index_spec, $2) AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:120: DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 13003 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:120: DEBUG:  executing "INSERT INTO documentdb_api_catalog.collection_indexes (collection_id, index_spec, index_is_valid) VALUES ($1, $2, $3) RETURNING index_id" via SPI
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:120: DEBUG:  executing "CREATE INDEX  documents_rum_index_13006 ON documentdb_data.documents_13003 USING documentdb_extended_rum ( document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops(pathspec='[ "a.b", "a.c" ]',tl=2691,rct=true,mkp=true)) " via SPI
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:120: DEBUG:  building index "documents_rum_index_13006" on table "documents_13003" serially
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:120: DEBUG:  Overriding parallel workers to 2
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:120: DEBUG:  parallel index build requested with 2 workers
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:120: LOG:  Rum performing merge on 2000.000000 tuples.
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:120: DEBUG:  parallel index build completed with 2000.000000 heaptuples and 0.000000 indextuples
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:120: DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 13003 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:118: DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id), index_is_valid FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND (index_spec).index_name = $2 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:118: DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id), index_is_valid FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND documentdb_api_internal.index_spec_options_are_equivalent(index_spec, $2) AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:118: DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 13003 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:118: DEBUG:  executing "INSERT INTO documentdb_api_catalog.collection_indexes (collection_id, index_spec, index_is_valid) VALUES ($1, $2, $3) RETURNING index_id" via SPI
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:118: DEBUG:  executing "CREATE INDEX  documents_rum_index_13006 ON documentdb_data.documents_13003 USING documentdb_extended_rum ( document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops(pathspec='[ "a.b", "a.c" ]',tl=2691,rct=true,mkp=true)) " via SPI
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:118: DEBUG:  building index "documents_rum_index_13006" on table "documents_13003" serially
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:118: DEBUG:  Overriding parallel workers to 2
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:118: DEBUG:  parallel index build requested with 2 workers
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:118: LOG:  Rum performing merge on 2000.000000 tuples.
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:118: DEBUG:  parallel index build completed with 2000.000000 heaptuples and 0.000000 indextuples
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:118: DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 13003 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
                                                                                                    create_indexes_non_concurrently                                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -386,7 +385,7 @@ SET documentdb.indexTermLimitOverride TO 50;
 -- document. Extraction at insert time ORs the multi-key, correlated, and
 -- truncation bits into the opclass-metadata blob, so all three surface.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkp_db', '{ "createIndexes": "mkp_props_insert_coll", "indexes": [ { "key": { "a.b": 1, "a.c": 1 }, "name": "a_b_c_1", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:152: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:150: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -425,7 +424,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 -- skips the empty-collection check). Extraction during the single-threaded
 -- build populates the same blob, so all three properties surface.
 SELECT documentdb_api.insert_one('mkp_db', 'mkp_props_build_coll', '{ "_id": 1, "a": [ { "b": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "c": 1 }, { "b": "bb", "c": 2 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:161: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:159: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -472,7 +471,7 @@ SET documentdb_rum.parallel_index_build_leader_participates TO off;
 SELECT COUNT(documentdb_api.insert_one('mkp_db', 'mkp_props_parallel_coll',
     FORMAT('{ "_id": %s, "a": [ { "b": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa%s", "c": %s }, { "b": "bb", "c": %s } ] }', i, i, i, -i)::bson))
 FROM generate_series(1, 2000) AS i;
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:179: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:177: NOTICE:  creating collection
  count 
 -------
   2000
@@ -480,17 +479,17 @@ psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:179: NOTICE:  
 
 set client_min_messages to DEBUG1;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkp_db', '{ "createIndexes": "mkp_props_parallel_coll", "indexes": [ { "key": { "a.b": 1, "a.c": 1 }, "name": "a_b_c_1", "enableOrderedIndex": 1 } ] }', TRUE);
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:182: DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id), index_is_valid FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND (index_spec).index_name = $2 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:182: DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id), index_is_valid FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND documentdb_api_internal.index_spec_options_are_equivalent(index_spec, $2) AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:182: DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 13006 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:182: DEBUG:  executing "INSERT INTO documentdb_api_catalog.collection_indexes (collection_id, index_spec, index_is_valid) VALUES ($1, $2, $3) RETURNING index_id" via SPI
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:182: DEBUG:  executing "CREATE INDEX  documents_rum_index_13012 ON documentdb_data.documents_13006 USING documentdb_extended_rum ( document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops(pathspec='[ "a.b", "a.c" ]',tl=50,rct=true,mkp=true)) " via SPI
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:182: DEBUG:  building index "documents_rum_index_13012" on table "documents_13006" serially
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:182: DEBUG:  Overriding parallel workers to 2
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:182: DEBUG:  parallel index build requested with 2 workers
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:182: LOG:  Rum performing merge on 2000.000000 tuples.
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:182: DEBUG:  parallel index build completed with 2000.000000 heaptuples and 0.000000 indextuples
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:182: DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 13006 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:180: DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id), index_is_valid FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND (index_spec).index_name = $2 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:180: DEBUG:  executing "SELECT index_id, index_spec, documentdb_api_internal.index_build_is_in_progress(index_id), index_is_valid FROM documentdb_api_catalog.collection_indexes WHERE collection_id = $1 AND documentdb_api_internal.index_spec_options_are_equivalent(index_spec, $2) AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:180: DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 13006 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:180: DEBUG:  executing "INSERT INTO documentdb_api_catalog.collection_indexes (collection_id, index_spec, index_is_valid) VALUES ($1, $2, $3) RETURNING index_id" via SPI
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:180: DEBUG:  executing "CREATE INDEX  documents_rum_index_13012 ON documentdb_data.documents_13006 USING documentdb_extended_rum ( document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops(pathspec='[ "a.b", "a.c" ]',tl=50,rct=true,mkp=true)) " via SPI
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:180: DEBUG:  building index "documents_rum_index_13012" on table "documents_13006" serially
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:180: DEBUG:  Overriding parallel workers to 2
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:180: DEBUG:  parallel index build requested with 2 workers
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:180: LOG:  Rum performing merge on 2000.000000 tuples.
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:180: DEBUG:  parallel index build completed with 2000.000000 heaptuples and 0.000000 indextuples
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:180: DEBUG:  executing "SELECT COUNT(*) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 13006 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
                                                                                                    create_indexes_non_concurrently                                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -529,7 +528,7 @@ RESET documentdb_rum.parallel_index_build_leader_participates;
 -- "hasTruncation" lines entirely (those lines are written only when the
 -- corresponding bit is set in the opclass-metadata blob).
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkp_db', '{ "createIndexes": "mkp_props_transition_coll", "indexes": [ { "key": { "a.b": 1, "a.c": 1 }, "name": "a_b_c_1", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:198: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:196: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -595,7 +594,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 -- that path: explain reports "truncatedPaths: a.c" (and isMultiKey is false, since
 -- there are no arrays).
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkp_db', '{ "createIndexes": "mkp_props_truncpaths_coll", "indexes": [ { "key": { "a.b": 1, "a.c": 1 }, "name": "a_b_c_1", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:215: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:213: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -659,7 +658,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 -- collection, then build the composite index over the existing data, and explain
 -- reports "truncatedPaths: a.b, a.c".
 SELECT documentdb_api.insert_one('mkp_db', 'mkp_props_truncbuild_coll', '{ "_id": 1, "a": { "b": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "c": "cccccccccccccccccccccccccccccccccc" } }');
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:231: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:229: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -705,7 +704,7 @@ RESET documentdb.indexTermLimitOverride;
 SET documentdb.indexTermLimitOverride TO 500;
 -- 5-path composite index: "multiKeyPaths" lists all 5 paths; truncatedPaths lists all 5 paths (since 5 <= 6).
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkp_db', '{ "createIndexes": "mkp_wide5_coll", "indexes": [ { "key": { "p0": 1, "p1": 1, "p2": 1, "p3": 1, "p4": 1 }, "name": "wide_5", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:252: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:250: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -739,7 +738,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 
 -- 10-path composite index: "multiKeyPaths" lists all 10 paths; truncatedPaths is capped at the first 6 paths (of 10).
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkp_db', '{ "createIndexes": "mkp_wide10_coll", "indexes": [ { "key": { "p0": 1, "p1": 1, "p2": 1, "p3": 1, "p4": 1, "p5": 1, "p6": 1, "p7": 1, "p8": 1, "p9": 1 }, "name": "wide_10", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:258: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:256: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -773,7 +772,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 
 -- 20-path composite index: "multiKeyPaths" lists all 20 paths; truncatedPaths is capped at the first 6 paths (of 20).
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkp_db', '{ "createIndexes": "mkp_wide20_coll", "indexes": [ { "key": { "p0": 1, "p1": 1, "p2": 1, "p3": 1, "p4": 1, "p5": 1, "p6": 1, "p7": 1, "p8": 1, "p9": 1, "p10": 1, "p11": 1, "p12": 1, "p13": 1, "p14": 1, "p15": 1, "p16": 1, "p17": 1, "p18": 1, "p19": 1 }, "name": "wide_20", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:264: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:262: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -795,7 +794,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
    indexKey: {"p0": 1,"p1": 1,"p2": 1,"p3": 1,"p4": 1,"p5": 1,"p6": 1,"p7": 1,"p8": 1,"p9": 1,"p10": 1,"p11": 1,"p12": 1,"p13": 1,"p14": 1,"p15": 1,"p16": 1,"p17": 1,"p18": 1,"p19": 1}
    isMultiKey: true
    multiKeyPaths: p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19
-   hasCorrelatedTerms: true
    hasTruncation: true
    truncatedPaths: p0, p1, p2, p3, p4, p5
    indexBounds: ["p0": [MinKey, MaxKey], "p1": [MinKey, MaxKey], "p2": (MinKey, MaxKey), "p3": (MinKey, MaxKey), "p4": (MinKey, MaxKey), "p5": (MinKey, MaxKey), "p6": (MinKey, MaxKey), "p7": (MinKey, MaxKey), "p8": (MinKey, MaxKey), "p9": (MinKey, MaxKey), "p10": (MinKey, MaxKey), "p11": (MinKey, MaxKey), "p12": (MinKey, MaxKey), "p13": (MinKey, MaxKey), "p14": (MinKey, MaxKey), "p15": (MinKey, MaxKey), "p16": (MinKey, MaxKey), "p17": (MinKey, MaxKey), "p18": (MinKey, MaxKey), "p19": (MinKey, MaxKey)]
@@ -804,7 +802,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
    ->  Index Scan using wide_20 on documents_13012 collection (actual rows=1 loops=1)
          Index Cond: ((document @>= '{ "p0" : { "$minKey" : 1 } }'::bson) AND (document @>= '{ "p1" : { "$minKey" : 1 } }'::bson))
-(15 rows)
+(14 rows)
 
 RESET documentdb.indexTermLimitOverride;
 -- ---------------------------------------------------------------------------
@@ -827,7 +825,7 @@ SET documentdb.indexTermLimitOverride TO 50;
 -- Metadata-tracked index (per-path tracking enabled): state is folded into the
 -- metapage blob, so no extra term entries are generated.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkp_db', '{ "createIndexes": "mkp_metapage_meta_coll", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:291: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:289: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -854,7 +852,7 @@ SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_
 -- global multi-key flag in the metapage (no per-path breakdown).
 set documentdb.enableIndexMetadataGlobalTracking to off;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkp_db', '{ "createIndexes": "mkp_metapage_legacy_coll", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:302: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_extrum_tests.sql:300: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
