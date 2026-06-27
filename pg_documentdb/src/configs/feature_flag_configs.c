@@ -330,9 +330,6 @@ bool EnableRumDynamicIndexScansSkipToTid =
 bool EnableDollarInToScalarArrayOpExprConversion =
 	DEFAULT_ENABLE_DOLLAR_IN_TO_SCALAR_ARRAY_OP_EXPR_CONVERSION;
 
-/* Added in v111, enabled in v111, remove after v114 */
-#define DEFAULT_USE_FOREIGN_KEY_LOOKUP_INLINE true
-bool EnableUseForeignKeyLookupInline = DEFAULT_USE_FOREIGN_KEY_LOOKUP_INLINE;
 
 /* Added in v110, enabled in v110, remove after v113 */
 #define DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE true
@@ -1113,13 +1110,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		DEFAULT_ENABLE_GROUP_BY_COMPOUND_ID_INDEX_PUSHDOWN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
-	DefineCustomBoolVariable(
-		psprintf("%s.enableUseForeignKeyLookupInline", newGucPrefix),
-		gettext_noop(
-			"Whether to use foreign key for lookup inline method."),
-		NULL, &EnableUseForeignKeyLookupInline,
-		DEFAULT_USE_FOREIGN_KEY_LOOKUP_INLINE,
-		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.indexBuildsScheduledOnBgWorker", newGucPrefix),
