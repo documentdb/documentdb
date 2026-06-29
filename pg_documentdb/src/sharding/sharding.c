@@ -1332,11 +1332,41 @@ GetExtendedIndexCreationCmds(MongoCollection *collection)
 		/* Check if this is an extended index AM */
 		if (IsExtendedIndexAmByName(amName))
 		{
+			/*
+			 * Queue commands may contain CONCURRENTLY (from background builds).
+			 * Remove 'CONCURRENTLY' since ShardCollectionCore executes commands via SPI inside a function,
+			 * where CREATE INDEX CONCURRENTLY is not allowed.
+			 */
+			char *cmd = request->cmd;
+			char *concurrentlyStart = strstr(cmd, "CONCURRENTLY");
+
+			if (concurrentlyStart != NULL)
+			{
+				/* Find the position of the index name format prefix after the CONCURRENTLY */
+				char *indexNameStart = strstr(concurrentlyStart + 12, /* strlen("CONCURRENTLY") = 12 */
+											  DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT_PREFIX);
+				if (indexNameStart != NULL)
+				{
+					/* Move the index name and everything after it to the left to overwrite "CONCURRENTLY" */
+					memmove(concurrentlyStart,
+							indexNameStart,
+							strlen(indexNameStart) + 1);
+				}
+				else
+				{
+					ereport(WARNING, (errmsg(
+										  "Unexpected format of CREATE INDEX command in index queue: index_id=%d, am=%s \ndefinition: %s",
+										  request->indexId, amName, cmd)));
+
+					continue;
+				}
+			}
+
 			ereport(DEBUG1, (errmsg(
 								 "Found in-progress extended index: index_id=%d, am=%s \ndefinition: %s",
-								 request->indexId, amName, request->cmd)));
-			existingExtendedIndexesCmds = lappend(existingExtendedIndexesCmds,
-												  request->cmd);
+								 request->indexId, amName, cmd)));
+
+			existingExtendedIndexesCmds = lappend(existingExtendedIndexesCmds, cmd);
 		}
 		else
 		{
