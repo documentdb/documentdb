@@ -195,6 +195,16 @@ pub struct ExplainPlan {
 
     #[serde(rename = "namespaceName")]
     pub namespace_name: Option<String>,
+
+    /// The cursor scan strategy (e.g. "streaming", "Secondary Index Scan").
+    /// Emitted in the queryPlanner stage of the wire-protocol explain output.
+    #[serde(rename = "cursorScanType")]
+    pub cursor_scan_type: Option<String>,
+
+    /// Number of tuples skipped during cursor continuation resume.
+    /// Emitted in the executionStats stage when > 0.
+    #[serde(rename = "Skipped Tuples")]
+    pub skipped_tuples: Option<f64>,
 }
 
 #[derive(Deserialize, Debug, Clone)]

@@ -1568,9 +1568,24 @@ TryAddDynamicCursorQuery(CursorParamKind cursorParamKind, QueryData *queryData,
 		return false;
 	}
 
+	/*
+	 * Allow dynamic cursor injection when either:
+	 * 1. The shard base table is directly accessible (normal local path), or
+	 * 2. We are in the planner aggregation query rewrite path (explain with
+	 *    enableCursorsOnAggregationQueryRewrite) and the collection is unsharded.
+	 *    In case (2), the query may execute on a remote worker via Citus where
+	 *    allowShardBaseTable is false due to the transaction isolation guard in
+	 *    TryGetCollectionShardTable. The cursor_tracker injection must still
+	 *    proceed so the worker's planner produces a DocumentDBApiCursorScan plan.
+	 */
+	bool allowDynamicCursor = context->allowShardBaseTable ||
+							  (queryData->isAggregationQueryCursorRewrite &&
+							   context->mongoCollection != NULL &&
+							   context->mongoCollection->shardKey == NULL);
+
 	if (cursorParamKind == CursorParamKind_Dynamic &&
 		queryData->cursorKind == QueryCursorType_Unspecified &&
-		context->allowShardBaseTable)
+		allowDynamicCursor)
 	{
 		/* Before processing anything add the cursor params to the base table
 		 * if able. Dynamic cursors only work on base shard table RTEs currently.

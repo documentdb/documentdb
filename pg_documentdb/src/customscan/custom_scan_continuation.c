@@ -930,9 +930,24 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 
 				if (!IsA(secondArg, Const))
 				{
-					ereport(ERROR, (errmsg(
-										"Invalid cursor state provided - must be a const value. found: %d",
-										secondArg->type)));
+					secondArg = eval_const_expressions(NULL, secondArg);
+
+					if (!IsA(secondArg, Const) && IsA(secondArg, CoerceViaIO))
+					{
+						Node *resolved = ResolveCoerceViaIOToConst(secondArg,
+																   BsonTypeId());
+						if (resolved != NULL)
+						{
+							secondArg = resolved;
+						}
+					}
+
+					if (!IsA(secondArg, Const))
+					{
+						ereport(ERROR, (errmsg(
+											"Invalid cursor state provided - must be a const value. found: %d",
+											secondArg->type)));
+					}
 				}
 
 				Const *constValue = (Const *) secondArg;
@@ -1629,6 +1644,20 @@ ExtensionScanExplainCustomScan(CustomScanState *node, List *ancestors,
 							   ExplainState *es)
 {
 	ExtensionScanState *extensionScanState = (ExtensionScanState *) node;
+
+	/*
+	 * Report the cursor scan strategy. This field is consumed by the gateway
+	 * explain layer and emitted in the queryPlanner stage of the wire-protocol
+	 * explain response as "cursorScanType".
+	 */
+	if (extensionScanState->queryState.isPrimaryKeyScan)
+	{
+		ExplainPropertyText("cursorScanType", "streamingPrimaryKey", es);
+	}
+	else
+	{
+		ExplainPropertyText("cursorScanType", "streaming", es);
+	}
 
 	/* Explain any extension specific state */
 	if (extensionScanState->batchCount > 0)
@@ -2524,4 +2553,81 @@ BuildPrimaryKeyRestrictInfo(PlannerInfo *root, RelOptInfo *rel,
 	RestrictInfo *shardKeyRestrict = make_simple_restrictinfo(root, skipExpr);
 
 	return shardKeyRestrict;
+}
+
+
+/*
+ * ResolveCoerceViaIOToConst
+ *
+ * When a query is dispatched via remote execution (e.g. through Citus),
+ * constant parameters may arrive wrapped in a CoerceViaIO node containing
+ * the text representation of the value. This function unwraps such nodes
+ * by evaluating the inner expression to a Const, validating that the inner
+ * Const type is bytea or bson (the expected binary types for cursor state),
+ * and converting through the proper IO functions to produce the target type.
+ *
+ * If the node is already a Const or is not a CoerceViaIO, returns NULL
+ * indicating no transformation was performed.
+ *
+ * expectedTypeOid: the expected result type of the coercion (typically bson).
+ */
+Node *
+ResolveCoerceViaIOToConst(Node *arg, Oid expectedTypeOid)
+{
+	if (!IsA(arg, CoerceViaIO))
+	{
+		return NULL;
+	}
+
+	CoerceViaIO *coerce = (CoerceViaIO *) arg;
+	Node *innerArg = (Node *) coerce->arg;
+	innerArg = eval_const_expressions(NULL, innerArg);
+
+	if (!IsA(innerArg, Const))
+	{
+		ereport(ERROR, (errmsg(
+							"Invalid cursor state provided - CoerceViaIO inner arg must be a const value. found: %d",
+							innerArg->type)));
+	}
+
+	Const *innerConst = (Const *) innerArg;
+	if (innerConst->constisnull)
+	{
+		return (Node *) innerConst;
+	}
+
+	/* Validate that the inner const is a binary type (bytea or bson) */
+	Oid innerType = innerConst->consttype;
+	bool isValidType = (innerType == BYTEAOID ||
+						innerType == BsonTypeId());
+	if (!isValidType)
+	{
+		ereport(ERROR, (errmsg(
+							"Invalid cursor state type in CoerceViaIO - expected bytea or bson, found type OID: %u",
+							innerType)));
+	}
+
+	/* Validate coercion target matches expected type */
+	if (expectedTypeOid != InvalidOid && coerce->resulttype != expectedTypeOid)
+	{
+		ereport(ERROR, (errmsg(
+							"Invalid CoerceViaIO result type - expected OID %u, found OID %u",
+							expectedTypeOid, coerce->resulttype)));
+	}
+
+	/* Convert through IO: source output func -> text -> target input func */
+	Oid outputFuncId;
+	bool typIsVarlena;
+	getTypeOutputInfo(innerConst->consttype, &outputFuncId, &typIsVarlena);
+	char *textValue = OidOutputFunctionCall(outputFuncId,
+											innerConst->constvalue);
+
+	Oid inputFuncId;
+	Oid typIOParam;
+	getTypeInputInfo(coerce->resulttype, &inputFuncId, &typIOParam);
+	Datum result = OidInputFunctionCall(inputFuncId, textValue, typIOParam, -1);
+
+	return (Node *) makeConst(coerce->resulttype, -1,
+							  coerce->resultcollid, -1,
+							  result, false, false);
 }

@@ -884,7 +884,7 @@ UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 				if (list_length(expr->args) != 2)
 				{
 					ereport(ERROR, (errmsg(
-										"Invalid cursor state provided - must have 2 arguments.")));
+										"Invalid dynamic cursor state provided - must have 2 arguments.")));
 				}
 
 				Node *secondArg = lsecond(expr->args);
@@ -902,9 +902,24 @@ UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 
 				if (!IsA(secondArg, Const))
 				{
-					ereport(ERROR, (errmsg(
-										"Invalid cursor state provided - must be a const value. found: %d",
-										secondArg->type)));
+					secondArg = eval_const_expressions(NULL, secondArg);
+
+					if (!IsA(secondArg, Const) && IsA(secondArg, CoerceViaIO))
+					{
+						Node *resolved = ResolveCoerceViaIOToConst(secondArg,
+																   BsonTypeId());
+						if (resolved != NULL)
+						{
+							secondArg = resolved;
+						}
+					}
+
+					if (!IsA(secondArg, Const))
+					{
+						ereport(ERROR, (errmsg(
+											"Invalid dynamic cursor state provided - must be a const value. found: %d",
+											secondArg->type)));
+					}
 				}
 
 				/* constvalue is safe to cast directly: the continuation is always
@@ -1210,43 +1225,43 @@ ExtensionCursorScanExplainCustomScan(CustomScanState *node, List *ancestors,
 	{
 		case QueryScanType_PrimaryKeyScan:
 		{
-			ExplainPropertyText("scanType", "Primary Key Scan", es);
+			ExplainPropertyText("cursorScanType", "Primary Key Scan", es);
 			break;
 		}
 
 		case QueryScanType_SecondaryIndexScan:
 		{
-			ExplainPropertyText("scanType", "Secondary Index Scan", es);
+			ExplainPropertyText("cursorScanType", "Secondary Index Scan", es);
 			break;
 		}
 
 		case QueryScanType_SecondaryIndexOnlyScan:
 		{
-			ExplainPropertyText("scanType", "Secondary Index Only Scan", es);
+			ExplainPropertyText("cursorScanType", "Secondary Index Only Scan", es);
 			break;
 		}
 
 		case QueryScanType_SecondaryIndexBitmapScan:
 		{
-			ExplainPropertyText("scanType", "Secondary Index Bitmap Scan", es);
+			ExplainPropertyText("cursorScanType", "Secondary Index Bitmap Scan", es);
 			break;
 		}
 
 		case QueryScanType_SecondaryIndexBitmapAnd:
 		{
-			ExplainPropertyText("scanType", "Secondary Index Bitmap AND Scan", es);
+			ExplainPropertyText("cursorScanType", "Secondary Index Bitmap AND Scan", es);
 			break;
 		}
 
 		case QueryScanType_SecondaryIndexBitmapOr:
 		{
-			ExplainPropertyText("scanType", "Secondary Index Bitmap OR Scan", es);
+			ExplainPropertyText("cursorScanType", "Secondary Index Bitmap OR Scan", es);
 			break;
 		}
 
 		case QueryScanType_TidRangeScan:
 		{
-			ExplainPropertyText("scanType", "TID Range Scan", es);
+			ExplainPropertyText("cursorScanType", "TID Range Scan", es);
 			break;
 		}
 

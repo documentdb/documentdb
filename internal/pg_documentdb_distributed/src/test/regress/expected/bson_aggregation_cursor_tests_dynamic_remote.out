@@ -1403,13 +1403,22 @@ set documentdb.enableCursorsOnAggregationQueryRewrite to on;
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('db', '{ "find": "bitmap_cursor_continuation", "projection": { "_id": 1 }, "filter": { "a": { "$gte": "aval-" } } , "batchSize": 1 }');
 QUERY PLAN
 Custom Scan (Citus Adaptive)
-  Output: remote_scan.document, remote_scan.continuation
+  Output: remote_scan.document
   Task Count: 1
   Tasks Shown: All
   ->  Task
-        Query: SELECT documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "a" : { "$gte" : "aval-" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document, documentdb_api_internal.current_cursor_state(document) AS continuation FROM documentdb_data.documents_11802_11800047 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>=) '{ "a" : "aval-" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '11802'::bigint) AND documentdb_api_internal.cursor_state(document, $1::documentdb_core.bson))
-        Error: Could not get remote plan.
-(7 rows)
+        Query: SELECT documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "a" : { "$gte" : "aval-" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_11802_11800047 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>=) '{ "a" : "aval-" }'::documentdb_core.bsonquery) AND ((shard_key_value OPERATOR(pg_catalog.=) '11802'::bigint) AND documentdb_api_internal.cursor_tracker(document, '{ }'::documentdb_core.bson)))
+        Node: host=localhost port=58070 dbname=regression
+        ->  Custom Scan (DocumentDBApiCursorScan)
+              Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "a" : { "$gte" : "aval-" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+              cursorScanType: Secondary Index Bitmap Scan
+              indexName: a_1
+              ->  Bitmap Heap Scan on documentdb_data.documents_11802_11800047 collection
+                    Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "a" : { "$gte" : "aval-" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+                    Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : "aval-" }'::documentdb_core.bson)
+                    ->  Bitmap Index Scan on a_1
+                          Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : "aval-" }'::documentdb_core.bson)
+(16 rows)
 CREATE TEMP TABLE firstPageResponse AS
 SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'), continuation, persistconnection, cursorid FROM
     find_cursor_first_page(database => 'db', commandSpec => '{ "find": "bitmap_cursor_continuation",  "projection": { "_id": 1 }, "filter": { "a": { "$gte": "aval-" } }, "batchSize": 2 }', cursorId => 4294967294);
@@ -1687,7 +1696,7 @@ Custom Scan (Citus Adaptive)
   Task Count: 1
   Tasks Shown: All
   ->  Task
-        Query: SELECT document FROM documentdb_data.documents_11804_11800081 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : "dsdsdasdasdasdadewe68676wqeeq" }'::documentdb_core.bsonquery) AND (object_id OPERATOR(documentdb_core.=) '{ "" : "dsdsdasdasdasdadewe68676wqeeq" }'::documentdb_core.bson) AND (shard_key_value OPERATOR(pg_catalog.=) '11804'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "createdDateTime" : { "$numberInt" : "-1" } }'::documentdb_core.bson)) ORDER BY (documentdb_api_catalog.bson_orderby(document, '{ "createdDateTime" : { "$numberInt" : "-1" } }'::documentdb_core.bson)) USING OPERATOR(documentdb_api_internal.>>>) NULLS LAST
+        Query: SELECT document FROM documentdb_data.documents_11804_11800081 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : "dsdsdasdasdasdadewe68676wqeeq" }'::documentdb_core.bsonquery) AND (object_id OPERATOR(documentdb_core.=) '{ "" : "dsdsdasdasdasdadewe68676wqeeq" }'::documentdb_core.bson) AND ((shard_key_value OPERATOR(pg_catalog.=) '11804'::bigint) AND documentdb_api_internal.cursor_tracker(document, '{ }'::documentdb_core.bson)) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "createdDateTime" : { "$numberInt" : "-1" } }'::documentdb_core.bson)) ORDER BY (documentdb_api_catalog.bson_orderby(document, '{ "createdDateTime" : { "$numberInt" : "-1" } }'::documentdb_core.bson)) USING OPERATOR(documentdb_api_internal.>>>) NULLS LAST
         Node: host=localhost port=58070 dbname=regression
         ->  Sort
               Output: document, (documentdb_api_catalog.bson_orderby(document, '{ "createdDateTime" : { "$numberInt" : "-1" } }'::documentdb_core.bson))

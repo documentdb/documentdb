@@ -375,7 +375,7 @@ $cmd$);
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "val" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(document, '{ "val" : { "$numberInt" : "1" } }'::bson))
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: idx_val_desc
    indexKey: {"val": -1}
    isMultiKey: false
@@ -456,7 +456,7 @@ $cmd$);
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "val" : { "$numberInt" : "1" } }'::bson, '{ "cat" : "even" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(document, '{ "val" : { "$numberInt" : "1" } }'::bson))
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: idx_cat_val
    indexKey: {"cat": 1,"val": 1}
    isMultiKey: false
@@ -928,7 +928,7 @@ $cmd$);
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson))
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: idx_abc
    indexKey: {"a": 1,"b": 1,"c": 1}
    isMultiKey: false
@@ -978,7 +978,7 @@ $cmd$);
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" } }'::bson, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson))
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: idx_abc
    indexKey: {"a": 1,"b": 1,"c": 1}
    isMultiKey: false
@@ -998,7 +998,7 @@ $cmd$);
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson))
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: idx_abc
    indexKey: {"a": 1,"b": 1,"c": 1}
    isMultiKey: false
@@ -1018,7 +1018,7 @@ $cmd$);
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson))
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: idx_abc
    indexKey: {"a": 1,"b": 1,"c": 1}
    isMultiKey: false
@@ -1038,7 +1038,7 @@ $cmd$);
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson))
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: idx_a_only
    indexKey: {"a": 1}
    isMultiKey: false
@@ -1641,7 +1641,7 @@ $cmd$);
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "val" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
-   scanType: Primary Key Scan
+   cursorScanType: Primary Key Scan
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_9804 collection
          Output: shard_key_value, object_id, document
@@ -1657,7 +1657,7 @@ $cmd$);
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "val" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_orderby(document, '{ "_id" : { "$numberInt" : "-1" } }'::bson)
-   scanType: Primary Key Scan
+   cursorScanType: Primary Key Scan
    indexName: _id_
    ->  Index Scan Backward using _id_ on documentdb_data.documents_9804 collection
          Output: shard_key_value, object_id, document
@@ -2162,13 +2162,19 @@ ANALYZE;
 EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('runtime_sort_db',
         '{ "find": "runtime_sort_coll", "filter": { "a": "grp_missing" }, "sort": { "b": 1 }, "projection": { "_id": 0, "b": 1 }, "batchSize": 100 }');
-                                                                     QUERY PLAN                                                                      
------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort
-   Sort Key: (bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   ->  Index Scan using idx_a on documents_9806 collection
-         Index Cond: ((document @= '{ "a" : "grp_missing" }'::bson) AND (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-(4 rows)
+                                           QUERY PLAN                                            
+-------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiCursorScan)
+   cursorScanType: Secondary Index Scan
+   indexName: idx_b_asc
+   indexKey: {"b": 1}
+   isMultiKey: false
+   indexBounds: ["b": (MinKey, MaxKey)]
+   ->  Index Scan using idx_b_asc on documents_9806 collection
+         Index Cond: (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+         Order By: (document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson)
+         Filter: (document @= '{ "a" : "grp_missing" }'::bson)
+(10 rows)
 
 SELECT CASE WHEN persistConnection THEN 'persistent (runtime sort)' ELSE 'streaming (index order)' END AS cursor_kind,
        COALESCE(jsonb_array_length((cursorPage::text::jsonb) -> 'cursor' -> 'firstBatch'), 0) AS docs
@@ -2204,7 +2210,7 @@ EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF)
                                            QUERY PLAN                                            
 -------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: idx_b_asc
    indexKey: {"b": 1}
    isMultiKey: false

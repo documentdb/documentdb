@@ -123,7 +123,7 @@ static bool IsRTEShardForDocumentDbCollection(RangeTblEntry *rte,
 static bool ProcessWorkerWriteQueryPath(PlannerInfo *root, RelOptInfo *rel, Index rti,
 										RangeTblEntry *rte);
 static Query * ExpandAggregationFunction(Query *node, ParamListInfo boundParams,
-										 PlannedStmt **plan);
+										 PlannedStmt **plan, int *cursorOptions);
 static Query * ExpandNestedAggregationFunction(Query *node, ParamListInfo boundParams);
 
 static void ForceExcludeNonIndexPaths(PlannerInfo *root, RelOptInfo *rel,
@@ -144,6 +144,7 @@ extern bool EnableDistinctCustomScan;
 extern bool EnableGroupByDistinctScan;
 extern bool EnableDistinctScanForGroupFirst;
 extern bool EnableDollarSampleReservoirScan;
+extern bool EnableDynamicCursorFastStartupScan;
 extern bool EnablePartialFilterEvalOnPlanner;
 
 planner_hook_type ExtensionPreviousPlannerHook = NULL;
@@ -179,7 +180,8 @@ DocumentDBApiPlanner(Query *parse, const char *queryString, int cursorOptions,
 
 		if (queryFlags & HAS_AGGREGATION_FUNCTION)
 		{
-			parse = (Query *) ExpandAggregationFunction(parse, boundParams, &plan);
+			parse = (Query *) ExpandAggregationFunction(parse, boundParams, &plan,
+														&cursorOptions);
 			if (plan != NULL)
 			{
 				return plan;
@@ -1668,7 +1670,9 @@ MutateQueryAggregatorFunction(Node *node, ParamListInfo boundParams)
 					IsAggregationFunction(castNode(FuncExpr, expr->funcexpr)->funcid))
 				{
 					PlannedStmt *stmt = NULL;
-					return (Node *) ExpandAggregationFunction(query, boundParams, &stmt);
+					int cursorOptions = 0;
+					return (Node *) ExpandAggregationFunction(query, boundParams, &stmt,
+															  &cursorOptions);
 				}
 			}
 		}
@@ -1696,7 +1700,8 @@ ExpandNestedAggregationFunction(Query *query, ParamListInfo boundParams)
  * to track the contents of the aggregation pipeline.
  */
 static Query *
-ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt **plan)
+ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt **plan,
+						  int *cursorOptions)
 {
 	/* Top level validations - these are right now during development */
 	*plan = NULL;
@@ -1838,9 +1843,19 @@ ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt *
 	QueryData queryData = GenerateFirstPageQueryData();
 	CursorParamKind cursorParams = CursorParamKind_Persistent;
 
-	if (EnableCursorsOnAggregationQueryRewrite && EnableDynamicCursors)
+	if (EnableCursorsOnAggregationQueryRewrite)
 	{
-		cursorParams = CursorParamKind_Dynamic;
+		queryData.cursorStateConst = PgbsonInitEmpty();
+		queryData.isAggregationQueryCursorRewrite = true;
+		if (EnableDynamicCursors)
+		{
+			cursorParams = CursorParamKind_Dynamic;
+			if (EnableDynamicCursorFastStartupScan)
+			{
+				/* ensure that in this path, the plan follows what cursors do */
+				*cursorOptions |= CURSOR_OPT_FAST_PLAN;
+			}
+		}
 	}
 
 	bool setStatementTimeout = false;

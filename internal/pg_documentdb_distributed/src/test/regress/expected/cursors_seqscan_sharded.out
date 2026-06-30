@@ -198,12 +198,13 @@ EXPLAIN (VERBOSE ON, COSTS OFF ) SELECT document, bson_dollar_project(document, 
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiScan)
                Output: document, documentdb_api_catalog.bson_dollar_project(document, '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson), documentdb_api_internal.current_cursor_state(document)
+               cursorScanType: streaming
                Page Row Count: 3 rows
                ->  Tid Range Scan on documentdb_data.documents_6720_6720016 documents_6720
                      Output: shard_key_value, object_id, document
                      TID Cond: (documents_6720.ctid >= '(0,0)'::tid)
                      Filter: (documentdb_api_internal.cursor_state(documents_6720.document, '{ "getpage_batchCount" : { "$numberInt" : "3" }, "continuation" : [ { "table_name" : "documents_6720_6720023", "value" : { "$binary" : { "base64" : "AAAAAAEA", "subType" : "00" } } } ] }'::documentdb_core.bson) AND (documents_6720.document OPERATOR(documentdb_api_catalog.@>) '{ "a.b" : { "$numberInt" : "12" } }'::documentdb_core.bson))
-(14 rows)
+(15 rows)
 
 -- now try with multi-continuation with a different table
 SELECT r3 FROM (SELECT $$'$$ || row_get_bson(rec) || $$'$$ AS r3 FROM (SELECT 3 AS "getpage_batchCount", array_append('{}'::bson[], '{ "table_name": "someOtherTable" }'::bson) AS "continuation" FROM d1 OFFSET 2 LIMIT 1) rec) r3 \gset
@@ -235,12 +236,13 @@ EXPLAIN (VERBOSE ON, COSTS OFF ) SELECT document, bson_dollar_project(document, 
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiScan)
                Output: document, documentdb_api_catalog.bson_dollar_project(document, '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson), documentdb_api_internal.current_cursor_state(document)
+               cursorScanType: streaming
                Page Row Count: 3 rows
                ->  Tid Range Scan on documentdb_data.documents_6720_6720016 documents_6720
                      Output: shard_key_value, object_id, document
                      TID Cond: (documents_6720.ctid >= '(0,0)'::tid)
                      Filter: (documentdb_api_internal.cursor_state(documents_6720.document, '{ "getpage_batchCount" : { "$numberInt" : "3" }, "continuation" : [ { "table_name" : "someOtherTable" } ] }'::documentdb_core.bson) AND (documents_6720.document OPERATOR(documentdb_api_catalog.@>) '{ "a.b" : { "$numberInt" : "12" } }'::documentdb_core.bson))
-(14 rows)
+(15 rows)
 
 -- run with remote execution
 set citus.enable_local_execution to off;

@@ -1373,6 +1373,10 @@ fn query_planner(
                 doc.append("ns", namespace_name);
             }
 
+            if let Some(cursor_scan_type) = plan.cursor_scan_type.as_deref() {
+                doc.append("cursorScanType", cursor_scan_type);
+            }
+
             if stage_name != "FETCH" {
                 if let Some(index_name) = plan.index_name.as_deref() {
                     doc.append("indexName", index_name);
@@ -1787,6 +1791,12 @@ fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocume
             );
         }
 
+        if let Some(skipped_tuples) = plan.skipped_tuples {
+            if skipped_tuples > 0.0 {
+                doc.append("skippedTuples", smallest_from_f64(skipped_tuples));
+            }
+        }
+
         if stage_name != "FETCH" {
             if let Some(index_name) = plan.index_name.as_deref() {
                 doc.append("indexName", index_name);
@@ -1986,35 +1996,68 @@ fn collect_index_costs(
     }
 }
 
+/// Repeatedly strips intermediate wrapper nodes from the plan tree until a
+/// non-skippable node is reached. Wrapper nodes (`Subquery Scan` with
+/// `bson_repath_and_build`, `ExplainQueryScan`, `DocumentDBApiCursorScan`,
+/// `DocumentDBApiScan`) are internal implementation details that should not be
+/// exposed in the wire-protocol explain output. Properties such as
+/// `cursor_scan_type`, `skipped_tuples`, `alias`, and `index_details` are
+/// propagated from skipped nodes to the surviving child.
 #[expect(clippy::expect_used, reason = "values are checked before access")]
-fn skip_stage(plan: ExplainPlan, query_catalog: &QueryCatalog) -> ExplainPlan {
-    if plan.node_type == "Subquery Scan"
-        && plan.output.as_ref().is_some_and(|o| {
-            o.len() == 1
-                && (o[0].starts_with("bson_repath_and_build")
-                    || o[0].starts_with(query_catalog.find_bson_repath_and_build()))
-        })
-        && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
-    {
-        let mut p = plan.inner_plans.expect("Checked").remove(0);
-        if p.alias.is_none() {
-            p.alias = plan.alias;
-        }
-        p
-    } else if plan.node_type == "Custom Scan"
-        && plan.custom_plan_provider.as_deref() == Some("DocumentDBApiExplainQueryScan")
-        && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
-    {
-        let mut new_plan = plan.inner_plans.expect("Checked").remove(0);
-        new_plan.output = plan.output;
-        if new_plan.namespace_name.is_none() {
-            new_plan.namespace_name = plan.namespace_name.clone();
-        }
+fn skip_stage(mut plan: ExplainPlan, query_catalog: &QueryCatalog) -> ExplainPlan {
+    loop {
+        plan = if plan.node_type == "Subquery Scan"
+            && plan.output.as_ref().is_some_and(|o| {
+                o.len() == 1
+                    && (o[0].starts_with("bson_repath_and_build")
+                        || o[0].starts_with(query_catalog.find_bson_repath_and_build()))
+            })
+            && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
+        {
+            let mut p = plan.inner_plans.expect("Checked").remove(0);
+            if p.alias.is_none() {
+                p.alias = plan.alias;
+            }
+            p
+        } else if plan.node_type == "Custom Scan"
+            && plan.custom_plan_provider.as_deref() == Some("DocumentDBApiExplainQueryScan")
+            && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
+        {
+            let mut new_plan = plan.inner_plans.expect("Checked").remove(0);
+            new_plan.output = plan.output;
+            if new_plan.namespace_name.is_none() {
+                new_plan.namespace_name = plan.namespace_name.clone();
+            }
+            if new_plan.cursor_scan_type.is_none() {
+                new_plan.cursor_scan_type = plan.cursor_scan_type;
+            }
+            if new_plan.skipped_tuples.is_none() {
+                new_plan.skipped_tuples = plan.skipped_tuples;
+            }
 
-        distribute_index_details(&mut new_plan, plan.index_details);
-        new_plan
-    } else {
-        plan
+            distribute_index_details(&mut new_plan, plan.index_details);
+            new_plan
+        } else if plan.node_type == "Custom Scan"
+            && matches!(
+                plan.custom_plan_provider.as_deref(),
+                Some("DocumentDBApiCursorScan" | "DocumentDBApiScan")
+            )
+            && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
+        {
+            let mut new_plan = plan.inner_plans.expect("Checked").remove(0);
+            if new_plan.alias.is_none() {
+                new_plan.alias = plan.alias;
+            }
+            if new_plan.cursor_scan_type.is_none() {
+                new_plan.cursor_scan_type = plan.cursor_scan_type;
+            }
+            if new_plan.skipped_tuples.is_none() {
+                new_plan.skipped_tuples = plan.skipped_tuples;
+            }
+            new_plan
+        } else {
+            break plan;
+        };
     }
 }
 

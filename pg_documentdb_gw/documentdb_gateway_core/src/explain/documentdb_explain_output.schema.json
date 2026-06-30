@@ -114,6 +114,10 @@
           "type": "string",
           "description": "Name of the index used by this stage. Present for IXSCAN and other index-based stages, but omitted for FETCH stages."
         },
+        "cursorScanType": {
+          "type": "string",
+          "description": "The type of cursor scan used by the streaming or dynamic cursor custom scan. Values include 'streaming' (streaming continuation scan), 'streamingPrimaryKey' (streaming scan using primary key continuation), 'Primary Key Scan', 'Secondary Index Scan', 'Secondary Index Only Scan', 'Secondary Index Bitmap Scan', 'Secondary Index Bitmap AND Scan', 'Secondary Index Bitmap OR Scan', 'TID Range Scan'. Present when the plan uses a cursor-based scan."
+        },
         "direction": {
           "type": "string",
           "description": "The scan direction of the index scan (e.g. 'Forward' or 'Backward'). Only present for index scan stages."
@@ -369,6 +373,10 @@
         "totalDocsExamined": {
           "type": "integer",
           "description": "Documents examined by this stage (actual rows + rows removed by filter). Present when the stage has no index or has a filter or has rows removed by filter."
+        },
+        "skippedTuples": {
+          "type": "number",
+          "description": "Number of tuples skipped by the cursor scan during execution. Only present when greater than zero."
         },
         "totalKeysExamined": {
           "type": "integer",

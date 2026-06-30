@@ -1685,13 +1685,14 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('db',
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiScan)
                Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "a" : { "$gte" : "aval-" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), documentdb_api_internal.current_cursor_state(document)
+               cursorScanType: streaming
                ->  Bitmap Heap Scan on documentdb_data.documents_3122_3120040 collection
                      Output: shard_key_value, object_id, document
                      Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : "aval-" }'::documentdb_core.bson)
                      Filter: documentdb_api_internal.cursor_state(collection.document, '{ }'::documentdb_core.bson)
                      ->  Bitmap Index Scan on a_1
                            Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : "aval-" }'::documentdb_core.bson)
-(15 rows)
+(16 rows)
 
 CREATE TEMP TABLE firstPageResponse AS
 SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }'), continuation, persistconnection, cursorid FROM
@@ -1713,6 +1714,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('d
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiScan)
                Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "a" : { "$gte" : "aval-" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), documentdb_api_internal.current_cursor_state(document)
+               cursorScanType: streaming
                Page Row Count: 2 rows
                Page Size Hint: 16777216 bytes
                Continuation: { "table_name" : "documents_3122_3120040", "value" : { "$binary" : { "base64" : "AAAAAAIA", "subType" : "00" } } }
@@ -1722,7 +1724,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('d
                      Filter: documentdb_api_internal.cursor_state(collection.document, '{ "continuation" : [ { "table_name" : "documents_3122_3120040", "value" : { "$binary" : { "base64" : "AAAAAAIA", "subType" : "00" } } } ], "getpage_batchCount" : { "$numberInt" : "2" }, "getpage_batchSizeHint" : { "$numberInt" : "16777216" }, "getpage_batchSizeAttr" : { "$numberInt" : "1" } }'::documentdb_core.bson)
                      ->  Bitmap Index Scan on a_1
                            Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : "aval-" }'::documentdb_core.bson)
-(18 rows)
+(19 rows)
 
 DROP TABLE results_fast;
 DROP TABLE results_slow;

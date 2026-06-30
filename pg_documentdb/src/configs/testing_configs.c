@@ -32,10 +32,6 @@ bool EnableGenerateNonExistsTerm = DEFAULT_ENABLE_GENERATE_NON_EXISTS_TERM;
 #define DEFAULT_INDEX_TRUNCATION_LIMIT_OVERRIDE INT_MAX
 int IndexTruncationLimitOverride = DEFAULT_INDEX_TRUNCATION_LIMIT_OVERRIDE;
 
-#define DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE false
-bool EnableCursorsOnAggregationQueryRewrite =
-	DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE;
-
 #define DEFAULT_UNIQUE_INDEX_KEYHASH_OVERIDE 0
 int DefaultUniqueIndexKeyhashOverride = DEFAULT_UNIQUE_INDEX_KEYHASH_OVERIDE;
 
@@ -190,17 +186,6 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		DEFAULT_MAX_WORKER_CURSOR_SIZE, 1, BSON_MAX_ALLOWED_SIZE,
 		PGC_USERSET,
 		GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE,
-		NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableCursorsOnAggregationQueryRewrite", newGucPrefix),
-		gettext_noop(
-			"Whether or not to add the cursors on aggregation style queries."),
-		NULL,
-		&EnableCursorsOnAggregationQueryRewrite,
-		DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE,
-		PGC_USERSET,
-		0,
 		NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

@@ -200,12 +200,13 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiScan)
                Output: document
+               cursorScanType: streamingPrimaryKey
                Page Row Count: 1 rows
                ->  Index Scan using _id_ on documentdb_data.documents_6700_6700003 collection
                      Output: shard_key_value, object_id, document
                      Index Cond: (collection.shard_key_value = '6700'::bigint)
                      Filter: (documentdb_api_internal.cursor_state(collection.document, '{ "getpage_batchCount" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "a.b" : { "$numberInt" : "2" } }'::documentdb_core.bson))
-(14 rows)
+(15 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'cursors_basic') WHERE documentdb_api_internal.cursor_state(document, '{ "getpage_batchCount": 5 }') AND document @@ '{ "a.d": { "$elemMatch": { "$gt": 2 } }}';
                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                       
@@ -219,12 +220,13 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiScan)
                Output: document
+               cursorScanType: streamingPrimaryKey
                Page Row Count: 5 rows
                ->  Index Scan using _id_ on documentdb_data.documents_6700_6700003 collection
                      Output: shard_key_value, object_id, document
                      Index Cond: (collection.shard_key_value = '6700'::bigint)
                      Filter: (documentdb_api_internal.cursor_state(collection.document, '{ "getpage_batchCount" : { "$numberInt" : "5" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@#?) '{ "a.d" : { "$gt" : { "$numberInt" : "2" } } }'::documentdb_core.bson))
-(14 rows)
+(15 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) EXECUTE q1('db', 'cursors_basic', '{ "getpage_batchCount": 7 }', '{ "a.b": { "$gt": 2 }}');
                                                                                                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                                                                                                      
@@ -238,12 +240,13 @@ EXPLAIN (VERBOSE ON, COSTS OFF) EXECUTE q1('db', 'cursors_basic', '{ "getpage_ba
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiScan)
                Output: document
+               cursorScanType: streamingPrimaryKey
                Page Row Count: 7 rows
                ->  Index Scan using _id_ on documentdb_data.documents_6700_6700003 collection
                      Output: shard_key_value, object_id, document
                      Index Cond: (collection.shard_key_value = '6700'::bigint)
                      Filter: (documentdb_api_internal.cursor_state(collection.document, '{ "getpage_batchCount" : { "$numberInt" : "7" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "a.b" : { "$numberInt" : "2" } }'::documentdb_core.bson))
-(14 rows)
+(15 rows)
 
 EXPLAIN (VERBOSE ON, ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) EXECUTE q1('db', 'cursors_basic', '{ "getpage_batchCount": 7 }', '{ "a.b": { "$gt": 2 }}');
                                                                                                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                                                                                                      
@@ -262,6 +265,7 @@ EXPLAIN (VERBOSE ON, ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) EXECUTE q1(
                One-Time Filter: (documentdb_api_catalog.bson_true_match($3) AND documentdb_api_catalog.bson_true_match($4))
                ->  Custom Scan (DocumentDBApiScan) (actual rows=7 loops=1)
                      Output: document
+                     cursorScanType: streamingPrimaryKey
                      Page Row Count: 7 rows
                      ->  Result (actual rows=8 loops=1)
                            Output: shard_key_value, object_id, document
@@ -271,7 +275,7 @@ EXPLAIN (VERBOSE ON, ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) EXECUTE q1(
                                  Index Cond: (collection.shard_key_value = '6700'::bigint)
                                  Filter: (documentdb_api_internal.cursor_state(collection.document, '{ "getpage_batchCount" : { "$numberInt" : "7" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "a.b" : { "$numberInt" : "2" } }'::documentdb_core.bson))
                                  Rows Removed by Filter: 1
-(23 rows)
+(24 rows)
 
 -- explain with projection (projection happens in the custom scan.)
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document, bson_dollar_project(document, '{ "a.b": 1 }') FROM documentdb_api.collection('db', 'cursors_basic') WHERE documentdb_api_internal.cursor_state(document, '{ "getpage_batchCount": 5 }') AND document @@ '{ "a.d": { "$elemMatch": { "$gt": 2 } }}';
@@ -286,12 +290,13 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document, bson_dollar_project(document, '
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiScan)
                Output: document, documentdb_api_catalog.bson_dollar_project(document, '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+               cursorScanType: streamingPrimaryKey
                Page Row Count: 5 rows
                ->  Index Scan using _id_ on documentdb_data.documents_6700_6700003 collection
                      Output: shard_key_value, object_id, document
                      Index Cond: (collection.shard_key_value = '6700'::bigint)
                      Filter: (documentdb_api_internal.cursor_state(collection.document, '{ "getpage_batchCount" : { "$numberInt" : "5" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@#?) '{ "a.d" : { "$gt" : { "$numberInt" : "2" } } }'::documentdb_core.bson))
-(14 rows)
+(15 rows)
 
 -- do a primary key scan.
 SELECT document FROM documentdb_api.collection('db', 'cursors_basic') WHERE documentdb_api_internal.cursor_state(document, '{ "getpage_batchCount": 5 }') AND document @@ '{ "_id": { "$gt": "10" } }';
@@ -316,12 +321,13 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiScan)
                Output: document
+               cursorScanType: streamingPrimaryKey
                Page Row Count: 5 rows
                ->  Index Scan using _id_ on documentdb_data.documents_6700_6700003 collection
                      Output: shard_key_value, object_id, document
                      Index Cond: ((collection.shard_key_value = '6700'::bigint) AND (collection.object_id OPERATOR(documentdb_core.>) '{ "" : "10" }'::documentdb_core.bson) AND (collection.object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson))
                      Filter: documentdb_api_internal.cursor_state(collection.document, '{ "getpage_batchCount" : { "$numberInt" : "5" } }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 -- do a primary key lookup
 SELECT document FROM documentdb_api.collection('db', 'cursors_basic') WHERE documentdb_api_internal.cursor_state(document, '{ "getpage_batchCount": 5 }') AND document @@ '{ "_id": { "$eq": "10" } }';
@@ -342,12 +348,13 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiScan)
                Output: document
+               cursorScanType: streamingPrimaryKey
                Page Row Count: 5 rows
                ->  Index Scan using _id_ on documentdb_data.documents_6700_6700003 collection
                      Output: shard_key_value, object_id, document
                      Index Cond: ((collection.shard_key_value = '6700'::bigint) AND (collection.object_id OPERATOR(documentdb_core.=) '{ "" : "10" }'::documentdb_core.bson))
                      Filter: documentdb_api_internal.cursor_state(collection.document, '{ "getpage_batchCount" : { "$numberInt" : "5" } }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 SELECT documentdb_distributed_test_helpers.drop_primary_key('db', 'cursors_basic');
  drop_primary_key 
@@ -412,12 +419,13 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiScan)
                Output: document
+               cursorScanType: streaming
                Page Row Count: 1 rows
                ->  Tid Range Scan on documentdb_data.documents_6700_6700003 collection
                      Output: shard_key_value, object_id, document
                      TID Cond: (collection.ctid >= '(0,0)'::tid)
                      Filter: (documentdb_api_internal.cursor_state(collection.document, '{ "getpage_batchCount" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "a.b" : { "$numberInt" : "2" } }'::documentdb_core.bson))
-(14 rows)
+(15 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'cursors_basic') WHERE documentdb_api_internal.cursor_state(document, '{ "getpage_batchCount": 5 }') AND document @@ '{ "a.d": { "$elemMatch": { "$gt": 2 } }}';
                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                       
@@ -431,12 +439,13 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiScan)
                Output: document
+               cursorScanType: streaming
                Page Row Count: 5 rows
                ->  Tid Range Scan on documentdb_data.documents_6700_6700003 collection
                      Output: shard_key_value, object_id, document
                      TID Cond: (collection.ctid >= '(0,0)'::tid)
                      Filter: (documentdb_api_internal.cursor_state(collection.document, '{ "getpage_batchCount" : { "$numberInt" : "5" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@#?) '{ "a.d" : { "$gt" : { "$numberInt" : "2" } } }'::documentdb_core.bson))
-(14 rows)
+(15 rows)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) EXECUTE q1('db', 'cursors_basic', '{ "getpage_batchCount": 7 }', '{ "a.b": { "$gt": 2 }}');
                                                                                                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                                                                                                      
@@ -450,12 +459,13 @@ EXPLAIN (VERBOSE ON, COSTS OFF) EXECUTE q1('db', 'cursors_basic', '{ "getpage_ba
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiScan)
                Output: document
+               cursorScanType: streaming
                Page Row Count: 7 rows
                ->  Tid Range Scan on documentdb_data.documents_6700_6700003 collection
                      Output: shard_key_value, object_id, document
                      TID Cond: (collection.ctid >= '(0,0)'::tid)
                      Filter: (documentdb_api_internal.cursor_state(collection.document, '{ "getpage_batchCount" : { "$numberInt" : "7" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "a.b" : { "$numberInt" : "2" } }'::documentdb_core.bson))
-(14 rows)
+(15 rows)
 
 -- now create an index on a.b and a.d
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', documentdb_distributed_test_helpers.generate_create_index_arg('cursors_basic', 'index_1', '{"a.b": 1}'), true);
@@ -495,6 +505,7 @@ set local enable_seqscan TO OFF;
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiScan)
                Output: document
+               cursorScanType: streaming
                Page Row Count: 1 rows
                ->  Bitmap Heap Scan on documentdb_data.documents_6700_6700003 collection
                      Output: shard_key_value, object_id, document
@@ -502,7 +513,7 @@ set local enable_seqscan TO OFF;
                      Filter: documentdb_api_internal.cursor_state(collection.document, '{ "getpage_batchCount" : { "$numberInt" : "1" } }'::documentdb_core.bson)
                      ->  Bitmap Index Scan on index_1
                            Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "a.b" : { "$numberInt" : "2" } }'::documentdb_core.bson)
-(16 rows)
+(17 rows)
 
 ROLLBACK;
 BEGIN;
@@ -532,6 +543,7 @@ set local enable_indexscan TO OFF;
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiScan)
                Output: document
+               cursorScanType: streaming
                Page Row Count: 1 rows
                ->  Bitmap Heap Scan on documentdb_data.documents_6700_6700003 collection
                      Output: shard_key_value, object_id, document
@@ -539,7 +551,7 @@ set local enable_indexscan TO OFF;
                      Filter: documentdb_api_internal.cursor_state(collection.document, '{ "getpage_batchCount" : { "$numberInt" : "1" } }'::documentdb_core.bson)
                      ->  Bitmap Index Scan on index_1
                            Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "a.b" : { "$numberInt" : "2" } }'::documentdb_core.bson)
-(16 rows)
+(17 rows)
 
 ROLLBACK;
 -- ensure parallel scans don't impact this.
@@ -570,12 +582,13 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api.collection('
          Node: host=localhost port=58070 dbname=regression
          ->  Custom Scan (DocumentDBApiScan)
                Output: document
+               cursorScanType: streaming
                Page Row Count: 1 rows
                ->  Tid Range Scan on documentdb_data.documents_6700_6700003 collection
                      Output: shard_key_value, object_id, document
                      TID Cond: (collection.ctid >= '(0,0)'::tid)
                      Filter: (documentdb_api_internal.cursor_state(collection.document, '{ "getpage_batchCount" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "a.b" : { "$numberInt" : "2" } }'::documentdb_core.bson))
-(14 rows)
+(15 rows)
 
 ROLLBACK;
 BEGIN;

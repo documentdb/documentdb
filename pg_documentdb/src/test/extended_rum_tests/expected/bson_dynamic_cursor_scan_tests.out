@@ -93,7 +93,7 @@ $cmd$);
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   scanType: Primary Key Scan
+   cursorScanType: Primary Key Scan
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_9201 collection
          Output: shard_key_value, object_id, document
@@ -165,7 +165,7 @@ $cmd$);
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "_id" : { "$gt" : { "$numberInt" : "3" }, "$lt" : { "$numberInt" : "8" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   scanType: Primary Key Scan
+   cursorScanType: Primary Key Scan
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_9201 collection
          Output: shard_key_value, object_id, document
@@ -230,7 +230,7 @@ $cmd$);
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   scanType: Primary Key Scan
+   cursorScanType: Primary Key Scan
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_9201 collection
          Output: shard_key_value, object_id, document
@@ -293,7 +293,7 @@ $cmd$);
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "sk" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: sk_1
    indexKey: {"sk": 1}
    isMultiKey: false
@@ -340,7 +340,7 @@ $cmd$);
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "sk" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   scanType: Primary Key Scan
+   cursorScanType: Primary Key Scan
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_9201 collection
          Output: shard_key_value, object_id, document
@@ -627,7 +627,7 @@ $cmd$);
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "$or" : [ { "x" : { "$numberInt" : "0" } }, { "y" : { "$numberInt" : "0" } } ] }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   scanType: Secondary Index Bitmap OR Scan
+   cursorScanType: Secondary Index Bitmap OR Scan
    indexName: x_1
    indexKey: {"x": 1}
    isMultiKey: false
@@ -678,7 +678,7 @@ $cmd$);
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "x" : { "$numberInt" : "5" }, "y" : { "$numberInt" : "3" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   scanType: Secondary Index Bitmap AND Scan
+   cursorScanType: Secondary Index Bitmap AND Scan
    indexName: y_1
    indexKey: {"y": 1}
    isMultiKey: false

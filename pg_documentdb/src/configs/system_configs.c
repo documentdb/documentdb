@@ -175,6 +175,10 @@ RumLibraryLoadOptions DocumentDBRumLibraryLoadOption = DEFAULT_RUM_LIBRARY_LOAD_
 #define DEFAULT_ENABLE_STATEMENT_TIMEOUT true
 bool EnableBackendStatementTimeout = DEFAULT_ENABLE_STATEMENT_TIMEOUT;
 
+#define DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE false
+bool EnableCursorsOnAggregationQueryRewrite =
+	DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE;
+
 static struct config_enum_entry rum_load_options[4] = {
 	{ "none", RumLibraryLoadOption_None, false },
 	{ "prefer_documentdb_extended_rum", RumLibraryLoadOption_PreferDocumentDBRum, false },
@@ -494,4 +498,15 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 		NULL, &MaxNonOrderedTermScanThreshold,
 		DEFAULT_MAX_NON_ORDERED_TERM_SCAN_THRESHOLD,
 		-1, INT_MAX, PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableCursorsOnAggregationQueryRewrite", newGucPrefix),
+		gettext_noop(
+			"Whether or not to add the cursors on aggregation style queries."),
+		NULL,
+		&EnableCursorsOnAggregationQueryRewrite,
+		DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
 }

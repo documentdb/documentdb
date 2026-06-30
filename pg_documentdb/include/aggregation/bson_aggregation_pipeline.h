@@ -136,6 +136,12 @@ typedef struct
 	 * The time system variables ($$NOW, $$CLUSTER_TIME).
 	 */
 	TimeSystemVariables timeSystemVariables;
+
+	/*
+	 * Whether this query is being built from the planner aggregation
+	 * query cursor rewrite path (enableCursorsOnAggregationQueryRewrite).
+	 */
+	bool isAggregationQueryCursorRewrite;
 } QueryData;
 
 

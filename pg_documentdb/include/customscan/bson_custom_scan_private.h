@@ -95,4 +95,6 @@ TupleTableSlot * SkipWithUserContinuation(ScanState *innerScanState,
 										  double *numSkipped);
 
 void WalkAndExplainScanState(PlanState *scanState, ExplainState *es);
+
+Node * ResolveCoerceViaIOToConst(Node *arg, Oid expectedTypeOid);
 #endif

@@ -186,7 +186,7 @@ $cmd$);
    Filter: (agg_stage_2.document #> '{ "legCount" : { "$numberInt" : "0" } }'::bsonquery)
    ->  Custom Scan (DocumentDBApiCursorScan)
          Output: (bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" }, "totalDist" : { "$sum" : { "$map" : { "input" : "$legs", "as" : "it", "in" : "$$it.dist" } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         scanType: Secondary Index Scan
+         cursorScanType: Secondary Index Scan
          indexName: idx_routeId
          indexKey: {"routeId": 1}
          isMultiKey: false
@@ -217,7 +217,7 @@ $cmd$);
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" }, "totalDist" : { "$sum" : { "$map" : { "input" : "$legs", "as" : "it", "in" : "$$it.dist" } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: idx_routeId
    indexKey: {"routeId": 1}
    isMultiKey: false
@@ -312,7 +312,7 @@ $cmd$);
    Filter: (agg_stage_3.document #= '{ "isLongHaul" : true }'::bsonquery)
    ->  Custom Scan (DocumentDBApiCursorScan)
          Output: (bson_dollar_project(bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "totalDist" : { "$sum" : { "$map" : { "input" : "$legs", "as" : "it", "in" : "$$it.dist" } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" }, "totalDist" : { "$numberInt" : "1" }, "isLongHaul" : { "$cond" : [ { "$gte" : [ "$totalDist", { "$numberInt" : "10" } ] }, true, false ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         scanType: Secondary Index Scan
+         cursorScanType: Secondary Index Scan
          indexName: idx_phase
          indexKey: {"phase": 1}
          isMultiKey: false
@@ -576,7 +576,7 @@ $cmd$, true);
  Subquery Scan on agg_stage_2 (actual rows=4 loops=1)
    Filter: (agg_stage_2.document #> '{ "legCount" : { "$numberInt" : "0" } }'::bsonquery)
    ->  Custom Scan (DocumentDBApiCursorScan) (actual rows=4 loops=1)
-         scanType: Secondary Index Scan
+         cursorScanType: Secondary Index Scan
          indexName: idx_routeId
          indexKey: {"routeId": 1}
          isMultiKey: false
@@ -607,7 +607,7 @@ $cmd$, true);
                                                                                                                    run_explain_and_trim                                                                                                                    
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=4 loops=1)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: idx_routeId
    indexKey: {"routeId": 1}
    isMultiKey: false
@@ -669,7 +669,7 @@ $cmd$);
    CTE internalinhibitoptimization
      ->  Custom Scan (DocumentDBApiCursorScan)
            Output: (bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-           scanType: Secondary Index Scan
+           cursorScanType: Secondary Index Scan
            indexName: idx_routeId
            indexKey: {"routeId": 1}
            isMultiKey: false
@@ -940,7 +940,7 @@ $cmd$);
    Filter: ((agg_stage_3.document #= '{ "hasData" : true }'::bsonquery) AND (agg_stage_3.document #>= '{ "normalizedScore" : { "$numberDouble" : "0.5" } }'::bsonquery))
    ->  Custom Scan (DocumentDBApiCursorScan)
          Output: (bson_dollar_project(bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "range" : { "$numberInt" : "1" }, "tagCount" : { "$size" : "$features" }, "normalizedScore" : { "$divide" : [ "$range", { "$numberInt" : "100" } ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" }, "range" : { "$numberInt" : "1" }, "tagCount" : { "$numberInt" : "1" }, "normalizedScore" : { "$numberInt" : "1" }, "hasData" : { "$cond" : [ { "$gt" : [ "$tagCount", { "$numberInt" : "0" } ] }, true, false ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         scanType: Secondary Index Scan
+         cursorScanType: Secondary Index Scan
          indexName: idx_class_range
          indexKey: {"class": 1,"range": 1}
          isMultiKey: false
@@ -1164,7 +1164,7 @@ $cmd$, true);
    Filter: ((agg_stage_3.document #= '{ "hasData" : true }'::bsonquery) AND (agg_stage_3.document #>= '{ "normalizedScore" : { "$numberDouble" : "0.5" } }'::bsonquery))
    Rows Removed by Filter: 3
    ->  Custom Scan (DocumentDBApiCursorScan) (actual rows=10 loops=1)
-         scanType: Secondary Index Scan
+         cursorScanType: Secondary Index Scan
          indexName: idx_class_range
          indexKey: {"class": 1,"range": 1}
          isMultiKey: false
@@ -1292,7 +1292,7 @@ $cmd$);
          Filter: (agg_stage_2.document #>= '{ "legCount" : { "$numberInt" : "1" } }'::bsonquery)
          ->  Custom Scan (DocumentDBApiCursorScan)
                Output: (bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "routeId" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" }, "totalCost" : { "$sum" : { "$map" : { "input" : "$legs", "as" : "it", "in" : { "$multiply" : [ "$$it.dist", "$$it.alt" ] } } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               scanType: Secondary Index Scan
+               cursorScanType: Secondary Index Scan
                indexName: idx_routeId
                indexKey: {"routeId": 1}
                isMultiKey: false
@@ -1409,7 +1409,7 @@ $cmd$, true);
    ->  Subquery Scan on agg_stage_2 (actual rows=16 loops=1)
          Filter: (agg_stage_2.document #>= '{ "legCount" : { "$numberInt" : "1" } }'::bsonquery)
          ->  Custom Scan (DocumentDBApiCursorScan) (actual rows=16 loops=1)
-               scanType: Secondary Index Scan
+               cursorScanType: Secondary Index Scan
                indexName: idx_routeId
                indexKey: {"routeId": 1}
                isMultiKey: false
@@ -1457,7 +1457,7 @@ $cmd$);
                Filter: (agg_stage_2.document #>= '{ "totalDist" : { "$numberInt" : "5" } }'::bsonquery)
                ->  Custom Scan (DocumentDBApiCursorScan)
                      Output: (bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "phase" : { "$numberInt" : "1" }, "totalDist" : { "$sum" : { "$map" : { "input" : "$legs", "as" : "it", "in" : "$$it.dist" } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-                     scanType: Secondary Index Scan
+                     cursorScanType: Secondary Index Scan
                      indexName: idx_phase
                      indexKey: {"phase": 1}
                      isMultiKey: false

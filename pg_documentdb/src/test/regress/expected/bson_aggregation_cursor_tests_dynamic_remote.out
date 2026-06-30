@@ -1295,7 +1295,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('db',
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "a" : { "$gte" : "aval-" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   scanType: Secondary Index Bitmap Scan
+   cursorScanType: Secondary Index Bitmap Scan
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: false
@@ -1317,7 +1317,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('d
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "a" : { "$gte" : "aval-" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   scanType: Secondary Index Bitmap Scan
+   cursorScanType: Secondary Index Bitmap Scan
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: false
