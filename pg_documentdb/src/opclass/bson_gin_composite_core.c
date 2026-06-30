@@ -47,6 +47,7 @@
 
 extern bool EnableRegexPrefixIndexBounds;
 extern bool EnableCompositeReducedCorrelatedPrefixTrim;
+extern bool EnablePerPathMultiKeySortPushdown;
 
 /* --------------------------------------------------------- */
 /* Data-types */
@@ -691,7 +692,8 @@ MergeWildCardSingleVariableBounds(List *boundsList)
 
 List *
 MergeSingleVariableBounds(List *boundsList, const char **wildcardPath,
-						  CompositeIndexBounds *mergedBounds, const char *indexCollation)
+						  CompositeIndexBounds *mergedBounds, const char *indexCollation,
+						  bool hasArrayPaths, uint32_t multiKeyBitMask)
 {
 	ListCell *cell;
 	foreach(cell, boundsList)
@@ -707,6 +709,20 @@ MergeSingleVariableBounds(List *boundsList, const char **wildcardPath,
 		{
 			ereport(ERROR, (errmsg(
 								"Unexpected, should not have wildcardPath in single variable bounds merge")));
+		}
+
+		if (hasArrayPaths)
+		{
+			if (multiKeyBitMask == 0 || !EnablePerPathMultiKeySortPushdown)
+			{
+				/* Can't merge since we don't have multi-path information */
+				continue;
+			}
+			else if ((multiKeyBitMask & (UINT32_C(1) << set->indexAttribute)) != 0)
+			{
+				/* Can't merge since this path is a multi-key path */
+				continue;
+			}
 		}
 
 		MergeBoundsForBoundsSet(set, mergedBounds, indexCollation);
@@ -2979,10 +2995,14 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 				&finalBounds, indexAttribute, wildcardPath);
 
 			int initialVariableBoundsCount = list_length(localBounds.variableBoundsList);
+
+			/* hasArrays is false here since it's per element of the array check */
+			bool hasArrays = false;
+			uint32_t multiKeyBitMask = 0;
 			localBounds.variableBoundsList =
 				MergeSingleVariableBounds(localBounds.variableBoundsList,
 										  &nestedWildcardPath, singleBounds->bounds,
-										  indexCollation);
+										  indexCollation, hasArrays, multiKeyBitMask);
 
 			if (list_length(localBounds.variableBoundsList) == initialVariableBoundsCount)
 			{

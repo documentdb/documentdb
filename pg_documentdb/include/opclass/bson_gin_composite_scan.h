@@ -23,7 +23,8 @@ char *SerializeBoundsStringForExplain(bytea * entry, void *extraData, PG_FUNCTIO
 
 Datum FormCompositeDatumFromQuals(List *indexQuals, bool isMultiKey,
 								  bool hasCorrelatedReducedTerm,
-								  bool supportsOperatorOrderedScans);
+								  bool supportsOperatorOrderedScans,
+								  uint32_t multiKeyBitMask);
 char * SerializeCompositeIndexKeyForExplain(bytea *entry);
 
 void DecodeCompositeOpClassQueryMetadata(void *options, uint64_t opclassMetadata,
@@ -31,14 +32,16 @@ void DecodeCompositeOpClassQueryMetadata(void *options, uint64_t opclassMetadata
 										 bool *hasCorrelatedReducedTerms,
 										 bool *hasTruncation);
 void DecodeCompositeOpClassMetadata(void *options, uint64_t opclassMetadata,
-									bool *hasMultiKey, List **multiKeyPerPathList,
+									bool *hasMultiKey, uint32_t *multiKeyBitMask,
+									List **multiKeyPerPathList,
 									bool *hasCorrelatedReducedTerms, bool *hasTruncation,
 									List **truncatedPerPathList);
 void SerializeCompositeIndexKeyForExplainToWriter(bytea *entry, pgbson_writer *writer);
 bool ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey
 									targetScanKey, bool hasArrayKeys, bool
 									hasCorrelatedReducedTerms,
-									bool supportsOrderedOperatorScans);
+									bool supportsOrderedOperatorScans,
+									uint32_t multiKeyBitMask);
 
 int32_t GetScanTypeForScanDirection(ScanDirection scanDirection);
 ScanDirection GetOrderByScanDirectionFromDatum(bytea *opClassoptions, Datum orderByDatum);

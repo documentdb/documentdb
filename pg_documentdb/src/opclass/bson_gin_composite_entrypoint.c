@@ -241,7 +241,8 @@ static bytea * BuildTermForBounds(CompositeQueryRunData *runData,
 static void ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
 									bool *isMultiKey,
 									bool *hasCorrelatedReducedTerms,
-									bool *supportsOrderedOperatorScans);
+									bool *supportsOrderedOperatorScans,
+									uint32_t *multiKeyBitMask);
 static int32_t RunCompareOnBounds(CompositeIndexBounds *bounds,
 								  SerializedCompositeTermPair *termPair,
 								  bool hasEqualityPrefix, bool isBackwardScan,
@@ -255,6 +256,7 @@ static void OptimizeVariableBoundsForQuery(CompositeQueryRunData *runData,
 										   VariableIndexBounds *variableBounds,
 										   bool hasArrayPaths, bool isOrderedScan,
 										   bool isCorrelatedReducedScan,
+										   uint32_t multiKeyBitMask,
 										   BsonGinCompositePathOptions *options,
 										   const char *indexPaths[INDEX_MAX_KEYS]);
 static void OptimizeVariableBoundsForOrderedScans(CompositeQueryRunData *runData,
@@ -524,6 +526,7 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	/* key that we're doing an ordered scan based off of search mode */
 	bool isCorrelatedReducedScan = false;
 	bool supportsOrderedOperatorScans = false;
+	uint32_t multiKeyBitMask = 0;
 
 	/* Round 1, collect fixed index bounds and collect variable index bounds */
 	ScanDirection scanDir = NoMovementScanDirection;
@@ -557,7 +560,8 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 		pgbsonelement singleElement;
 		ParseCompositeQuerySpec(query, &singleElement, &hasArrayPaths,
 								&isCorrelatedReducedScan,
-								&supportsOrderedOperatorScans);
+								&supportsOrderedOperatorScans,
+								&multiKeyBitMask);
 		ParseBoundsForCompositeOperator(&singleElement, indexPaths, indexPathLengths,
 										sortOrders, numPaths,
 										metaInfo->wildcardPathIndex,
@@ -611,7 +615,9 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	 */
 	OptimizeVariableBoundsForQuery(runData, &variableBounds, hasArrayPaths,
 								   metaInfo->isOrderedScan,
-								   isCorrelatedReducedScan, options, indexPaths);
+								   isCorrelatedReducedScan,
+								   multiKeyBitMask,
+								   options, indexPaths);
 
 	/* Tally up the total variable bound counts - this is the permutation of all variable terms
 	 * e.g. if we have { "a": { "$in": [ 1, 2, 3 ]}} && { "b": { "$in": [ 4, 5 ] } }
@@ -1027,6 +1033,7 @@ OptimizeVariableBoundsForQuery(CompositeQueryRunData *runData,
 							   VariableIndexBounds *variableBounds,
 							   bool hasArrayPaths, bool isOrderedScan,
 							   bool isCorrelatedReducedScan,
+							   uint32_t multiKeyBitMask,
 							   BsonGinCompositePathOptions *options,
 							   const char *indexPaths[INDEX_MAX_KEYS])
 {
@@ -1048,13 +1055,15 @@ OptimizeVariableBoundsForQuery(CompositeQueryRunData *runData,
 			TrimSecondaryVariableBounds(variableBounds, runData, indexPaths);
 		}
 
-		if (!hasArrayPaths)
+		if (!hasArrayPaths || options->enableMetadataBasedTracking)
 		{
 			variableBounds->variableBoundsList =
 				MergeSingleVariableBounds(variableBounds->variableBoundsList,
 										  &runData->wildcardPath,
 										  runData->indexBounds,
-										  runData->metaInfo->collation);
+										  runData->metaInfo->collation,
+										  hasArrayPaths,
+										  multiKeyBitMask);
 		}
 	}
 
@@ -3812,7 +3821,7 @@ DecodeCompositeOpClassQueryMetadata(void *options, uint64_t opclassMetadata,
  */
 void
 DecodeCompositeOpClassMetadata(void *options, uint64_t opclassMetadata, bool *hasMultiKey,
-							   List **multiKeyPerPathList,
+							   uint32_t *multiKeyBitMask, List **multiKeyPerPathList,
 							   bool *hasCorrelatedReducedTerms, bool *hasTruncation,
 							   List **truncatedPerPathList)
 {
@@ -3830,6 +3839,7 @@ DecodeCompositeOpClassMetadata(void *options, uint64_t opclassMetadata, bool *ha
 										&multiKeyPerPathStatus, hasCorrelatedReducedTerms,
 										hasTruncation);
 	*multiKeyPerPathList = NIL;
+	*multiKeyBitMask = multiKeyPerPathStatus;
 	for (int i = 0; i < numPaths; i++)
 	{
 		if (multiKeyPerPathStatus & (UINT32_C(1) << i))
@@ -4067,7 +4077,8 @@ SerializeBoundsStringForExplain(bytea *entry, void *extraData, PG_FUNCTION_ARGS,
 
 Datum
 FormCompositeDatumFromQuals(List *indexQuals, bool isMultiKey, bool
-							hasCorrelatedReducedTerm, bool supportsOperatorOrderedScans)
+							hasCorrelatedReducedTerm, bool supportsOperatorOrderedScans,
+							uint32_t multiKeyBitMask)
 {
 	ScanKeyData *scanKeys = palloc0(sizeof(ScanKeyData) * list_length(indexQuals));
 	ScanKeyData targetScanKey = { 0 };
@@ -4136,7 +4147,7 @@ FormCompositeDatumFromQuals(List *indexQuals, bool isMultiKey, bool
 	/* TODO: Extract order by scan direction from index orderby */
 	if (!ModifyScanKeysForCompositeScan(scanKeys, list_length(indexQuals), &targetScanKey,
 										isMultiKey, hasCorrelatedReducedTerm,
-										supportsOperatorOrderedScans))
+										supportsOperatorOrderedScans, multiKeyBitMask))
 	{
 		return (Datum) 0;
 	}
@@ -4158,7 +4169,8 @@ FormCompositeDatumFromQuals(List *indexQuals, bool isMultiKey, bool
 bool
 ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetScanKey,
 							   bool hasArrayKeys, bool hasCorrelatedReducedTerms,
-							   bool supportsOrderedOperatorScans)
+							   bool supportsOrderedOperatorScans, uint32_t
+							   multiKeyBitMask)
 {
 	pgbson_writer querySpecWriter;
 	PgbsonWriterInit(&querySpecWriter);
@@ -4206,6 +4218,11 @@ ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetSca
 	if (supportsOrderedOperatorScans)
 	{
 		PgbsonWriterAppendBool(&querySpecWriter, "oo", 2, true);
+	}
+
+	if (multiKeyBitMask != 0)
+	{
+		PgbsonWriterAppendInt64(&querySpecWriter, "mk", 2, (int64_t) multiKeyBitMask);
 	}
 
 	Datum finalDatum = PointerGetDatum(
@@ -4268,7 +4285,8 @@ static void
 ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
 						bool *isMultiKey,
 						bool *hasCorrelatedReducedTerms,
-						bool *supportsOrderedOperatorScans)
+						bool *supportsOrderedOperatorScans,
+						uint32_t *multiKeyBitMask)
 {
 	bson_iter_t queryIter;
 	PgbsonInitIterator(querySpec, &queryIter);
@@ -4297,6 +4315,10 @@ ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
 		{
 			*supportsOrderedOperatorScans = *supportsOrderedOperatorScans ||
 											bson_iter_bool(&queryIter);
+		}
+		else if (strcmp(key, "mk") == 0)
+		{
+			*multiKeyBitMask = (uint32_t) bson_iter_int64(&queryIter);
 		}
 		else
 		{

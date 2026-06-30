@@ -337,7 +337,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
          indexKey: {"contacts.ref_id": 1,"logged_at": 1}
          isMultiKey: true
          multiKeyPaths: contacts.ref_id
-         indexBounds: ["contacts.ref_id": ["4235", "4235"], "logged_at": [{ "$date" : "2006-01-01T00:00:00Z" }, { "$date" : "292278994-08-17T07:12:55.807Z" }]]
+         indexBounds: ["contacts.ref_id": ["4235", "4235"], "logged_at": [{ "$date" : "2006-01-01T00:00:00Z" }, { "$date" : "2026-12-31T23:59:59.999Z" }]]
          isBackwardScan: true
          innerScanLoops: 3 loops
          scanType: ordered

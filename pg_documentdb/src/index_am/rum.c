@@ -81,6 +81,8 @@ typedef struct DocumentDBRumIndexState
 	IndexMultiKeyStatus multiKeyStatus;
 
 	bool hasCorrelatedReducedTerms;
+
+	uint32_t multiKeyPerPathStatus;
 } DocumentDBRumIndexState;
 
 
@@ -1239,7 +1241,6 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 			if (options->enableMetadataBasedTracking &&
 				getopclassMetadataFunc != NULL)
 			{
-				uint32_t multiKeyPerPathStatus = 0;
 				bool hasReducedCorrelatedTerms = false;
 				bool indexHasArrays = false;
 				bool indexHasTruncation = false;
@@ -1249,7 +1250,7 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 																  scan->indexRelation)));
 				DecodeCompositeOpClassQueryMetadata(options, opclassMetadata,
 													&indexHasArrays,
-													&multiKeyPerPathStatus,
+													&outerScanState->multiKeyPerPathStatus,
 													&hasReducedCorrelatedTerms,
 													&indexHasTruncation);
 				outerScanState->multiKeyStatus = indexHasArrays ?
@@ -1300,7 +1301,8 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 										   outerScanState->multiKeyStatus ==
 										   IndexMultiKeyStatus_HasArrays,
 										   outerScanState->hasCorrelatedReducedTerms,
-										   supportsOrderedOperatorScans))
+										   supportsOrderedOperatorScans,
+										   outerScanState->multiKeyPerPathStatus))
 		{
 			innerScanKey = &outerScanState->compositeKey;
 			nInnerScanKeys = 1;
@@ -1384,9 +1386,9 @@ extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nsc
 			(BsonGinCompositePathOptions *) scan->indexRelation->rd_opcoptions[0];
 		IndexMultiKeyStatus indexHasArrays = IndexMultiKeyStatus_Unknown;
 		bool hasCorrelatedReducedTerms = false;
+		uint32_t multiKeyPerPathStatus = 0;
 		if (options->enableMetadataBasedTracking)
 		{
-			uint32_t multiKeyPerPathStatus = 0;
 			bool indexHasArraysBool = false;
 			bool indexHasTruncation = false;
 			uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
@@ -1437,7 +1439,8 @@ extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nsc
 										   indexHasArrays ==
 										   IndexMultiKeyStatus_HasArrays,
 										   hasCorrelatedReducedTerms,
-										   supportsOrderedOperatorScans))
+										   supportsOrderedOperatorScans,
+										   multiKeyPerPathStatus))
 		{
 			int numscankeys = 1;
 			coreRoutine->amrescan(scan, &compositeKey, numscankeys, orderbys, norderbys);
@@ -1805,6 +1808,7 @@ ExplainCompositeProperties(void *state, PGFunction multiKeyStatusFunc,
 	bool hasCorrelatedTerms = false;
 	bool isTruncated = false;
 	List *truncatedPerPathList = NIL;
+	uint32_t multiKeyBitMask = 0;
 	if (getOpclassMetadataFunc != NULL && options != NULL &&
 		options->enableMetadataBasedTracking)
 	{
@@ -1813,7 +1817,7 @@ ExplainCompositeProperties(void *state, PGFunction multiKeyStatusFunc,
 													  PointerGetDatum(
 														  index_rel)));
 		DecodeCompositeOpClassMetadata(options, opclassMetadata, &isMultiKey,
-									   &multiKeyPerPathList,
+									   &multiKeyBitMask, &multiKeyPerPathList,
 									   &hasCorrelatedTerms, &isTruncated,
 									   &truncatedPerPathList);
 	}
@@ -1862,7 +1866,8 @@ ExplainCompositeProperties(void *state, PGFunction multiKeyStatusFunc,
 
 	Datum compositeDatum = FormCompositeDatumFromQuals(indexQuals,
 													   isMultiKey, hasCorrelatedTerms,
-													   supportsOrderedOperatorScans);
+													   supportsOrderedOperatorScans,
+													   multiKeyBitMask);
 	if (compositeDatum != 0)
 	{
 		ScanDirection scanDir = NoMovementScanDirection;
@@ -2059,6 +2064,7 @@ ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 	bool hasCorrelatedReducedTerms = false;
 	bool hasTruncation = false;
 	List *truncatedPerPathList = NIL;
+	uint32_t multiKeyBitMask = 0;
 
 	bool supportsOrderedOperatorScans = false;
 	PGFunction multiKeyStatusFunc = NULL;
@@ -2075,7 +2081,7 @@ ExplainCompositeScanCore(IndexScanDesc scan, void *state,
 														  scan->indexRelation)));
 
 		DecodeCompositeOpClassMetadata(options, opclassMetadata, &hasMultiKey,
-									   &multiKeyPerPathList,
+									   &multiKeyBitMask, &multiKeyPerPathList,
 									   &hasCorrelatedReducedTerms, &hasTruncation,
 									   &truncatedPerPathList);
 	}
