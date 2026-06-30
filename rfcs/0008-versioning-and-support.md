@@ -14,7 +14,6 @@ implementations:
 
 ## Problem
 
-Currently our versioning strategy is optimized for the needs of a cloud service.
 As we enter different distribution channels (e.g. package repositories) we need
 to improve our strategy to align closer with package repositories. In particular
 we need to come up with strategies for long term support, compatibility, release
