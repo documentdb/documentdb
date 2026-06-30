@@ -3911,7 +3911,13 @@ CheckPartFilterExprOperatorsWalker(Node *node, void *context)
 		}
 		else if (boolExpr->boolop == OR_EXPR)
 		{
-			ThrowUnsupportedPartFilterExprError(node);
+			bool isTopLevel = (bool) context;
+			if (!isTopLevel)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+								errmsg("$or only supported in partialFilterExpression "
+									   "at top level")));
+			}
 		}
 		else if (boolExpr->boolop == NOT_EXPR)
 		{

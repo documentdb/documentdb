@@ -142,6 +142,7 @@ typedef struct MatchNamespaceFiltersContext
 
 extern bool EnableDollarInToScalarArrayOpExprConversion;
 extern bool EnableObjectIdFuncExprConversion;
+extern bool EnablePartialFilterEvalOnPlanner;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -2464,6 +2465,47 @@ CreateOpExprFromOperatorDocIterator(const char *path,
 }
 
 
+Expr *
+CreateScalarArrayOpExprForInWithBsonIndexBounds(Expr *documentExpr, const char *path,
+												const char *collationString,
+												bson_iter_t *arrayIter)
+{
+	List *inArgsList = NIL;
+	while (bson_iter_next(arrayIter))
+	{
+		const bson_value_t *currentValue = bson_iter_value(arrayIter);
+		Const *bsonConst = CreateConstFromBsonValue(
+			path, currentValue, collationString);
+		bsonConst->consttype = BsonIndexBoundsTypeId();
+		inArgsList = lappend(inArgsList, bsonConst);
+	}
+
+	/*
+	 * In the case where we're operating with a $in and indexes with
+	 * PFE we need to coerce the expression to the type of the index
+	 */
+	if (inArgsList != NIL)
+	{
+		ScalarArrayOpExpr *inOperator = makeNode(ScalarArrayOpExpr);
+		inOperator->useOr = true;
+		inOperator->opno = BsonIndexBoundsEqualOperatorId();
+		inOperator->opfuncid = BsonIndexBoundsEqualOperatorFuncId();
+
+		/* Second arg is an ArrayExpr containing the documents */
+		ArrayExpr *arrayExpr = makeNode(ArrayExpr);
+		arrayExpr->array_typeid = GetBsonIndexBoundsArrayTypeOid();
+		arrayExpr->element_typeid = BsonIndexBoundsTypeId();
+		arrayExpr->multidims = false;
+		arrayExpr->elements = inArgsList;
+		inOperator->args = list_make2(documentExpr, arrayExpr);
+
+		return (Expr *) inOperator;
+	}
+
+	return NULL;
+}
+
+
 static Expr *
 CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 										BsonQueryOperatorContext *context,
@@ -2602,43 +2644,21 @@ CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 					context->coerceOperatorExprIfApplicable &&
 					context->inputType == MongoQueryOperatorInputType_Bson &&
 					operator->operatorType == QUERY_OPERATOR_IN &&
-					!hasRegex)
+					!hasRegex && !EnablePartialFilterEvalOnPlanner)
 				{
-					List *inArgsList = NIL;
 					if (bson_iter_recurse(operatorDocIterator, &arrayIterator))
 					{
-						while (bson_iter_next(&arrayIterator))
+						Expr *inOperator =
+							CreateScalarArrayOpExprForInWithBsonIndexBounds(
+								context->documentExpr, path,
+								context->
+								collationString, &arrayIterator);
+
+						if (inOperator != NULL)
 						{
-							currentValue = *bson_iter_value(&arrayIterator);
-							Const *bsonConst = CreateConstFromBsonValue(
-								path, &currentValue,
-								context->collationString);
-							bsonConst->consttype = BsonIndexBoundsTypeId();
-							inArgsList = lappend(inArgsList, bsonConst);
+							inExpr = (Expr *) make_and_qual((Node *) inExpr,
+															(Node *) inOperator);
 						}
-					}
-
-					/*
-					 * In the case where we're operating with a $in and indexes with
-					 * PFE we need to coerce the expression to the type of the index
-					 */
-					if (inArgsList != NIL)
-					{
-						ScalarArrayOpExpr *inOperator = makeNode(ScalarArrayOpExpr);
-						inOperator->useOr = true;
-						inOperator->opno = BsonIndexBoundsEqualOperatorId();
-						inOperator->opfuncid = BsonIndexBoundsEqualOperatorFuncId();
-
-						/* Second arg is an ArrayExpr containing the documents */
-						ArrayExpr *arrayExpr = makeNode(ArrayExpr);
-						arrayExpr->array_typeid = GetBsonIndexBoundsArrayTypeOid();
-						arrayExpr->element_typeid = BsonIndexBoundsTypeId();
-						arrayExpr->multidims = false;
-						arrayExpr->elements = inArgsList;
-						inOperator->args = list_make2(context->documentExpr, arrayExpr);
-
-						inExpr = (Expr *) make_and_qual((Node *) inExpr,
-														(Node *) inOperator);
 					}
 				}
 

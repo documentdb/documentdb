@@ -34,6 +34,7 @@
 #include <utils/syscache.h>
 #include <executor/spi.h>
 #include <parser/parse_relation.h>
+#include <optimizer/optimizer.h>
 
 #include "geospatial/bson_geospatial_geonear.h"
 #include "metadata/collection.h"
@@ -49,12 +50,15 @@
 #include "aggregation/bson_aggregation_pipeline.h"
 #include "aggregation/bson_query_common.h"
 #include "utils/query_utils.h"
+#include "utils/docdb_make_funcs.h"
+#include "collation/collation.h"
 #include "api_hooks.h"
 #include "query/bson_compare.h"
 #include "planner/documents_custom_planner.h"
 #include "index_am/index_am_utils.h"
 #include "index_am/documentdb_rum.h"
 #include "index_am/index_am_extend_query.h"
+#include "opclass/bson_gin_index_types_core.h"
 
 
 typedef enum DocumentDbQueryFlag
@@ -124,9 +128,7 @@ static Query * ExpandNestedAggregationFunction(Query *node, ParamListInfo boundP
 
 static void ForceExcludeNonIndexPaths(PlannerInfo *root, RelOptInfo *rel,
 									  Index rti, RangeTblEntry *rte);
-static void ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
-											RangeTblEntry *rte, uint64 collectionId, bool
-											isShardQuery);
+static List * AugmentBaseRestrictInfo(PlannerInfo *root, RelOptInfo *rel);
 
 extern bool ForceDisableSeqScan;
 extern bool EnableExtendedExplainPlans;
@@ -142,6 +144,7 @@ extern bool EnableDistinctCustomScan;
 extern bool EnableGroupByDistinctScan;
 extern bool EnableDistinctScanForGroupFirst;
 extern bool EnableDollarSampleReservoirScan;
+extern bool EnablePartialFilterEvalOnPlanner;
 
 planner_hook_type ExtensionPreviousPlannerHook = NULL;
 set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook = NULL;
@@ -427,15 +430,6 @@ ExtensionRelPathlistHookCore(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		return;
 	}
 
-	ExtensionRelPathlistHookCoreNew(root, rel, rti, rte, collectionId, isShardQuery);
-}
-
-
-static void
-ExtensionRelPathlistHookCoreNew(PlannerInfo *root, RelOptInfo *rel, Index rti,
-								RangeTblEntry *rte, uint64 collectionId, bool
-								isShardQuery)
-{
 	ReplaceExtensionFunctionContext indexContext = {
 		.queryDataForVectorSearch = { 0 },
 		.hasVectorSearchQuery = false,
@@ -790,6 +784,11 @@ LogRelationIndexesOrder(const RelOptInfo *rel)
  * 3. Regular BSON indexes are given the next priority.
  * 4. Any other index access method is given the lowest priority.
  *
+ * Additional things we do in this method:
+ * 1) If parallel scans are supported, we mark the indexam as supporting it if it's capable
+ * 2) If there's PFE we support PFE pushdown based on the baserestrictinfo
+ * 3) Modify the btree cost estimate to the custom cost estimate
+ *
  */
 static void
 ExtensionGetRelationInfoHookCore(PlannerInfo *root, Oid relationObjectId,
@@ -807,7 +806,12 @@ ExtensionGetRelationInfoHookCore(PlannerInfo *root, Oid relationObjectId,
 		list_sort(rel->indexlist, CompareIndexOptionsFunc);
 	}
 
-	/* In this path btree will be first if any */
+	/* In this path btree will be first if any
+	 * As we walk the indexes, collect all the PFE indexes if required.
+	 * If there are any PFE indexes, we need to process them for
+	 * predOk based on the custom expressions we may need.
+	 */
+	List *pfeIndexes = NIL;
 	if (list_length(rel->indexlist) > 0)
 	{
 		ListCell *cell;
@@ -824,7 +828,45 @@ ExtensionGetRelationInfoHookCore(PlannerInfo *root, Oid relationObjectId,
 			{
 				firstIndex->amcanparallel = true;
 			}
+
+			if (EnablePartialFilterEvalOnPlanner &&
+				list_length(firstIndex->indpred) > 0)
+			{
+				pfeIndexes = lappend(pfeIndexes, firstIndex);
+			}
 		}
+	}
+
+
+	if (EnablePartialFilterEvalOnPlanner &&
+		list_length(pfeIndexes) > 0)
+	{
+		/* Create a temporary memory context for this */
+		MemoryContext tempContext = AllocSetContextCreate(CurrentMemoryContext,
+														  "PFE Context",
+														  ALLOCSET_DEFAULT_MINSIZE,
+														  ALLOCSET_DEFAULT_INITSIZE,
+														  ALLOCSET_DEFAULT_MAXSIZE);
+		MemoryContext oldMemoryContext = MemoryContextSwitchTo(tempContext);
+
+		List *clauselist = AugmentBaseRestrictInfo(root, rel);
+
+		/* If there are partial filter indexes, apply the predOk test here
+		 * This means we need to augment additional clauses in the
+		 * index_restrict_info to ensure that PFE pred_ok works correctly.
+		 */
+		ListCell *cell;
+		foreach(cell, pfeIndexes)
+		{
+			IndexOptInfo *pfeIndex = lfirst(cell);
+			pfeIndex->predOK = predicate_implied_by(pfeIndex->indpred, clauselist,
+													false);
+		}
+
+		MemoryContextSwitchTo(oldMemoryContext);
+		MemoryContextDelete(tempContext);
+
+		list_free(pfeIndexes);
 	}
 
 	if (EnableLogRelationIndexesOrder)
@@ -1979,4 +2021,117 @@ ForceExcludeNonIndexPaths(PlannerInfo *root, RelOptInfo *rel,
 								"Could not find any valid index to push down for query")));
 		}
 	}
+}
+
+
+static Node *
+AugmentBaseRestrictInfoCore(Node *node, void *context)
+{
+	CHECK_FOR_INTERRUPTS();
+	check_stack_depth();
+	if (node == NULL)
+	{
+		return node;
+	}
+
+	if (IsA(node, FuncExpr))
+	{
+		/* For $in, we want to track for PFE as a scalar array operator */
+		FuncExpr *func = (FuncExpr *) node;
+		if (list_length(func->args) < 2)
+		{
+			return node;
+		}
+
+		Expr *firstArg = linitial(func->args);
+		Expr *secondArg = lsecond(func->args);
+		if (!IsA(secondArg, Const))
+		{
+			return node;
+		}
+
+		if (func->funcid == BsonInMatchFunctionId())
+		{
+			Const *secondConst = (Const *) secondArg;
+			pgbson *inBson = DatumGetPgBson(secondConst->constvalue);
+
+			pgbsonelement inElement;
+			const char *collation = PgbsonToSinglePgbsonElementWithCollation(inBson,
+																			 &
+																			 inElement);
+
+			bson_iter_t arrayIterator;
+			BsonValueInitIterator(&inElement.bsonValue, &arrayIterator);
+
+			Expr *expr = CreateScalarArrayOpExprForInWithBsonIndexBounds(firstArg,
+																		 inElement.path,
+																		 collation,
+																		 &arrayIterator);
+			if (expr != NULL)
+			{
+				return (Node *) expr;
+			}
+		}
+		else if (func->funcid == BsonRegexMatchFunctionId())
+		{
+			Const *secondConst = (Const *) secondArg;
+			pgbson *regexBson = DatumGetPgBson(secondConst->constvalue);
+
+			pgbsonelement regexElement;
+			PgbsonToSinglePgbsonElementWithCollation(regexBson, &regexElement);
+
+			/* Create an OR expr that has the ranges for all strings and all regexes.
+			 * $regex implies the field exists with either a string or regex value.
+			 * Build: (@>= string_min) OR (@>= regex_min)
+			 */
+			const char *path = regexElement.path;
+			uint32_t pathLen = regexElement.pathLength;
+
+			/* Build string lower bound using GetLowerBound */
+			bson_value_t stringLower = GetLowerBound(BSON_TYPE_UTF8);
+
+			pgbson_writer stringWriter;
+			PgbsonWriterInit(&stringWriter);
+			PgbsonWriterAppendValue(&stringWriter, path, pathLen, &stringLower);
+			pgbson *stringMinBson = PgbsonWriterGetPgbson(&stringWriter);
+			Const *stringMinConst = MakeBsonConst(stringMinBson);
+			stringMinConst->consttype = GetClusterBsonQueryTypeId();
+
+			OpExpr *stringGte = (OpExpr *) make_opclause(
+				BsonGreaterThanEqualMatchRuntimeOperatorId(), BOOLOID, false,
+				firstArg, (Expr *) stringMinConst, InvalidOid, InvalidOid);
+			stringGte->opfuncid = BsonGreaterThanEqualMatchRuntimeFunctionId();
+
+			/* Build regex lower bound using GetLowerBound */
+			bson_value_t regexLower = GetLowerBound(BSON_TYPE_REGEX);
+
+			pgbson_writer regexWriter;
+			PgbsonWriterInit(&regexWriter);
+			PgbsonWriterAppendValue(&regexWriter, path, pathLen, &regexLower);
+			pgbson *regexMinBson = PgbsonWriterGetPgbson(&regexWriter);
+			Const *regexMinConst = MakeBsonConst(regexMinBson);
+			regexMinConst->consttype = GetClusterBsonQueryTypeId();
+
+			OpExpr *regexGte = (OpExpr *) make_opclause(
+				BsonGreaterThanEqualMatchRuntimeOperatorId(), BOOLOID, false,
+				firstArg, (Expr *) regexMinConst, InvalidOid, InvalidOid);
+			regexGte->opfuncid = BsonGreaterThanEqualMatchRuntimeFunctionId();
+
+			/* Build OR expression: string_gte OR regex_gte */
+			return (Node *) make_orclause(list_make2(stringGte, regexGte));
+		}
+	}
+
+	return expression_tree_mutator(node, AugmentBaseRestrictInfoCore, context);
+}
+
+
+static List *
+AugmentBaseRestrictInfo(PlannerInfo *root, RelOptInfo *rel)
+{
+	List *clauselist = make_ands_implicit((Expr *) root->parse->jointree->quals);
+
+	/* This function is a placeholder for the actual implementation */
+	return (List *) expression_tree_mutator((Node *) clauselist,
+											AugmentBaseRestrictInfoCore, 0);
 }

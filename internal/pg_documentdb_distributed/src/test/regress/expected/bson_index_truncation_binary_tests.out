@@ -643,14 +643,14 @@ SELECT document FROM documentdb_api.collection('db', 'index_truncation_binary_te
 (0 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api.collection('db', 'index_truncation_binary_tests') WHERE document @@ '{ "ikey": { "$in": [{ "$binary" : { "base64": "dGhpcyBpcyBhIHRlc3Qgc3RyaW5n", "subType" : "01" } }, { "$binary" : { "base64": "MTIzNDUxMjM0NQ==", "subType" : "07" } }] } }';
-                                                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                     
+                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_11500_1150003 collection WHERE (documentdb_api_catalog.bson_dollar_in(document, '{ "ikey" : [ { "$binary" : { "base64" : "dGhpcyBpcyBhIHRlc3Qgc3RyaW5n", "subType" : "01" } }, { "$binary" : { "base64" : "MTIzNDUxMjM0NQ==", "subType" : "07" } } ] }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_internal.##=) ANY (ARRAY['{ "ikey" : { "$binary" : { "base64" : "dGhpcyBpcyBhIHRlc3Qgc3RyaW5n", "subType" : "01" } } }'::documentdb_api_internal.bsonindexbounds, '{ "ikey" : { "$binary" : { "base64" : "MTIzNDUxMjM0NQ==", "subType" : "07" } } }'::documentdb_api_internal.bsonindexbounds])) AND (shard_key_value OPERATOR(pg_catalog.=) '11500'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_11500_1150003 collection WHERE (documentdb_api_catalog.bson_dollar_in(document, '{ "ikey" : [ { "$binary" : { "base64" : "dGhpcyBpcyBhIHRlc3Qgc3RyaW5n", "subType" : "01" } }, { "$binary" : { "base64" : "MTIzNDUxMjM0NQ==", "subType" : "07" } } ] }'::documentdb_core.bson) AND (shard_key_value OPERATOR(pg_catalog.=) '11500'::bigint))
          Node: host=localhost port=58070 dbname=regression
          ->  Bitmap Heap Scan on documentdb_data.documents_11500_1150003 collection
                Output: document

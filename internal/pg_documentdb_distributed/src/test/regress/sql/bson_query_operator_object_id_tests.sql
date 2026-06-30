@@ -71,6 +71,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('objectIdTest
 
 BEGIN;
 SET LOCAL documentdb.ForceUseIndexIfAvailable to OFF;
+SET LOCAL enable_seqscan to off;
 EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('objectIdTestDB', 'test_object_id_index') WHERE document @@ '{ "_id": { "$in": [ 15, 55, 90 ] } }';
 ROLLBACK;
 

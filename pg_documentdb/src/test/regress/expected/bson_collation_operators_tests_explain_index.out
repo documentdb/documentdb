@@ -7372,8 +7372,8 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "single_field", "filter": { "$nor": [ { "a": { "$in": ["APPLE", "BANANA"] } } ] }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                 
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                  run_explain_and_trim                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=6 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
@@ -7382,7 +7382,7 @@ $cmd$);
          indexName: _id_
          ->  Index Scan using _id_ on documents_9501 collection (actual rows=6 loops=1)
                Index Cond: (shard_key_value = '9501'::bigint)
-               Filter: (NOT COALESCE((bson_dollar_in(document, '{ "a" : [ "APPLE", "BANANA" ], "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.##=) ANY ('{"{ \"a\" : \"APPLE\", \"collation\" : \"en-u-ks-level1\" }","{ \"a\" : \"BANANA\", \"collation\" : \"en-u-ks-level1\" }"}'::documentdb_api_internal.bsonindexbounds[]))), false))
+               Filter: (NOT COALESCE(bson_dollar_in(document, '{ "a" : [ "APPLE", "BANANA" ], "collation" : "en-u-ks-level1" }'::bson), false))
                Rows Removed by Filter: 4
 (10 rows)
 

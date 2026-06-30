@@ -177,18 +177,16 @@ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'test_o
 BEGIN;
 SET LOCAL documentdb.ForceUseIndexIfAvailable to OFF;
 EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'test_object_id_index') WHERE document @@ '{ "_id": { "$in": [ 15, 55, 90 ] } }';
-                                                                                            QUERY PLAN                                                                                             
+                                                                                       QUERY PLAN                                                                                        
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 8
    Tasks Shown: One of 8
    ->  Task
          Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documents_2510_251016 documents_2510
-               Recheck Cond: (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "15" }, { "$numberInt" : "55" }, { "$numberInt" : "90" } ] }'::documentdb_core.bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "15" }, { "$numberInt" : "55" }, { "$numberInt" : "90" } ] }'::documentdb_core.bson)
-(9 rows)
+         ->  Seq Scan on documents_2510_251016 documents_2510
+               Filter: (document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "15" }, { "$numberInt" : "55" }, { "$numberInt" : "90" } ] }'::documentdb_core.bson)
+(7 rows)
 
 ROLLBACK;
 EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('db', 'test_object_id_index') WHERE document @@ '{ "_id": 15, "a": 15 }';
@@ -391,11 +389,11 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (V
 
 -- Test with multiple object_id filters in the query
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('objectIdTestDB', '{ "find": "test_object_id_index",  "filter": { "$and": [ { "$or": [ { "_id": { "$in": [15, 16, 17] } } ] } ], "otherField": {"$ne": "bbb"}, "_id": 15 }, "limit": 1 }') $cmd$);
-                                                                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                                                                            
+                                                                                                                                                                        run_explain_and_trim                                                                                                                                                                        
 ---------------------------------------------------------------------
  Index Scan using _id_ on documents_2512_251026 collection (actual rows=1 loops=1)
    Index Cond: ((shard_key_value = '2512'::bigint) AND (object_id = '{ "" : { "$numberInt" : "15" } }'::bson))
-   Filter: (bson_dollar_in(document, '{ "_id" : [ { "$numberInt" : "15" }, { "$numberInt" : "16" }, { "$numberInt" : "17" } ] }'::bson) AND (document ##= ANY (ARRAY['{ "_id" : { "$numberInt" : "15" } }'::bsonindexbounds, '{ "_id" : { "$numberInt" : "16" } }'::bsonindexbounds, '{ "_id" : { "$numberInt" : "17" } }'::bsonindexbounds])) AND bson_dollar_ne(document, '{ "otherField" : "bbb" }'::bson) AND (object_id = ANY (ARRAY['{ "" : { "$numberInt" : "15" } }'::bson, '{ "" : { "$numberInt" : "16" } }'::bson, '{ "" : { "$numberInt" : "17" } }'::bson])))
+   Filter: (bson_dollar_in(document, '{ "_id" : [ { "$numberInt" : "15" }, { "$numberInt" : "16" }, { "$numberInt" : "17" } ] }'::bson) AND bson_dollar_ne(document, '{ "otherField" : "bbb" }'::bson) AND (object_id = ANY (ARRAY['{ "" : { "$numberInt" : "15" } }'::bson, '{ "" : { "$numberInt" : "16" } }'::bson, '{ "" : { "$numberInt" : "17" } }'::bson])))
 (3 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (VERBOSE OFF, COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('objectIdTestDB', '{ "find": "test_object_id_index",  "filter": { "$and": [ { "$or": [ { "_id": { "$in": [15, 16, 17] } } ] } ], "otherField": {"$ne": "bbb"}, "$or": [ { "_id": 15 }, { "_id": 16 } ] }, "limit": 1 }') $cmd$);
@@ -431,6 +429,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('objectIdTest
 
 BEGIN;
 SET LOCAL documentdb.ForceUseIndexIfAvailable to OFF;
+SET LOCAL enable_seqscan to off;
 EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('objectIdTestDB', 'test_object_id_index') WHERE document @@ '{ "_id": { "$in": [ 15, 55, 90 ] } }';
                                                                                             QUERY PLAN                                                                                             
 ---------------------------------------------------------------------

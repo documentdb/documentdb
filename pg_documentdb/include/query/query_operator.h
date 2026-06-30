@@ -165,4 +165,9 @@ pgbson * FindNamespaceFiltersInMatchSpec(bson_iter_t *specIter, List **nsFilters
 										 bool *multipleNSFilters,
 										 bool *invalidNSFilters);
 
+Expr * CreateScalarArrayOpExprForInWithBsonIndexBounds(Expr *documentExpr, const
+													   char *path,
+													   const char *collationString,
+													   bson_iter_t *arrayIter);
+
 #endif

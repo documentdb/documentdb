@@ -225,6 +225,10 @@ bool EnablePartialMatchHasRecheck = DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK;
 #define DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TERMS true
 bool EnableSkipDottedFieldIndexTerms = DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TERMS;
 
+/* Added in v115, enabled in v115, remove after v118 */
+#define DEFAULT_ENABLE_PARTIAL_FILTER_EVAL_ON_PLANNER true
+bool EnablePartialFilterEvalOnPlanner = DEFAULT_ENABLE_PARTIAL_FILTER_EVAL_ON_PLANNER;
+
 /* Added in v114, enabled in v114, remove after v116 */
 #define DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS true
 bool EnableDottedValueTextIndexTerms = DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS;
@@ -864,6 +868,15 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to skip generating index terms for fields with dotted names (e.g. literal \"a.b\" field)."),
 		NULL, &EnableSkipDottedFieldIndexTerms,
 		DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TERMS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	/* Added in v115, enabled in v115, remove after v118 */
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_partial_filter_eval_on_planner", newGucPrefix),
+		gettext_noop(
+			"Whether to enable partial filter evaluation on the planner."),
+		NULL, &EnablePartialFilterEvalOnPlanner,
+		DEFAULT_ENABLE_PARTIAL_FILTER_EVAL_ON_PLANNER,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
