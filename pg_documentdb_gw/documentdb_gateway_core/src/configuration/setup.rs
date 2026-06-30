@@ -845,7 +845,7 @@ fn read_env_bool(key: &str) -> Result<Option<bool>> {
 }
 
 fn default_user() -> String {
-    whoami::username()
+    whoami::username().unwrap_or_default()
 }
 
 impl SetupConfiguration for DocumentDBSetupConfiguration {

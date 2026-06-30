@@ -12,7 +12,8 @@ use documentdb_gateway_core::configuration::{
 
 #[must_use]
 pub fn setup_configuration() -> DocumentDBSetupConfiguration {
-    let system_user = std::env::var("PostgresSystemUser").unwrap_or(whoami::username());
+    let system_user = std::env::var("PostgresSystemUser")
+        .unwrap_or_else(|_| whoami::username().unwrap_or_default());
 
     DocumentDBSetupConfiguration {
         node_host_name: "localhost".to_owned(),

@@ -7,6 +7,11 @@ members = [
     "documentdb_macros",
     "documentdb_tests"
 ]
+# Locally vendored, patched copy of tokio-postgres (see [patch.crates-io] below).
+# Excluded so it is built only as a patched dependency, not as a workspace member.
+exclude = [
+    "vendor/tokio-postgres"
+]
 resolver = "2"
 
 [workspace.package]
@@ -46,25 +51,22 @@ openssl = "0.10.79"
 opentelemetry = { version = "0.30", features = ["metrics", "trace"] }
 opentelemetry-otlp = { version = "0.30", features = ["grpc-tonic", "metrics", "trace"] }
 opentelemetry_sdk = { version = "0.30", features = ["rt-tokio", "metrics", "trace"] }
-rand = "0.8.6"
+rand = "0.10.0"
 regex = "1.12.3"
 scc = { version = "3.7.0", features = ["equivalent", "serde"] }
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = { version = "1.0.149", features = ["arbitrary_precision"] }
-socket2 = "0.5.10"
+socket2 = "0.6.4"
 strum_macros = "0.28.0"
 tokio = { version = "1", features = ["full", "tracing"] }
 tokio-openssl = "0.6.5"
-tokio-postgres = { version = "0.7.17", features = [
-    "with-serde_json-1",
-    "array-impls",
-] }
+tokio-postgres = { version = "0.7.18", features = ["with-serde_json-1", "array-impls"] }
 tokio-util = "0.7.18"
 tracing = "0.1.44"
 tracing-opentelemetry = "0.31"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 uuid = { version = "1.23.1", features = ["v4"] }
-whoami = "1.6.1"
+whoami = "2.0.1"
 
 [workspace.lints.rust]
 ambiguous_negative_literals = "warn"
@@ -140,3 +142,7 @@ codegen-units = 1
 [profile.profiling]
 inherits = "release"
 debug = true
+
+## Patch section
+[patch.crates-io]
+tokio-postgres = { path = "libs/tokio-postgres" }

@@ -16,7 +16,7 @@ use std::{
 
 use base64::{engine::general_purpose, Engine as _};
 use bson::{rawdoc, spec::BinarySubtype};
-use rand::Rng;
+use rand::RngExt;
 use serde_json::Value;
 use tokio::time::{sleep, Duration};
 use tokio_postgres::{error::SqlState, types::Type};
@@ -333,11 +333,11 @@ async fn handle_auth_request(
 
 fn generate_server_nonce(client_nonce: &str) -> String {
     const CHARSET: &[u8] = b"!\"#$%&'()*+-./0123456789:;<>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     let mut result = String::with_capacity(NONCE_LENGTH);
     for _ in 0..NONCE_LENGTH {
-        let idx = rng.gen_range(0..CHARSET.len());
+        let idx = rng.random_range(0..CHARSET.len());
         result.push(CHARSET[idx] as char);
     }
 
