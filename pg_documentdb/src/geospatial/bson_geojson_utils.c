@@ -111,6 +111,8 @@ static bool IsHoleFullyCoveredByOuterRing(char *currPtr, int32 numPoints,
 										  PolygonValidationState *polygonValidationState,
 										  Datum holeDatum);
 static char * GetRingPointsStringForError(char *currPtr, int32 numPoints);
+static StringInfo GetAntimeridianUnwrappedPolygonWKB(StringInfo polygonWKB,
+													 bool *hasCrossing);
 
 
 /* HashSet utilities for Points */
@@ -884,6 +886,145 @@ ValidateCoordinatesNotArray(const bson_value_t *coordinatesValue, GeoJsonType ge
 
 
 /*
+ * Builds an "antimeridian unwrapped" copy of the polygon WKB and returns it.
+ *
+ * A GeoJSON polygon ring that crosses the antimeridian has consecutive vertices whose
+ * longitudes jump by more than 180 degrees (e.g. 175 -> -175). On the sphere this is a
+ * short edge crossing the +/-180 line, and MongoDB (which uses spherical S2 geometry)
+ * accepts such polygons. However the planar PostGIS validity check (ST_IsValidDetail used
+ * by AdditionalPolygonValidation) interprets that edge as spanning ~350 degrees the long
+ * way across the map, which makes the ring appear to self-intersect and is wrongly rejected
+ * with "Loop is not valid - Edges cross".
+ *
+ * To let the planar validity check reflect the true spherical validity, this function shifts
+ * longitudes by multiples of 360 so that:
+ *  - each ring is made continuous across the antimeridian (no >180 degree jumps), and
+ *  - every ring is aligned to the same longitude frame as the exterior ring, so that
+ *    multi-ring polygons (shell + holes) remain correctly nested in the planar frame.
+ *
+ * The unwrapped WKB is used ONLY for validation. The original (in-range) coordinates are
+ * still used for storage and querying via PostGIS geography, which natively handles the
+ * antimeridian (verified: ring orientation does not affect geography interior, so storage
+ * is unaffected).
+ *
+ * *hasCrossing is set to true only when the polygon crosses the antimeridian AND every ring
+ * remains closed after unwrapping (an even number of crossings per ring). Polygons that
+ * encircle a pole cross an odd number of times and cannot be unwrapped; for those *hasCrossing
+ * is false and the caller falls back to the existing planar validation. When *hasCrossing is
+ * false the returned buffer must not be used. The caller owns the returned StringInfo.
+ */
+static StringInfo
+GetAntimeridianUnwrappedPolygonWKB(StringInfo polygonWKB, bool *hasCrossing)
+{
+	*hasCrossing = false;
+
+	StringInfo unwrappedWKB = makeStringInfo();
+	appendBinaryStringInfo(unwrappedWKB, polygonWKB->data, polygonWKB->len);
+
+	char *base = unwrappedWKB->data;
+
+	/* Skip the varlena header, the byte order byte and the geometry type */
+	Size offset = VARHDRSZ + WKB_BYTE_SIZE_ORDER + WKB_BYTE_SIZE_TYPE;
+
+	int32 numRings = 0;
+	memcpy(&numRings, base + offset, WKB_BYTE_SIZE_NUM);
+	offset += WKB_BYTE_SIZE_NUM;
+
+	/* Longitude of the exterior ring's first vertex, used to align all rings to one frame */
+	double referenceLongitude = 0.0;
+
+	bool anyCrossing = false;
+
+	/*
+	 * A ring that crosses the antimeridian an odd number of times encircles a pole
+	 * (e.g. all vertices at the same latitude going around the earth). Such a ring cannot
+	 * be unwrapped into a closed planar ring - the shift accumulated while walking the ring
+	 * would not return to its starting value, leaving the closing vertex displaced. These
+	 * polygons are handled by the existing planar straight-line workaround, so we leave them
+	 * untouched and only unwrap when every ring stays closed (an even number of crossings).
+	 */
+	bool allRingsRemainClosed = true;
+
+	for (int32 ring = 0; ring < numRings; ring++)
+	{
+		int32 numPoints = 0;
+		memcpy(&numPoints, base + offset, WKB_BYTE_SIZE_NUM);
+		offset += WKB_BYTE_SIZE_NUM;
+
+		char *pointsStart = base + offset;
+
+		double firstLongitude = 0.0;
+		if (numPoints > 0)
+		{
+			memcpy(&firstLongitude, pointsStart, sizeof(double));
+		}
+
+		/*
+		 * Align this ring to the exterior ring's frame so shells and holes stay nested.
+		 * The exterior ring (ring == 0) defines the reference frame.
+		 */
+		double wholeRingOffset = 0.0;
+		if (ring == 0)
+		{
+			referenceLongitude = firstLongitude;
+		}
+		else
+		{
+			wholeRingOffset = 360.0 * floor((referenceLongitude - firstLongitude) /
+											360.0 + 0.5);
+		}
+
+		double previousLongitude = 0.0;
+		double cumulativeShift = wholeRingOffset;
+		for (int32 pointIndex = 0; pointIndex < numPoints; pointIndex++)
+		{
+			char *xPtr = pointsStart + (pointIndex * WKB_BYTE_SIZE_POINT);
+			double longitude = 0.0;
+			memcpy(&longitude, xPtr, sizeof(double));
+
+			if (pointIndex > 0)
+			{
+				double delta = longitude - previousLongitude;
+				if (delta > 180.0)
+				{
+					cumulativeShift -= 360.0;
+					anyCrossing = true;
+				}
+				else if (delta < -180.0)
+				{
+					cumulativeShift += 360.0;
+					anyCrossing = true;
+				}
+			}
+			previousLongitude = longitude;
+
+			if (cumulativeShift != 0.0)
+			{
+				double shifted = longitude + cumulativeShift;
+				memcpy(xPtr, &shifted, sizeof(double));
+			}
+		}
+
+		/*
+		 * The closing vertex repeats the first vertex, so the shift after walking the ring
+		 * must return to the ring's starting offset for the ring to remain closed.
+		 */
+		if (fabs(cumulativeShift - wholeRingOffset) > 1e-6)
+		{
+			allRingsRemainClosed = false;
+		}
+
+		offset += (Size) numPoints * WKB_BYTE_SIZE_POINT;
+	}
+
+	*hasCrossing = anyCrossing && allRingsRemainClosed;
+
+	SET_VARSIZE(unwrappedWKB->data, unwrappedWKB->len);
+	return unwrappedWKB;
+}
+
+
+/*
  * AdditionalPolygonValidation validates the given polygon rings so that they form a valid polygon.
  * This method creates a polygon "geometry" from the Polygon WKB and runs the 'ST_IsValidReason' for
  * the polygon.
@@ -930,6 +1071,41 @@ AdditionalPolygonValidation(StringInfo polygonWKB, GeoJsonParseState *parseState
 	if (isValidDetailState.isValid)
 	{
 		return true;
+	}
+
+	/*
+	 * The planar validity check above rejects polygons that cross the antimeridian
+	 * because their edges appear to span ~350 degrees the long way around in 2d, even
+	 * though they are valid on the sphere (and accepted by MongoDB). Re-run the planar
+	 * validity check on an "unwrapped" copy whose longitudes are shifted by multiples of
+	 * 360 so antimeridian-crossing rings become continuous. If the unwrapped polygon is
+	 * valid, the original polygon is valid on the sphere; storage/querying continue to use
+	 * the original in-range coordinates via geography, which handles the antimeridian.
+	 */
+	bool hasAntimeridianCrossing = false;
+	StringInfo unwrappedPolygonWKB =
+		GetAntimeridianUnwrappedPolygonWKB(polygonWKB, &hasAntimeridianCrossing);
+
+	if (hasAntimeridianCrossing)
+	{
+		Datum unwrappedGeometry =
+			GetGeometryFromWKB((bytea *) unwrappedPolygonWKB->data);
+		IsValidDetailState unwrappedValidDetailState =
+			GetPolygonInvalidityReason(unwrappedGeometry, NULL);
+
+		pfree(DatumGetPointer(unwrappedGeometry));
+		pfree(unwrappedPolygonWKB->data);
+		pfree(unwrappedPolygonWKB);
+
+		if (unwrappedValidDetailState.isValid)
+		{
+			return true;
+		}
+	}
+	else
+	{
+		pfree(unwrappedPolygonWKB->data);
+		pfree(unwrappedPolygonWKB);
 	}
 
 	/* Check if holes are outside */
