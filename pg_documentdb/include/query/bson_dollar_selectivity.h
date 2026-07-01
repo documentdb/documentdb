@@ -27,4 +27,7 @@ double GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 bool EnablePlannerCostSelectivityFromRelOptInfo(PlannerInfo *planner, RelOptInfo *rel);
 bool EnablePlannerCostSelectivity(PlannerInfo *planner, List *args);
 
+void GetCorrelationFromStatistics(PlannerInfo *root, IndexPath *path,
+								  double *indexCorrelation);
+
 #endif

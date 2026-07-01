@@ -485,16 +485,6 @@ documentdb_rum_costestimate(PlannerInfo *root, IndexPath *path, double loop_coun
 	*indexStartupCost += (entryPagesFetched + dataPagesFetched) * spc_random_page_cost;
 
 	/*
-	 * Now compute the number of data pages fetched during the scan.
-	 *
-	 * We assume every entry to have the same number of items, and that there
-	 * is no overlap between them. (XXX: tsvector and array opclasses collect
-	 * statistics on the frequency of individual keys; it would be nice to use
-	 * those here.)
-	 */
-	dataPagesFetched = ceil(numDataPages * counts.exactEntries / numEntries);
-
-	/*
 	 * If there is a lot of overlap among the entries, in particular if one of
 	 * the entries is very frequent, the above calculation can grossly
 	 * under-estimate.  As a simple cross-check, calculate a lower bound based

@@ -19,14 +19,19 @@
 #include <optimizer/pathnode.h>
 #include <metadata/metadata_cache.h>
 #include <planner/mongo_query_operator.h>
+#include <catalog/pg_statistic_ext.h>
+#include <catalog/pg_statistic.h>
+#include <statistics/statistics.h>
 
 #include "query/bson_dollar_selectivity.h"
+#include "opclass/bson_gin_index_mgmt.h"
 #include "aggregation/bson_query_common.h"
 #include "utils/docdb_make_funcs.h"
 #include "utils/version_utils.h"
 
 extern bool EnablePerCollectionPlannerStatistics;
 extern bool EnableCompositeIndexPlanner;
+extern bool EnableIndexCorrelationFromStatistics;
 
 /* PG selectivity functions */
 extern Datum eqsel(PG_FUNCTION_ARGS);
@@ -602,18 +607,18 @@ bson_stats_project(PG_FUNCTION_ARGS)
 	 */
 	bson_iter_t iter;
 	pgbson *resultBson;
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
 	if (PgbsonInitIteratorAtPath(document, queryString, &iter))
 	{
-		pgbson_writer writer;
-		PgbsonWriterInit(&writer);
 		PgbsonWriterAppendValue(&writer, "", 0, bson_iter_value(&iter));
-		resultBson = PgbsonWriterGetPgbson(&writer);
 	}
 	else
 	{
-		resultBson = NULL;
+		PgbsonWriterAppendNull(&writer, "", 0);
 	}
 
+	resultBson = PgbsonWriterGetPgbson(&writer);
 	pfree(queryString);
 	PG_FREE_IF_COPY(document, 0);
 	PG_FREE_IF_COPY(queryPath, 1);
@@ -624,4 +629,114 @@ bson_stats_project(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_POINTER(resultBson);
+}
+
+
+void
+GetCorrelationFromStatistics(PlannerInfo *root, IndexPath *path,
+							 double *indexCorrelation)
+{
+	if (!EnableIndexCorrelationFromStatistics)
+	{
+		return;
+	}
+
+	bool isWildCardIndex = false;
+	const char *firstPath = GetFirstPathFromIndexOptionsIfApplicable(
+		path->indexinfo->opclassoptions[0], &isWildCardIndex);
+	if (isWildCardIndex || firstPath == NULL || path->path.parent == NULL ||
+		path->path.parent->statlist == NIL)
+	{
+		return;
+	}
+
+	int32_t numPaths = GetCompositeOpClassPathCount(path->indexinfo->opclassoptions[0]);
+	StatisticExtInfo *foundStatistic = NULL;
+	ListCell *cell;
+	foreach(cell, path->path.parent->statlist)
+	{
+		StatisticExtInfo *stat = (StatisticExtInfo *) lfirst(cell);
+
+		if (stat->exprs == NULL || list_length(stat->exprs) < 1)
+		{
+			continue;
+		}
+
+		Expr *statExpr = (Expr *) linitial(stat->exprs);
+		if (!IsA(statExpr, FuncExpr))
+		{
+			continue;
+		}
+
+		FuncExpr *funcExpr = (FuncExpr *) statExpr;
+		if (funcExpr->funcid != BsonStatsProjectFuncOid())
+		{
+			continue;
+		}
+
+		Expr *secondArg = lsecond(funcExpr->args);
+		if (!IsA(secondArg, Const))
+		{
+			continue;
+		}
+
+		Const *constArg = (Const *) secondArg;
+		if (constArg->consttype != TEXTOID)
+		{
+			continue;
+		}
+
+		StringView statPath = CreateStringViewFromText(DatumGetTextPP(
+														   constArg->constvalue));
+		if (!StringViewEqualsCString(&statPath, firstPath))
+		{
+			continue;
+		}
+
+		/* found a matching statistic */
+		foundStatistic = stat;
+		break;
+	}
+
+	if (foundStatistic != NULL)
+	{
+		RangeTblEntry *rte = planner_rt_fetch(path->path.parent->relid, root);
+		VariableStatData vardata;
+		vardata.statsTuple =
+			statext_expressions_load(foundStatistic->statOid, rte->inh, 0);
+
+		Oid sortop;
+		AttStatsSlot sslot;
+
+		sortop = get_opfamily_member(BsonBtreeOpFamilyOid(),
+									 BsonTypeId(),
+									 BsonTypeId(),
+									 BTLessStrategyNumber);
+		if (OidIsValid(sortop) &&
+			get_attstatsslot(&sslot, vardata.statsTuple,
+							 STATISTIC_KIND_CORRELATION, sortop,
+							 ATTSTATSSLOT_NUMBERS))
+		{
+			double varCorrelation;
+
+			Assert(sslot.nnumbers == 1);
+			varCorrelation = sslot.numbers[0];
+
+			if (numPaths > 1)
+			{
+				/* Adjust correlation for composite indexes with multiple paths
+				 * simliar to btree.
+				 */
+				*indexCorrelation = varCorrelation * 0.75;
+			}
+			else
+			{
+				*indexCorrelation = varCorrelation;
+			}
+
+			free_attstatsslot(&sslot);
+		}
+
+		pfree(vardata.statsTuple);
+	}
 }

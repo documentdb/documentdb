@@ -177,6 +177,11 @@ bool EnableIndexMetadataGlobalTracking = DEFAULT_ENABLE_INDEX_METADATA_GLOBAL_TR
 bool EnablePerPathMultiKeySortPushdown =
 	DEFAULT_ENABLE_PER_PATH_MULTI_KEY_SORT_PUSHDOWN;
 
+/* Added in v115, enabled in v115, remove after v118 */
+#define DEFAULT_ENABLE_INDEX_CORRELATION_FROM_STATISTICS true
+bool EnableIndexCorrelationFromStatistics =
+	DEFAULT_ENABLE_INDEX_CORRELATION_FROM_STATISTICS;
+
 /* Longer term feature flag to track older cluster data: Move to testing_configs when convenient */
 /* Added in v109, enabled in v109, remove after v999 */
 #define DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS true
@@ -1078,6 +1083,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to respect the per-path multi-key bitmask when deciding order-by pushdown for composite ordered indexes. When off, a multi-key index blocks order-by pushdown on any filtered sort column regardless of that column's per-path multi-key state."),
 		NULL, &EnablePerPathMultiKeySortPushdown,
 		DEFAULT_ENABLE_PER_PATH_MULTI_KEY_SORT_PUSHDOWN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_index_correlation_from_statistics", newGucPrefix),
+		gettext_noop(
+			"Whether to source the physical-order correlation of a composite index's leading path from extended statistics during cost estimation. When off, the correlation defaults to the base access method estimate."),
+		NULL, &EnableIndexCorrelationFromStatistics,
+		DEFAULT_ENABLE_INDEX_CORRELATION_FROM_STATISTICS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

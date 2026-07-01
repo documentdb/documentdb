@@ -772,6 +772,9 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 
 		InitFunctionCallInfoData(*fcinfo, NULL, 13, InvalidOid, NULL, NULL);
 		orderedCostEstimateCoreFunc(fcinfo);
+
+		/* if possible also record correlation via stats if available */
+		GetCorrelationFromStatistics(root, path, indexCorrelation);
 	}
 	else
 	{
