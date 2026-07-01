@@ -241,11 +241,11 @@ bool EnableDistinctIndexPushdown = DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN;
  * SECTION: Planner feature flags
  */
 
-/* Added in v110, Pending stabilization. Superseded by EnableNewWithExprAccumulators in v111, enable in v114 */
+/* Added in v110, Pending stabilization. Superseded by EnableNewWithExprAccumulators in v111, enable in v115 */
 #define DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS false
 bool EnableNewMinMaxAccumulators = DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS;
 
-/* Added in v111, Pending stabilization, enable in v114 */
+/* Added in v111, Pending stabilization, enable in v115 */
 #define DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS false
 bool EnableNewWithExprAccumulators = DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS;
 
