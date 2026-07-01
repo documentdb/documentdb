@@ -488,19 +488,10 @@ freeScanEntries(RumScanEntry *entries, uint32 nentries)
 void
 freeScanKeys(RumScanOpaque so)
 {
-	if (RumEnableSupportDeadIndexItems &&
-		so->orderByScanData && so->numKilled > 0 &&
-		so->orderByScanData->isPageValid &&
-		so->orderByScanData->orderByEntryPageCopy &&
-		so->orderByScanData->orderStack)
-	{
-		/* last chance to kill entries - needs to be called
-		 * before freeScanEntries releases buffer pins.
-		 */
-		LockBuffer(so->orderByScanData->orderStack->buffer, RUM_SHARE);
-		RumKillEntryItems(so, so->orderByScanData);
-		LockBuffer(so->orderByScanData->orderStack->buffer, RUM_UNLOCK);
-	}
+	/* last chance to kill entries - needs to be called
+	 * before freeScanEntries releases buffer pins.
+	 */
+	rumFlushKilledEntries(so);
 
 	freeScanEntries(so->entries, so->totalentries);
 

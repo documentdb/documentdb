@@ -54,6 +54,7 @@ static void entryGetItemOrdered(RumState *rumstate, RumScanEntry entry,
 								RumScanOpaque so);
 static void entryFindItem(RumState *rumstate, RumScanEntry entry, RumItem *item, Snapshot
 						  snapshot);
+static void CopyPageContents(Page sourcePage, Page targetPage);
 
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_get_current_index_key);
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_skip_tids_on_current_entry);
@@ -1752,13 +1753,17 @@ startScanEntryOrderedCore(RumScanOpaque so, RumScanEntry minScanEntry, Snapshot 
 	/* Otherwise found something valid */
 	itemid = PageGetItemId(page, stackEntry->off);
 
+	/* TODO: should this be an assert? */
 	if (!ItemIdHasStorage(itemid))
 	{
 		goto endOrderedScanEntry;
 	}
 
-	/* Let MoveScanForward deal with the reving and setting of stuff */
+	/* Copy the page before we unlock it and set it to valid to avoid TOCTOU issues with page splits and vacuum. */
+	CopyPageContents(page, so->orderByScanData->orderByEntryPageCopy);
 	so->orderByScanData->orderStack = stackEntry;
+	so->orderByScanData->isPageValid = true;
+	so->orderByScanData->needsParallelSeize = true;
 	entry->isFinished = true;
 
 endOrderedScanEntry:
@@ -3849,16 +3854,8 @@ MoveBuffersForOrderedScan(RumScanOpaque so, RumBtree btree)
 	BlockNumber nextBlockNo = InvalidBlockNumber;
 	IndexTuple boundTuple = NULL;
 	OffsetNumber boundTupleOffset = InvalidOffsetNumber;
-	if (!scanData->isPageValid)
-	{
-		/* First time after startOrderedScan is called - need to init from current buffer page */
-		LockBuffer(scanData->orderStack->buffer, RUM_SHARE);
-		page = BufferGetPage(scanData->orderStack->buffer);
-		CopyPageContents(page, scanData->orderByEntryPageCopy);
-		scanData->isPageValid = true;
-		LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
-		return true;
-	}
+
+	Assert(scanData->isPageValid);
 
 	/* We have a page already, check if it's reusable */
 	if (ScanDirectionIsForward(so->orderScanDirection))
@@ -3977,10 +3974,11 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 	if (ScanDirectionIsForward(so->orderScanDirection))
 	{
 		if (scanData->isPageValid &&
+			!scanData->needsParallelSeize &&
 			scanData->orderStack->off <= PageGetMaxOffsetNumber(
 				scanData->orderByEntryPageCopy))
 		{
-			/* Current page is still valid */
+			/* Current page is still valid and already registered */
 			return true;
 		}
 
@@ -4002,20 +4000,30 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 				return false;
 			}
 
+			scanData->needsParallelSeize = false;
+
 			if (startingBlock == InvalidBlockNumber)
 			{
 				/* We won the race and have registered the starting block
 				 * start by copying this and moving forward on this buffer while
 				 * notifying the parallel state that we've currently processed this block.
 				 */
-				LockBuffer(scanData->orderStack->buffer, RUM_SHARE);
-				page = BufferGetPage(scanData->orderStack->buffer);
-				CopyPageContents(page, scanData->orderByEntryPageCopy);
-				scanData->isPageValid = true;
-
-				/* In the forward scan we store the right link as read right now in the parallel data */
-				rum_parallel_release(parallelScan, RumPageRightLink(page));
-				LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
+				if (!scanData->isPageValid)
+				{
+					LockBuffer(scanData->orderStack->buffer, RUM_SHARE);
+					page = BufferGetPage(scanData->orderStack->buffer);
+					CopyPageContents(page, scanData->orderByEntryPageCopy);
+					scanData->isPageValid = true;
+					rum_parallel_release(parallelScan, RumPageRightLink(page));
+					LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
+				}
+				else
+				{
+					/* Page already copied in startScanEntryOrderedCore — just register rightlink */
+					rum_parallel_release(parallelScan,
+										 RumPageGetOpaque(
+											 scanData->orderByEntryPageCopy)->rightlink);
+				}
 				return true;
 			}
 
@@ -4168,6 +4176,7 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 					if (cmp > 0)
 					{
 						/* start the orderedScan again with the new entry now */
+						rumFlushKilledEntries(so);
 						startScanEntryOrderedCore(so, newMinEntry, snapshot);
 						newMinEntry->isFinished = false;
 						entry = so->orderByScanData->orderByEntry;
@@ -4238,6 +4247,7 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 					orderedBtree->entryKey = entry->queryKeyOverride;
 					if (entryIsMoveRight(orderedBtree, page))
 					{
+						rumFlushKilledEntries(so);
 						startScanEntryOrderedCore(so, entry, snapshot);
 						entry->isFinished = false;
 						if (!so->orderByScanData->orderStack)

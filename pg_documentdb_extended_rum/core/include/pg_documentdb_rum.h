@@ -912,6 +912,7 @@ typedef struct RumOrderByScanData
 	RumBtreeStack *orderStack;
 	Page orderByEntryPageCopy;
 	bool isPageValid;
+	bool needsParallelSeize;
 	RumScanEntry orderByEntry;
 	IndexTuple boundEntryTuple;
 	RumBtreeData orderByBtree;
@@ -1634,6 +1635,29 @@ rumDataPageLeafReadPointer(Pointer ptr, OffsetNumber attnum, RumItem *item,
 		ptr = (Pointer) att_addlength_pointer(ptr, attr->attlen, ptr);
 	}
 	return ptr;
+}
+
+
+/*
+ * Flush any pending killed entry items for the current page.
+ * Must be called before releasing the buffer pin on the current entry page
+ * (e.g., during skip-scan restarts or scan teardown).
+ */
+static inline void
+rumFlushKilledEntries(RumScanOpaque so)
+{
+	if (RumEnableSupportDeadIndexItems &&
+		so->orderByScanData && so->numKilled > 0 &&
+		so->orderByScanData->isPageValid &&
+		so->orderByScanData->orderByEntryPageCopy &&
+		so->orderByScanData->orderStack)
+	{
+		LockBuffer(so->orderByScanData->orderStack->buffer, RUM_SHARE);
+		RumKillEntryItems(so, so->orderByScanData);
+		LockBuffer(so->orderByScanData->orderStack->buffer, RUM_UNLOCK);
+	}
+
+	so->numKilled = 0;
 }
 
 
