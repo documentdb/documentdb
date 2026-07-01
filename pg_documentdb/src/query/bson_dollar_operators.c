@@ -351,7 +351,7 @@ static bool CompareBsonValueAgainstQueryCore(const pgbsonelement *element,
 											 const TraverseBsonExecutionFuncs *
 											 executionFuncs,
 											 IsQueryFilterNullFunc isQueryFilterNull);
-static bool CompareBsonAgainstQuery(const pgbson *element,
+static bool CompareBsonAgainstQuery(Datum documentDatum,
 									const pgbson *filter,
 									CompareMatchValueFunc compareFunc,
 									IsQueryFilterNullFunc isQueryFilterNull);
@@ -423,6 +423,11 @@ static bool DollarRangeVisitArrayField(pgbsonelement *element, const
 static Datum BsonOrderbyCore(pgbson *leftBson, pgbson *rightBson, const
 							 char *collationString, bool validateSort,
 							 const CustomOrderByOptions options);
+static bool TraverseBsonAndProcessQueryResult(Datum documentDatum, const
+											  TraverseBsonExecutionFuncs *execFuncs,
+											  const char *filterPath,
+											  TraverseValidateState *state,
+											  IsQueryFilterNullFunc isQueryFilterNull);
 
 /*
  * Standard execution functions for traversing bson and evaluating queries for $ops.
@@ -627,20 +632,20 @@ PG_FUNCTION_INFO_V1(command_bson_orderby_index_reverse);
 Datum
 bson_dollar_size(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 
-	bson_iter_t documentIterator;
 	pgbsonelement filterElement;
 	TraverseElementValidateState state = { 0 };
-	PgbsonInitIterator(document, &documentIterator);
 	PgbsonToSinglePgbsonElement(filter, &filterElement);
 	filterElement.pathLength = 0;
 	state.filter = &filterElement;
 	state.traverseState.matchFunc = CompareArraySizeMatch;
-	TraverseBson(&documentIterator, filterElement.path, &state.traverseState,
-				 &CompareTopLevelFieldExecutionFuncs);
-	PG_RETURN_BOOL(state.traverseState.compareResult == CompareResult_Match);
+
+	IsQueryFilterNullFunc queryNullFunc = NULL;
+	PG_RETURN_BOOL(TraverseBsonAndProcessQueryResult(
+					   documentDatum, &CompareTopLevelFieldExecutionFuncs,
+					   filterElement.path, &state.traverseState, queryNullFunc));
 }
 
 
@@ -684,11 +689,11 @@ bson_value_dollar_size(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_type(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 
 	IsQueryFilterNullFunc isNullFilterEquality = NULL;
-	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareArrayTypeMatch,
+	PG_RETURN_BOOL(CompareBsonAgainstQuery(documentDatum, filter, CompareArrayTypeMatch,
 										   isNullFilterEquality));
 }
 
@@ -718,7 +723,7 @@ bson_value_dollar_type(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_all(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	TraverseAllValidateState validationState = {
 		.elementState =
 		{
@@ -746,19 +751,14 @@ bson_dollar_all(PG_FUNCTION_ARGS)
 		execFuncs = &CompareTopLevelFieldExecutionFuncs;
 	}
 
-	bson_iter_t documentIterator;
-	PgbsonInitIterator(document, &documentIterator);
-	TraverseBson(&documentIterator, filterElement.path,
-				 &validationState.elementState.traverseState,
-				 execFuncs);
-	pfree(validationState.matchState);
-
 	/* if path was not found and the $all array only contains null,
 	 * ([null], or [null,null,null]) we have a match. */
-	IsQueryFilterNullFunc isNullFilterEquality = IsQueryFilterNullForDollarAll;
-	PG_RETURN_BOOL(ProcessQueryResultAndGetMatch(isNullFilterEquality,
-												 &validationState.elementState.
-												 traverseState));
+	bool result = TraverseBsonAndProcessQueryResult(
+		documentDatum, execFuncs, filterElement.path,
+		&validationState.elementState.traverseState, IsQueryFilterNullForDollarAll);
+	pfree(validationState.matchState);
+
+	PG_RETURN_BOOL(result);
 }
 
 
@@ -814,7 +814,7 @@ bson_value_dollar_all(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_elemmatch(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	pgbson *document = PG_GETARG_PGBSON_PACKED(0);
 	bson_iter_t documentIterator;
 	TraverseElemMatchValidateState state = {
 		.traverseState = { 0 },
@@ -861,11 +861,12 @@ bson_value_dollar_elemmatch(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_bits_all_clear(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 
 	IsQueryFilterNullFunc isNullFilterEquality = NULL;
-	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareBitsAllClearMatch,
+	PG_RETURN_BOOL(CompareBsonAgainstQuery(documentDatum, filter,
+										   CompareBitsAllClearMatch,
 										   isNullFilterEquality));
 }
 
@@ -877,11 +878,12 @@ bson_dollar_bits_all_clear(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_bits_any_clear(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 
 	IsQueryFilterNullFunc isNullFilterEquality = NULL;
-	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareBitsAnyClearMatch,
+	PG_RETURN_BOOL(CompareBsonAgainstQuery(documentDatum, filter,
+										   CompareBitsAnyClearMatch,
 										   isNullFilterEquality));
 }
 
@@ -893,11 +895,11 @@ bson_dollar_bits_any_clear(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_bits_all_set(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 
 	IsQueryFilterNullFunc isNullFilterEquality = NULL;
-	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareBitsAllSetMatch,
+	PG_RETURN_BOOL(CompareBsonAgainstQuery(documentDatum, filter, CompareBitsAllSetMatch,
 										   isNullFilterEquality));
 }
 
@@ -909,11 +911,11 @@ bson_dollar_bits_all_set(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_bits_any_set(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 
 	IsQueryFilterNullFunc isNullFilterEquality = NULL;
-	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareBitsAnySetMatch,
+	PG_RETURN_BOOL(CompareBsonAgainstQuery(documentDatum, filter, CompareBitsAnySetMatch,
 										   isNullFilterEquality));
 }
 
@@ -995,18 +997,17 @@ bson_value_dollar_bits_any_set(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_regex(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
-	bson_iter_t documentIterator;
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	TraverseRegexValidateState state = {
 		{ 0 }, { 0 }
 	};
 
 	bool hasObjectIdArg = false;
 	pgbsonelement filterElement = PopulateRegexState(fcinfo, &state, hasObjectIdArg);
-	PgbsonInitIterator(document, &documentIterator);
-	TraverseBson(&documentIterator, filterElement.path, &state.traverseState,
-				 &CompareExecutionFuncs);
-	PG_RETURN_BOOL(state.traverseState.compareResult == CompareResult_Match);
+	IsQueryFilterNullFunc queryNullFunc = NULL;
+	PG_RETURN_BOOL(TraverseBsonAndProcessQueryResult(
+					   documentDatum, &CompareExecutionFuncs, filterElement.path,
+					   &state.traverseState, queryNullFunc));
 }
 
 
@@ -1024,7 +1025,7 @@ bson_dollar_regex_object_id(PG_FUNCTION_ARGS)
 	 * query on the object_id value rather than the document which may be large and may need to
 	 * be detoasted.
 	 */
-	pgbson *objectIdValue = PG_GETARG_PGBSON(1);
+	pgbson *objectIdValue = PG_GETARG_PGBSON_PACKED(1);
 	pgbsonelement documentElement;
 	PgbsonToSinglePgbsonElement(objectIdValue, &documentElement);
 
@@ -1069,11 +1070,11 @@ bson_value_dollar_regex(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_mod(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 
 	IsQueryFilterNullFunc isNullFilterEquality = NULL;
-	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareModMatch,
+	PG_RETURN_BOOL(CompareBsonAgainstQuery(documentDatum, filter, CompareModMatch,
 										   isNullFilterEquality));
 }
 
@@ -1104,10 +1105,10 @@ bson_value_dollar_mod(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_eq(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 	IsQueryFilterNullFunc isNullFilterEquality = IsQueryFilterNullForValue;
-	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareEqualMatch,
+	PG_RETURN_BOOL(CompareBsonAgainstQuery(documentDatum, filter, CompareEqualMatch,
 										   isNullFilterEquality));
 }
 
@@ -1123,7 +1124,7 @@ Datum
 bson_dollar_eq_object_id(PG_FUNCTION_ARGS)
 {
 	/* Use the object_id instead to avoid detoasting the entire document. */
-	pgbson *document = PG_GETARG_PGBSON(1);
+	pgbson *document = PG_GETARG_PGBSON_PACKED(1);
 	pgbson *filter = PG_GETARG_PGBSON(2);
 	PG_RETURN_BOOL(CompareBsonAgainstObjectIdQuery(document, filter, CompareEqualMatch));
 }
@@ -1159,11 +1160,11 @@ bson_value_dollar_eq(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_gt(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 
 	IsQueryFilterNullFunc isNullFilterEquality = NULL;
-	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareGreaterMatch,
+	PG_RETURN_BOOL(CompareBsonAgainstQuery(documentDatum, filter, CompareGreaterMatch,
 										   isNullFilterEquality));
 }
 
@@ -1179,7 +1180,7 @@ Datum
 bson_dollar_gt_object_id(PG_FUNCTION_ARGS)
 {
 	/* Use the object_id instead to avoid detoasting the entire document. */
-	pgbson *document = PG_GETARG_PGBSON(1);
+	pgbson *document = PG_GETARG_PGBSON_PACKED(1);
 	pgbson *filter = PG_GETARG_PGBSON(2);
 
 	PG_RETURN_BOOL(CompareBsonAgainstObjectIdQuery(document, filter,
@@ -1212,11 +1213,11 @@ bson_value_dollar_gt(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_not_gt(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	pgbson *query = (pgbson *) PG_GETARG_PGBSON(1);
 
 	IsQueryFilterNullFunc isNullFilterEquality = NULL;
-	bool result = CompareBsonAgainstQuery(document, query, CompareGreaterMatch,
+	bool result = CompareBsonAgainstQuery(documentDatum, query, CompareGreaterMatch,
 										  isNullFilterEquality);
 	PG_RETURN_BOOL(!result);
 }
@@ -1232,10 +1233,11 @@ bson_dollar_not_gt(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_gte(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 	IsQueryFilterNullFunc isNullFilterEquality = IsQueryFilterNullForValue;
-	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareGreaterEqualMatch,
+	PG_RETURN_BOOL(CompareBsonAgainstQuery(documentDatum, filter,
+										   CompareGreaterEqualMatch,
 										   isNullFilterEquality));
 }
 
@@ -1251,7 +1253,7 @@ Datum
 bson_dollar_gte_object_id(PG_FUNCTION_ARGS)
 {
 	/* Use the object_id instead to avoid detoasting the entire document. */
-	pgbson *document = PG_GETARG_PGBSON(1);
+	pgbson *document = PG_GETARG_PGBSON_PACKED(1);
 	pgbson *filter = PG_GETARG_PGBSON(2);
 	PG_RETURN_BOOL(CompareBsonAgainstObjectIdQuery(document, filter,
 												   CompareGreaterEqualMatch));
@@ -1268,10 +1270,10 @@ bson_dollar_gte_object_id(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_not_gte(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 	IsQueryFilterNullFunc isNullFilterEquality = IsQueryFilterNullForValue;
-	bool result = CompareBsonAgainstQuery(document, filter, CompareGreaterEqualMatch,
+	bool result = CompareBsonAgainstQuery(documentDatum, filter, CompareGreaterEqualMatch,
 										  isNullFilterEquality);
 	PG_RETURN_BOOL(!result);
 }
@@ -1323,7 +1325,6 @@ bson_dollar_index_hint(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_range(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 	const DollarRangeParams *cachedRangeParamsState;
 	SetCachedFunctionState(
@@ -1389,12 +1390,7 @@ bson_dollar_range(PG_FUNCTION_ARGS)
 							   "at runtime")));
 	}
 
-	bson_iter_t documentIterator;
-	PgbsonInitIterator(document, &documentIterator);
-	TraverseBson(&documentIterator, rangeState.elementState.filter->path,
-				 (void *) &rangeState,
-				 &CompareDollarRangeExecutionFuncs);
-
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	IsQueryFilterNullFunc isNullFilterEquality = NULL;
 	if (rangeState.params.isMaxInclusive ||
 		rangeState.params.isMinInclusive)
@@ -1402,9 +1398,10 @@ bson_dollar_range(PG_FUNCTION_ARGS)
 		isNullFilterEquality = IsQueryFilterNullForValue;
 	}
 
-	PG_RETURN_BOOL(ProcessQueryResultAndGetMatch(isNullFilterEquality,
-												 &rangeState.elementState.
-												 traverseState));
+	PG_RETURN_BOOL(TraverseBsonAndProcessQueryResult(
+					   documentDatum, &CompareDollarRangeExecutionFuncs,
+					   filterElement.path,
+					   &rangeState.elementState.traverseState, isNullFilterEquality));
 }
 
 
@@ -1436,11 +1433,11 @@ bson_value_dollar_gte(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_not_lt(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 
 	IsQueryFilterNullFunc isNullFilterEquality = NULL;
-	bool result = CompareBsonAgainstQuery(document, filter, CompareLessMatch,
+	bool result = CompareBsonAgainstQuery(documentDatum, filter, CompareLessMatch,
 										  isNullFilterEquality);
 	PG_RETURN_BOOL(!result);
 }
@@ -1456,11 +1453,11 @@ bson_dollar_not_lt(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_lt(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 
 	IsQueryFilterNullFunc isNullFilterEquality = NULL;
-	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareLessMatch,
+	PG_RETURN_BOOL(CompareBsonAgainstQuery(documentDatum, filter, CompareLessMatch,
 										   isNullFilterEquality));
 }
 
@@ -1469,7 +1466,7 @@ Datum
 bson_dollar_lt_object_id(PG_FUNCTION_ARGS)
 {
 	/* Use the object_id instead to avoid detoasting the entire document. */
-	pgbson *document = PG_GETARG_PGBSON(1);
+	pgbson *document = PG_GETARG_PGBSON_PACKED(1);
 	pgbson *filter = PG_GETARG_PGBSON(2);
 
 	PG_RETURN_BOOL(CompareBsonAgainstObjectIdQuery(document, filter, CompareLessMatch));
@@ -1485,7 +1482,7 @@ Datum
 bson_value_dollar_lt(PG_FUNCTION_ARGS)
 {
 	pgbsonelement *element = (pgbsonelement *) PG_GETARG_POINTER(0);
-	pgbson *query = (pgbson *) PG_GETARG_PGBSON(1);
+	pgbson *query = (pgbson *) PG_GETARG_PGBSON_PACKED(1);
 
 	IsQueryFilterNullFunc isNullFilterEquality = NULL;
 	PG_RETURN_BOOL(CompareBsonValueAgainstQuery(element, query, CompareLessMatch,
@@ -1503,11 +1500,11 @@ bson_value_dollar_lt(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_lte(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 
 	IsQueryFilterNullFunc isNullFilterEquality = IsQueryFilterNullForValue;
-	PG_RETURN_BOOL(CompareBsonAgainstQuery(document, filter, CompareLessEqualMatch,
+	PG_RETURN_BOOL(CompareBsonAgainstQuery(documentDatum, filter, CompareLessEqualMatch,
 										   isNullFilterEquality));
 }
 
@@ -1523,7 +1520,7 @@ Datum
 bson_dollar_lte_object_id(PG_FUNCTION_ARGS)
 {
 	/* Use the object_id instead to avoid detoasting the entire document. */
-	pgbson *document = PG_GETARG_PGBSON(1);
+	pgbson *document = PG_GETARG_PGBSON_PACKED(1);
 	pgbson *filter = PG_GETARG_PGBSON(2);
 
 	PG_RETURN_BOOL(CompareBsonAgainstObjectIdQuery(document, filter,
@@ -1541,11 +1538,11 @@ bson_dollar_lte_object_id(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_not_lte(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 
 	IsQueryFilterNullFunc isNullFilterEquality = IsQueryFilterNullForValue;
-	bool result = CompareBsonAgainstQuery(document, filter, CompareLessEqualMatch,
+	bool result = CompareBsonAgainstQuery(documentDatum, filter, CompareLessEqualMatch,
 										  isNullFilterEquality);
 	PG_RETURN_BOOL(!result);
 }
@@ -1653,7 +1650,7 @@ bson_value_dollar_in(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_nin(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	pgbson *document = PG_GETARG_PGBSON_PACKED(0);
 	bson_iter_t documentIterator;
 	TraverseInValidateState state = { 0 };
 
@@ -1710,11 +1707,11 @@ bson_value_dollar_nin(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_ne(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 
 	IsQueryFilterNullFunc isNullFilterEquality = IsQueryFilterNullForValue;
-	PG_RETURN_BOOL(!CompareBsonAgainstQuery(document, filter, CompareEqualMatch,
+	PG_RETURN_BOOL(!CompareBsonAgainstQuery(documentDatum, filter, CompareEqualMatch,
 											isNullFilterEquality));
 }
 
@@ -1745,13 +1742,13 @@ bson_value_dollar_ne(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_exists(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	Datum documentDatum = PG_GETARG_DATUM(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 
 	bool existsPositiveMatch = IsExistPositiveMatch(filter);
 
 	IsQueryFilterNullFunc isNullFilterEquality = NULL;
-	bool match = CompareBsonAgainstQuery(document, filter, CompareExistsMatch,
+	bool match = CompareBsonAgainstQuery(documentDatum, filter, CompareExistsMatch,
 										 isNullFilterEquality);
 	PG_RETURN_BOOL(existsPositiveMatch ? match : !match);
 }
@@ -1788,7 +1785,7 @@ bson_value_dollar_exists(PG_FUNCTION_ARGS)
 Datum
 bson_dollar_expr(PG_FUNCTION_ARGS)
 {
-	pgbson *document = PG_GETARG_PGBSON(0);
+	pgbson *document = PG_GETARG_PGBSON_PACKED(0);
 	pgbson *filter = PG_GETARG_PGBSON(1);
 	pgbson *variablesContext = NULL;
 
@@ -3052,15 +3049,13 @@ CompareBsonAgainstObjectIdQuery(const pgbson *element,
  * and returning whether or not it matched the query provided.
  */
 static bool
-CompareBsonAgainstQuery(const pgbson *element,
+CompareBsonAgainstQuery(Datum documentDatum,
 						const pgbson *filter,
 						CompareMatchValueFunc compareFunc,
 						IsQueryFilterNullFunc isQueryFilterNull)
 {
-	bson_iter_t documentIterator;
 	pgbsonelement filterElement;
 	TraverseElementValidateState state = { 0 };
-	PgbsonInitIterator(element, &documentIterator);
 
 	state.collationString = PgbsonToSinglePgbsonElementWithCollation(filter,
 																	 &filterElement);
@@ -3081,8 +3076,23 @@ CompareBsonAgainstQuery(const pgbson *element,
 		execFuncs = &CompareNullExecutionFuncs;
 	}
 
-	TraverseBson(&documentIterator, filterElement.path, &state.traverseState, execFuncs);
-	return ProcessQueryResultAndGetMatch(isQueryFilterNull, &state.traverseState);
+	return TraverseBsonAndProcessQueryResult(
+		documentDatum, execFuncs, filterElement.path, &state.traverseState,
+		isQueryFilterNull);
+}
+
+
+static bool
+TraverseBsonAndProcessQueryResult(Datum documentDatum, const
+								  TraverseBsonExecutionFuncs *execFuncs,
+								  const char *filterPath, TraverseValidateState *state,
+								  IsQueryFilterNullFunc isQueryFilterNull)
+{
+	pgbson *element = DatumGetPgBsonPacked(documentDatum);
+	bson_iter_t documentIterator;
+	PgbsonInitIterator(element, &documentIterator);
+	TraverseBson(&documentIterator, filterPath, state, execFuncs);
+	return ProcessQueryResultAndGetMatch(isQueryFilterNull, state);
 }
 
 
@@ -3934,10 +3944,17 @@ PopulateExprStateFromQuery(BsonDollarExprQueryState *state,
 }
 
 
+static bool
+IsQueryFilterNullForDollarIn(const TraverseValidateState *state)
+{
+	TraverseInValidateState *inState = (TraverseInValidateState *) state;
+	return inState->hasNull;
+}
+
+
 static Datum
 BsonDollarInCore(PG_FUNCTION_ARGS, bool hasObjectIdArg)
 {
-	bson_iter_t documentIterator;
 	TraverseInValidateState state = { 0 };
 
 	pgbsonelement filterElement = { 0 };
@@ -3945,7 +3962,7 @@ BsonDollarInCore(PG_FUNCTION_ARGS, bool hasObjectIdArg)
 
 	if (hasObjectIdArg)
 	{
-		pgbson *objectId = PG_GETARG_PGBSON(1);
+		pgbson *objectId = PG_GETARG_PGBSON_PACKED(1);
 		pgbsonelement objectIdElement = { 0 };
 		PgbsonToSinglePgbsonElement(objectId, &objectIdElement);
 
@@ -3956,20 +3973,11 @@ BsonDollarInCore(PG_FUNCTION_ARGS, bool hasObjectIdArg)
 		PG_RETURN_BOOL(result);
 	}
 
-	pgbson *document = PG_GETARG_PGBSON(0);
-	PgbsonInitIterator(document, &documentIterator);
-	TraverseBson(&documentIterator, filterElement.path, &state.traverseState,
-				 &CompareExecutionFuncs);
-
-	if (state.hasNull)
-	{
-		/* If any element in the input is null and the target path cannot be found in the document, we'll choose that document. */
-		PG_RETURN_BOOL(state.traverseState.compareResult != CompareResult_Mismatch);
-	}
-	else
-	{
-		PG_RETURN_BOOL(state.traverseState.compareResult == CompareResult_Match);
-	}
+	Datum documentDatum = PG_GETARG_DATUM(0);
+	IsQueryFilterNullFunc queryNullFunc = IsQueryFilterNullForDollarIn;
+	PG_RETURN_BOOL(TraverseBsonAndProcessQueryResult(
+					   documentDatum, &CompareExecutionFuncs, filterElement.path,
+					   &state.traverseState, queryNullFunc));
 }
 
 

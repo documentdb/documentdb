@@ -81,7 +81,7 @@ PG_FUNCTION_INFO_V1(bson_to_json_string);
 Datum
 bson_out(PG_FUNCTION_ARGS)
 {
-	pgbson *arg = PG_GETARG_PGBSON(0);
+	pgbson *arg = PG_GETARG_PGBSON_PACKED(0);
 
 	const char *jsonString;
 	if (BsonTextUseJsonRepresentation)
