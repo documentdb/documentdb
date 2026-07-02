@@ -12,10 +12,10 @@ SELECT documentdb_api.create_user('{"createUser":"user_rw", "pwd":"Password@9", 
 
 SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog;
 
--- Should not have access to the earlier API schemas
+-- The readwrite role has access to the earlier API schemas.
 SELECT documentdb_api.create_collection('test', 'my_coll1');
 
-SELECT documentdb_api_v2.create_collection('test', 'my_coll1');
+SELECT documentdb_api_v2.create_collection('test', 'my_coll2');
 
 -- Should not be able to drop database
 SELECT documentdb_api_v2.drop_database('test');

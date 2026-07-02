@@ -16,12 +16,15 @@ SELECT documentdb_api.create_user('{"createUser":"user_rw", "pwd":"Password@9", 
 
 \c regression user_rw
 SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog;
--- Should not have access to the earlier API schemas
+-- The readwrite role has access to the earlier API schemas.
 SELECT documentdb_api.create_collection('test', 'my_coll1');
-ERROR:  permission denied for schema documentdb_api
-LINE 1: SELECT documentdb_api.create_collection('test', 'my_coll1');
-               ^
-SELECT documentdb_api_v2.create_collection('test', 'my_coll1');
+NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api_v2.create_collection('test', 'my_coll2');
 NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
@@ -234,7 +237,7 @@ SELECT bson_dollar_project(cursorpage, '{ "cursor.firstBatch._id": 1, "cursor.id
 SELECT * FROM firstPageResponse;
                                                                                                                         bson_dollar_project                                                                                                                        |                                                                                                                                                                                                                                      continuation                                                                                                                                                                                                                                       | persistconnection |  cursorid  
 ---------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "firstBatch" : [ { "_id" : { "$numberInt" : "1" } }, { "_id" : { "$numberInt" : "2" } }, { "_id" : { "$numberInt" : "3" } }, { "_id" : { "$numberInt" : "4" } }, { "_id" : { "$numberInt" : "5" } } ] } } | { "qi" : { "$numberLong" : "4294967294" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qc" : { "find" : "aggregation_cursor_txn", "batchSize" : { "$numberInt" : "5" } }, "continuation" : [ { "table_name" : "documents_15_102189", "value" : { "$binary" : { "base64" : "AAAAAAUA", "subType" : "00" } }, "pk" : [ { "$numberLong" : "15" }, { "" : { "$numberInt" : "5" } } ] } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE } | f                 | 4294967294
+ { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "firstBatch" : [ { "_id" : { "$numberInt" : "1" } }, { "_id" : { "$numberInt" : "2" } }, { "_id" : { "$numberInt" : "3" } }, { "_id" : { "$numberInt" : "4" } }, { "_id" : { "$numberInt" : "5" } } ] } } | { "qi" : { "$numberLong" : "4294967294" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qc" : { "find" : "aggregation_cursor_txn", "batchSize" : { "$numberInt" : "5" } }, "continuation" : [ { "table_name" : "documents_16_102193", "value" : { "$binary" : { "base64" : "AAAAAAUA", "subType" : "00" } }, "pk" : [ { "$numberLong" : "16" }, { "" : { "$numberInt" : "5" } } ] } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE } | f                 | 4294967294
 (1 row)
 
 -- now drain it
@@ -253,7 +256,7 @@ FROM documentdb_api_v2.aggregate_cursor_first_page(
 );
                                                                                     bson_dollar_project                                                                                    |                                                                                                                                                                                                                                                                                  continuation                                                                                                                                                                                                                                                                                  | persistconnection |  cursorid  
 ---------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "4294967295" }, "firstBatch" : [ { "_id" : { "$numberInt" : "2" } }, { "_id" : { "$numberInt" : "4" } }, { "_id" : { "$numberInt" : "6" } } ] } } | { "qi" : { "$numberLong" : "4294967295" }, "qp" : false, "qk" : { "$numberInt" : "2" }, "qc" : { "aggregate" : "aggregation_cursor_txn", "pipeline" : [ { "$match" : { "sk" : { "$numberInt" : "0" } } } ], "cursor" : { "batchSize" : { "$numberInt" : "3" } } }, "continuation" : [ { "table_name" : "documents_15_102189", "value" : { "$binary" : { "base64" : "AAAAAAYA", "subType" : "00" } }, "pk" : [ { "$numberLong" : "15" }, { "" : { "$numberInt" : "6" } } ] } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE } | f                 | 4294967295
+ { "cursor" : { "id" : { "$numberLong" : "4294967295" }, "firstBatch" : [ { "_id" : { "$numberInt" : "2" } }, { "_id" : { "$numberInt" : "4" } }, { "_id" : { "$numberInt" : "6" } } ] } } | { "qi" : { "$numberLong" : "4294967295" }, "qp" : false, "qk" : { "$numberInt" : "2" }, "qc" : { "aggregate" : "aggregation_cursor_txn", "pipeline" : [ { "$match" : { "sk" : { "$numberInt" : "0" } } } ], "cursor" : { "batchSize" : { "$numberInt" : "3" } } }, "continuation" : [ { "table_name" : "documents_16_102193", "value" : { "$binary" : { "base64" : "AAAAAAYA", "subType" : "00" } }, "pk" : [ { "$numberLong" : "16" }, { "" : { "$numberInt" : "6" } } ] } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE } | f                 | 4294967295
 (1 row)
 
 SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') 
