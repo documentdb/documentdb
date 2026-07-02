@@ -54,6 +54,44 @@ This RFC establishes that baseline for DocumentDB. It defines **how** statistics
 - This RFC does **not** replace or modify existing PostgreSQL statistics.
 - This RFC does **not** address using statistics for query planning or optimization. The focus is solely on exposability and monitoring.
 - This RFC does **not** cover statistics exposed through the MongoDB wire protocol (e.g., `collStats`, `dbStats`). Those follow MongoDB API compatibility conventions. This RFC covers only **extension-defined statistics** consumed via SQL by operators and monitoring tools.
+- This RFC covers statistics **instrumentation** (how a contributor defines and exposes a stat as a SQL-queryable view). It does **not** cover metric **collection or emission** — scraping these views and shipping them to an external observability backend (e.g., OpenTelemetry exporters, a metrics sidecar, pre-aggregation, and emission-delay tuning). That is deferred to future work; a stats view is a **pull-based** surface that such a system reads on its own schedule.
+
+---
+
+## When to Build a Stats View
+
+Before following the conventions in this RFC, decide *whether* a stats view is the
+right tool at all. Walk these gates in order; the first "stop" answer wins — don't
+build a view.
+
+**Gate 1 — Is it already exposed?**
+Is the data already available from an existing DocumentDB command, or from a
+standard PostgreSQL facility you can simply surface (a built-in `pg_stat_*` view
+or a common extension such as `pg_stat_statements`)?
+→ **Yes:** point users at that. Do **not** re-implement it.
+
+**Gate 2 — What shape and lifetime is the data?**
+
+| The data is… | Right tool |
+|---|---|
+| **Per-event** detail (each slow query, each error, each auth failure) | Logs |
+| **Historical trends** — how a value changed across the last hour/day/week | External metrics pipeline (poll a view, store in a TSDB) |
+| A **value read on demand** — a current reading or a running total | **Stats view — continue** |
+
+**Gate 3 — Does it earn its keep?**
+Continue only if **both** hold:
+
+- **Operator value**, especially for the managed service — a DBA, SRE, or control
+  plane takes a concrete action from it. Not merely "nice to see."
+- **Bounded** — reduces to a small, fixed set of rows (bounded by `MaxBackends`, a
+  fixed dimension set, or a top-N cap). Does **not** grow with document count,
+  query count, or time.
+
+→ If either is **no**, stop and pick an alternative from Gate 2.
+
+Passed all gates? Build the view following the conventions below. Whether its
+columns are cumulative counters or point-in-time gauges determines the reset
+behavior — see [Reset Functions](#reset-functions).
 
 ---
 
@@ -187,7 +225,20 @@ AS 'MODULE_PATHNAME', $$documentdb_stat_get_<scope>$$;
 
 #### Reset Functions
 
-If a view contains cumulative counters that may need to be reset, a reset function must be provided.
+A view's **value columns** (the ones carrying a measured value, not dimension or
+metadata columns) fall into two kinds, which determine the reset obligation:
+
+- **Counter** — a value that **accumulates as events occur** (e.g., total queries,
+  cumulative latency). Counter columns require a reset function and a `stats_reset`
+  timestamp column.
+- **Gauge** — a **current-state** value read on demand (e.g., active connections,
+  live sizes). Gauge columns require **no** reset function and **no** `stats_reset`
+  column.
+
+A view may mix counter and gauge value columns; the reset obligation applies
+per-column. How the underlying value is stored and collected (shared memory,
+atomics, a GUC kill-switch, etc.) is an implementation choice — see
+[Performance Considerations](#performance-considerations) for guidance.
 
 **Naming pattern**
 ```
