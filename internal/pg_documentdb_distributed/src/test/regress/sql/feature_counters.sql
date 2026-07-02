@@ -381,3 +381,33 @@ DROP TABLE topo_first_page;
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
 SELECT documentdb_api.drop_database('topo_db');
+
+-- $sample heap skip feature counter: an Index Scan child with no residual filter engages heap
+-- skip, recording sample_heap_skip. Oversampling then sorting keeps the output deterministic.
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('feature_counter_hs_db', 'sampleHeapSkipColl', FORMAT('{ "_id": %s, "a": %s }', g, g)::documentdb_core.bson) FROM generate_series(1, 40) g) ig;
+-- Reset the counters by making a call to the counter and discarding the results
+SELECT count(*) * 0 AS count FROM documentdb_api_internal.command_feature_counter_stats(true);
+SET documentdb.enableDollarSampleReservoirScan TO on;
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
+SELECT document FROM bson_aggregation_pipeline('feature_counter_hs_db', '{ "aggregate": "sampleHeapSkipColl", "pipeline": [ { "$match": { "_id": { "$gte": 0 } } }, { "$sample": { "size": 40 } }, { "$sort": { "_id": 1 } }, { "$limit": 3 }, { "$project": { "_id": 1 } } ], "cursor": {} }');
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
+RESET documentdb.enableDollarSampleReservoirScan;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- $sample heap skip eligibility counter: when the heap skip flag is off but the plan is
+-- structurally heap skip capable (a plain Index Scan child with no residual filter),
+-- sample_heap_skip_eligible records the query as a candidate for turning the flag on.
+-- Reset the counters by making a call to the counter and discarding the results
+SELECT count(*) * 0 AS count FROM documentdb_api_internal.command_feature_counter_stats(true);
+SET documentdb.enableDollarSampleReservoirScan TO on;
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO off;
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_pipeline('feature_counter_hs_db', '{ "aggregate": "sampleHeapSkipColl", "pipeline": [ { "$match": { "_id": { "$gte": 0 } } }, { "$sample": { "size": 40 } }, { "$sort": { "_id": 1 } }, { "$limit": 3 }, { "$project": { "_id": 1 } } ], "cursor": {} }');
+RESET enable_bitmapscan;
+RESET enable_seqscan;
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
+RESET documentdb.enableDollarSampleReservoirScan;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+SELECT documentdb_api.drop_database('feature_counter_hs_db');

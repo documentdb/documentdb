@@ -121,6 +121,15 @@ pub struct ExplainPlan {
     #[serde(rename = "Sample Size")]
     pub sample_size: Option<i64>,
 
+    #[serde(rename = "Sample Reservoir Method")]
+    pub sample_reservoir_method: Option<String>,
+
+    #[serde(rename = "Sample Rows Skipped")]
+    pub sample_rows_skipped: Option<i64>,
+
+    #[serde(rename = "Sample Heap Skips")]
+    pub sample_heap_skips: Option<i64>,
+
     #[serde(rename = "Plan Rows")]
     pub plan_rows: Option<serde_json::value::Number>,
 

@@ -71,6 +71,10 @@ BEGIN
       SELECT regexp_replace(v_explain_row, 'Sort Method: quicksort  Memory: [0-9]+kB', 'Sort Method: quicksort  Memory: xxxkB') INTO v_explain_row;
     ELSIF v_explain_row ~ 'Sort Method: quicksort  Average Memory: [0-9]+kB  Peak Memory: [0-9]+kB' THEN
       SELECT regexp_replace(v_explain_row, 'Sort Method: quicksort  Average Memory: [0-9]+kB  Peak Memory: [0-9]+kB', 'Sort Method: quicksort  Average Memory: xxxkB  Peak Memory: xxxkB') INTO v_explain_row;
+    ELSIF v_explain_row ~ 'Sample Rows Skipped: [0-9]+' THEN
+      SELECT regexp_replace(v_explain_row, 'Sample Rows Skipped: [0-9]+', 'Sample Rows Skipped: xxx') INTO v_explain_row;
+    ELSIF v_explain_row ~ 'Sample Heap Skips: [0-9]+' THEN
+      SELECT regexp_replace(v_explain_row, 'Sample Heap Skips: [0-9]+', 'Sample Heap Skips: xxx') INTO v_explain_row;
     ELSIF v_explain_row ~ 'Memory Usage: [0-9]+kB' THEN
       SELECT regexp_replace(v_explain_row, 'Memory Usage: [0-9]+kB', 'Memory Usage: xxxkB') INTO v_explain_row;
     END IF;

@@ -1428,6 +1428,18 @@ fn query_planner(
                 }
             }
 
+            if let Some(sample_reservoir_method) = &plan.sample_reservoir_method {
+                doc.append("sampleReservoirMethod", sample_reservoir_method.as_str());
+            }
+
+            if let Some(sample_rows_skipped) = plan.sample_rows_skipped {
+                doc.append("sampleRowsSkipped", smallest_from_i64(sample_rows_skipped));
+            }
+
+            if let Some(sample_heap_skips) = plan.sample_heap_skips {
+                doc.append("sampleHeapSkips", smallest_from_i64(sample_heap_skips));
+            }
+
             if let Some(startup_cost) = plan.startup_cost {
                 doc.append("startupCost", startup_cost);
             }

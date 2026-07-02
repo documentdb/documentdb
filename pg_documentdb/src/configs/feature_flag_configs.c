@@ -405,6 +405,11 @@ bool EnableSubqueryPushdownForMatch = DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_MATCH
 #define DEFAULT_ENABLE_DOLLAR_SAMPLE_RESERVOIR_SCAN true
 bool EnableDollarSampleReservoirScan = DEFAULT_ENABLE_DOLLAR_SAMPLE_RESERVOIR_SCAN;
 
+/* Added in v115, Pending stabilization, enable in v118 */
+#define DEFAULT_ENABLE_DOLLAR_SAMPLE_HEAP_SKIP_RESERVOIR_SCAN false
+bool EnableDollarSampleHeapSkipReservoirScan =
+	DEFAULT_ENABLE_DOLLAR_SAMPLE_HEAP_SKIP_RESERVOIR_SCAN;
+
 /* Added in v114, enabled in v114, remove after v117 */
 #define DEFAULT_ENABLE_SKIP_COMMENT_FIELD_ON_UPSERT true
 bool EnableSkipCommentFieldOnUpsert = DEFAULT_ENABLE_SKIP_COMMENT_FIELD_ON_UPSERT;
@@ -1455,6 +1460,19 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableDollarSampleReservoirScan,
 		DEFAULT_ENABLE_DOLLAR_SAMPLE_RESERVOIR_SCAN,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableDollarSampleHeapSkipReservoirScan", newGucPrefix),
+		gettext_noop(
+			"Whether the DocumentDBApiReservoirSample custom scan over an Index "
+			"Scan may read the heap only for sampled rows, skipping unsampled "
+			"rows via the index."),
+		NULL,
+		&EnableDollarSampleHeapSkipReservoirScan,
+		DEFAULT_ENABLE_DOLLAR_SAMPLE_HEAP_SKIP_RESERVOIR_SCAN,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

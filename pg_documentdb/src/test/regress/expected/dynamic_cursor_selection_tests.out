@@ -1062,13 +1062,14 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Custom Scan (DocumentDBApiReservoirSample)
    Output: document
    Sample Size: 2
+   Sample Reservoir Method: Materialize
    ->  Custom Scan (DocumentDBApiCursorScan)
          Output: document
          cursorScanType: Primary Key Scan
          indexName: _id_
          ->  Index Scan using _id_ on documentdb_data.documents_2601 collection
                Output: shard_key_value, object_id, document
-(9 rows)
+(10 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sample": { "size": 2 } }], "cursor": {} }');

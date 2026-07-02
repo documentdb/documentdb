@@ -148,6 +148,22 @@
           "type": "number",
           "description": "The page size used for batched index lookups. Only present when the PostgreSQL plan reports a non-zero page size."
         },
+        "sampleSize": {
+          "type": "number",
+          "description": "The requested sample size for a $sample stage. Only present when the PostgreSQL plan reports a non-zero sample size."
+        },
+        "sampleReservoirMethod": {
+          "type": "string",
+          "description": "The reservoir sampling method chosen for a $sample stage. Either 'Materialize' (every matching row is read from the heap) or 'Heap Skip' (unsampled rows are passed over via the index without a heap read). Only present when the plan uses reservoir sampling."
+        },
+        "sampleRowsSkipped": {
+          "type": "number",
+          "description": "The number of matching rows passed over without entering the reservoir during heap skip sampling. Only present under executionStats verbosity when the plan uses heap skip sampling."
+        },
+        "sampleHeapSkips": {
+          "type": "number",
+          "description": "The number of skipped rows that still required a heap read (page not all-visible or a lossy index match); the rest were counted from the visibility map. Only present under executionStats verbosity when the plan uses heap skip sampling."
+        },
         "startupCost": {
           "type": "number",
           "description": "PostgreSQL estimated startup cost for this plan node. Represents the cost before the first row can be returned. Only present when greater than zero."

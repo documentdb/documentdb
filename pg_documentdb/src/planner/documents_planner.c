@@ -576,7 +576,7 @@ ExtensionRelPathlistHookCore(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	/* Wrap paths with ReservoirSample CustomPath (must happen after all path transforms) */
 	if (EnableDollarSampleReservoirScan && indexContext.reservoirSampleExpr != NULL)
 	{
-		AddReservoirSampleCustomPath(rel, indexContext.reservoirSampleExpr);
+		AddReservoirSampleCustomPath(root, rel, indexContext.reservoirSampleExpr);
 	}
 
 	if (EnableExtendedExplainPlans)

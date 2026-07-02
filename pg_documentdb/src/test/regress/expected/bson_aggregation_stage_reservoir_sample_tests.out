@@ -223,13 +223,14 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    ->  Custom Scan (DocumentDBApiReservoirSample)
          Output: bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_orderby(bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)
          Sample Size: 3
+         Sample Reservoir Method: Materialize
          ->  Bitmap Heap Scan on documentdb_data.documents_25712001 collection
                Output: collection.document
                Recheck Cond: (collection.shard_key_value = '25712001'::bigint)
                Filter: (collection.document @= '{ "category" : "A" }'::bson)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (collection.shard_key_value = '25712001'::bigint)
-(12 rows)
+(13 rows)
 
 -- Plan: empty $match + $sample - empty $match doesn't add filters, uses TABLESAMPLE path
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 5 } } ] }');
@@ -299,10 +300,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Custom Scan (DocumentDBApiReservoirSample)
    Output: document
    Sample Size: 3
+   Sample Reservoir Method: Materialize
    ->  Index Scan using _id_ on documentdb_data.documents_25712001 collection
          Output: document
          Index Cond: ((collection.shard_key_value = '25712001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "1" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberInt" : "15" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
-(6 rows)
+(7 rows)
 
 -- Execution: $match + $sample (size >= matched) + $sort returns all matched docs deterministically
 SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 20 } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
@@ -568,13 +570,14 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Custom Scan (DocumentDBApiReservoirSample)
    Output: document
    Sample Size: 3
+   Sample Reservoir Method: Materialize
    ->  Bitmap Heap Scan on documentdb_data.documents_25712001 collection
          Output: document
          Recheck Cond: (collection.shard_key_value = '25712001'::bigint)
          Filter: (collection.document @= '{ "category" : "A" }'::bson)
          ->  Bitmap Index Scan on _id_
                Index Cond: (collection.shard_key_value = '25712001'::bigint)
-(9 rows)
+(10 rows)
 
 -- =============================================================================
 -- ALTERNATE INDEX PATH TESTS (wildcard, single-field, compound, sparse, partial)
@@ -597,10 +600,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Custom Scan (DocumentDBApiReservoirSample)
    Output: document
    Sample Size: 3
+   Sample Reservoir Method: Materialize
    ->  Index Scan using wildcard_all on documentdb_data.documents_25712001 collection
          Output: document
          Index Cond: (collection.document @> '{ "value" : { "$numberInt" : "50" } }'::bson)
-(6 rows)
+(7 rows)
 
 -- Plan: $match on category (string equality) + $sample with wildcard index
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 2 } } ] }');
@@ -609,10 +613,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Custom Scan (DocumentDBApiReservoirSample)
    Output: document
    Sample Size: 2
+   Sample Reservoir Method: Materialize
    ->  Index Scan using wildcard_all on documentdb_data.documents_25712001 collection
          Output: document
          Index Cond: (collection.document @= '{ "category" : "A" }'::bson)
-(6 rows)
+(7 rows)
 
 -- Execution: $match + $sample with wildcard index, verify correct count
 SELECT count(*) FROM (
@@ -636,6 +641,7 @@ SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "r
 
 -- Extended explain: $match + $sample with wildcard index shows indexName and no leaked marker qual
 SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO off;
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 2 } } ], "cursor": {} }') $$);
                                         run_explain_and_trim                                        
 ----------------------------------------------------------------------------------------------------
@@ -647,10 +653,12 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (COSTS OFF, ANALY
    indexBounds: ["category": [ { "category": "A" } ,  { "category": "A" } ]]
    ->  Custom Scan (DocumentDBApiReservoirSample) (actual rows=2 loops=1)
          Sample Size: 2
+         Sample Reservoir Method: Materialize
          ->  Index Scan using wildcard_all on documents_25712001 collection (actual rows=8 loops=1)
                Index Cond: (document @= '{ "category" : "A" }'::bson)
-(10 rows)
+(11 rows)
 
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
 RESET documentdb.enableExtendedExplainPlans;
 -- Single-field index on "value"
 SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{ "createIndexes": "reservoirTest", "indexes": [ { "key": { "value": 1 }, "name": "value_asc" } ] }', TRUE);
@@ -666,10 +674,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Custom Scan (DocumentDBApiReservoirSample)
    Output: document
    Sample Size: 3
+   Sample Reservoir Method: Materialize
    ->  Index Scan using value_asc on documentdb_data.documents_25712001 collection
          Output: document
          Index Cond: ((collection.document @>= '{ "value" : { "$numberInt" : "50" } }'::bson) AND (collection.document @<= '{ "value" : { "$numberInt" : "150" } }'::bson))
-(6 rows)
+(7 rows)
 
 -- Execution: verify correct count with single-field index
 SELECT count(*) FROM (
@@ -680,6 +689,19 @@ SELECT count(*) FROM (
      3
 (1 row)
 
+-- EXPLAIN ANALYZE in heap skip mode: reports how skipped rows were resolved (VM vs heap fetch).
+-- The counts are run dependent, so run_explain_and_trim masks them; filter to the reservoir lines.
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
+SELECT l FROM documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "value": { "$gte": 50, "$lte": 150 } } }, { "$sample": { "size": 3 } } ], "cursor": {} }') $$) AS l
+WHERE l ~ 'Sample (Reservoir Method|Rows Skipped|Heap Skips)';
+                  l                   
+--------------------------------------
+   Sample Reservoir Method: Heap Skip
+   Sample Rows Skipped: xxx
+   Sample Heap Skips: xxx
+(3 rows)
+
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
 -- Compound index on "category" + "value"
 SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{ "createIndexes": "reservoirTest", "indexes": [ { "key": { "category": 1, "value": -1 }, "name": "category_value_compound" } ] }', TRUE);
                                                                                                    create_indexes_non_concurrently                                                                                                    
@@ -694,10 +716,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Custom Scan (DocumentDBApiReservoirSample)
    Output: document
    Sample Size: 2
+   Sample Reservoir Method: Materialize
    ->  Index Scan using category_value_compound on documentdb_data.documents_25712001 collection
          Output: document
          Index Cond: ((collection.document @= '{ "category" : "A" }'::bson) AND (collection.document @> '{ "value" : { "$numberInt" : "50" } }'::bson))
-(6 rows)
+(7 rows)
 
 -- Execution: compound index match + sample returns correct count
 SELECT count(*) FROM (
@@ -749,10 +772,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Custom Scan (DocumentDBApiReservoirSample)
    Output: document
    Sample Size: 2
+   Sample Reservoir Method: Materialize
    ->  Index Scan using category_high_value on documentdb_data.documents_25712001 collection
          Output: document
          Index Cond: (collection.document @= '{ "category" : "A" }'::bson)
-(6 rows)
+(7 rows)
 
 -- Execution: partial filter index match + sample + sort (deterministic)
 SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A", "value": { "$gt": 100 } } }, { "$sample": { "size": 100 } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
@@ -781,10 +805,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Custom Scan (DocumentDBApiReservoirSample)
    Output: document
    Sample Size: 3
+   Sample Reservoir Method: Materialize
    ->  Index Scan using category_high_value on documentdb_data.documents_25712001 collection
          Output: document
          Index Cond: (collection.document @= '{ "category" : "C" }'::bson)
-(6 rows)
+(7 rows)
 
 -- Execution: partial filter match for category C
 SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "C", "value": { "$gt": 100 } } }, { "$sample": { "size": 100 } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
@@ -878,13 +903,14 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          ->  Custom Scan (DocumentDBApiReservoirSample)
                Output: collection_0_1.document
                Sample Size: 2
+               Sample Reservoir Method: Materialize
                ->  Bitmap Heap Scan on documentdb_data.documents_25712005 collection_0_1
                      Output: collection_0_1.document
                      Recheck Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
                      Filter: (collection_0_1.document @= '{ "ref" : "A" }'::bson)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
-(16 rows)
+(17 rows)
 
 -- Correlated $lookup with $sample on the right collection
 -- The inner pipeline has a correlation ($match on $$category), so it should
@@ -1002,13 +1028,14 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          ->  Custom Scan (DocumentDBApiReservoirSample)
                Output: collection_0_1.document
                Sample Size: 2
+               Sample Reservoir Method: Materialize
                ->  Bitmap Heap Scan on documentdb_data.documents_25712005 collection_0_1
                      Output: collection_0_1.document
                      Recheck Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
                      Filter: (collection_0_1.document @= '{ "ref" : "A" }'::bson)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
-(16 rows)
+(17 rows)
 
 -- Correlated $lookup with $match + $sample in inner pipeline
 -- Correlation ($$category) prevents reservoir optimization
@@ -1058,9 +1085,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    ->  Custom Scan (DocumentDBApiReservoirSample)
          Output: bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "category" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_orderby(bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "category" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "category" : { "$numberInt" : "1" } }'::bson)
          Sample Size: 2
+         Sample Reservoir Method: Materialize
          ->  Seq Scan on documentdb_data.documents_25712001 collection
                Output: document
-(8 rows)
+(9 rows)
 
 -- $match + $sample + $project — verify where the project node is placed
 -- relative to the ReservoirSample custom scan
@@ -1070,10 +1098,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Custom Scan (DocumentDBApiReservoirSample)
    Output: bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    Sample Size: 3
+   Sample Reservoir Method: Materialize
    ->  Seq Scan on documentdb_data.documents_25712001 collection
          Output: collection.document
          Filter: (collection.document @= '{ "category" : "A" }'::bson)
-(6 rows)
+(7 rows)
 
 -- $match + $project + $sample — project before sample; reservoir is used
 -- and the project is folded into the ReservoirSample output target list
@@ -1083,10 +1112,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Custom Scan (DocumentDBApiReservoirSample)
    Output: bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    Sample Size: 3
+   Sample Reservoir Method: Materialize
    ->  Seq Scan on documentdb_data.documents_25712001 collection
          Output: document
          Filter: (collection.document @= '{ "category" : "A" }'::bson)
-(6 rows)
+(7 rows)
 
 -- =============================================================================
 -- natts = 0: when the outer query does not reference the document column,
@@ -1100,6 +1130,1200 @@ SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "r
  { "total" : { "$numberInt" : "5" } }
 (1 row)
 
+-- =============================================================================
+-- HEAP-SKIP MODE TESTS (btree)
+-- When the child is a plain Index Scan with no residual filter, skipped rows are
+-- counted by advancing the index and checking the visibility map, so the heap is
+-- only read for sampled rows. btree matches are never lossy, so no recheck runs.
+-- =============================================================================
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('reservoirdb','indexSkipSample', FORMAT('{ "_id": %s, "value": %s }', g, g*10)::documentdb_core.bson, NULL) FROM generate_series(1, 50) g) ig;
+NOTICE:  creating collection
+ count 
+-------
+    50
+(1 row)
+
+-- Freeze so the visibility map marks every page all visible. The samples below
+-- then run over an all-visible heap, so TrySkipHeapEntry can take the
+-- VM_ALL_VISIBLE fast path (skip the heap, take only the page predicate lock).
+SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'indexSkipSample' \gset
+SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
+VACUUM (FREEZE ON) documentdb_data.documents_25712006
+SET documentdb.enableDollarSampleReservoirScan TO on;
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
+SET enable_seqscan TO off;
+SET documentdb.forceUseIndexIfAvailable TO on;
+-- Plan: $match on _id (pushed into the _id btree index) + $sample.
+-- Expect "Sample Reservoir Method: Heap Skip" over an Index Scan using _id_.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "indexSkipSample", "pipeline": [ { "$match": { "_id": { "$gte": 0 } } }, { "$sample": { "size": 5 } } ] }');
+                                                                                                          QUERY PLAN                                                                                                           
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Heap Skip
+   ->  Index Scan using _id_ on documentdb_data.documents_25712006 collection
+         Output: document
+         Index Cond: ((collection.shard_key_value = '25712006'::bigint) AND (collection.object_id >= '{ "" : { "$numberInt" : "0" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+(7 rows)
+
+-- Correctness on the all-visible heap: a sample of K (< population) returns
+-- exactly K distinct documents from 50.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "indexSkipSample", "pipeline": [ { "$match": { "_id": { "$gte": 0 } } }, { "$sample": { "size": 10 } } ] }')) t;
+ cnt | distinct_cnt 
+-----+--------------
+  10 |           10
+(1 row)
+
+-- Oversample: requesting more than the population returns every document once.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "indexSkipSample", "pipeline": [ { "$match": { "_id": { "$gte": 0 } } }, { "$sample": { "size": 100 } } ] }')) t;
+ cnt | distinct_cnt 
+-----+--------------
+  50 |           50
+(1 row)
+
+-- Update _id 25's unindexed "value" field. The write clears the visibility map
+-- bit for that page. SQL output can't observe which branch ran, so the two
+-- queries below are correctness guards rather than path assertions. First, an
+-- oversample (size >= population never skips, so every row is read) must surface
+-- the refreshed value; a stale read would drop 99999.
+SELECT documentdb_api.update('reservoirdb', '{ "update": "indexSkipSample", "updates": [ { "q": { "_id": 25 }, "u": { "$set": { "value": 99999 } } } ] }');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+SELECT count(*) AS updated_seen FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "indexSkipSample", "pipeline": [ { "$match": { "_id": { "$gte": 0 } } }, { "$sample": { "size": 100 } } ] }')) t WHERE document::text LIKE '%99999%';
+ updated_seen 
+--------------
+            1
+(1 row)
+
+-- Then a subset sample (size < population) does skip rows, so it reaches the
+-- page whose visibility map bit was cleared through index_fetch_heap and must
+-- still return exactly K distinct documents.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "indexSkipSample", "pipeline": [ { "$match": { "_id": { "$gte": 0 } } }, { "$sample": { "size": 10 } } ] }')) t;
+ cnt | distinct_cnt 
+-----+--------------
+  10 |           10
+(1 row)
+
+-- Flag off: falls back to "Sample Reservoir Method: Materialize".
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "indexSkipSample", "pipeline": [ { "$match": { "_id": { "$gte": 0 } } }, { "$sample": { "size": 5 } } ] }');
+                                                                                                          QUERY PLAN                                                                                                           
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Materialize
+   ->  Index Scan using _id_ on documentdb_data.documents_25712006 collection
+         Output: document
+         Index Cond: ((collection.shard_key_value = '25712006'::bigint) AND (collection.object_id >= '{ "" : { "$numberInt" : "0" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+(7 rows)
+
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
+RESET enable_seqscan;
+RESET documentdb.forceUseIndexIfAvailable;
+-- =============================================================================
+-- HEAP-SKIP MODE OVER A LOSSY (RUM) INDEX
+-- A wildcard index produces a plain Index Scan whose matches can be lossy
+-- (xs_recheck set per row). Heap skip still applies: the lossy rows are fetched
+-- from the heap and rechecked, so a false positive never joins the sample. The
+-- index qual lives in the Index Cond (no residual Filter), so the scan stays
+-- eligible.
+-- =============================================================================
+-- value = id*10; tags is an array, so range predicates over it are lossy on the
+-- wildcard index, exercising the recheck branch.
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('reservoirdb','rumHeapSkipSample', FORMAT('{ "_id": %s, "value": %s, "tags": [ %s, %s ] }', g, g*10, g, g+1)::documentdb_core.bson, NULL) FROM generate_series(1, 60) g) ig;
+NOTICE:  creating collection
+ count 
+-------
+    60
+(1 row)
+
+-- Build the wildcard (RUM) index and freeze so the visibility map is set.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{ "createIndexes": "rumHeapSkipSample", "indexes": [ { "key": { "$**": 1 }, "name": "wildcard_all" } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'rumHeapSkipSample' \gset
+SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
+VACUUM (FREEZE ON) documentdb_data.documents_25712007
+SET documentdb.enableDollarSampleReservoirScan TO on;
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
+SET enable_seqscan TO off;
+SET documentdb.forceUseIndexIfAvailable TO on;
+-- Plan: $match (value > 100) maps to the wildcard Index Scan as an Index Cond
+-- with no residual Filter. Expect "Sample Reservoir Method: Heap Skip".
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumHeapSkipSample", "pipeline": [ { "$match": { "value": { "$gt": 100 } } }, { "$sample": { "size": 5 } } ] }');
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Heap Skip
+   ->  Index Scan using wildcard_all on documentdb_data.documents_25712007 collection
+         Output: document
+         Index Cond: (collection.document @> '{ "value" : { "$numberInt" : "100" } }'::bson)
+(7 rows)
+
+-- Subset correctness: value > 100 matches _id 11..60 (50 rows). A sample of 10
+-- returns exactly 10 distinct docs, all in range (no lossy false positive).
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt,
+       count(*) FILTER (WHERE NOT (document @@ '{ "value": { "$gt": 100 } }'::bson)) AS not_matching
+FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumHeapSkipSample", "pipeline": [ { "$match": { "value": { "$gt": 100 } } }, { "$sample": { "size": 10 } } ] }')) t;
+ cnt | distinct_cnt | not_matching 
+-----+--------------+--------------
+  10 |           10 |            0
+(1 row)
+
+-- Oversample (size >= matches) returns exactly the matched set.
+SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumHeapSkipSample", "pipeline": [ { "$match": { "value": { "$gt": 540 } } }, { "$sample": { "size": 100 } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+              document               
+-------------------------------------
+ { "_id" : { "$numberInt" : "55" } }
+ { "_id" : { "$numberInt" : "56" } }
+ { "_id" : { "$numberInt" : "57" } }
+ { "_id" : { "$numberInt" : "58" } }
+ { "_id" : { "$numberInt" : "59" } }
+ { "_id" : { "$numberInt" : "60" } }
+(6 rows)
+
+-- Multikey lossy match: tags >= 30 returns the same heap TID once per qualifying
+-- array element. The recheck still keeps every sampled doc within the filter.
+SELECT count(*) FILTER (WHERE NOT (document @@ '{ "tags": { "$gte": 30 } }'::bson)) AS not_matching
+FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumHeapSkipSample", "pipeline": [ { "$match": { "tags": { "$gte": 30 } } }, { "$sample": { "size": 8 } } ] }')) t;
+ not_matching 
+--------------
+            0
+(1 row)
+
+-- Flag off: the same lossy index scan falls back to "Sample Reservoir Method: Materialize".
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumHeapSkipSample", "pipeline": [ { "$match": { "value": { "$gt": 100 } } }, { "$sample": { "size": 5 } } ] }');
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Materialize
+   ->  Index Scan using wildcard_all on documentdb_data.documents_25712007 collection
+         Output: document
+         Index Cond: (collection.document @> '{ "value" : { "$numberInt" : "100" } }'::bson)
+(7 rows)
+
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
+RESET enable_seqscan;
+RESET documentdb.forceUseIndexIfAvailable;
+-- =============================================================================
+-- HEAP-SKIP MODE OVER RUM INDEXES: INDEX SHAPE AND PREDICATE VARIETY
+-- Heap skip applies to any plain Index Scan over a RUM index whose $match lands
+-- entirely in the Index Cond (no residual Filter). These cases cover range,
+-- equality, $in, a nested path, a string key and a multikey array. Each EXPLAIN
+-- shows "Sample Reservoir Method: Heap Skip" and each result stays in range.
+-- =============================================================================
+-- a is a scalar, s a string, nested.x a nested scalar, b a two element array.
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('reservoirdb','rumVariety', FORMAT('{ "_id": %s, "a": %s, "s": "k%s", "nested": { "x": %s }, "b": [ %s, %s ] }', g, g, lpad(g::text, 3, '0'), g*2, g, g+100)::documentdb_core.bson, NULL) FROM generate_series(1, 80) g) ig;
+NOTICE:  creating collection
+ count 
+-------
+    80
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{ "createIndexes": "rumVariety", "indexes": [ { "key": { "a": 1 }, "name": "a_1" }, { "key": { "s": 1 }, "name": "s_1" }, { "key": { "nested.x": 1 }, "name": "nx_1" }, { "key": { "b": 1 }, "name": "b_1" } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "5" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'rumVariety' \gset
+SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
+VACUUM (FREEZE ON) documentdb_data.documents_25712008
+SET documentdb.enableDollarSampleReservoirScan TO on;
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
+SET enable_seqscan TO off;
+SET documentdb.forceUseIndexIfAvailable TO on;
+-- Range $gt on a scalar index.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumVariety", "pipeline": [ { "$match": { "a": { "$gt": 10 } } }, { "$sample": { "size": 5 } } ] }');
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Heap Skip
+   ->  Index Scan using a_1 on documentdb_data.documents_25712008 collection
+         Output: document
+         Index Cond: (collection.document @> '{ "a" : { "$numberInt" : "10" } }'::bson)
+(7 rows)
+
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt,
+       count(*) FILTER (WHERE NOT (document @@ '{ "a": { "$gt": 10 } }'::bson)) AS out_of_range
+FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumVariety", "pipeline": [ { "$match": { "a": { "$gt": 10 } } }, { "$sample": { "size": 5 } } ] }')) t;
+ cnt | distinct_cnt | out_of_range 
+-----+--------------+--------------
+   5 |            5 |            0
+(1 row)
+
+-- Equality on a scalar index; population is a single document.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumVariety", "pipeline": [ { "$match": { "a": 42 } }, { "$sample": { "size": 5 } } ] }');
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Heap Skip
+   ->  Index Scan using a_1 on documentdb_data.documents_25712008 collection
+         Output: document
+         Index Cond: (collection.document @= '{ "a" : { "$numberInt" : "42" } }'::bson)
+(7 rows)
+
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt
+FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumVariety", "pipeline": [ { "$match": { "a": 42 } }, { "$sample": { "size": 5 } } ] }')) t;
+ cnt | distinct_cnt 
+-----+--------------
+   1 |            1
+(1 row)
+
+-- $in over a scalar index.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumVariety", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2, 3, 50, 60 ] } } }, { "$sample": { "size": 3 } } ] }');
+                                                                                          QUERY PLAN                                                                                          
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 3
+   Sample Reservoir Method: Heap Skip
+   ->  Index Scan using a_1 on documentdb_data.documents_25712008 collection
+         Output: document
+         Index Cond: (collection.document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "50" }, { "$numberInt" : "60" } ] }'::bson)
+(7 rows)
+
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt,
+       count(*) FILTER (WHERE NOT (document @@ '{ "a": { "$in": [ 1, 2, 3, 50, 60 ] } }'::bson)) AS out_of_range
+FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumVariety", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2, 3, 50, 60 ] } } }, { "$sample": { "size": 3 } } ] }')) t;
+ cnt | distinct_cnt | out_of_range 
+-----+--------------+--------------
+   3 |            3 |            0
+(1 row)
+
+-- Oversample (size >= matches) returns exactly the five matched documents.
+SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumVariety", "pipeline": [ { "$match": { "a": { "$in": [ 1, 2, 3, 50, 60 ] } } }, { "$sample": { "size": 100 } }, { "$sort": { "a": 1 } }, { "$project": { "_id": 0, "a": 1 } } ] }');
+             document              
+-----------------------------------
+ { "a" : { "$numberInt" : "1" } }
+ { "a" : { "$numberInt" : "2" } }
+ { "a" : { "$numberInt" : "3" } }
+ { "a" : { "$numberInt" : "50" } }
+ { "a" : { "$numberInt" : "60" } }
+(5 rows)
+
+-- Range on a nested path index.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumVariety", "pipeline": [ { "$match": { "nested.x": { "$gte": 100 } } }, { "$sample": { "size": 4 } } ] }');
+                                           QUERY PLAN                                            
+-------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 4
+   Sample Reservoir Method: Heap Skip
+   ->  Index Scan using nx_1 on documentdb_data.documents_25712008 collection
+         Output: document
+         Index Cond: (collection.document @>= '{ "nested.x" : { "$numberInt" : "100" } }'::bson)
+(7 rows)
+
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt,
+       count(*) FILTER (WHERE NOT (document @@ '{ "nested.x": { "$gte": 100 } }'::bson)) AS out_of_range
+FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumVariety", "pipeline": [ { "$match": { "nested.x": { "$gte": 100 } } }, { "$sample": { "size": 4 } } ] }')) t;
+ cnt | distinct_cnt | out_of_range 
+-----+--------------+--------------
+   4 |            4 |            0
+(1 row)
+
+-- Range on a string key index.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumVariety", "pipeline": [ { "$match": { "s": { "$gt": "k040" } } }, { "$sample": { "size": 4 } } ] }');
+                                 QUERY PLAN                                  
+-----------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 4
+   Sample Reservoir Method: Heap Skip
+   ->  Index Scan using s_1 on documentdb_data.documents_25712008 collection
+         Output: document
+         Index Cond: (collection.document @> '{ "s" : "k040" }'::bson)
+(7 rows)
+
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt,
+       count(*) FILTER (WHERE NOT (document @@ '{ "s": { "$gt": "k040" } }'::bson)) AS out_of_range
+FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumVariety", "pipeline": [ { "$match": { "s": { "$gt": "k040" } } }, { "$sample": { "size": 4 } } ] }')) t;
+ cnt | distinct_cnt | out_of_range 
+-----+--------------+--------------
+   4 |            4 |            0
+(1 row)
+
+-- Multikey array index: array-element matches are lossy, so the recheck drops false positives.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumVariety", "pipeline": [ { "$match": { "b": { "$gte": 150 } } }, { "$sample": { "size": 4 } } ] }');
+                                        QUERY PLAN                                        
+------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 4
+   Sample Reservoir Method: Heap Skip
+   ->  Index Scan using b_1 on documentdb_data.documents_25712008 collection
+         Output: document
+         Index Cond: (collection.document @>= '{ "b" : { "$numberInt" : "150" } }'::bson)
+(7 rows)
+
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt,
+       count(*) FILTER (WHERE NOT (document @@ '{ "b": { "$gte": 150 } }'::bson)) AS out_of_range
+FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumVariety", "pipeline": [ { "$match": { "b": { "$gte": 150 } } }, { "$sample": { "size": 4 } } ] }')) t;
+ cnt | distinct_cnt | out_of_range 
+-----+--------------+--------------
+   4 |            4 |            0
+(1 row)
+
+-- Sample size of one over the range scan.
+SELECT count(*) AS cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumVariety", "pipeline": [ { "$match": { "a": { "$gt": 10 } } }, { "$sample": { "size": 1 } } ] }')) t;
+ cnt 
+-----
+   1
+(1 row)
+
+-- Flag off: the same scalar index scan falls back to "Sample Reservoir Method: Materialize".
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "rumVariety", "pipeline": [ { "$match": { "a": { "$gt": 10 } } }, { "$sample": { "size": 5 } } ] }');
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Materialize
+   ->  Index Scan using a_1 on documentdb_data.documents_25712008 collection
+         Output: document
+         Index Cond: (collection.document @> '{ "a" : { "$numberInt" : "10" } }'::bson)
+(7 rows)
+
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
+RESET enable_seqscan;
+RESET documentdb.forceUseIndexIfAvailable;
+-- =============================================================================
+-- MATERIALIZE MODE: ineligible child shapes
+-- Heap skip only applies to a plain Index Scan with no residual Filter. With the
+-- flag on, the reservoir still falls back to "Sample Reservoir Method: Materialize" when
+-- the child is a Seq Scan or an Index Scan that carries a residual Filter (part of
+-- the $match not pushed into the Index Cond). Each case must still sample
+-- correctly: K distinct documents from the matched set.
+-- =============================================================================
+-- a is indexed, b is left unindexed so predicates on it become a Seq Scan or a
+-- residual Filter.
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('reservoirdb','matSample', FORMAT('{ "_id": %s, "a": %s, "b": %s }', g, g, g % 5)::documentdb_core.bson, NULL) FROM generate_series(1, 60) g) ig;
+NOTICE:  creating collection
+ count 
+-------
+    60
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{ "createIndexes": "matSample", "indexes": [ { "key": { "a": 1 }, "name": "a_1" } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'matSample' \gset
+SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
+VACUUM (FREEZE ON) documentdb_data.documents_25712009
+SET documentdb.enableDollarSampleReservoirScan TO on;
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
+-- Seq Scan child: $match on the unindexed field b. Expect Materialize.
+SET enable_seqscan TO on;
+SET enable_indexscan TO off;
+SET enable_bitmapscan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "matSample", "pipeline": [ { "$match": { "b": { "$gte": 0 } } }, { "$sample": { "size": 5 } } ] }');
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Materialize
+   ->  Seq Scan on documentdb_data.documents_25712009 collection
+         Output: document
+         Filter: (collection.document @>= '{ "b" : { "$numberInt" : "0" } }'::bson)
+(7 rows)
+
+-- Correctness: b >= 0 matches all 60; a sample of 10 is 10 distinct documents.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "matSample", "pipeline": [ { "$match": { "b": { "$gte": 0 } } }, { "$sample": { "size": 10 } } ] }')) t;
+ cnt | distinct_cnt 
+-----+--------------
+  10 |           10
+(1 row)
+
+-- Index Scan with a residual Filter: a maps to the Index Cond but the unindexed
+-- b predicate stays as a Filter, so the scan is ineligible. Expect Materialize.
+SET enable_seqscan TO off;
+SET enable_indexscan TO on;
+SET enable_bitmapscan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "matSample", "pipeline": [ { "$match": { "a": { "$gte": 10 }, "b": { "$gte": 0 } } }, { "$sample": { "size": 5 } } ] }');
+                                       QUERY PLAN                                        
+-----------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Materialize
+   ->  Index Scan using a_1 on documentdb_data.documents_25712009 collection
+         Output: document
+         Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "10" } }'::bson)
+         Filter: (collection.document @>= '{ "b" : { "$numberInt" : "0" } }'::bson)
+(8 rows)
+
+-- Correctness: a >= 10 and b >= 0 matches 51; a sample of 10 is 10 distinct documents.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "matSample", "pipeline": [ { "$match": { "a": { "$gte": 10 }, "b": { "$gte": 0 } } }, { "$sample": { "size": 10 } } ] }')) t;
+ cnt | distinct_cnt 
+-----+--------------
+  10 |           10
+(1 row)
+
+RESET enable_seqscan;
+RESET enable_indexscan;
+RESET enable_bitmapscan;
+RESET documentdb.forceUseIndexIfAvailable;
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
+-- =============================================================================
+-- HEAP-SKIP MODE: DEAD TUPLES, EMPTY POPULATION, AND SIZE BOUNDARIES
+-- Paths the other sections don't reach: dead index entries (deleted but not yet
+-- vacuumed) that the skip phase must not count, an empty match set, and sizes 0
+-- and 1.
+-- =============================================================================
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('reservoirdb','extraHS', FORMAT('{ "_id": %s, "a": %s }', g, g)::documentdb_core.bson, NULL) FROM generate_series(1, 60) g) ig;
+NOTICE:  creating collection
+ count 
+-------
+    60
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{ "createIndexes": "extraHS", "indexes": [ { "key": { "a": 1 }, "name": "a_1" } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'extraHS' \gset
+SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
+VACUUM (FREEZE ON) documentdb_data.documents_25712010
+SET documentdb.enableDollarSampleReservoirScan TO on;
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
+SET enable_seqscan TO off;
+SET documentdb.forceUseIndexIfAvailable TO on;
+-- Delete a >= 31 (30 rows) without vacuuming, leaving dead index entries. Live
+-- rows are a = 1..30.
+SELECT documentdb_api.delete('reservoirdb', '{ "delete": "extraHS", "deletes": [ { "q": { "a": { "$gte": 31 } }, "limit": 0 } ] }');
+                                         delete                                          
+-----------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""30"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+-- An oversample (size > live population) never fills the reservoir, so the skip
+-- phase stays off. Plain correctness check that deleted rows are not returned.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt,
+       count(*) FILTER (WHERE document @@ '{ "a": { "$gte": 31 } }'::bson) AS deleted_seen
+FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "extraHS", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sample": { "size": 100 } } ] }')) t;
+ cnt | distinct_cnt | deleted_seen 
+-----+--------------+--------------
+  30 |           30 |            0
+(1 row)
+
+-- A subset sample (size 10 < 30 live rows) fills the reservoir, so the skip phase
+-- engages and walks the dead index entries. They fetch the heap, fail the MVCC
+-- visibility check, and are not counted, so exactly 10 distinct live rows come
+-- back with no deleted documents.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt,
+       count(*) FILTER (WHERE document @@ '{ "a": { "$gte": 31 } }'::bson) AS deleted_seen
+FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "extraHS", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sample": { "size": 10 } } ] }')) t;
+ cnt | distinct_cnt | deleted_seen 
+-----+--------------+--------------
+  10 |           10 |            0
+(1 row)
+
+-- Empty match set: Heap Skip plan, zero rows out.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "extraHS", "pipeline": [ { "$match": { "a": { "$gte": 100000 } } }, { "$sample": { "size": 5 } } ] }');
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Heap Skip
+   ->  Index Scan using a_1 on documentdb_data.documents_25712010 collection
+         Output: document
+         Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "100000" } }'::bson)
+(7 rows)
+
+SELECT count(*) AS cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "extraHS", "pipeline": [ { "$match": { "a": { "$gte": 100000 } } }, { "$sample": { "size": 5 } } ] }')) t;
+ cnt 
+-----
+   0
+(1 row)
+
+-- Size 0: empty result.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "extraHS", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sample": { "size": 0 } } ] }');
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 0
+   Sample Reservoir Method: Heap Skip
+   ->  Index Scan using a_1 on documentdb_data.documents_25712010 collection
+         Output: document
+         Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
+(7 rows)
+
+SELECT count(*) AS cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "extraHS", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sample": { "size": 0 } } ] }')) t;
+ cnt 
+-----
+   0
+(1 row)
+
+-- Size 1: one document.
+SELECT count(*) AS cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "extraHS", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sample": { "size": 1 } } ] }')) t;
+ cnt 
+-----
+   1
+(1 row)
+
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
+RESET enable_seqscan;
+RESET documentdb.forceUseIndexIfAvailable;
+-- =============================================================================
+-- HEAP-SKIP MODE: DESCENDING-KEY INDEX
+-- Heap skip works over a descending-key index. (The scan still runs forward; a
+-- true backward scan can't arise from $sample, since any sort sits above the
+-- reservoir rather than feeding the scan.)
+-- =============================================================================
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('reservoirdb','descHS', FORMAT('{ "_id": %s, "a": %s }', g, g)::documentdb_core.bson, NULL) FROM generate_series(1, 60) g) ig;
+NOTICE:  creating collection
+ count 
+-------
+    60
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{ "createIndexes": "descHS", "indexes": [ { "key": { "a": -1 }, "name": "a_desc" } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'descHS' \gset
+SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
+VACUUM (FREEZE ON) documentdb_data.documents_25712011
+SET documentdb.enableDollarSampleReservoirScan TO on;
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
+SET enable_seqscan TO off;
+SET documentdb.forceUseIndexIfAvailable TO on;
+-- Expect "Sample Reservoir Method: Heap Skip" over the a_desc index.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "descHS", "pipeline": [ { "$match": { "a": { "$gte": 10 } } }, { "$sample": { "size": 5 } } ] }');
+                                       QUERY PLAN                                        
+-----------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Heap Skip
+   ->  Index Scan using a_desc on documentdb_data.documents_25712011 collection
+         Output: document
+         Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "10" } }'::bson)
+(7 rows)
+
+-- a >= 10 matches 51; a sample of 10 is 10 distinct in-range docs.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt,
+       count(*) FILTER (WHERE NOT (document @@ '{ "a": { "$gte": 10 } }'::bson)) AS out_of_range
+FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "descHS", "pipeline": [ { "$match": { "a": { "$gte": 10 } } }, { "$sample": { "size": 10 } } ] }')) t;
+ cnt | distinct_cnt | out_of_range 
+-----+--------------+--------------
+  10 |           10 |            0
+(1 row)
+
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
+RESET enable_seqscan;
+RESET documentdb.forceUseIndexIfAvailable;
+-- =============================================================================
+-- HEAP-SKIP MODE: SHARDED COLLECTION (does not engage)
+-- A sharded $sample takes the Sort-on-random() plus Limit path, so the reservoir
+-- (and heap skip) never engages. The plan has no ReservoirSample node.
+-- =============================================================================
+SELECT documentdb_api.create_collection('reservoirdb', 'shardHS');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('reservoirdb','shardHS', FORMAT('{ "_id": %s, "a": %s }', g, g)::documentdb_core.bson, NULL) FROM generate_series(1, 60) g) ig;
+ count 
+-------
+    60
+(1 row)
+
+SELECT documentdb_api.shard_collection('reservoirdb','shardHS', '{ "_id": "hashed" }', false);
+ shard_collection 
+------------------
+ 
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{ "createIndexes": "shardHS", "indexes": [ { "key": { "a": 1 }, "name": "a_1" } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET documentdb.enableDollarSampleReservoirScan TO on;
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
+SET enable_seqscan TO off;
+SET documentdb.forceUseIndexIfAvailable TO on;
+-- No ReservoirSample node; a Sort on random() with a Limit instead.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "shardHS", "pipeline": [ { "$match": { "a": { "$gte": 10 } } }, { "$sample": { "size": 5 } } ] }');
+                                          QUERY PLAN                                           
+-----------------------------------------------------------------------------------------------
+ Limit
+   Output: document, (random())
+   ->  Sort
+         Output: document, (random())
+         Sort Key: (random())
+         ->  Index Scan using a_1 on documentdb_data.documents_25712012 collection
+               Output: document, random()
+               Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "10" } }'::bson)
+(8 rows)
+
+-- a >= 10 matches 51; a sample of 10 is 10 distinct in-range docs.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt,
+       count(*) FILTER (WHERE NOT (document @@ '{ "a": { "$gte": 10 } }'::bson)) AS out_of_range
+FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "shardHS", "pipeline": [ { "$match": { "a": { "$gte": 10 } } }, { "$sample": { "size": 10 } } ] }')) t;
+ cnt | distinct_cnt | out_of_range 
+-----+--------------+--------------
+  10 |           10 |            0
+(1 row)
+
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
+RESET enable_seqscan;
+RESET documentdb.forceUseIndexIfAvailable;
+-- =============================================================================
+-- ORDER BY (vector) SCAN + $sample: reservoir sampling must NOT engage
+-- An ordering operator Index Scan (vector search) reaches $sample through a Sort
+-- on random() plus a Limit, so the reservoir custom scan is never applied to it
+-- (and heap skip, which only exists inside that scan, is never reached). This
+-- pins that behavior with the flag on: the plan keeps the ordered Index Scan
+-- under a Sort (no ReservoirSample node) and the results stay correct over the
+-- set of nearest neighbors.
+-- TODO: support reservoir sampling on upper paths (e.g. above $unwind, $search).
+-- =============================================================================
+-- v = [id/10, 0, 0]; nearest to [0,0,0] under L2 is the smallest id.
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('reservoirdb','vecSample', FORMAT('{ "_id": %s, "v": [ %s, 0, 0 ] }', g, g::float8/10)::documentdb_core.bson, NULL) FROM generate_series(1, 10) g) ig;
+NOTICE:  creating collection
+ count 
+-------
+    10
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{ "createIndexes": "vecSample", "indexes": [ { "key": { "v": "cosmosSearch" }, "cosmosSearchOptions": { "kind": "vector-ivf", "numLists": 1, "similarity": "L2", "dimensions": 3 }, "name": "vidx" } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'vecSample' \gset
+SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
+VACUUM (FREEZE ON) documentdb_data.documents_25712013
+SET documentdb.enableDollarSampleReservoirScan TO on;
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
+SET enable_seqscan TO off;
+SET documentdb.forceUseIndexIfAvailable TO on;
+-- Plan: vector search becomes a Sort on random() plus a Limit over the ordered
+-- Index Scan. No ReservoirSample custom scan and no "Sample Reservoir Method" line appear.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "vecSample", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 0, 0, 0 ], "path": "v", "k": 5 } } }, { "$sample": { "size": 3 } } ] }');
+                                                                                                    QUERY PLAN                                                                                                     
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   Output: (bson_document_add_score_field(agg_stage_0.document, (public.vector(bson_extract_vector(agg_stage_0.document, 'v'::text), 3, true) OPERATOR(public.<->) '[0,0,0]'::public.vector))), (random())
+   ->  Sort
+         Output: (bson_document_add_score_field(agg_stage_0.document, (public.vector(bson_extract_vector(agg_stage_0.document, 'v'::text), 3, true) OPERATOR(public.<->) '[0,0,0]'::public.vector))), (random())
+         Sort Key: (random())
+         ->  Subquery Scan on agg_stage_0
+               Output: bson_document_add_score_field(agg_stage_0.document, (public.vector(bson_extract_vector(agg_stage_0.document, 'v'::text), 3, true) OPERATOR(public.<->) '[0,0,0]'::public.vector)), random()
+               ->  Limit
+                     Output: collection.document, ((public.vector(bson_extract_vector(collection.document, 'v'::text), 3, true) OPERATOR(public.<->) '[0,0,0]'::public.vector))
+                     ->  Custom Scan (DocumentDBApiQueryScan)
+                           Output: collection.document, (public.vector(bson_extract_vector(collection.document, 'v'::text), 3, true) OPERATOR(public.<->) '[0,0,0]'::public.vector)
+                           CosmosSearch Custom Params: { "nProbes" : 1 }
+                           ->  Index Scan using vidx on documentdb_data.documents_25712013 collection
+                                 Output: collection.document
+                                 Order By: (public.vector(bson_extract_vector(collection.document, 'v'::text), 3, true) OPERATOR(public.<->) '[0,0,0]'::public.vector)
+(15 rows)
+
+-- Oversample (size >= k) over the 5 nearest returns exactly those 5 documents.
+SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "vecSample", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 0, 0, 0 ], "path": "v", "k": 5 } } }, { "$sample": { "size": 50 } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+              document              
+------------------------------------
+ { "_id" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "5" } }
+(5 rows)
+
+-- Subset (size < k): exactly 3 distinct docs, all drawn from the 5 nearest.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt,
+       count(*) FILTER (WHERE NOT (document @@ '{ "_id": { "$lte": 5 } }'::bson)) AS out_of_range
+FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "vecSample", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 0, 0, 0 ], "path": "v", "k": 5 } } }, { "$sample": { "size": 3 } } ] }')) t;
+ cnt | distinct_cnt | out_of_range 
+-----+--------------+--------------
+   3 |            3 |            0
+(1 row)
+
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
+RESET enable_seqscan;
+RESET documentdb.forceUseIndexIfAvailable;
+-- =============================================================================
+-- HEAP-SKIP MODE: bitmap heap scan conversion
+-- A Bitmap Heap Scan whose bitmapqual is a single Bitmap Index Scan is rewritten
+-- to a plain Index Scan so heap skip can engage, but only when the index covers
+-- every restriction. A multi-index bitmap (BitmapOr / BitmapAnd) or a residual
+-- filter is left untouched, and with the flag off no conversion happens.
+-- =============================================================================
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('reservoirdb','bitmapConv', FORMAT('{ "_id": %s, "a": %s, "b": %s, "c": %s }', g, g, g % 7, g)::documentdb_core.bson, NULL) FROM generate_series(1, 200) g) ig;
+NOTICE:  creating collection
+ count 
+-------
+   200
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{ "createIndexes": "bitmapConv", "indexes": [ { "key": { "a": 1 }, "name": "a_1" }, { "key": { "b": 1 }, "name": "b_1" } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'bitmapConv' \gset
+SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
+VACUUM (FREEZE ON) documentdb_data.documents_25712014
+SET documentdb.enableDollarSampleReservoirScan TO on;
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
+SET enable_seqscan TO off;
+SET enable_indexscan TO off;
+SET enable_bitmapscan TO on;
+SET documentdb.forceUseIndexIfAvailable TO on;
+-- Single-index bitmap: only a Bitmap Heap Scan over a_1 is available. It is
+-- rewritten to an Index Scan, so expect "Sample Reservoir Method: Heap Skip".
+-- Wrapped in run_explain_and_trim to strip the PG18-only "Disabled: true" line that
+-- appears because the Index Scan is produced while enable_indexscan is off.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "bitmapConv", "pipeline": [ { "$match": { "a": { "$gte": 0 } } }, { "$sample": { "size": 5 } } ] }') $$);
+                                  run_explain_and_trim                                  
+----------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Heap Skip
+   ->  Index Scan using a_1 on documentdb_data.documents_25712014 collection
+         Output: document
+         Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "0" } }'::bson)
+(7 rows)
+
+-- Correctness: a >= 0 matches all 200; a sample of 10 is 10 distinct documents.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "bitmapConv", "pipeline": [ { "$match": { "a": { "$gte": 0 } } }, { "$sample": { "size": 10 } } ] }')) t;
+ cnt | distinct_cnt 
+-----+--------------
+  10 |           10
+(1 row)
+
+-- Multi-clause single index: a range on "a" yields two index clauses (>= and <=),
+-- both covered by a_1. The coverage check passes on every clause, so the bitmap is
+-- still rewritten to an Index Scan. Expect "Sample Reservoir Method: Heap Skip".
+-- Wrapped in run_explain_and_trim to strip the PG18-only "Disabled: true" line that
+-- appears because the Index Scan is produced while enable_indexscan is off.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "bitmapConv", "pipeline": [ { "$match": { "a": { "$gte": 10, "$lte": 50 } } }, { "$sample": { "size": 5 } } ] }') $$);
+                                                                       run_explain_and_trim                                                                        
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Heap Skip
+   ->  Index Scan using a_1 on documentdb_data.documents_25712014 collection
+         Output: document
+         Index Cond: ((collection.document @>= '{ "a" : { "$numberInt" : "10" } }'::bson) AND (collection.document @<= '{ "a" : { "$numberInt" : "50" } }'::bson))
+(7 rows)
+
+-- Correctness: 10 <= a <= 50 matches 41; a sample of 10 is 10 distinct documents.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "bitmapConv", "pipeline": [ { "$match": { "a": { "$gte": 10, "$lte": 50 } } }, { "$sample": { "size": 10 } } ] }')) t;
+ cnt | distinct_cnt 
+-----+--------------
+  10 |           10
+(1 row)
+
+-- Residual filter: c is not indexed, so a bitmap over a_1 keeps a Filter on c.
+-- The index does not cover every restriction, so the bitmap is left as is and
+-- the plan stays Materialize (converting would gain no heap skip).
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "bitmapConv", "pipeline": [ { "$match": { "a": { "$gte": 0 }, "c": { "$gte": 0 } } }, { "$sample": { "size": 3 } } ] }');
+                                          QUERY PLAN                                          
+----------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 3
+   Sample Reservoir Method: Materialize
+   ->  Bitmap Heap Scan on documentdb_data.documents_25712014 collection
+         Output: document
+         Recheck Cond: (collection.document @>= '{ "a" : { "$numberInt" : "0" } }'::bson)
+         Filter: (collection.document @>= '{ "c" : { "$numberInt" : "0" } }'::bson)
+         ->  Bitmap Index Scan on a_1
+               Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "0" } }'::bson)
+(10 rows)
+
+-- Multi-index bitmap: a $or across a_1 and b_1 builds a BitmapOr, which is not a
+-- single Bitmap Index Scan, so the Bitmap Heap Scan is left as is. Expect Materialize.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "bitmapConv", "pipeline": [ { "$match": { "$or": [ { "a": { "$gte": 190 } }, { "b": { "$eq": 3 } } ] } }, { "$sample": { "size": 3 } } ] }');
+                                                                            QUERY PLAN                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 3
+   Sample Reservoir Method: Materialize
+   ->  Bitmap Heap Scan on documentdb_data.documents_25712014 collection
+         Output: document
+         Recheck Cond: ((collection.document @>= '{ "a" : { "$numberInt" : "190" } }'::bson) OR (collection.document @= '{ "b" : { "$numberInt" : "3" } }'::bson))
+         ->  BitmapOr
+               ->  Bitmap Index Scan on a_1
+                     Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "190" } }'::bson)
+               ->  Bitmap Index Scan on b_1
+                     Index Cond: (collection.document @= '{ "b" : { "$numberInt" : "3" } }'::bson)
+(12 rows)
+
+-- Correctness: the $or matches a mix; a sample of 5 stays distinct.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "bitmapConv", "pipeline": [ { "$match": { "$or": [ { "a": { "$gte": 190 } }, { "b": { "$eq": 3 } } ] } }, { "$sample": { "size": 5 } } ] }')) t;
+ cnt | distinct_cnt 
+-----+--------------
+   5 |            5
+(1 row)
+
+-- Flag off: the single-index bitmap is not converted. Expect Materialize.
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "bitmapConv", "pipeline": [ { "$match": { "a": { "$gte": 0 } } }, { "$sample": { "size": 5 } } ] }');
+                                          QUERY PLAN                                          
+----------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Materialize
+   ->  Bitmap Heap Scan on documentdb_data.documents_25712014 collection
+         Output: document
+         Recheck Cond: (collection.document @>= '{ "a" : { "$numberInt" : "0" } }'::bson)
+         ->  Bitmap Index Scan on a_1
+               Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "0" } }'::bson)
+(9 rows)
+
+RESET enable_seqscan;
+RESET enable_indexscan;
+RESET enable_bitmapscan;
+RESET documentdb.forceUseIndexIfAvailable;
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
+-- =============================================================================
+-- HEAP-SKIP MODE: SURROUNDING PIPELINE STAGE COMBINATIONS
+-- Stages around $sample keep the plain Index Scan child intact, so heap skip holds;
+-- a $sample with no $match feeding it takes the system_rows tablesample instead.
+-- =============================================================================
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('reservoirdb','stageHS', FORMAT('{ "_id": %s, "a": %s }', g, g)::documentdb_core.bson, NULL) FROM generate_series(1, 60) g) ig;
+NOTICE:  creating collection
+ count 
+-------
+    60
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{ "createIndexes": "stageHS", "indexes": [ { "key": { "a": 1 }, "name": "a_1" } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'stageHS' \gset
+SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
+VACUUM (FREEZE ON) documentdb_data.documents_25712015
+SET documentdb.enableDollarSampleReservoirScan TO on;
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
+SET enable_seqscan TO off;
+SET documentdb.forceUseIndexIfAvailable TO on;
+-- Bare $sample (no $match): nothing drives an Index Scan, so $sample takes the
+-- system_rows tablesample fast path. No reservoir scan and no heap skip.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "stageHS", "pipeline": [ { "$sample": { "size": 5 } } ] }');
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Limit
+   Output: document, (random())
+   ->  Sort
+         Output: document, (random())
+         Sort Key: (random())
+         ->  Sample Scan on documentdb_data.documents_25712015 collection
+               Output: document, random()
+               Sampling: system_rows ('5'::bigint)
+(8 rows)
+
+-- Correctness: a sample of 10 from 60 is 10 distinct documents.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "stageHS", "pipeline": [ { "$sample": { "size": 10 } } ] }')) t;
+ cnt | distinct_cnt 
+-----+--------------
+  10 |           10
+(1 row)
+
+-- $match + $sample + $project: the $project is applied above the reservoir. Expect Heap Skip.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "stageHS", "pipeline": [ { "$match": { "a": { "$gte": 10 } } }, { "$sample": { "size": 5 } }, { "$project": { "_id": 1 } } ] }');
+                                                                              QUERY PLAN                                                                               
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Sample Size: 5
+   Sample Reservoir Method: Heap Skip
+   ->  Index Scan using a_1 on documentdb_data.documents_25712015 collection
+         Output: collection.document
+         Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "10" } }'::bson)
+(7 rows)
+
+-- Correctness: a >= 10 matches 51; a sample of 10 keeps 10 distinct _id values.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "stageHS", "pipeline": [ { "$match": { "a": { "$gte": 10 } } }, { "$sample": { "size": 10 } }, { "$project": { "_id": 1 } } ] }')) t;
+ cnt | distinct_cnt 
+-----+--------------
+  10 |           10
+(1 row)
+
+-- $match + $sample + $sort: the $sort is applied above the reservoir. Expect Heap Skip.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "stageHS", "pipeline": [ { "$match": { "a": { "$gte": 10 } } }, { "$sample": { "size": 5 } }, { "$sort": { "a": 1 } } ] }');
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Sort
+   Output: collection.document, (bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   ->  Custom Scan (DocumentDBApiReservoirSample)
+         Output: collection.document, bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson)
+         Sample Size: 5
+         Sample Reservoir Method: Heap Skip
+         ->  Index Scan using a_1 on documentdb_data.documents_25712015 collection
+               Output: collection.document
+               Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "10" } }'::bson)
+(10 rows)
+
+-- Correctness: a >= 10 matches 51; a sample of 10 is 10 distinct in-range docs.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt,
+       count(*) FILTER (WHERE NOT (document @@ '{ "a": { "$gte": 10 } }'::bson)) AS out_of_range
+FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "stageHS", "pipeline": [ { "$match": { "a": { "$gte": 10 } } }, { "$sample": { "size": 10 } }, { "$sort": { "a": 1 } } ] }')) t;
+ cnt | distinct_cnt | out_of_range 
+-----+--------------+--------------
+  10 |           10 |            0
+(1 row)
+
+-- $match + $sample + $skip + $limit: skip/limit are applied above the reservoir. Expect Heap Skip.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "stageHS", "pipeline": [ { "$match": { "a": { "$gte": 10 } } }, { "$sample": { "size": 20 } }, { "$skip": 2 }, { "$limit": 5 } ] }');
+                                             QUERY PLAN                                              
+-----------------------------------------------------------------------------------------------------
+ Limit
+   Output: collection.document
+   ->  Limit
+         Output: collection.document
+         ->  Custom Scan (DocumentDBApiReservoirSample)
+               Output: collection.document
+               Sample Size: 20
+               Sample Reservoir Method: Heap Skip
+               ->  Index Scan using a_1 on documentdb_data.documents_25712015 collection
+                     Output: collection.document
+                     Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "10" } }'::bson)
+(11 rows)
+
+-- Correctness: sampling 20 then skipping 2 and limiting to 5 yields 5 distinct in-range docs.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt,
+       count(*) FILTER (WHERE NOT (document @@ '{ "a": { "$gte": 10 } }'::bson)) AS out_of_range
+FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "stageHS", "pipeline": [ { "$match": { "a": { "$gte": 10 } } }, { "$sample": { "size": 20 } }, { "$skip": 2 }, { "$limit": 5 } ] }')) t;
+ cnt | distinct_cnt | out_of_range 
+-----+--------------+--------------
+   5 |            5 |            0
+(1 row)
+
+-- $sample followed by $match: the $match sits above $sample and does not feed an
+-- Index Scan, so $sample still takes the system_rows tablesample (no reservoir).
+-- The trailing $match then filters the sampled rows.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "stageHS", "pipeline": [ { "$sample": { "size": 20 } }, { "$match": { "a": { "$gte": 10 } } } ] }');
+                                     QUERY PLAN                                      
+-------------------------------------------------------------------------------------
+ Subquery Scan on agg_stage_1
+   Output: agg_stage_1.document
+   Filter: (agg_stage_1.document #>= '{ "a" : { "$numberInt" : "10" } }'::bsonquery)
+   ->  Limit
+         Output: collection.document, (random())
+         ->  Sort
+               Output: collection.document, (random())
+               Sort Key: (random())
+               ->  Sample Scan on documentdb_data.documents_25712015 collection
+                     Output: collection.document, random()
+                     Sampling: system_rows ('20'::bigint)
+(11 rows)
+
+-- Correctness: an oversample (size >= 60) returns every doc once, so the trailing
+-- $match yields exactly the 51 in-range docs and none out of range.
+SELECT count(*) AS cnt,
+       count(*) FILTER (WHERE NOT (document @@ '{ "a": { "$gte": 10 } }'::bson)) AS out_of_range
+FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "stageHS", "pipeline": [ { "$sample": { "size": 100 } }, { "$match": { "a": { "$gte": 10 } } } ] }')) t;
+ cnt | out_of_range 
+-----+--------------
+  51 |            0
+(1 row)
+
+-- $match + $project + $sample: the $project ahead of $sample is applied above the
+-- Index Scan, so an eligible plain Index Scan child remains and heap skip engages.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "stageHS", "pipeline": [ { "$match": { "a": { "$gte": 10 } } }, { "$project": { "_id": 1, "a": 1 } }, { "$sample": { "size": 5 } } ] }');
+                                                                                        QUERY PLAN                                                                                        
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Sample Size: 5
+   Sample Reservoir Method: Heap Skip
+   ->  Index Scan using a_1 on documentdb_data.documents_25712015 collection
+         Output: document
+         Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "10" } }'::bson)
+(7 rows)
+
+-- Correctness: a >= 10 matches 51; a sample of 10 keeps 10 distinct docs.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "stageHS", "pipeline": [ { "$match": { "a": { "$gte": 10 } } }, { "$project": { "_id": 1, "a": 1 } }, { "$sample": { "size": 10 } } ] }')) t;
+ cnt | distinct_cnt 
+-----+--------------
+  10 |           10
+(1 row)
+
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
+RESET enable_seqscan;
+RESET documentdb.forceUseIndexIfAvailable;
+-- =============================================================================
+-- HEAP-SKIP MODE: partial-index coverage detection (Index Scan and Bitmap Scan)
+-- A partial index predicate implies part of the match, so that clause never
+-- becomes a residual Filter. Coverage is checked against indrestrictinfo, which
+-- for a partial index already excludes clauses the predicate implies (unlike
+-- baserestrictinfo). This must hold for both eligibility paths:
+--   - a plain Index Scan child (IsHeapSkipEligible), and
+--   - a Bitmap Heap Scan child rewritten to an Index Scan (bitmap conversion).
+-- In each, a match fully covered by the index heap skips, while a match with a
+-- clause on an unindexed field (a residual Filter) falls back to Materialize.
+-- =============================================================================
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('reservoirdb','bitmapPartial', FORMAT('{ "_id": %s, "a": %s, "b": %s, "c": %s }', g, g, g, g)::documentdb_core.bson, NULL) FROM generate_series(1, 200) g) ig;
+NOTICE:  creating collection
+ count 
+-------
+   200
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('reservoirdb', '{ "createIndexes": "bitmapPartial", "indexes": [ { "key": { "a": 1 }, "name": "a_partial", "partialFilterExpression": { "b": { "$gt": 100 } } } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT collection_id AS reservoir_col FROM documentdb_api_catalog.collections WHERE database_name = 'reservoirdb' AND collection_name = 'bitmapPartial' \gset
+SELECT FORMAT('VACUUM (FREEZE ON) documentdb_data.documents_%s', :reservoir_col) \gexec
+VACUUM (FREEZE ON) documentdb_data.documents_25712016
+SET documentdb.enableDollarSampleReservoirScan TO on;
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
+SET enable_seqscan TO off;
+SET documentdb.forceUseIndexIfAvailable TO on;
+-- --- Plain Index Scan child (enable_indexscan on, enable_bitmapscan off) ---
+SET enable_indexscan TO on;
+SET enable_bitmapscan TO off;
+-- Covered: a >= 0 is the index clause; b > 100 matches the partial predicate, so
+-- it is implied and never becomes a Filter. indrestrictinfo carries no residual,
+-- so the plain Index Scan is eligible. Expect "Sample Reservoir Method: Heap Skip".
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "bitmapPartial", "pipeline": [ { "$match": { "a": { "$gte": 0 }, "b": { "$gt": 100 } } }, { "$sample": { "size": 5 } } ] }') $$);
+                                  run_explain_and_trim                                  
+----------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Heap Skip
+   ->  Index Scan using a_partial on documentdb_data.documents_25712016 collection
+         Output: document
+         Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "0" } }'::bson)
+(7 rows)
+
+-- Not covered: c is unindexed and not implied by the partial predicate, so it
+-- remains in indrestrictinfo as a residual Filter on the Index Scan. The scan is
+-- ineligible. Expect "Sample Reservoir Method: Materialize".
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "bitmapPartial", "pipeline": [ { "$match": { "a": { "$gte": 0 }, "b": { "$gt": 100 }, "c": { "$gte": 0 } } }, { "$sample": { "size": 5 } } ] }') $$);
+                                  run_explain_and_trim                                  
+----------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Materialize
+   ->  Index Scan using a_partial on documentdb_data.documents_25712016 collection
+         Output: document
+         Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "0" } }'::bson)
+         Filter: (collection.document @>= '{ "c" : { "$numberInt" : "0" } }'::bson)
+(8 rows)
+
+-- --- Bitmap Heap Scan child (enable_indexscan off, enable_bitmapscan on) ---
+SET enable_indexscan TO off;
+SET enable_bitmapscan TO on;
+-- Covered: the single-index bitmap is rewritten to an Index Scan because every
+-- indrestrictinfo clause is redundant with the index clauses (b implied by the
+-- partial predicate). Expect "Sample Reservoir Method: Heap Skip".
+-- Wrapped in run_explain_and_trim to strip the PG18-only "Disabled: true" line
+-- that appears because the Index Scan is produced while enable_indexscan is off.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "bitmapPartial", "pipeline": [ { "$match": { "a": { "$gte": 0 }, "b": { "$gt": 100 } } }, { "$sample": { "size": 5 } } ] }') $$);
+                                  run_explain_and_trim                                  
+----------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Heap Skip
+   ->  Index Scan using a_partial on documentdb_data.documents_25712016 collection
+         Output: document
+         Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "0" } }'::bson)
+(7 rows)
+
+-- Correctness: b > 100 matches _id 101..200 (100 docs); a sample of 10 keeps 10
+-- distinct documents, all within the filter.
+SELECT count(*) AS cnt, count(DISTINCT document) AS distinct_cnt,
+       count(*) FILTER (WHERE NOT (document @@ '{ "b": { "$gt": 100 } }'::bson)) AS not_matching
+FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "bitmapPartial", "pipeline": [ { "$match": { "a": { "$gte": 0 }, "b": { "$gt": 100 } } }, { "$sample": { "size": 10 } } ] }')) t;
+ cnt | distinct_cnt | not_matching 
+-----+--------------+--------------
+  10 |           10 |            0
+(1 row)
+
+-- Not covered: c remains a residual Filter, so indrestrictinfo is not fully
+-- redundant with the index clauses and the bitmap is left as a Bitmap Heap Scan
+-- (converting would gain no heap skip). Expect "Sample Reservoir Method: Materialize".
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "bitmapPartial", "pipeline": [ { "$match": { "a": { "$gte": 0 }, "b": { "$gt": 100 }, "c": { "$gte": 0 } } }, { "$sample": { "size": 5 } } ] }') $$);
+                                                                        run_explain_and_trim                                                                        
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Materialize
+   ->  Bitmap Heap Scan on documentdb_data.documents_25712016 collection
+         Output: document
+         Recheck Cond: ((collection.document @>= '{ "a" : { "$numberInt" : "0" } }'::bson) AND (collection.document @> '{ "b" : { "$numberInt" : "100" } }'::bson))
+         Filter: (collection.document @>= '{ "c" : { "$numberInt" : "0" } }'::bson)
+         ->  Bitmap Index Scan on a_partial
+               Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "0" } }'::bson)
+(10 rows)
+
+-- Flag off: no conversion, so the bitmap stays and the plan falls back to Materialize.
+SET documentdb.enableDollarSampleHeapSkipReservoirScan TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "bitmapPartial", "pipeline": [ { "$match": { "a": { "$gte": 0 }, "b": { "$gt": 100 } } }, { "$sample": { "size": 5 } } ] }') $$);
+                                                                        run_explain_and_trim                                                                        
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiReservoirSample)
+   Output: document
+   Sample Size: 5
+   Sample Reservoir Method: Materialize
+   ->  Bitmap Heap Scan on documentdb_data.documents_25712016 collection
+         Output: document
+         Recheck Cond: ((collection.document @>= '{ "a" : { "$numberInt" : "0" } }'::bson) AND (collection.document @> '{ "b" : { "$numberInt" : "100" } }'::bson))
+         ->  Bitmap Index Scan on a_partial
+               Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "0" } }'::bson)
+(9 rows)
+
+RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
+RESET enable_seqscan;
+RESET enable_indexscan;
+RESET enable_bitmapscan;
+RESET documentdb.forceUseIndexIfAvailable;
 -- =============================================================================
 -- CLEANUP
 -- =============================================================================

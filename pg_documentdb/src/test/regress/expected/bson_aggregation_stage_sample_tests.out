@@ -136,12 +136,13 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '
    Sort Key: (bson_orderby(bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiReservoirSample)
          Sample Size: 2
+         Sample Reservoir Method: Materialize
          ->  Bitmap Heap Scan on documents_25711001 collection
                Recheck Cond: (shard_key_value = '25711001'::bigint)
                Filter: (document @= '{ "product" : "p1" }'::bson)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (shard_key_value = '25711001'::bigint)
-(9 rows)
+(10 rows)
 
 -- $sample + $match (filter applied after sampling, TABLESAMPLE expected)
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": 5 } }, { "$match": { "unitPrice": { "$gt": 4 } } } ] }');

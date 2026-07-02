@@ -1,4 +1,5 @@
 ### documentdb v0.115-0 (Unreleased) ###
+* Optimize `$sample` over an Index Scan by avoiding heap reads for rows the reservoir discards (visible rows are counted via the visibility map). Applies to Index Scans without runtime filters over btree or regular RUM indexes. *[Perf]*
 * Fix `$exists` argument coercion so falsy non-boolean values (`null`, `undefined`, `0`) are treated as `$exists: false` and truthy non-boolean values as `$exists: true`, matching the documented truthiness semantics. Previously `$exists: null` behaved like `$exists: true`. *[Bugfix]*
 * Fix `$size` returning wrong results when applied to a field path nested inside `$elemMatch`. *[Bugfix]*
 * Fix backend crash (heap-buffer-overflow) in `$setUnion`/`$setIntersection` element deduplication when hashing `CodeWScope` values (wrong union member read), and fix `Regex` values failing to deduplicate plus a latent over-read for long patterns, in `BsonValueHashUint32`. *[Bugfix]*
