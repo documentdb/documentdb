@@ -28,6 +28,7 @@
  #include <lib/stringinfo.h>
  #include <nodes/pathnodes.h>
  #include <access/gin.h>
+ #include <utils/search_utils.h>
 
  #include "io/bson_core.h"
  #include "aggregation/bson_query_common.h"
@@ -1634,46 +1635,6 @@ MoveUnsatisfiableBoundForward(CompositeQueryRunData *runData, int compareIndex)
 }
 
 
-/*
- * Modified binary search where on mismatch returns the position.
- * returns index if item is found;
- * otherwise, a negative number that is the bitwise complement of the index of the next element that is larger than item or,
- * if there is no larger element, the bitwise complement of length.
- * See https://github.com/dotnet/runtime/blob/4fa917e666f88701785d0ed5e801fded279ee2a8/src/libraries/System.Private.CoreLib/src/System/Array.cs#L1254-L1279
- */
-static int32
-BinarySearchBoundsArray(void *pointer, int startIndex, int length,
-						int elemSize, const void *toFind,
-						int (*compar)(const void *, const void *, void *),
-						void *arg)
-{
-	const char *base = (const char *) pointer;
-	int lo = startIndex;
-	int hi = length - 1;
-	while (lo <= hi)
-	{
-		int i = lo + ((hi - lo) >> 1);
-
-		const char *p = base + (i * elemSize);
-		int c = compar(p, toFind, arg);
-		if (c == 0)
-		{
-			return i;
-		}
-		if (c < 0)
-		{
-			lo = i + 1;
-		}
-		else
-		{
-			hi = i - 1;
-		}
-	}
-
-	return ~lo;
-}
-
-
 static int
 CompareOnBoundsForSearch(const void *a, const void *b, void *arg)
 {
@@ -1768,7 +1729,7 @@ advance_ordered_scan_data_start:
 					.isWildcardScan = entry->boundsSet->wildcardPath != NULL,
 					.collation = runData->metaInfo->collation
 				};
-				int foundIndex = BinarySearchBoundsArray(
+				int foundIndex = BinarySearchWithMissingPositionCheck(
 					entry->boundsSet->bounds, entry->currentOperatorIndex + 1,
 					entry->boundsSet->numBounds, sizeof(CompositeIndexBounds),
 					&serializedTermsSet[compareIndex], CompareOnBoundsForSearch,
@@ -4270,6 +4231,17 @@ GetScanTypeForScanDirection(ScanDirection scanDirection)
 			ereport(ERROR, (errmsg("Unknown scan direction %d", scanDirection)));
 		}
 	}
+}
+
+
+ScanDirection
+GetIndexScanDirectionForComposite(bytea *opClassoptions)
+{
+	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
+	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
+	BsonGinCompositePathOptions *options = (BsonGinCompositePathOptions *) opClassoptions;
+	GetIndexPathsFromOptions(options, indexPaths, sortOrders);
+	return (ScanDirection) sortOrders[0];
 }
 
 

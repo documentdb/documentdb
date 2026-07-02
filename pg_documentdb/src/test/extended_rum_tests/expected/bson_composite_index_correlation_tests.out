@@ -110,6 +110,92 @@ SELECT index_correlation_tests.classify_index_correlation(
 (1 row)
 
 reset documentdb.enable_index_correlation_from_statistics;
+-- ============================================================================
+-- Sort direction and descending (backward) index correlation.
+--
+-- The physical-order correlation reported to the planner tracks the direction
+-- the index is actually scanned relative to the heap:
+--   * An ascending index over an ascending-inserted leading path is scanned
+--     forward and tracks physical order  -> positive (highly) correlated.
+--   * A descending index over the same leading path is scanned forward in the
+--     opposite direction of physical order -> negative (inversely) correlated.
+--   * Adding an ORDER BY flips the scan direction: a descending index with a
+--     matching descending sort is scanned backward and once again tracks
+--     physical order -> positive; an ascending index with a descending sort is
+--     scanned backward against physical order -> negative.
+-- ============================================================================
+-- A descending composite index over the same ascending-inserted leading path.
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'corr_idb', '{ "createIndexes": "index_correlation", "indexes": [ { "name": "seq_desc_tag_1", "key": { "seq": -1, "tag": 1 } } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Signed classifier that preserves the sign of the correlation so ascending
+-- (positive) and descending/inverted (negative) scans can be told apart.
+CREATE FUNCTION index_correlation_tests.classify_signed_index_correlation(p_query text, p_index text) RETURNS text
+ LANGUAGE plpgsql AS $$
+DECLARE
+    v_explain_row text;
+    v_correlation numeric;
+BEGIN
+    FOR v_explain_row IN EXECUTE p_query
+    LOOP
+        IF v_explain_row LIKE '%' || p_index || '%' AND v_explain_row LIKE '%correlation=%' THEN
+            v_correlation := substring(v_explain_row from 'correlation=([0-9.eE+-]+)')::numeric;
+            IF v_correlation >= 0.5 THEN
+                RETURN 'highly correlated (correlation >= 0.5)';
+            ELSIF v_correlation <= -0.5 THEN
+                RETURN 'inversely correlated (correlation <= -0.5)';
+            ELSIF abs(v_correlation) < 0.1 THEN
+                RETURN 'uncorrelated (|correlation| < 0.1)';
+            ELSE
+                RETURN 'moderately correlated (0.1 <= |correlation| < 0.5)';
+            END IF;
+        END IF;
+    END LOOP;
+    RETURN 'no cost line found for index ' || p_index;
+END;
+$$;
+-- Ascending index, no sort: forward scan tracks physical order -> highly correlated.
+SELECT index_correlation_tests.classify_signed_index_correlation(
+    $q$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('corr_idb', '{ "find": "index_correlation", "filter": { "seq": { "$gte": 100, "$lte": 300 } }, "hint": { "seq": 1, "tag": 1 } }') $q$,
+    'seq_tag_1');
+   classify_signed_index_correlation    
+----------------------------------------
+ highly correlated (correlation >= 0.5)
+(1 row)
+
+-- Descending index, no sort: forward scan runs opposite to physical order -> inversely correlated.
+SELECT index_correlation_tests.classify_signed_index_correlation(
+    $q$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('corr_idb', '{ "find": "index_correlation", "filter": { "seq": { "$gte": 100, "$lte": 300 } }, "hint": { "seq": -1, "tag": 1 } }') $q$,
+    'seq_desc_tag_1');
+     classify_signed_index_correlation      
+--------------------------------------------
+ inversely correlated (correlation <= -0.5)
+(1 row)
+
+-- Descending index with a matching descending sort: the backward scan tracks
+-- physical order again -> highly correlated.
+SELECT index_correlation_tests.classify_signed_index_correlation(
+    $q$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('corr_idb', '{ "find": "index_correlation", "filter": { "seq": { "$gte": 100, "$lte": 300 } }, "sort": { "seq": -1 }, "hint": { "seq": -1, "tag": 1 } }') $q$,
+    'seq_desc_tag_1');
+   classify_signed_index_correlation    
+----------------------------------------
+ highly correlated (correlation >= 0.5)
+(1 row)
+
+-- Ascending index with a descending sort: the backward scan runs against
+-- physical order -> inversely correlated.
+SELECT index_correlation_tests.classify_signed_index_correlation(
+    $q$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('corr_idb', '{ "find": "index_correlation", "filter": { "seq": { "$gte": 100, "$lte": 300 } }, "sort": { "seq": -1 }, "hint": { "seq": 1, "tag": 1 } }') $q$,
+    'seq_tag_1');
+     classify_signed_index_correlation      
+--------------------------------------------
+ inversely correlated (correlation <= -0.5)
+(1 row)
+
 reset enable_bitmapscan;
 reset enable_seqscan;
 SELECT documentdb_api.drop_collection('corr_idb', 'index_correlation');
@@ -119,4 +205,6 @@ SELECT documentdb_api.drop_collection('corr_idb', 'index_correlation');
 (1 row)
 
 DROP SCHEMA index_correlation_tests CASCADE;
-NOTICE:  drop cascades to function index_correlation_tests.classify_index_correlation(text,text)
+NOTICE:  drop cascades to 2 other objects
+DETAIL:  drop cascades to function index_correlation_tests.classify_index_correlation(text,text)
+drop cascades to function index_correlation_tests.classify_signed_index_correlation(text,text)

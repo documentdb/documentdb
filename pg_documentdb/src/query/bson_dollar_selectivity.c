@@ -11,6 +11,7 @@
 #include <fmgr.h>
 #include <miscadmin.h>
 #include <utils/lsyscache.h>
+#include <utils/memutils.h>
 #include <catalog/pg_collation.h>
 #include <nodes/pathnodes.h>
 #include <nodes/makefuncs.h>
@@ -19,19 +20,38 @@
 #include <optimizer/pathnode.h>
 #include <metadata/metadata_cache.h>
 #include <planner/mongo_query_operator.h>
+#include <query/bson_compare.h>
+#include <utils/search_utils.h>
 #include <catalog/pg_statistic_ext.h>
 #include <catalog/pg_statistic.h>
 #include <statistics/statistics.h>
 
 #include "query/bson_dollar_selectivity.h"
+#include "opclass/bson_gin_composite_scan.h"
 #include "opclass/bson_gin_index_mgmt.h"
 #include "aggregation/bson_query_common.h"
 #include "utils/docdb_make_funcs.h"
 #include "utils/version_utils.h"
+#include "io/bson_traversal.h"
 
 extern bool EnablePerCollectionPlannerStatistics;
 extern bool EnableCompositeIndexPlanner;
 extern bool EnableIndexCorrelationFromStatistics;
+
+/* CODESYNC with system_configs.c */
+#define ARRAY_STATISTICS_MAX_SAMPLE_COUNT 128
+extern int ArrayStatisticsMaxSampleCount;
+
+
+/* See analyze.c in postgres for details on the limit */
+#define MAX_SCALAR_TYPE_ANALYZE_SIZE 1024
+
+typedef struct StatsProjectState
+{
+	bson_value_t samples[ARRAY_STATISTICS_MAX_SAMPLE_COUNT];
+	int sampleCount;
+	int maxAllowedSamples;
+} StatsProjectState;
 
 /* PG selectivity functions */
 extern Datum eqsel(PG_FUNCTION_ARGS);
@@ -49,8 +69,34 @@ static double GetStatisticsNoStatsData(List *args, Oid selectivityOpExpr, double
 static double GetDisableStatisticSelectivity(List *args, double
 											 defaultDisabledSelectivity);
 
+static bool StatsProjectVisitTopLevelField(pgbsonelement *element, const
+										   StringView *traversePath,
+										   void *state);
+static bool StatsProjectContinueProcessingIntermediateArray(void *state, const
+															bson_value_t *value, bool
+															isArrayIndexSearch);
+static bool StatsProjectVisitArrayField(pgbsonelement *element, const
+										StringView *traversePath, int
+										arrayIndex, void *state);
+static void StatsSetIntermediateArrayStartEnd(void *state, bool isStart);
+
+static void StatsHandleIntermediateArrayPathNotFound(void *state, int32_t arrayIndex,
+													 const
+													 StringView *remainingPath);
+
 PG_FUNCTION_INFO_V1(bson_dollar_selectivity);
 PG_FUNCTION_INFO_V1(bson_stats_project);
+PG_FUNCTION_INFO_V1(test_bson_stats_project_with_memcheck);
+
+static const TraverseBsonExecutionFuncs StatsProjectExecutionFuncs = {
+	.ContinueProcessIntermediateArray = StatsProjectContinueProcessingIntermediateArray,
+	.SetTraverseResult = NULL,
+	.VisitArrayField = StatsProjectVisitArrayField,
+	.VisitTopLevelField = StatsProjectVisitTopLevelField,
+	.SetIntermediateArrayIndex = NULL,
+	.HandleIntermediateArrayPathNotFound = StatsHandleIntermediateArrayPathNotFound,
+	.SetIntermediateArrayStartEnd = StatsSetIntermediateArrayStartEnd,
+};
 
 
 static inline bool
@@ -585,6 +631,24 @@ GetDisableStatisticSelectivity(List *args, double defaultExprSelectivity)
 }
 
 
+static int32_t
+CompareBsonValuesSort(const void *a, const void *b)
+{
+	const bson_value_t *valueA = (const bson_value_t *) a;
+	const bson_value_t *valueB = (const bson_value_t *) b;
+
+	bool isComparisonValid = false;
+	return CompareBsonValueAndType(valueA, valueB, &isComparisonValid);
+}
+
+
+static int32_t
+CompareBsonValuesSortWithArg(const void *a, const void *b, void *arg)
+{
+	return CompareBsonValuesSort(a, b);
+}
+
+
 /*
  * This is the projection function that managed statistics for filters in the documents table.
  * This provides a similar functionality to expression indexes against documentdb indexes for stats collections.
@@ -598,37 +662,207 @@ bson_stats_project(PG_FUNCTION_ARGS)
 	pgbson *document = PG_GETARG_PGBSON_PACKED(0);
 	text *queryPath = PG_GETARG_TEXT_PP(1);
 
-	char *queryString = text_to_cstring(queryPath);
+	StringView queryStringView = CreateStringViewFromText(queryPath);
 
-	/* For now, we do direct projection of the incoming path. Any intermediate arrays
-	 * are not handled at the moment.
-	 * TODO: handle intermediate array paths as well.'
-	 * TODO: This is also lossy on array path indexes (e.g. a.b.0.1 will track as a field of 0): Fix this as well
+	/* Traverse the path using the BSON traversal framework which handles
+	 * intermediate arrays by visiting each element.
+	 * TODO: This is lossy on array path indexes (e.g. a.b.0.1 will track as a field of 0): Fix this as well
 	 */
 	bson_iter_t iter;
 	pgbson *resultBson;
+	StatsProjectState state = { 0 };
+	state.maxAllowedSamples = Min(ArrayStatisticsMaxSampleCount,
+								  ARRAY_STATISTICS_MAX_SAMPLE_COUNT);
+
+	PgbsonInitIterator(document, &iter);
+	TraverseBsonPathStringView(&iter, &queryStringView, &state,
+							   &StatsProjectExecutionFuncs);
+
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
-	if (PgbsonInitIteratorAtPath(document, queryString, &iter))
-	{
-		PgbsonWriterAppendValue(&writer, "", 0, bson_iter_value(&iter));
-	}
-	else
+	if (state.sampleCount == 0)
 	{
 		PgbsonWriterAppendNull(&writer, "", 0);
 	}
-
-	resultBson = PgbsonWriterGetPgbson(&writer);
-	pfree(queryString);
-	PG_FREE_IF_COPY(document, 0);
-	PG_FREE_IF_COPY(queryPath, 1);
-
-	if (resultBson == NULL)
+	else if (state.sampleCount == 1)
 	{
-		PG_RETURN_NULL();
+		PgbsonWriterAppendValue(&writer, "", 0, &state.samples[0]);
+	}
+	else
+	{
+		pgbson_array_writer arrayWriter;
+		PgbsonWriterStartArray(&writer, "", 0, &arrayWriter);
+		for (int i = 0; i < state.sampleCount; i++)
+		{
+			if (i > 0 && CompareBsonValuesSort(&state.samples[i - 1],
+											   &state.samples[i]) == 0)
+			{
+				/* Skip duplicate values */
+				continue;
+			}
+
+			if (PgbsonArrayWriterGetSize(&arrayWriter) >= MAX_SCALAR_TYPE_ANALYZE_SIZE)
+			{
+				/* Stop adding values if the array is full and would cause the stats to get skipped */
+				break;
+			}
+
+			PgbsonArrayWriterWriteValue(&arrayWriter, &state.samples[i]);
+		}
+
+		PgbsonWriterEndArray(&writer, &arrayWriter);
 	}
 
+	resultBson = PgbsonWriterGetPgbson(&writer);
+	PG_FREE_IF_COPY(document, 0);
+	PG_FREE_IF_COPY(queryPath, 1);
 	PG_RETURN_POINTER(resultBson);
+}
+
+
+static void
+AddValueToSamples(StatsProjectState *projectState, const bson_value_t *value)
+{
+	if (projectState->sampleCount >= projectState->maxAllowedSamples)
+	{
+		return;
+	}
+
+	int32_t index = BinarySearchWithMissingPositionCheck(projectState->samples, 0,
+														 projectState->sampleCount,
+														 sizeof(bson_value_t), value,
+														 CompareBsonValuesSortWithArg,
+														 NULL);
+
+	if (index >= 0)
+	{
+		/* Value already exists, do nothing */
+		return;
+	}
+
+	/* Value should be inserted at ~index */
+	index = ~index;
+	if (index < projectState->sampleCount)
+	{
+		memmove(&projectState->samples[index + 1], &projectState->samples[index],
+				(projectState->sampleCount - index) * sizeof(bson_value_t));
+	}
+
+	projectState->samples[index] = *value;
+	projectState->sampleCount++;
+}
+
+
+static bool
+StatsProjectVisitTopLevelField(pgbsonelement *element, const StringView *traversePath,
+							   void *state)
+{
+	StatsProjectState *projectState = (StatsProjectState *) state;
+	if (element->bsonValue.value_type != BSON_TYPE_ARRAY ||
+		IsBsonValueEmptyArray(&element->bsonValue))
+	{
+		AddValueToSamples(projectState, &element->bsonValue);
+	}
+
+	return true;
+}
+
+
+static bool
+StatsProjectContinueProcessingIntermediateArray(void *state, const bson_value_t *value,
+												bool
+												isArrayIndexSearch)
+{
+	return true;
+}
+
+
+static bool
+StatsProjectVisitArrayField(pgbsonelement *element, const StringView *traversePath, int
+							arrayIndex, void *state)
+{
+	StatsProjectState *projectState = (StatsProjectState *) state;
+	AddValueToSamples(projectState, &element->bsonValue);
+	return true;
+}
+
+
+static void
+StatsSetIntermediateArrayStartEnd(void *state, bool isStart)
+{ }
+
+
+static void
+StatsHandleIntermediateArrayPathNotFound(void *state, int32_t arrayIndex, const
+										 StringView *remainingPath)
+{
+	StatsProjectState *projectState = (StatsProjectState *) state;
+
+	/* Write null to indicate a missing value */
+	bson_value_t nullValue = { .value_type = BSON_TYPE_NULL };
+	AddValueToSamples(projectState, &nullValue);
+}
+
+
+/*
+ * Test function for the bson stats project with memory checking.
+ * Creates a temporary memory context, calls bson_stats_project in a loop,
+ * validates that memory is fully freed after a single reset, returns the last result.
+ */
+Datum
+test_bson_stats_project_with_memcheck(PG_FUNCTION_ARGS)
+{
+	Datum documentDatum = PG_GETARG_DATUM(0);
+	Datum queryPathDatum = PG_GETARG_DATUM(1);
+	int32 loopCount = PG_GETARG_INT32(2);
+
+	MemoryContext oldContext = CurrentMemoryContext;
+	MemoryContext tempContext = AllocSetContextCreate(oldContext,
+													  "StatsProjectMemCheck",
+													  ALLOCSET_DEFAULT_SIZES);
+
+	/* Record baseline memory (keeper block) */
+	Size baselineMemory = MemoryContextMemAllocated(tempContext, true);
+
+	MemoryContextSwitchTo(tempContext);
+
+	for (int i = 0; i < loopCount; i++)
+	{
+		LOCAL_FCINFO(innerFcinfo, 2);
+		InitFunctionCallInfoData(*innerFcinfo, NULL, 2, InvalidOid, NULL, NULL);
+		innerFcinfo->args[0].value = documentDatum;
+		innerFcinfo->args[0].isnull = false;
+		innerFcinfo->args[1].value = queryPathDatum;
+		innerFcinfo->args[1].isnull = false;
+
+		Datum iterResult = bson_stats_project(innerFcinfo);
+		pfree(DatumGetPointer(iterResult));
+	}
+
+	MemoryContextSwitchTo(oldContext);
+
+	/* Verify no leaked allocations beyond the keeper block */
+	Size memAllocated = MemoryContextMemAllocated(tempContext, true);
+	if (memAllocated != baselineMemory)
+	{
+		ereport(ERROR,
+				(errmsg("Memory leak detected: %zu bytes allocated vs %zu baseline",
+						memAllocated, baselineMemory)));
+	}
+
+	MemoryContextDelete(tempContext);
+
+	/* Run one final time in the caller's context to get the return value */
+	LOCAL_FCINFO(finalFcinfo, 2);
+	InitFunctionCallInfoData(*finalFcinfo, NULL, 2, InvalidOid, NULL, NULL);
+	finalFcinfo->args[0].value = documentDatum;
+	finalFcinfo->args[0].isnull = false;
+	finalFcinfo->args[1].value = queryPathDatum;
+	finalFcinfo->args[1].isnull = false;
+
+	Datum result = bson_stats_project(finalFcinfo);
+
+	PG_RETURN_DATUM(result);
 }
 
 
@@ -718,23 +952,45 @@ GetCorrelationFromStatistics(PlannerInfo *root, IndexPath *path,
 							 ATTSTATSSLOT_NUMBERS))
 		{
 			double varCorrelation;
-
 			Assert(sslot.nnumbers == 1);
 			varCorrelation = sslot.numbers[0];
+			free_attstatsslot(&sslot);
 
+			/* Now set the index correlation */
 			if (numPaths > 1)
 			{
 				/* Adjust correlation for composite indexes with multiple paths
 				 * simliar to btree.
 				 */
-				*indexCorrelation = varCorrelation * 0.75;
-			}
-			else
-			{
-				*indexCorrelation = varCorrelation;
+				varCorrelation = varCorrelation * 0.75;
 			}
 
-			free_attstatsslot(&sslot);
+			ScanDirection indexScanDir = GetIndexScanDirectionForComposite(
+				path->indexinfo->opclassoptions[0]);
+
+			/* If there are sorts, find the sort direction & flip the correlation if needed */
+			if (path->path.pathkeys != NIL)
+			{
+				PathKey *pathKey = linitial(path->path.pathkeys);
+				ScanDirection sortScanDir =
+					SortPathKeyStrategy(pathKey) == BTGreaterStrategyNumber
+					? BackwardScanDirection : ForwardScanDirection;
+
+				/* Combine the scan directions (Desc * Desc = Asc, Desc * Asc = Desc, etc.) */
+				ScanDirection effectiveDirection = sortScanDir * indexScanDir;
+				if (effectiveDirection == BackwardScanDirection)
+				{
+					/* If the effective direction is backward, invert the correlation */
+					varCorrelation = -varCorrelation;
+				}
+			}
+			else if (indexScanDir == BackwardScanDirection)
+			{
+				/* If the index is a descending index, the correlation will be inverted from the stats */
+				varCorrelation = -varCorrelation;
+			}
+
+			*indexCorrelation = varCorrelation;
 		}
 
 		pfree(vardata.statsTuple);

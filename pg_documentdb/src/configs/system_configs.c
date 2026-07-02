@@ -179,6 +179,11 @@ bool EnableBackendStatementTimeout = DEFAULT_ENABLE_STATEMENT_TIMEOUT;
 bool EnableCursorsOnAggregationQueryRewrite =
 	DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE;
 
+/* CodeSync with bson_dollar_selectivity.c */
+#define ARRAY_STATISTICS_MAX_SAMPLE_COUNT 128
+#define DEFAULT_ARRAY_STATISTICS_MAX_SAMPLE_COUNT 10
+int ArrayStatisticsMaxSampleCount = DEFAULT_ARRAY_STATISTICS_MAX_SAMPLE_COUNT;
+
 static struct config_enum_entry rum_load_options[4] = {
 	{ "none", RumLibraryLoadOption_None, false },
 	{ "prefer_documentdb_extended_rum", RumLibraryLoadOption_PreferDocumentDBRum, false },
@@ -498,6 +503,14 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 		NULL, &MaxNonOrderedTermScanThreshold,
 		DEFAULT_MAX_NON_ORDERED_TERM_SCAN_THRESHOLD,
 		-1, INT_MAX, PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.arrayStatisticsMaxSampleCount", newGucPrefix),
+		gettext_noop(
+			"The maximum number of samples to collect for array statistics."),
+		NULL, &ArrayStatisticsMaxSampleCount,
+		DEFAULT_ARRAY_STATISTICS_MAX_SAMPLE_COUNT,
+		1, ARRAY_STATISTICS_MAX_SAMPLE_COUNT, PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enableCursorsOnAggregationQueryRewrite", newGucPrefix),

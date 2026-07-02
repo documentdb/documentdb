@@ -34,9 +34,10 @@ CALL documentdb_api.drop_indexes('stats_db', '{ "dropIndexes": "planner_stats", 
 SELECT documentdb_api_internal.bson_stats_project('{ "a": 1, "b": 1 }', 'b');
 SELECT documentdb_api_internal.bson_stats_project('{ "a": 1, "b": { "c": 1 } }', 'b.c');
 
--- sort of works for top level arrays
+-- works for top level arrays
 SELECT documentdb_api_internal.bson_stats_project('{ "a": 1, "b": { "c": [ 1, 2, 3 ] } }', 'b.c');
 
+-- works for parent arrays via traversal
 -- A path that does not resolve (parent arrays, or an entirely absent field)
 -- now projects an explicit null rather than SQL NULL. This lets absent values
 -- be captured in the collected statistics so that a sparse $exists estimates
@@ -44,6 +45,284 @@ SELECT documentdb_api_internal.bson_stats_project('{ "a": 1, "b": { "c": [ 1, 2,
 SELECT documentdb_api_internal.bson_stats_project('{ "a": 1, "b": [ { "c": 1 }, { "c": 2 } ] }', 'b.c');
 SELECT documentdb_api_internal.bson_stats_project('{ "a": 1 }', 'missing');
 SELECT documentdb_api_internal.bson_stats_project('{ "a": 1, "b": { "c": 1 } }', 'b.d');
+
+-- ============================================================================
+-- Tests for bson_stats_project: null, missing, and nested array paths
+-- ============================================================================
+
+-- Null values at leaf
+SELECT documentdb_api_internal.bson_stats_project('{ "a": null }', 'a');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": null } }', 'a.b');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": { "c": null } } }', 'a.b.c');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": { "c": { "d": null } } } }', 'a.b.c.d');
+
+-- Missing values (field does not exist at all)
+SELECT documentdb_api_internal.bson_stats_project('{ "x": 1 }', 'a');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": 1 }', 'a.b');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "x": 1 } }', 'a.b');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": 1 } }', 'a.b.c');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": { "x": 1 } } }', 'a.b.c');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": { "c": 1 } } }', 'a.b.c.d');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": { "c": { "x": 1 } } } }', 'a.b.c.d');
+
+-- Null at intermediate path (parent is null, child is requested)
+SELECT documentdb_api_internal.bson_stats_project('{ "a": null }', 'a.b');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": null }', 'a.b.c');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": null } }', 'a.b.c');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": null } }', 'a.b.c.d');
+
+-- Leaf is an array
+SELECT documentdb_api_internal.bson_stats_project('{ "a": [1, 2, 3] }', 'a');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": [1, 2, 3] } }', 'a.b');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": { "c": [1, 2, 3] } } }', 'a.b.c');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": { "c": { "d": [1, 2, 3] } } } }', 'a.b.c.d');
+
+-- Leaf array contains nulls and missing-equivalent values
+SELECT documentdb_api_internal.bson_stats_project('{ "a": [1, null, 3] }', 'a');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": [null, null] } }', 'a.b');
+
+-- Array at first level of a.b.c.d path
+SELECT documentdb_api_internal.bson_stats_project('{ "a": [ { "b": { "c": { "d": 1 } } }, { "b": { "c": { "d": 2 } } } ] }', 'a.b.c.d');
+
+-- Array at second level of a.b.c.d path
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": [ { "c": { "d": 1 } }, { "c": { "d": 2 } } ] } }', 'a.b.c.d');
+
+-- Array at third level of a.b.c.d path
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": { "c": [ { "d": 1 }, { "d": 2 } ] } } }', 'a.b.c.d');
+
+-- Array at fourth level (d is itself an array)
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": { "c": { "d": [1, 2, 3] } } } }', 'a.b.c.d');
+
+-- Multiple levels are arrays: a and b are arrays
+SELECT documentdb_api_internal.bson_stats_project('{ "a": [ { "b": [ { "c": { "d": 1 } } ] }, { "b": [ { "c": { "d": 2 } } ] } ] }', 'a.b.c.d');
+
+-- Multiple levels are arrays: a and c are arrays
+SELECT documentdb_api_internal.bson_stats_project('{ "a": [ { "b": { "c": [ { "d": 1 }, { "d": 2 } ] } }, { "b": { "c": [ { "d": 3 } ] } } ] }', 'a.b.c.d');
+
+-- Multiple levels are arrays: b and c are arrays
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": [ { "c": [ { "d": 1 }, { "d": 2 } ] }, { "c": [ { "d": 3 } ] } ] } }', 'a.b.c.d');
+
+-- Multiple levels are arrays: b and d are arrays
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": [ { "c": { "d": [1, 2] } }, { "c": { "d": [3, 4] } } ] } }', 'a.b.c.d');
+
+-- All levels are arrays
+SELECT documentdb_api_internal.bson_stats_project('{ "a": [ { "b": [ { "c": [ { "d": [1] } ] } ] } ] }', 'a.b.c.d');
+
+-- Array paths where some elements have the sub-path and others don't
+SELECT documentdb_api_internal.bson_stats_project('{ "a": [ { "b": { "c": { "d": 1 } } }, { "b": { "c": { "x": 2 } } } ] }', 'a.b.c.d');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": [ { "b": { "c": { "d": 1 } } }, { "b": { "x": 2 } } ] }', 'a.b.c.d');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": [ { "b": { "c": { "d": 1 } } }, { "x": 2 } ] }', 'a.b.c.d');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": [ { "b": { "c": { "d": 1 } } }, { } ] }', 'a.b.c.d');
+
+-- Array with mix of objects and scalars at intermediate level
+SELECT documentdb_api_internal.bson_stats_project('{ "a": [ { "b": 1 }, { "b": { "c": { "d": 2 } } } ] }', 'a.b.c.d');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": [ 1, { "c": { "d": 2 } } ] } }', 'a.b.c.d');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": { "c": [ 1, { "d": 2 } ] } } }', 'a.b.c.d');
+
+-- Array with mix of nulls and valid objects
+SELECT documentdb_api_internal.bson_stats_project('{ "a": [ null, { "b": { "c": { "d": 1 } } } ] }', 'a.b.c.d');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": [ null, { "c": { "d": 1 } } ] } }', 'a.b.c.d');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": { "c": [ null, { "d": 1 } ] } } }', 'a.b.c.d');
+
+-- Empty arrays at various levels
+SELECT documentdb_api_internal.bson_stats_project('{ "a": [] }', 'a');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": [] }', 'a.b');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": [] } }', 'a.b');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": [] } }', 'a.b.c');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": { "c": [] } } }', 'a.b.c');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": { "c": [] } } }', 'a.b.c.d');
+
+-- Empty document at various levels
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { } }', 'a.b');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": { } } }', 'a.b.c');
+SELECT documentdb_api_internal.bson_stats_project('{ "a": { "b": { "c": { } } } }', 'a.b.c.d');
+
+-- Deeply nested arrays with some paths missing at different depths
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [ { "b": [ { "c": [ { "d": 1 }, { "d": 2 } ] }, { "c": [ { "d": 3 } ] } ] }, { "b": [ { "c": [ { "x": 99 } ] } ] } ] }',
+    'a.b.c.d');
+
+-- ============================================================================
+-- Tests for bson_stats_project: arrays with duplicates and larger arrays
+-- ============================================================================
+
+-- 10-element array at leaf, no duplicates
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [7, 3, 9, 1, 5, 10, 2, 8, 4, 6] }', 'a');
+
+-- 10-element array at leaf, with duplicates
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [3, 1, 2, 1, 3, 2, 1, 3, 1, 2] }', 'a');
+
+-- 20-element array at leaf, no duplicates
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [14, 7, 2, 19, 11, 5, 16, 3, 20, 8, 1, 13, 6, 18, 10, 4, 17, 9, 15, 12] }', 'a');
+
+-- 20-element array at leaf, with duplicates
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [3, 5, 1, 4, 2, 5, 3, 1, 2, 4, 1, 5, 3, 2, 4, 1, 3, 5, 2, 4] }', 'a');
+
+-- 30-element array at leaf, no duplicates
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [22, 7, 15, 3, 28, 11, 19, 1, 25, 9, 30, 14, 6, 21, 17, 4, 26, 12, 8, 23, 2, 29, 16, 5, 27, 10, 20, 13, 24, 18] }', 'a');
+
+-- 30-element array at leaf, all duplicates (same value)
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7] }', 'a');
+
+-- 10-element intermediate array with path traversal, no duplicates
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [ {"b": 6}, {"b": 2}, {"b": 9}, {"b": 4}, {"b": 10}, {"b": 1}, {"b": 7}, {"b": 3}, {"b": 8}, {"b": 5} ] }', 'a.b');
+
+-- 10-element intermediate array with path traversal, with duplicates
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [ {"b": 2}, {"b": 1}, {"b": 2}, {"b": 1}, {"b": 2}, {"b": 1}, {"b": 1}, {"b": 2}, {"b": 2}, {"b": 1} ] }', 'a.b');
+
+-- 20-element intermediate array with path traversal, with duplicates
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [ {"b": 3}, {"b": 1}, {"b": 2}, {"b": 3}, {"b": 1}, {"b": 2}, {"b": 1}, {"b": 3}, {"b": 2}, {"b": 1}, {"b": 3}, {"b": 2}, {"b": 1}, {"b": 3}, {"b": 2}, {"b": 3}, {"b": 1}, {"b": 2}, {"b": 1}, {"b": 3} ] }', 'a.b');
+
+-- 10-element intermediate array with nested path, no duplicates
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [ {"b": {"c": 8}}, {"b": {"c": 3}}, {"b": {"c": 6}}, {"b": {"c": 1}}, {"b": {"c": 10}}, {"b": {"c": 5}}, {"b": {"c": 9}}, {"b": {"c": 2}}, {"b": {"c": 7}}, {"b": {"c": 4}} ] }', 'a.b.c');
+
+-- 10-element intermediate array with nested path, with duplicates
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [ {"b": {"c": 2}}, {"b": {"c": 3}}, {"b": {"c": 1}}, {"b": {"c": 3}}, {"b": {"c": 1}}, {"b": {"c": 2}}, {"b": {"c": 1}}, {"b": {"c": 3}}, {"b": {"c": 2}}, {"b": {"c": 1}} ] }', 'a.b.c');
+
+-- Multiple arrays at different levels with duplicates: a has 3 elements, each b has 3 elements
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [ {"b": [{"c": 2}, {"c": 1}, {"c": 1}]}, {"b": [{"c": 1}, {"c": 3}, {"c": 3}]}, {"b": [{"c": 2}, {"c": 1}, {"c": 2}]} ] }', 'a.b.c');
+
+-- Large nested array with duplicates and some missing paths
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [ {"b": 2}, {"b": 1}, {"x": 99}, {"b": 3}, {"b": 1}, {"b": 4}, {"x": 88}, {"b": 1}, {"b": 2}, {"b": 1} ] }', 'a.b');
+
+-- Large nested array with duplicates, nulls, and missing paths mixed
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [ {"b": null}, {"b": 1}, null, {"b": 2}, {"b": 1}, {"x": 5}, {"b": null}, {"b": 1}, {"b": 2}, {"b": 1} ] }', 'a.b');
+
+-- 20-element array at nested path a.b.c.d with duplicates
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [ {"b": {"c": {"d": 3}}}, {"b": {"c": {"d": 1}}}, {"b": {"c": {"d": 2}}}, {"b": {"c": {"d": 1}}}, {"b": {"c": {"d": 3}}}, {"b": {"c": {"d": 2}}}, {"b": {"c": {"d": 1}}}, {"b": {"c": {"d": 3}}}, {"b": {"c": {"d": 2}}}, {"b": {"c": {"d": 3}}}, {"b": {"c": {"d": 1}}}, {"b": {"c": {"d": 2}}}, {"b": {"c": {"d": 3}}}, {"b": {"c": {"d": 1}}}, {"b": {"c": {"d": 2}}}, {"b": {"c": {"d": 1}}}, {"b": {"c": {"d": 3}}}, {"b": {"c": {"d": 2}}}, {"b": {"c": {"d": 1}}}, {"b": {"c": {"d": 3}}} ] }',
+    'a.b.c.d');
+
+-- Leaf array with 20 elements containing duplicates and nulls
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": { "b": [3, null, 1, 5, 2, null, 4, 1, 3, 2, null, 5, 1, 4, 3, null, 2, 1, 5, 3] } }', 'a.b');
+
+-- Intermediate array (10 elements) where leaf is also an array with duplicates
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [ {"b": [2, 1, 1]}, {"b": [3, 2, 2]}, {"b": [1, 3, 3]}, {"b": [2, 1, 1]}, {"b": [3, 2, 2]}, {"b": [1, 3, 3]}, {"b": [2, 1, 1]}, {"b": [3, 2, 2]}, {"b": [1, 3, 3]}, {"b": [2, 1, 1]} ] }', 'a.b');
+
+-- 21-element intermediate array: 20 duplicates followed by a unique value on the 21st
+-- The unique value (999) should appear in the sample
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [ {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 999} ] }', 'a.b');
+
+-- ============================================================================
+-- Tests for bson_stats_project: 1KB truncation threshold
+-- The output array is truncated after the first value that crosses 1024 bytes
+-- ============================================================================
+
+-- 10 unique strings of ~150 bytes each: should truncate around 6-7 values (~1024 bytes)
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa02", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa03", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa04", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa05", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa06", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa07", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa08", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa09", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa10"] }', 'a');
+
+-- 10 unique strings of ~300 bytes each: should truncate around 3-4 values
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa02", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa03", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa04", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa05", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa06", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa07", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa08", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa09", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa10"] }', 'a');
+
+-- Single value > 1024 bytes: should still include it (first value always written)
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }', 'a');
+
+-- Intermediate array with long string values: truncation on path traversal
+SELECT documentdb_api_internal.bson_stats_project(
+    '{ "a": [ {"b": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx01"}, {"b": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx02"}, {"b": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx03"}, {"b": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx04"}, {"b": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx05"}, {"b": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx06"}, {"b": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx07"}, {"b": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx08"}, {"b": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx09"}, {"b": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx10"} ] }', 'a.b');
+
+-- ============================================================================
+-- Memory leak tests for bson_stats_project using test_bson_stats_project_with_memcheck
+-- Validates that bson_stats_project does not allocate/leak memory in the calling context
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION test_bson_stats_project_with_memcheck(
+    document documentdb_core.bson, field text, loop_count int)
+RETURNS documentdb_core.bson
+LANGUAGE C STRICT
+AS 'pg_documentdb', $$test_bson_stats_project_with_memcheck$$;
+
+-- Validate truncation with the memcheck function (no leaks during truncation)
+SELECT test_bson_stats_project_with_memcheck(
+    '{ "a": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa02", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa03", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa04", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa05", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa06", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa07", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa08", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa09", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa10"] }', 'a', 100);
+
+-- Simple scalar values
+SELECT test_bson_stats_project_with_memcheck('{ "a": 1, "b": "hello" }', 'b', 100);
+SELECT test_bson_stats_project_with_memcheck('{ "a": 1, "b": 3.14159 }', 'b', 100);
+
+-- Null values
+SELECT test_bson_stats_project_with_memcheck('{ "a": null }', 'a', 100);
+SELECT test_bson_stats_project_with_memcheck('{ "a": { "b": null } }', 'a.b', 100);
+
+-- Missing values
+SELECT test_bson_stats_project_with_memcheck('{ "x": 1 }', 'a', 100);
+SELECT test_bson_stats_project_with_memcheck('{ "a": { "x": 1 } }', 'a.b.c', 100);
+
+-- Simple leaf array
+SELECT test_bson_stats_project_with_memcheck('{ "a": [1, 2, 3, 4, 5] }', 'a', 100);
+
+-- Leaf array with duplicates
+SELECT test_bson_stats_project_with_memcheck('{ "a": [3, 1, 3, 2, 1, 3, 2, 1] }', 'a', 100);
+
+-- Intermediate array with path traversal
+SELECT test_bson_stats_project_with_memcheck(
+    '{ "a": [ {"b": 10}, {"b": 20}, {"b": 30}, {"b": 10}, {"b": 20} ] }', 'a.b', 100);
+
+-- Nested path through intermediate array with duplicates
+SELECT test_bson_stats_project_with_memcheck(
+    '{ "a": [ {"b": {"c": 5}}, {"b": {"c": 5}}, {"b": {"c": 10}}, {"b": {"c": 10}}, {"b": {"c": 15}} ] }', 'a.b.c', 100);
+
+-- Multiple levels of arrays: a is array, each element has b as array
+SELECT test_bson_stats_project_with_memcheck(
+    '{ "a": [ {"b": [1, 2, 3]}, {"b": [2, 3, 4]}, {"b": [3, 4, 5]} ] }', 'a.b', 100);
+
+-- Deeply nested arrays: a.b.c.d with arrays at multiple levels
+SELECT test_bson_stats_project_with_memcheck(
+    '{ "a": [ {"b": [ {"c": [ {"d": 1}, {"d": 2} ]}, {"c": [ {"d": 3} ]} ]}, {"b": [ {"c": [ {"d": 4}, {"d": 5} ]} ]} ] }', 'a.b.c.d', 100);
+
+-- Large array (20 elements) with duplicates
+SELECT test_bson_stats_project_with_memcheck(
+    '{ "a": [7, 3, 9, 3, 7, 1, 9, 5, 3, 7, 1, 5, 9, 3, 7, 1, 5, 9, 3, 7] }', 'a', 100);
+
+-- Large intermediate array (20 elements) with path traversal and duplicates
+SELECT test_bson_stats_project_with_memcheck(
+    '{ "a": [ {"b": 5}, {"b": 12}, {"b": 5}, {"b": 8}, {"b": 12}, {"b": 3}, {"b": 5}, {"b": 8}, {"b": 3}, {"b": 12}, {"b": 5}, {"b": 8}, {"b": 3}, {"b": 12}, {"b": 5}, {"b": 8}, {"b": 3}, {"b": 12}, {"b": 5}, {"b": 999} ] }', 'a.b', 100);
+
+-- 30-element array with heavy duplicates
+SELECT test_bson_stats_project_with_memcheck(
+    '{ "a": [2, 8, 2, 5, 8, 2, 5, 8, 2, 5, 8, 2, 5, 8, 2, 5, 8, 2, 5, 8, 2, 5, 8, 2, 5, 8, 2, 5, 8, 99] }', 'a', 100);
+
+-- Mixed types in array (strings, numbers, nulls)
+SELECT test_bson_stats_project_with_memcheck(
+    '{ "a": [1, "hello", null, 3.14, "world", null, 1, "hello", 42] }', 'a', 100);
+
+-- Intermediate array with some elements missing the target field
+SELECT test_bson_stats_project_with_memcheck(
+    '{ "a": [ {"b": 1}, {"x": 2}, {"b": 3}, {"y": 4}, {"b": 5}, {"b": 1}, {"x": 6} ] }', 'a.b', 100);
+
+-- Intermediate array with nulls at leaf and missing paths mixed
+SELECT test_bson_stats_project_with_memcheck(
+    '{ "a": [ {"b": {"c": null}}, {"b": {"c": 5}}, {"b": {"x": 1}}, {"b": null}, {"b": {"c": 5}}, {"b": {"c": null}} ] }', 'a.b.c', 100);
+
+-- Large document with many fields (only projecting one)
+SELECT test_bson_stats_project_with_memcheck(
+    '{ "f1": "aaaa", "f2": "bbbb", "f3": "cccc", "f4": "dddd", "f5": "eeee", "f6": "ffff", "f7": "gggg", "f8": "hhhh", "f9": "iiii", "f10": "jjjj", "target": [5, 3, 8, 3, 5, 1, 8, 3] }', 'target', 100);
+
+-- 21-element intermediate array: 20 duplicates then unique (high iteration count)
+SELECT test_bson_stats_project_with_memcheck(
+    '{ "a": [ {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 5}, {"b": 999} ] }', 'a.b', 500);
+
+DROP FUNCTION test_bson_stats_project_with_memcheck(documentdb_core.bson, text, int);
 
 -- now test the stats usage.
 SELECT COUNT(documentdb_api.insert_one('stats_db', 'planner_stats', bson_build_document('_id', i, 'b', 1, 'c', i, 'padding', repeat('x', 1010)))) FROM generate_series(1, 1000) i;

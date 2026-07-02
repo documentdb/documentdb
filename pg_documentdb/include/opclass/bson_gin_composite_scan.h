@@ -45,4 +45,5 @@ bool ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey
 
 int32_t GetScanTypeForScanDirection(ScanDirection scanDirection);
 ScanDirection GetOrderByScanDirectionFromDatum(bytea *opClassoptions, Datum orderByDatum);
+ScanDirection GetIndexScanDirectionForComposite(bytea *opClassoptions);
  #endif
