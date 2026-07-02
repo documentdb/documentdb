@@ -163,6 +163,11 @@ PGDLLEXPORT bool RumEnableOverwriteEntryTupleOnVacuum =
 PGDLLEXPORT bool RumEnableTargetedPostingTreePruning =
 	RUM_DEFAULT_ENABLE_TARGETED_POSTING_TREE_PRUNING;
 
+/* FeatureFlag: Added in v115, Pending stabilization, enable on v118 */
+#define RUM_DEFAULT_ENABLE_SINGLE_PASS_POSTING_TREE_VACUUM false
+PGDLLEXPORT bool RumEnableSinglePassPostingTreeVacuum =
+	RUM_DEFAULT_ENABLE_SINGLE_PASS_POSTING_TREE_VACUUM;
+
 /* rumget.c */
 /* FeatureFlag: Added in v109, Pending stabilization, enable on v116 */
 #define RUM_DEFAULT_ENABLE_SUPPORT_DEAD_INDEX_ITEMS false
@@ -425,6 +430,18 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&RumEnableTargetedPostingTreePruning,
 		RUM_DEFAULT_ENABLE_TARGETED_POSTING_TREE_PRUNING,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_single_pass_posting_tree_vacuum", documentDBRumGucPrefix),
+		"Prunes empty posting tree leaf pages in a single pass during bulk-delete instead of a separate pruning pass",
+		"Only applies when posting-tree data pages are not vacuumed inline "
+		"(enable_new_bulk_delete_inline_data_pages = off). When inline data-page "
+		"vacuum is on, structural pruning is deferred to vacuumcleanup and this "
+		"setting has no effect.",
+		&RumEnableSinglePassPostingTreeVacuum,
+		RUM_DEFAULT_ENABLE_SINGLE_PASS_POSTING_TREE_VACUUM,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 

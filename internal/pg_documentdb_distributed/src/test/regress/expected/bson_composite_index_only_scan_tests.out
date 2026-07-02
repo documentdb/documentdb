@@ -1073,7 +1073,7 @@ SELECT documentdb_api.delete('idx_only_scan_db', '{ "delete": "idx_only_scan_col
 CALL documentdb_distributed_test_helpers.wait_for_vacuum_horizon();
 set client_min_messages to DEBUG1;
 VACUUM (FREEZE ON) documentdb_data.documents_69001;
-LOG:  Vacuum[index=21664,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=0, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0
+LOG:  Vacuum[index=21664,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=0, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0
 reset client_min_messages;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$eq": "Mexico"}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
                                                    run_explain_and_trim                                                   
