@@ -42,7 +42,7 @@ SELECT r2 FROM (SELECT $$'$$ || row_get_bson(rec) || $$'$$ AS r2 FROM (SELECT 3 
 
 -- now run the query with the continuation.
 SELECT document, bson_dollar_project(document, '{ "a.b": 1 }'), current_cursor_state(document) INTO TEMPORARY d2 FROM documentdb_api.collection('db', 'cursors_seqscan_sharded') WHERE documentdb_api_internal.cursor_state(document, :r2) AND document @@ '{ "a.b": { "$gt": 12 }}';
-SELECT document,  bson_dollar_project, bson_dollar_project(current_cursor_state, '{ "table_name": 0 }') FROM d2 order by document -> '_id';
+SELECT document,  bson_dollar_project, bson_dollar_project(current_cursor_state, '{ "table_name": 0 }') FROM d2 order by document -> '_id', document -> 'sh';
 EXPLAIN (VERBOSE ON, COSTS OFF ) SELECT document, bson_dollar_project(document, '{ "a.b": 1 }'), current_cursor_state(document) FROM documentdb_api.collection('db', 'cursors_seqscan_sharded') WHERE documentdb_api_internal.cursor_state(document, :r2) AND document @@ '{ "a.b": { "$gt": 12 }}';
 
 
@@ -53,11 +53,11 @@ SELECT r3 FROM (SELECT $$'$$ || row_get_bson(rec) || $$'$$ AS r3 FROM (SELECT 3 
 
 -- now run the query with the continuation (Should have no continuation).
 SELECT document, bson_dollar_project(document, '{ "a.b": 1 }'), current_cursor_state(document) INTO TEMPORARY d3 FROM documentdb_api.collection('db', 'cursors_seqscan_sharded') WHERE documentdb_api_internal.cursor_state(document, :r3) AND document @@ '{ "a.b": { "$gt": 12 }}';
-SELECT document,  bson_dollar_project, bson_dollar_project(current_cursor_state, '{ "table_name": 0 }') FROM d3 order by document -> '_id';
+SELECT document,  bson_dollar_project, bson_dollar_project(current_cursor_state, '{ "table_name": 0 }') FROM d3 order by document -> '_id', document -> 'sh';
 EXPLAIN (VERBOSE ON, COSTS OFF ) SELECT document, bson_dollar_project(document, '{ "a.b": 1 }'), current_cursor_state(document) FROM documentdb_api.collection('db', 'cursors_seqscan_sharded') WHERE documentdb_api_internal.cursor_state(document, :r3) AND document @@ '{ "a.b": { "$gt": 12 }}';
 
 -- run with remote execution
 set citus.enable_local_execution to off;
 SELECT * FROM execute_and_sort($$SELECT  object_id, document::text || ', cursurState:' ||current_cursor_state(document)::text as document FROM documentdb_api.collection('db', 'cursors_seqscan_sharded') WHERE documentdb_api_internal.cursor_state(document, '{ "getpage_batchCount": 3 }') AND document @@ '{ "a.b": { "$gt": 12 }}'$$);
 SELECT document, bson_dollar_project(document, '{ "a.b": 1 }'), current_cursor_state(document) INTO TEMPORARY d4 FROM documentdb_api.collection('db', 'cursors_seqscan_sharded') WHERE documentdb_api_internal.cursor_state(document, :r2) AND document @@ '{ "a.b": { "$gt": 12 }}';
-SELECT document,  bson_dollar_project, bson_dollar_project(current_cursor_state, '{ "table_name": 0 }') FROM d4 order by document -> '_id';
+SELECT document,  bson_dollar_project, bson_dollar_project(current_cursor_state, '{ "table_name": 0 }') FROM d4 order by document -> '_id', document -> 'sh';

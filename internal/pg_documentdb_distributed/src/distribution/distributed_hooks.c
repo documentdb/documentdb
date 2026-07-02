@@ -65,6 +65,30 @@ IsMetadataCoordinatorCore(void)
 
 
 /*
+ * Returns true if the cluster has been initialized (initialize_cluster has been called).
+ * Checks for the presence of initialized_version in the cluster_data metadata table.
+ */
+static bool
+IsClusterInitializedCore(void)
+{
+	StringInfoData cmdStr = { 0 };
+	initStringInfo(&cmdStr);
+	appendStringInfo(&cmdStr,
+					 "SELECT %s.bson_get_value_text(metadata, 'initialized_version') FROM "
+					 "%s.%s_cluster_data;", CoreSchemaName, ApiDistributedSchemaName,
+					 ExtensionObjectPrefix);
+
+	bool isNull = false;
+	bool readOnly = true;
+	ExtensionExecuteQueryViaSPI(cmdStr.data, readOnly, SPI_OK_SELECT, &isNull);
+
+	pfree(cmdStr.data);
+
+	return !isNull;
+}
+
+
+/*
  * Runs a command on the cluster's metadata holding coordinator node.
  */
 static DistributedRunCommandResult
@@ -823,6 +847,7 @@ void
 InitializeDocumentDBDistributedHooks(void)
 {
 	is_metadata_coordinator_hook = IsMetadataCoordinatorCore;
+	is_cluster_initialized_hook = IsClusterInitializedCore;
 	run_command_on_metadata_coordinator_hook = RunCommandOnMetadataCoordinatorCore;
 	run_query_with_commutative_writes_hook = RunQueryWithCommutativeWritesCore;
 	run_multi_value_query_with_commutative_writes_hook =

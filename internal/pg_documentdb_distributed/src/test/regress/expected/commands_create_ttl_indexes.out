@@ -1006,6 +1006,9 @@ SELECT count(*) from ( SELECT shard_key_value, object_id, document  from documen
  10001
 (1 row)
 
+--  Disable autovacuum so the dead index entries left by the TTL purges are not
+--  reclaimed before the eligibleDeadItems EXPLAINs below (Citus propagates this to shards).
+ALTER TABLE documentdb_data.documents_20006 SET (autovacuum_enabled = off);
 --  Call ttl purge procedure with a batch size of 100
 BEGIN;
 SET client_min_messages TO LOG;
@@ -1050,6 +1053,9 @@ EXPLAIN(costs off) SELECT object_id FROM documentdb_data.documents_20006
 (11 rows)
 
 END;
+--  Remove the dead heap tuples while leaving their index entries in place, so the
+--  eligibleDeadItems count in the ordered index scan EXPLAIN below is deterministic.
+VACUUM (INDEX_CLEANUP OFF) documentdb_data.documents_20006;
 --  Check the query to fetch the eligible TTL indexes uses IndexScan.
 BEGIN;
 EXPLAIN(analyze on, verbose on, costs off, timing off, summary off) SELECT ctid FROM documentdb_data.documents_20006_2000105
@@ -1094,6 +1100,9 @@ BEGIN;
 SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(100);
 END;
+--  Remove the dead heap tuples while leaving their index entries in place, so the
+--  eligibleDeadItems count in the EXPLAINs below is deterministic.
+VACUUM (INDEX_CLEANUP OFF) documentdb_data.documents_20006;
 SELECT count(*) from ( SELECT shard_key_value, object_id, document  from documentdb_api.collection('db', 'ttlCompositeOrderedScan') order by object_id) as a;
  count 
 ---------------------------------------------------------------------

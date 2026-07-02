@@ -44,6 +44,7 @@
 #include "infrastructure/job_management.h"
 #include "metadata/metadata_cache.h"
 #include "utils/error_utils.h"
+#include "utils/guc_utils.h"
 #include "utils/index_utils.h"
 
 #define ONE_SEC_IN_MS 1000L
@@ -66,6 +67,7 @@ extern char *LocalhostConnectionString;
 
 extern int LatchTimeOutSec;
 extern int BackgroundWorkerJobTimeoutThresholdSec;
+extern bool BgWorkerEnableDiagnosticsLog;
 
 static bool BackgroundWorkerReloadConfig = false;
 
@@ -139,7 +141,7 @@ typedef struct InitJobState
 	bool done;
 } InitJobState;
 
-static bool TryExecuteInitJob(InitJobState *state);
+static void ExecuteInitJob(InitJobState *state);
 static void RunInitJobs(void);
 static bool AreAllInitJobsDone(void);
 
@@ -247,6 +249,15 @@ DocumentDBBackgroundWorkerMain(Datum main_arg)
 	WaitForInitJobsCompletion();
 
 	/*
+	 * After init jobs complete, mark all subsequent transactions as read-only.
+	 * The bg worker leader only reads metadata from here on; actual job work
+	 * happens over separate libpq connections to the same server.
+	 */
+	set_config_option("default_transaction_read_only", "true",
+					  PGC_USERSET, PGC_S_SESSION,
+					  GUC_ACTION_SET, true, 0, false);
+
+	/*
 	 * Wait until BackgroundWorkerRole prerequisites are met.
 	 */
 	WaitForBackgroundWorkerDependencies();
@@ -266,8 +277,34 @@ DocumentDBBackgroundWorkerMain(Datum main_arg)
 	/* Create list of job executions */
 	List *jobExecutions = NIL;
 
+	/*
+	 * Create a dedicated memory context for the background worker.
+	 * All allocations during the worker's lifetime happen here, making
+	 * it easier to diagnose memory issues via pg_log_backend_memory_contexts.
+	 */
+	MemoryContext bgWorkerContext = AllocSetContextCreate(TopMemoryContext,
+														  "DocdbBackgroundWorkerContext",
+														  ALLOCSET_DEFAULT_SIZES);
+
+	/*
+	 * Start a transaction for the first loop iteration. We commit before
+	 * WaitLatch (releasing the snapshot so vacuum can progress) and restart
+	 * after waking.
+	 */
+	SetCurrentStatementStartTimestamp();
+	StartTransactionCommand();
+	PushActiveSnapshot(GetTransactionSnapshot());
+
 	while (!got_sigterm)
 	{
+		/*
+		 * Ensure we're in bgWorkerContext at the top of each iteration.
+		 * StartTransactionCommand switches to CurTransactionContext, but
+		 * we want our base context to be bgWorkerContext so that any
+		 * stableContext captures in job functions point to long-lived memory.
+		 */
+		MemoryContextSwitchTo(bgWorkerContext);
+
 		/*
 		 * The background worker job framework is controlled by a GUC
 		 * that enables or disables job executions. The control flow
@@ -292,7 +329,13 @@ DocumentDBBackgroundWorkerMain(Datum main_arg)
 		 * instead, they may wait on their process latch, which sleeps as
 		 * necessary, but is awakened if postmaster dies.  That way the
 		 * background process goes away immediately in an emergency.
+		 *
+		 * Release the snapshot before sleeping so we don't pin the vacuum
+		 * horizon while idle. Re-acquire after waking.
 		 */
+		PopActiveSnapshot();
+		CommitTransactionCommand();
+
 		waitResult = 0;
 		if (BackgroundWorkerReloadConfig)
 		{
@@ -316,6 +359,12 @@ DocumentDBBackgroundWorkerMain(Datum main_arg)
 		HandleMainLoopInterrupts();
 #endif
 
+		/* Re-acquire transaction and snapshot after waking. */
+		SetCurrentStatementStartTimestamp();
+		StartTransactionCommand();
+		PushActiveSnapshot(GetTransactionSnapshot());
+		MemoryContextSwitchTo(bgWorkerContext);
+
 		if (waitResult & WL_LATCH_SET)
 		{
 			/* Event received for latch */
@@ -332,10 +381,13 @@ DocumentDBBackgroundWorkerMain(Datum main_arg)
 
 	if (jobExecutions != NIL)
 	{
-		/* Cleanup lists */
+		/* Close any open libpq connections before destroying the context. */
 		FreeJobExecutions(jobExecutions);
 		jobExecutions = NIL;
 	}
+
+	MemoryContextSwitchTo(TopMemoryContext);
+	MemoryContextDelete(bgWorkerContext);
 
 	/* when sigterm comes, try cancel all currently open connections */
 	ereport(LOG, (errmsg("%s is currently shutting down.",
@@ -449,32 +501,28 @@ IsJobEnabled(BackgroundWorkerJobExecution *jobExec)
 		return true;
 	}
 
-	/*
-	 * Wrap the hook call in a transaction so that hooks can safely use
-	 * SPI, GUC nesting, or catalog lookups without having to manage
-	 * transaction state themselves.
-	 */
-	SetCurrentStatementStartTimestamp();
-	StartTransactionCommand();
-	PushActiveSnapshot(GetTransactionSnapshot());
+	MemoryContext stableContext = CurrentMemoryContext;
+
+	bool volatile isJobEnabled = false;
 
 	PG_TRY();
 	{
-		bool enabled = jobExec->job.is_job_enabled_hook();
-
-		PopActiveSnapshot();
-		CommitTransactionCommand();
-		return enabled;
+		isJobEnabled = jobExec->job.is_job_enabled_hook();
 	}
 	PG_CATCH();
 	{
+		MemoryContextSwitchTo(stableContext);
 		FlushErrorState();
 
-		/*
-		 * Clean up any transaction state the callback left behind.
-		 */
+		/* Restart the transaction. */
 		PopAllActiveSnapshots();
 		AbortCurrentTransaction();
+		SetCurrentStatementStartTimestamp();
+		StartTransactionCommand();
+		PushActiveSnapshot(GetTransactionSnapshot());
+		MemoryContextSwitchTo(stableContext);
+
+		isJobEnabled = false;
 
 		ereport(WARNING, (errmsg(
 							  "is_job_enabled_hook for background worker job %s with id %d threw an error. The job will be considered disabled.",
@@ -482,7 +530,7 @@ IsJobEnabled(BackgroundWorkerJobExecution *jobExec)
 	}
 	PG_END_TRY();
 
-	return false;
+	return isJobEnabled;
 }
 
 
@@ -520,7 +568,6 @@ CanExecuteJob(BackgroundWorkerJobExecution *jobExec, TimestampTz currentTime)
 static void
 CheckJobCompletion(BackgroundWorkerJobExecution *jobExec)
 {
-	PGconn *conn = jobExec->connection;
 	if (jobExec->state == JOB_IDLE)
 	{
 		return;
@@ -531,14 +578,14 @@ CheckJobCompletion(BackgroundWorkerJobExecution *jobExec)
 	/* Checks if command is busy. If not, close connection and reset it. */
 	PG_TRY();
 	{
-		if (PQconsumeInput(conn) == 0)
+		if (PQconsumeInput(jobExec->connection) == 0)
 		{
-			PGConnReportError(conn, NULL, ERROR);
+			PGConnReportError(jobExec->connection, NULL, ERROR);
 		}
 
-		if (!PQisBusy(conn))
+		if (!PQisBusy(jobExec->connection))
 		{
-			PQfinish(conn);
+			PQfinish(jobExec->connection);
 			jobExec->connection = NULL;
 			jobExec->state = JOB_IDLE;
 		}
@@ -550,11 +597,22 @@ CheckJobCompletion(BackgroundWorkerJobExecution *jobExec)
 		/* Clear error context since we don't use it. */
 		FlushErrorState();
 
-		/* We fail gracefuly and close the connection. */
-		PQfinish(conn);
+		/* Close the connection. */
+		if (jobExec->connection != NULL)
+		{
+			PQfinish(jobExec->connection);
+			jobExec->connection = NULL;
+		}
+
+		/* Restart the transaction since the error may have aborted it. */
+		PopAllActiveSnapshots();
+		AbortCurrentTransaction();
+		SetCurrentStatementStartTimestamp();
+		StartTransactionCommand();
+		PushActiveSnapshot(GetTransactionSnapshot());
+		MemoryContextSwitchTo(stableContext);
 
 		/* Set state to idle so it can run in the next iteration. */
-		jobExec->connection = NULL;
 		jobExec->state = JOB_IDLE;
 
 		ereport(WARNING, (errmsg(
@@ -574,9 +632,9 @@ WaitForBackgroundWorkerDependencies(void)
 {
 	int waitResult;
 	int waitTimeoutInSec = 10;
-	bool roleExists = false;
+	bool dependenciesMet = false;
 
-	while (!roleExists && !got_sigterm)
+	while (!dependenciesMet && !got_sigterm)
 	{
 		waitResult = 0;
 		waitResult = WaitLatch(&BackgroundWorkerShmem->latch,
@@ -596,13 +654,39 @@ WaitForBackgroundWorkerDependencies(void)
 
 		if (waitResult & WL_TIMEOUT)
 		{
-			/* Check if background worker start condition is met. */
+			SetCurrentStatementStartTimestamp();
+			StartTransactionCommand();
+			PushActiveSnapshot(GetTransactionSnapshot());
+
+			/* Check if background worker role exists. */
 			const char *roleName = ApiBgWorkerRole;
-			roleExists = CheckIfRoleExists(roleName);
+			bool roleExists = CheckIfRoleExists(roleName);
+
+			/* Check if the cluster is fully initialized. */
+			bool clusterReady = roleExists && IsClusterInitialized();
+
+			PopActiveSnapshot();
+			CommitTransactionCommand();
+
 			if (!roleExists)
 			{
 				ereport(WARNING, errmsg("BackgroundWorkerRole %s does not exist.",
 										roleName));
+				continue;
+			}
+
+			if (!clusterReady)
+			{
+				ereport(WARNING, errmsg(
+							"Cluster not yet initialized, background worker waiting."));
+				continue;
+			}
+
+			dependenciesMet = true;
+			if (BgWorkerEnableDiagnosticsLog)
+			{
+				ereport(LOG, (errmsg(
+								  "Background worker dependencies met, starting job loop.")));
 			}
 		}
 	}
@@ -681,35 +765,33 @@ ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *database
 		return;
 	}
 
-	PGconn *conn = NULL;
-
-	/*
-	 * PG's error recovery unwinds a thrown error in ErrorContext and does not
-	 * restore CurrentMemoryContext, so the PG_CATCH below must switch back
-	 * explicitly later.
-	 */
 	MemoryContext stableContext = CurrentMemoryContext;
 
 	StringInfoData localhostConnStr;
 	initStringInfo(&localhostConnStr);
 	appendStringInfo(&localhostConnStr,
-					 "%s port=%d user=%s dbname=%s application_name='%s'",
+					 "%s port=%d user=%s dbname=%s application_name=%s",
 					 LocalhostConnectionString, PostPortNumber,
 					 userName,
 					 databaseName,
-					 jobExec->job.jobName);
+					 quote_literal_cstr(jobExec->job.jobName));
 
 	/*
 	 * The job execution consists of creating a LibPQ connection an sending its
 	 * command query through it. In case of failure the connection is closed and
 	 * is not assigned to the job.
+	 *
+	 * We store the connection in jobExec->connection immediately after
+	 * PQconnectStart so that PG_CATCH can always find and close it via the
+	 * heap-allocated struct, avoiding the need for a volatile local variable
+	 * to survive longjmp.
 	 */
 	PG_TRY();
 	{
 		char *connStr = localhostConnStr.data;
 
-		conn = PQconnectStart(connStr);
-		if (conn == NULL)
+		jobExec->connection = PQconnectStart(connStr);
+		if (jobExec->connection == NULL)
 		{
 			/*
 			 * We don't expect PQconnectStart to return NULL unless OOM happened.
@@ -720,13 +802,13 @@ ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *database
 		}
 
 		const int argNonBlocking = 1;
-		PQsetnonblocking(conn, argNonBlocking);
+		PQsetnonblocking(jobExec->connection, argNonBlocking);
 
-		PGConnFinishConnectionEstablishment(conn);
+		PGConnFinishConnectionEstablishment(jobExec->connection);
 
-		if (PQstatus(conn) != CONNECTION_OK)
+		if (PQstatus(jobExec->connection) != CONNECTION_OK)
 		{
-			PGConnReportError(conn, NULL, ERROR);
+			PGConnReportError(jobExec->connection, NULL, ERROR);
 		}
 
 		const char *query = jobExec->commandQuery;
@@ -740,15 +822,13 @@ ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *database
 		int resultFormat = 0;
 
 		/* We try to send the query. If it fails, report error and retry on the next latch event. */
-		if (!PQsendQueryParams(conn, query, nParams, paramTypes, parameterValues, NULL,
-							   NULL,
-							   resultFormat))
+		if (!PQsendQueryParams(jobExec->connection, query, nParams, paramTypes,
+							   parameterValues, NULL, NULL, resultFormat))
 		{
-			PGConnReportError(conn, NULL, ERROR);
+			PGConnReportError(jobExec->connection, NULL, ERROR);
 		}
 
-		/* Query was sent successfuly. Assign connection to job. */
-		jobExec->connection = conn;
+		/* Query was sent successfully. */
 		jobExec->state = JOB_RUNNING;
 		jobExec->lastStartTime = currentTime;
 	}
@@ -756,14 +836,22 @@ ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *database
 	{
 		MemoryContextSwitchTo(stableContext);
 
-		/* Clear error context since we don't use it. */
 		FlushErrorState();
 
-		/* We fail gracefuly and only check if the connection needs to be closed. */
-		if (conn != NULL)
+		/* Close the connection if one was opened. */
+		if (jobExec->connection != NULL)
 		{
-			PQfinish(conn);
+			PQfinish(jobExec->connection);
+			jobExec->connection = NULL;
 		}
+
+		/* Restart the transaction since the error may have aborted it. */
+		PopAllActiveSnapshots();
+		AbortCurrentTransaction();
+		SetCurrentStatementStartTimestamp();
+		StartTransactionCommand();
+		PushActiveSnapshot(GetTransactionSnapshot());
+		MemoryContextSwitchTo(stableContext);
 
 		/* Set state to idle so it can run in the next iteration. */
 		jobExec->state = JOB_IDLE;
@@ -774,11 +862,6 @@ ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName, char *database
 	}
 	PG_END_TRY();
 
-	/*
-	 * The StringInfoData header is local, only its buffer is palloc'd, and
-	 * it lives in the long-lived bg-worker context, so free it explicitly rather
-	 * than relying on a context reset.
-	 */
 	pfree(localhostConnStr.data);
 }
 
@@ -791,7 +874,6 @@ static void
 CancelJobIfTimeIsUp(BackgroundWorkerJobExecution *jobExec, TimestampTz currentTime)
 {
 	int timeoutInSeconds = jobExec->job.timeoutInSeconds;
-	PGconn *conn = jobExec->connection;
 	if (jobExec->state == JOB_IDLE ||
 		timeoutInSeconds <= 0)
 	{
@@ -803,12 +885,12 @@ CancelJobIfTimeIsUp(BackgroundWorkerJobExecution *jobExec, TimestampTz currentTi
 			currentTime,
 			timeoutInSeconds * ONE_SEC_IN_MS))
 	{
-		if (PGConnXactIsActive(conn))
+		if (PGConnXactIsActive(jobExec->connection))
 		{
-			PGConnTryCancel(conn);
+			PGConnTryCancel(jobExec->connection);
 		}
 
-		PQfinish(conn);
+		PQfinish(jobExec->connection);
 		jobExec->connection = NULL;
 		jobExec->state = JOB_IDLE;
 
@@ -949,22 +1031,19 @@ GenerateJobExecutions(void)
 
 
 /*
- * Receives a background worker job and returns an background worker job execution.
+ * Receives a background worker job and returns a background worker job execution
  * object. We need it to keep track of execution states and database connection.
  */
 static BackgroundWorkerJobExecution *
 CreateJobExecutionObj(BackgroundWorkerJob job)
 {
-	BackgroundWorkerJobExecution *jobExec = NULL;
-	char *commandQuery = NULL;
-
-	commandQuery = GenerateCommandQuery(job, CurrentMemoryContext);
+	char *commandQuery = GenerateCommandQuery(job, CurrentMemoryContext);
 	if (commandQuery == NULL)
 	{
 		return NULL;
 	}
 
-	jobExec = palloc(sizeof(BackgroundWorkerJobExecution));
+	BackgroundWorkerJobExecution *jobExec = palloc(sizeof(BackgroundWorkerJobExecution));
 	jobExec->lastStartTime = GetCurrentTimestamp();
 	jobExec->job = job;
 	jobExec->connection = NULL;
@@ -993,6 +1072,13 @@ FreeJobExecutions(List *jobExecutions)
 			PQfinish(jobExec->connection);
 			jobExec->connection = NULL;
 		}
+
+		/* Free the command query string (separate palloc). */
+		if (jobExec->commandQuery != NULL)
+		{
+			pfree(jobExec->commandQuery);
+			jobExec->commandQuery = NULL;
+		}
 	}
 	list_free_deep(jobExecutions);
 	jobExecutions = NIL;
@@ -1007,16 +1093,16 @@ CheckIfMetadataCoordinator(void)
 {
 	if (IsCoordinator == BackgroundWorkerBoolOption_Undefined)
 	{
-		SetCurrentStatementStartTimestamp();
-		StartTransactionCommand();
-		PushActiveSnapshot(GetTransactionSnapshot());
-
 		IsCoordinator = IsMetadataCoordinator() ?
 						BackgroundWorkerBoolOption_True :
 						BackgroundWorkerBoolOption_False;
 
-		PopActiveSnapshot();
-		CommitTransactionCommand();
+		bool isCoord = (IsCoordinator == BackgroundWorkerBoolOption_True);
+		if (BgWorkerEnableDiagnosticsLog)
+		{
+			ereport(LOG, (errmsg("Background worker determined node is %s coordinator",
+								 isCoord ? "a" : "not a")));
+		}
 	}
 
 	return IsCoordinator == BackgroundWorkerBoolOption_True;
@@ -1029,17 +1115,8 @@ CheckIfMetadataCoordinator(void)
 static char *
 GenerateCommandQuery(BackgroundWorkerJob job, MemoryContext stableContext)
 {
-	SetCurrentStatementStartTimestamp();
-	PopAllActiveSnapshots();
-	StartTransactionCommand();
-	PushActiveSnapshot(GetTransactionSnapshot());
-
-	MemoryContext oldMemContext = CurrentMemoryContext;
-
 	/* declared volatile because of the longjmp in PG_CATCH */
-	volatile char *commandQuery = NULL;
-	volatile int errorCode = 0;
-	volatile ErrorData *edata = NULL;
+	char *volatile commandQuery = NULL;
 
 	PG_TRY();
 	{
@@ -1081,29 +1158,30 @@ GenerateCommandQuery(BackgroundWorkerJob job, MemoryContext stableContext)
 		char *tempQuery = psprintf("%s %s.%s(%s);", commandPrefix, job.command.schema,
 								   job.command.name, parameter);
 
-		/* Switch to the stable memory context and copy the query string there BEFORE committing */
+		/* Copy into the stable context so it survives beyond the current transaction */
 		MemoryContextSwitchTo(stableContext);
 		commandQuery = pstrdup(tempQuery);
-		MemoryContextSwitchTo(oldMemContext);
-
-		PopActiveSnapshot();
-		CommitTransactionCommand();
 	}
 	PG_CATCH();
 	{
 		MemoryContextSwitchTo(stableContext);
-		edata = CopyErrorDataAndFlush();
-		errorCode = edata->sqlerrcode;
-		MemoryContextSwitchTo(oldMemContext);
+		ErrorData *edata = CopyErrorData();
+		FlushErrorState();
 
-		ereport(LOG, (errcode(errorCode),
+		/* Restart the transaction since the error may have aborted it. */
+		PopAllActiveSnapshots();
+		AbortCurrentTransaction();
+		SetCurrentStatementStartTimestamp();
+		StartTransactionCommand();
+		PushActiveSnapshot(GetTransactionSnapshot());
+		MemoryContextSwitchTo(stableContext);
+
+		ereport(LOG, (errcode(edata->sqlerrcode),
 					  errmsg(
 						  "couldn't construct command for the background worker job execution:"
 						  "file: %s, line: %d, message_id: %s",
 						  edata->filename, edata->lineno, edata->message_id)));
-
-		PopAllActiveSnapshots();
-		AbortCurrentTransaction();
+		FreeErrorData(edata);
 	}
 	PG_END_TRY();
 
@@ -1165,6 +1243,7 @@ BackgroundWorkerKill(int code, Datum arg)
 
 /*
  * Searches PG role in SysCache. Returns true if found.
+ * Must be called within an active transaction.
  */
 static bool
 CheckIfRoleExists(const char *roleName)
@@ -1174,15 +1253,8 @@ CheckIfRoleExists(const char *roleName)
 		return false;
 	}
 
-	SetCurrentStatementStartTimestamp();
-	StartTransactionCommand();
-	PushActiveSnapshot(GetTransactionSnapshot());
-
 	bool missingOk = true;
 	Oid roleId = get_role_oid(roleName, missingOk);
-
-	PopActiveSnapshot();
-	CommitTransactionCommand();
 
 	return OidIsValid(roleId);
 }
@@ -1262,50 +1334,49 @@ RegisterBackgroundWorkerInitJob(BackgroundWorkerInitJob job)
  * Attempt to execute a single init job.
  * Returns true if the job completed successfully.
  */
-static bool
-TryExecuteInitJob(InitJobState *state)
+static void
+ExecuteInitJob(InitJobState *state)
 {
-	bool success = false;
-
 	ereport(LOG, (errmsg("Init job '%s': starting attempt",
 						 state->job.jobName)));
 
+	MemoryContext stableContext = CurrentMemoryContext;
+
+	SetCurrentStatementStartTimestamp();
+	StartTransactionCommand();
+	PushActiveSnapshot(GetTransactionSnapshot());
+
 	PG_TRY();
 	{
-		success = state->job.callback();
+		state->job.callback();
 	}
 	PG_CATCH();
 	{
+		MemoryContextSwitchTo(stableContext);
+		ErrorData *edata = CopyErrorData();
 		FlushErrorState();
 
 		/*
-		 * Clean up any transaction state the callback left behind.
-		 * If the callback threw mid-transaction, we must pop its
-		 * snapshots and abort to leave the connection usable for retry.
+		 * Abort the transaction that we started for this init job.
 		 */
 		PopAllActiveSnapshots();
 		AbortCurrentTransaction();
 
 		ereport(ERROR, (errmsg(
-							"Init job '%s': callback threw an error",
-							state->job.jobName)));
+							"Init job '%s': callback threw an error: %s",
+							state->job.jobName, edata->message)));
 	}
 	PG_END_TRY();
 
-	if (success)
-	{
-		state->done = true;
-		ereport(LOG, (errmsg("Init job '%s': completed successfully",
-							 state->job.jobName)));
-	}
-	else
-	{
-		ereport(WARNING, (errmsg(
-							  "Init job '%s': failed",
-							  state->job.jobName)));
-	}
+	/* The PG_CATCH throws an error, so we will never get to this point when we enter the catch,
+	 * which means the init job was successfull. */
 
-	return success;
+	PopActiveSnapshot();
+	CommitTransactionCommand();
+
+	state->done = true;
+	ereport(LOG, (errmsg("Init job '%s': completed successfully",
+						 state->job.jobName)));
 }
 
 
@@ -1331,7 +1402,7 @@ RunInitJobs(void)
 			continue;
 		}
 
-		TryExecuteInitJob(state);
+		ExecuteInitJob(state);
 	}
 }
 

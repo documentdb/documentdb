@@ -29,6 +29,12 @@
  */
 bool IsMetadataCoordinator(void);
 
+/*
+ * Returns true if the cluster is fully initialized and ready for
+ * background worker jobs. Defaults to true when no hook is set.
+ */
+bool IsClusterInitialized(void);
+
 
 /*
  * Runs a command on the MetadataCoordinator if the current node is not a

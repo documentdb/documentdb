@@ -27,6 +27,7 @@ extern bool DefaultUseCompositeOpClass;
 extern bool EnableExtendedIndexes;
 
 IsMetadataCoordinator_HookType is_metadata_coordinator_hook = NULL;
+IsClusterInitialized_HookType is_cluster_initialized_hook = NULL;
 RunCommandOnMetadataCoordinator_HookType run_command_on_metadata_coordinator_hook = NULL;
 RunQueryWithCommutativeWrites_HookType run_query_with_commutative_writes_hook = NULL;
 RunMultiValueQueryWithCommutativeWrites_HookType
@@ -109,6 +110,22 @@ IsMetadataCoordinator(void)
 	if (is_metadata_coordinator_hook != NULL)
 	{
 		return is_metadata_coordinator_hook();
+	}
+
+	return true;
+}
+
+
+/*
+ * Returns true if the cluster is fully initialized (e.g. distributed requires initialize cluster to distribute tables).
+ * Non distributed scenario is always considered initialized.
+ */
+bool
+IsClusterInitialized(void)
+{
+	if (is_cluster_initialized_hook != NULL)
+	{
+		return is_cluster_initialized_hook();
 	}
 
 	return true;

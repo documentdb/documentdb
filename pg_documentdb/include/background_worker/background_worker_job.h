@@ -109,9 +109,10 @@ void RegisterBackgroundWorkerJob(BackgroundWorkerJob job);
  * Callback for background worker init jobs. Native C functions that run
  * one time initialization before the periodic job loop, and before
  * extensions/roles exist.
- * Returns true if completed (will not be retried), false to retry.
+ * A normal return indicates success (will not be retried).
+ * Throwing an error indicates failure (will be retried).
  */
-typedef bool (*BackgroundWorkerInitJobCallback)(void);
+typedef void (*BackgroundWorkerInitJobCallback)(void);
 
 
 /*

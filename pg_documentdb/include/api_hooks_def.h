@@ -35,6 +35,15 @@ typedef bool (*IsMetadataCoordinator_HookType)(void);
 extern IsMetadataCoordinator_HookType is_metadata_coordinator_hook;
 
 /*
+ * Returns true if the cluster has been fully initialized (e.g. tables
+ * distributed, metadata set up). The background worker waits for this
+ * before starting periodic jobs to avoid operating on an incomplete cluster.
+ * When not set (single-node), the cluster is considered ready immediately.
+ */
+typedef bool (*IsClusterInitialized_HookType)(void);
+extern IsClusterInitialized_HookType is_cluster_initialized_hook;
+
+/*
  * Indicates whether the Change Stream feature is currently enabled
  */
 typedef bool (*IsChangeStreamEnabledAndCompatible)(void);

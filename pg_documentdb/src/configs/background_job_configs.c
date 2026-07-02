@@ -78,6 +78,9 @@ char *BackgroundWorkerDatabaseName = DEFAULT_BG_DATABASE_NAME;
 #define DEFAULT_BG_LATCH_TIMEOUT_SEC 1
 int LatchTimeOutSec = DEFAULT_BG_LATCH_TIMEOUT_SEC;
 
+#define DEFAULT_BG_WORKER_ENABLE_DIAGNOSTICS_LOG false
+bool BgWorkerEnableDiagnosticsLog = DEFAULT_BG_WORKER_ENABLE_DIAGNOSTICS_LOG;
+
 #define DEFAULT_LOG_TTL_PROGRESS_ACTIVITY false
 bool LogTTLProgressActivity = DEFAULT_LOG_TTL_PROGRESS_ACTIVITY;
 
@@ -304,6 +307,17 @@ InitDocumentDBBackgroundWorkerConfigurations(const char *prefix)
 		0,
 		200,
 		PGC_POSTMASTER,
+		GUC_SUPERUSER_ONLY,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.bg_worker_enable_diagnostics_log", prefix),
+		gettext_noop("Enables diagnostic LOG messages from the background worker "
+					 "for testing purposes."),
+		NULL,
+		&BgWorkerEnableDiagnosticsLog,
+		DEFAULT_BG_WORKER_ENABLE_DIAGNOSTICS_LOG,
+		PGC_SIGHUP,
 		GUC_SUPERUSER_ONLY,
 		NULL, NULL, NULL);
 }

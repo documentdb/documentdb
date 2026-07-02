@@ -388,6 +388,10 @@ from documentdb_api_catalog.collection_indexes where (index_spec).index_expire_a
 SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('db','{ "listIndexes": "ttlCompositeOrderedScan" }') ORDER BY 1;
 SELECT count(*) from ( SELECT shard_key_value, object_id, document  from documentdb_api.collection('db', 'ttlCompositeOrderedScan') order by object_id) as a;
 
+--  Disable autovacuum so the dead index entries left by the TTL purges are not
+--  reclaimed before the eligibleDeadItems EXPLAINs below (Citus propagates this to shards).
+ALTER TABLE documentdb_data.documents_20006 SET (autovacuum_enabled = off);
+
 --  Call ttl purge procedure with a batch size of 100
 BEGIN;
 SET client_min_messages TO LOG;
@@ -417,6 +421,10 @@ EXPLAIN(costs off) SELECT object_id FROM documentdb_data.documents_20006
         LIMIT 100;
 END;
 
+--  Remove the dead heap tuples while leaving their index entries in place, so the
+--  eligibleDeadItems count in the ordered index scan EXPLAIN below is deterministic.
+VACUUM (INDEX_CLEANUP OFF) documentdb_data.documents_20006;
+
 --  Check the query to fetch the eligible TTL indexes uses IndexScan.
 
 BEGIN;
@@ -435,6 +443,11 @@ BEGIN;
 SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(100);
 END;
+
+--  Remove the dead heap tuples while leaving their index entries in place, so the
+--  eligibleDeadItems count in the EXPLAINs below is deterministic.
+VACUUM (INDEX_CLEANUP OFF) documentdb_data.documents_20006;
+
 SELECT count(*) from ( SELECT shard_key_value, object_id, document  from documentdb_api.collection('db', 'ttlCompositeOrderedScan') order by object_id) as a;
 
 
