@@ -6,6 +6,7 @@
 * Fix crash in `$fill` with `partitionByFields` when the pipeline includes a stage that migrates the window query into a subquery (e.g. a preceding `$sort` or a `$limit`). The partition expression is now built after the migration so it references the correct range-table level. *[Bugfix]*
 * Fix backend crash (use-after-free) when a `$let` declaring more than one variable has an `in` that produces a document or array and is evaluated more than once (across multiple documents, or nested inside `$map`/`$filter`/`$reduce` iterating over multiple elements). The shared variable table is no longer destroyed on the writer finalization path when it is flagged to be preserved. *[Bugfix]*
 * Add feature-flagged single-pass RUM posting-tree vacuum that prunes emptied leaf pages inline during the bulk-delete TID cleanup walk instead of a separate pruning pass. Guarded by `enable_single_pass_posting_tree_vacuum`, disabled by default while pending stabilization. *[Perf]*
+* Fix backend crash when serializing a SQL array that contains a NULL element. *[Bugfix]*
 
 ### documentdb v0.114-0 (Unreleased) ###
 * Extend `enableNewNamespaceValidation` to block create/drop/rename/createIndex on reserved collections in `admin` and `local` databases, and complete the `config` reserved-collection list (added sharding-runtime names: `changelog`, `mongos`, `placementHistory`, `tags`, `transactions`, `locks`, `lockpings`, `migrations`, `migrationCoordinators`, `rangeDeletions`, `reshardingOperations`, `cache.collections`, `cache.databases`). *[Feature]*

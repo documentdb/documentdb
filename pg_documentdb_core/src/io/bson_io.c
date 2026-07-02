@@ -630,6 +630,21 @@ void
 PgbsonElementWriterWriteSQLValue(pgbson_element_writer *writer,
 								 bool isNull, Datum fieldValue, Oid fieldTypeId)
 {
+	if (isNull)
+	{
+		/*
+		 * A SQL NULL value (e.g. a NULL element of a SQL array) must be written
+		 * as a BSON null. We cannot fall through to the type-specific handling
+		 * below because for by-reference types (text, numeric, bson, arrays, ...)
+		 * fieldValue is a 0 Datum and any DatumGetXxx detoast would dereference a
+		 * NULL pointer and crash the backend.
+		 */
+		bson_value_t nullValue = { 0 };
+		nullValue.value_type = BSON_TYPE_NULL;
+		PgbsonElementWriterWriteValue(writer, &nullValue);
+		return;
+	}
+
 	if (type_is_array(fieldTypeId))
 	{
 		/* array type */

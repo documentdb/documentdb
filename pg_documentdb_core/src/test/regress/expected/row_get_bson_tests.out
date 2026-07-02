@@ -32,3 +32,30 @@ WITH c1 AS (SELECT 'string value' AS "col1") SELECT row_get_bson(c1) FROM c1;
  { "col1" : "string value" }
 (1 row)
 
+-- arrays: regression for NULL element handling. A NULL element of a by-reference
+-- SQL array (text/numeric/bson/...) previously crashed the backend in
+-- pg_detoast_datum because PgbsonElementWriterWriteSQLValue ignored isNull.
+WITH c1 AS (SELECT ARRAY['a', 'b', 'c']::text[] AS "col1") SELECT row_get_bson(c1) FROM c1;
+          row_get_bson          
+--------------------------------
+ { "col1" : [ "a", "b", "c" ] }
+(1 row)
+
+WITH c1 AS (SELECT ARRAY['a', NULL, 'c']::text[] AS "col1") SELECT row_get_bson(c1) FROM c1;
+          row_get_bson           
+---------------------------------
+ { "col1" : [ "a", null, "c" ] }
+(1 row)
+
+WITH c1 AS (SELECT ARRAY[NULL, NULL]::text[] AS "col1") SELECT row_get_bson(c1) FROM c1;
+        row_get_bson         
+-----------------------------
+ { "col1" : [ null, null ] }
+(1 row)
+
+WITH c1 AS (SELECT ARRAY[10, NULL, 30]::int4[] AS "col1") SELECT row_get_bson(c1) FROM c1;
+                              row_get_bson                               
+-------------------------------------------------------------------------
+ { "col1" : [ { "$numberInt" : "10" }, null, { "$numberInt" : "30" } ] }
+(1 row)
+
