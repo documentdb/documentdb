@@ -242,6 +242,11 @@ bool EnableDottedValueTextIndexTerms = DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TE
 #define DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN true
 bool EnableDistinctIndexPushdown = DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN;
 
+/* Added in v115, enabled in v115, remove after v119 */
+#define DEFAULT_ENABLE_DISTINCT_MULTIKEY_FILTER_PUSHDOWN true
+bool EnableDistinctMultiKeyFilterPushdown =
+	DEFAULT_ENABLE_DISTINCT_MULTIKEY_FILTER_PUSHDOWN;
+
 /*
  * SECTION: Planner feature flags
  */
@@ -898,6 +903,15 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable pushing down distinct operations to the index."),
 		NULL, &EnableDistinctIndexPushdown,
 		DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_distinct_multikey_filter_pushdown", newGucPrefix),
+		gettext_noop(
+			"Whether to push an $exists: true filter into a multi-key index when "
+			"a distinct cannot push down its order-by."),
+		NULL, &EnableDistinctMultiKeyFilterPushdown,
+		DEFAULT_ENABLE_DISTINCT_MULTIKEY_FILTER_PUSHDOWN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

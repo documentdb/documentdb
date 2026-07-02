@@ -2972,6 +2972,10 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 				filter = *value;
 			}
 		}
+		else if (StringViewEqualsCString(&keyView, "hint"))
+		{
+			ProcessIndexHint(&distinctIter, &indexHint);
+		}
 		else if (StringViewEqualsCString(&keyView, "key"))
 		{
 			/* Validation handled in the stage processing */

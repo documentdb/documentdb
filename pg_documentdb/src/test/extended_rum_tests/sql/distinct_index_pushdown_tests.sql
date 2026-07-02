@@ -824,6 +824,159 @@ $cmd$, p_ignore_heap_fetches => true);
 ROLLBACK;
 
 -- ============================================================
+-- Test 47: Multikey index exists-true pushdown - pushdown ON
+-- When the chosen index is multikey and a distinct is present, the
+-- order-by cannot be pushed down (Sort remains). However, an
+-- $exists: true filter on the distinct path is still pushed into the
+-- index clauses so the scan is restricted to documents that contain
+-- the field. Force the multikey composite index via a hint so the
+-- pushed clause is visible in the Index Cond.
+-- Expect: Index Scan using idx_arr with an Index Cond containing
+-- @> '{ "arr" : { "$minKey" : 1 } }' and a Sort node still present.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push_mk", "key": "arr", "hint": "idx_arr" }')
+$cmd$);
+ROLLBACK;
+
+-- ============================================================
+-- Test 48: Multikey index exists-true pushdown - pushdown OFF
+-- With pushdown OFF the order-by processing does not run, so no
+-- $exists: true clause is pushed into the multikey index. Forcing the
+-- multikey index via a hint should show a plain index scan (only the
+-- orderByScan clause) with a Sort node, and no minKey exists clause.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push_mk", "key": "arr", "hint": "idx_arr" }')
+$cmd$);
+ROLLBACK;
+
+-- ============================================================
+-- Reinsert an array document into dist_push so that idx_a and idx_a_b
+-- carry a live multikey term for the following tests, rather than only
+-- the sticky metapage flag left behind by Test 7 (whose array doc was
+-- deleted and vacuumed away). This keeps the multikey pushdown tests
+-- below unambiguous: the index is genuinely multikey on "a" and the
+-- extended-explain "isMultiKey" metadata reflects that.
+-- ============================================================
+SELECT documentdb_api.insert_one('db', 'dist_push', '{ "_id": 998, "a": [100, 200, 300], "b": "Z" }');
+ANALYZE documentdb_data.documents_19900;
+
+-- ============================================================
+-- Test 49: Distinct with a hint forcing a specific index
+-- The dist_push collection has both idx_a ({ a: 1 }) and idx_a_b
+-- ({ a: 1, b: 1 }). A distinct on "a" could use either; a hint should
+-- force the planner to use the named index.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+
+-- Hint the compound index idx_a_b explicitly.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "hint": "idx_a_b" }')
+$cmd$);
+ROLLBACK;
+
+-- Hint the single-field index idx_a explicitly.
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "hint": "idx_a" }')
+$cmd$);
+ROLLBACK;
+
+-- ============================================================
+-- Test 50: Distinct on "a" with a filter on "b" over composite
+-- index { a: 1, b: 1 }. The distinct key "a" is multikey and has no
+-- bound of its own, so an $exists: true (@>= minKey) clause is pushed
+-- on "a"; the query filter on "b" is pushed as a separate index clause.
+-- Expect the Index Cond to contain a clause on "a" (orderByScan +
+-- $minKey exists) AND a clause on "b" (the $gte filter).
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "b": { "$gte": "C" } }, "hint": "idx_a_b" }')
+$cmd$);
+ROLLBACK;
+
+-- ============================================================
+-- Test 51: Same query as Test 50 with extended explain plans ON.
+-- The extended explain metadata should show the composite index
+-- bounds for both "a" (with the $exists/$minKey lower bound) and "b".
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "b": { "$gte": "C" } }, "hint": "idx_a_b" }')
+$cmd$, p_ignore_heap_fetches => true);
+ROLLBACK;
+
+-- ============================================================
+-- Test 52: Add a bound on the distinct key "a" (a > 5) alongside the
+-- "b" filter. Because "a" now has its own (non-equality) bound, the
+-- $exists: true (@>= minKey) clause should NO LONGER be pushed; the
+-- Index Cond should contain the "a" > 5 bound and the "b" filter only.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "a": { "$gt": 5 }, "b": { "$gte": "C" } }, "hint": "idx_a_b" }')
+$cmd$, p_ignore_heap_fetches => true);
+ROLLBACK;
+
+-- ============================================================
+-- Test 53: Feature flag gate - enable_distinct_multikey_filter_pushdown
+-- OFF. With the flag disabled, the $exists: true (@>= minKey) clause is
+-- NOT pushed into the multikey index even though distinct pushdown is on
+-- and the index is multikey. The order-by still cannot be pushed (Sort
+-- remains) and only the orderByScan clause appears in the Index Cond.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+SET LOCAL documentdb.enable_distinct_multikey_filter_pushdown TO off;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "b": { "$gte": "C" } }, "hint": "idx_a_b" }')
+$cmd$);
+ROLLBACK;
+
+-- ============================================================
 -- Cleanup
 -- ============================================================
 -- SELECT documentdb_api.drop_collection('db', 'dist_push');

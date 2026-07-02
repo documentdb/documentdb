@@ -176,6 +176,7 @@ extern bool EnableObjectIdFuncExprConversion;
 extern bool EnableExtendedIndexes;
 extern bool EnableDynamicCursors;
 extern bool EnableDistinctIndexPushdown;
+extern bool EnableDistinctMultiKeyFilterPushdown;
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool EnablePerPathMultiKeySortPushdown;
 
@@ -213,7 +214,7 @@ static Expr * CreateKnownFullScanExpr(Datum queryValue, Expr *documentExpr, int
 static OpExpr * CreateExistsTrueOpExpr(Expr *documentExpr, const char *sourcePath,
 									   uint32_t sourcePathLength);
 static List * GetSortDetails(PlannerInfo *root, Index rti,
-							 bool *hasGroupby, bool *isOrderById);
+							 bool *hasGroupby, bool *isOrderById, bool *hasDistinct);
 static bool IsQueryCollationCompatibleWithIndex(const char *queryCollation,
 												bytea *indexOptions);
 static bool IsValidIndexPathForIdOrderBy(IndexPath *indexPath, List *sortDetails);
@@ -2823,8 +2824,9 @@ ConsiderBtreeOrderByPushdown(PlannerInfo *root, IndexPath *indexPath)
 {
 	bool isOrderById = false;
 	bool hasGroupby = false;
+	bool hasDistinct = false;
 	List *sortDetails = GetSortDetails(root, indexPath->path.parent->relid, &hasGroupby,
-									   &isOrderById);
+									   &isOrderById, &hasDistinct);
 
 	if (sortDetails == NIL || !isOrderById)
 	{
@@ -2936,7 +2938,8 @@ BuildPointReadIndexClause(RestrictInfo *restrictInfo, int indexCol)
 
 
 static List *
-GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby, bool *isOrderById)
+GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby,
+			   bool *isOrderById, bool *hasDistinctScan)
 {
 	List *sortDetails = NIL;
 	ListCell *sortCell;
@@ -3071,6 +3074,7 @@ GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby, bool *isOrderById
 			}
 
 			hasDistinct = true;
+			*hasDistinctScan = true;
 			*hasGroupby = true;
 		}
 		else
@@ -3343,7 +3347,9 @@ ConsiderIndexOrderByPushdownForId(PlannerInfo *root, RelOptInfo *rel, RangeTblEn
 
 	bool isOrderById = false;
 	bool hasGroupby = false;
-	List *sortDetails = GetSortDetails(root, rti, &hasGroupby, &isOrderById);
+	bool hasDistinct = false;
+	List *sortDetails = GetSortDetails(root, rti, &hasGroupby, &isOrderById,
+									   &hasDistinct);
 
 	if (sortDetails == NIL || !isOrderById)
 	{
@@ -3471,11 +3477,71 @@ ProcessOrderByStatements(PlannerInfo *root,
 
 	bool hasGroupby = false;
 	bool isOrderById = false;
+	bool hasDistinct = false;
 	List *sortDetails = GetSortDetails(root, path->path.parent->relid, &hasGroupby,
-									   &isOrderById);
+									   &isOrderById, &hasDistinct);
 
 	if (list_length(sortDetails) == 0)
 	{
+		return;
+	}
+
+	if (isMultiKeyIndex && hasDistinct)
+	{
+		/* if it's multi-key and there's a distinct, we can't push down an order by.
+		 * However, we can push an $exists: true filter down to the index so that we
+		 * can reduce the overall data set to the index.
+		 */
+		if (EnableDistinctMultiKeyFilterPushdown && list_length(sortDetails) >= 1)
+		{
+			SortIndexInputDetails *sortDetailsInput = linitial(sortDetails);
+			if (sortDetailsInput->funcOid == BsonDistinctUnwindFunctionOid())
+			{
+				int sortColumn = -1;
+				for (int col = minOrderByColumn; col <= maxOrderByColumn; col++)
+				{
+					if (queryOrderPaths[col] != NULL &&
+						strcmp(sortDetailsInput->sortPath, queryOrderPaths[col]) == 0)
+					{
+						sortColumn = col;
+						break;
+					}
+				}
+
+				/*
+				 * Only push the $exists: true filter when the distinct path
+				 * maps to a column of this index (sortColumn >= 0) that does
+				 * not already carry an equality or non-equality bound. If the
+				 * column already has a bound, the exists clause is redundant;
+				 * if the distinct path is not part of the index at all, there
+				 * is no column to constrain.
+				 *
+				 * NOTE: sortColumn and the prefix arrays are both keyed off the
+				 * distinct path (the first sort detail). Today a distinct always
+				 * drives the leading order-by, so this is safe. If a future
+				 * shape allows the distinct key (e.g. "a") to differ from the
+				 * column that carries the order-by/filter (e.g. an order and
+				 * filter on "b" over an index on "b"), this single-column check
+				 * would look at the wrong column's prefixes and must be revised
+				 * to resolve the exists target independently of the order-by.
+				 */
+				if (sortColumn >= 0 && !(equalityPrefixes[sortColumn] ||
+										 nonEqualityPrefixes[sortColumn]))
+				{
+					/* push down an $exists: true filter to the index for this path */
+					Expr *existsTrueOpExpr = (Expr *) CreateExistsTrueOpExpr(
+						(Expr *) sortDetailsInput->sortVar,
+						sortDetailsInput->sortPath, strlen(sortDetailsInput->sortPath));
+					RestrictInfo *existsTrueRestrictInfo = make_simple_restrictinfo(
+						root, (Expr *) existsTrueOpExpr);
+					IndexClause *indexClause = BuildPointReadIndexClause(
+						existsTrueRestrictInfo, 0);
+					path->indexclauses = lappend(path->indexclauses, indexClause);
+				}
+			}
+		}
+
+		list_free(sortDetails);
 		return;
 	}
 
