@@ -182,7 +182,14 @@ pub async fn process_request(
             indexing::process_list_indexes(request_context, connection_context, pg_data_client)
                 .await
         }
-        RequestType::Ping => Ok(constant::ok_response()),
+        RequestType::Ping
+        | RequestType::PlanCacheClear
+        | RequestType::PlanCacheClearFilters
+        | RequestType::PlanCacheSetFilter
+        | RequestType::RefreshSessions
+        | RequestType::KillAllSessions
+        | RequestType::KillAllSessionsByPattern => Ok(constant::ok_response()),
+        RequestType::PlanCacheListFilters => Ok(constant::plan_cache_list_filters_response()),
         RequestType::SaslContinue | RequestType::SaslStart | RequestType::Logout => Err(
             DocumentDBError::internal_error("Command should have been handled by Auth".to_owned()),
         ),

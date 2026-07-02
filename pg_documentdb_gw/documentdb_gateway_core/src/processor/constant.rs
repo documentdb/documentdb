@@ -11,7 +11,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use bson::{rawdoc, RawDocumentBuf};
+use bson::{rawdoc, RawArrayBuf, RawDocumentBuf};
 
 use crate::{
     configuration::DynamicConfiguration,
@@ -25,6 +25,13 @@ pub fn ok_response() -> Response {
     Response::Raw(RawResponse::new(rawdoc! {
         "ok": OK_SUCCEEDED
     }))
+}
+
+pub fn plan_cache_list_filters_response() -> Response {
+    let mut doc = RawDocumentBuf::new();
+    doc.append("filters", RawArrayBuf::new());
+    doc.append("ok", OK_SUCCEEDED);
+    Response::Raw(RawResponse::new(doc))
 }
 
 pub fn process_build_info(dynamic_config: &Arc<dyn DynamicConfiguration>) -> Response {
@@ -159,7 +166,7 @@ struct CommandInfo {
     secondary_override_ok: Option<bool>,
 }
 
-static SUPPORTED_COMMANDS : [CommandInfo; 62] = [
+static SUPPORTED_COMMANDS : [CommandInfo; 69] = [
 	CommandInfo {
 		command_name: "abortTransaction",
 		admin_only: true,
@@ -481,6 +488,22 @@ static SUPPORTED_COMMANDS : [CommandInfo; 62] = [
 		secondary_override_ok: None,
 	},
 	CommandInfo {
+		command_name: "killAllSessions",
+		admin_only: false,
+		help: "kill all logical sessions",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
+		command_name: "killAllSessionsByPattern",
+		admin_only: false,
+		help: "kill logical sessions by pattern",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
 		command_name: "killCursors",
 		admin_only: false,
 		help: "Stop a set of cursors.",
@@ -561,9 +584,49 @@ static SUPPORTED_COMMANDS : [CommandInfo; 62] = [
 		secondary_override_ok: None,
 	},
 	CommandInfo {
+		command_name: "planCacheClear",
+		admin_only: false,
+		help: "clear the plan cache",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
+		command_name: "planCacheClearFilters",
+		admin_only: false,
+		help: "clear plan cache index filters",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
+		command_name: "planCacheListFilters",
+		admin_only: false,
+		help: "list plan cache index filters",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
+		command_name: "planCacheSetFilter",
+		admin_only: false,
+		help: "set a plan cache index filter",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
 		command_name: "reIndex",
 		admin_only: false,
 		help: "Rebuild an index.",
+		secondary_ok: false,
+		requires_auth: true,
+		secondary_override_ok: None,
+	},
+	CommandInfo {
+		command_name: "refreshSessions",
+		admin_only: false,
+		help: "refresh logical session records",
 		secondary_ok: false,
 		requires_auth: true,
 		secondary_override_ok: None,

@@ -4322,8 +4322,9 @@ HandleSkip(const bson_value_t *existingValue, Query *query,
 	ReportFeatureUsage(FEATURE_STAGE_SKIP);
 	if (!BsonValueIsNumber(existingValue))
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION15972),
-						errmsg("$skip requires a numeric argument")));
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION5107200),
+						errmsg(
+							"Invalid argument to $skip stage: Expected a non-negative integer argument")));
 	}
 
 	bool checkFixedInteger = true;

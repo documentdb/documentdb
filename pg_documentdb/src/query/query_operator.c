@@ -4270,7 +4270,16 @@ ValidateOrderbyExpressionAndGetIsAscending(pgbson *orderby)
 
 	if (!BsonValueIsNumber(&orderingElement.bsonValue))
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION15974),
+						errmsg("Sort direction value %s is not valid",
+							   BsonValueToJsonForLogging(
+								   &orderingElement.bsonValue))));
+	}
+
+	double sortOrderDouble = BsonValueAsDouble(&orderingElement.bsonValue);
+	if (isnan(sortOrderDouble) || isinf(sortOrderDouble))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION15975),
 						errmsg("Sort direction value %s is not valid",
 							   BsonValueToJsonForLogging(
 								   &orderingElement.bsonValue))));
@@ -4279,7 +4288,7 @@ ValidateOrderbyExpressionAndGetIsAscending(pgbson *orderby)
 	int64_t sortOrder = BsonValueAsInt64(&orderingElement.bsonValue);
 	if (sortOrder != 1 && sortOrder != -1)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION15975),
 						errmsg("Sort direction value %s is not valid",
 							   BsonValueToJsonForLogging(
 								   &orderingElement.bsonValue))));
