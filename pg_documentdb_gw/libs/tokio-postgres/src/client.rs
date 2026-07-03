@@ -87,6 +87,7 @@ struct CachedTypeInfo {
 pub struct InnerClient {
     sender: mpsc::UnboundedSender<Request>,
     cached_typeinfo: Mutex<CachedTypeInfo>,
+    buffer_size: usize,
 
     /// A buffer to use when writing out postgres commands.
     buffer: Mutex<BytesMut>,
@@ -102,7 +103,9 @@ impl InnerClient {
 
         Ok(Responses {
             receiver,
-            cur: BackendMessages::empty(),
+            // The first batch from the channel replaces `cur`, so there is no
+            // need to pre-allocate here.
+            cur: BackendMessages::with_capacity(0),
         })
     }
 
@@ -150,7 +153,11 @@ impl InnerClient {
     {
         let mut buffer = self.buffer.lock();
         let r = f(&mut buffer);
-        buffer.clear();
+        if buffer.capacity() > self.buffer_size {
+            *buffer = BytesMut::with_capacity(self.buffer_size);
+        } else {
+            buffer.clear();
+        }
         r
     }
 }
@@ -195,12 +202,14 @@ impl Client {
         ssl_negotiation: SslNegotiation,
         process_id: i32,
         secret_key: i32,
+        buffer_size: usize,
     ) -> Client {
         Client {
             inner: Arc::new(InnerClient {
                 sender,
                 cached_typeinfo: Default::default(),
-                buffer: Default::default(),
+                buffer_size,
+                buffer: Mutex::new(BytesMut::with_capacity(buffer_size)),
             }),
             #[cfg(feature = "runtime")]
             socket_config: None,
@@ -795,5 +804,28 @@ impl Client {
 impl fmt::Debug for Client {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Client").finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inner_client_drops_oversized_write_buffer_after_use() {
+        let buffer_size = 16;
+        let (sender, _receiver) = mpsc::unbounded();
+        let client = InnerClient {
+            sender,
+            cached_typeinfo: Default::default(),
+            buffer_size,
+            buffer: Mutex::new(BytesMut::with_capacity(buffer_size)),
+        };
+
+        client.with_buf(|buf| {
+            buf.reserve(1024 * 1024);
+        });
+
+        assert!(client.buffer.lock().capacity() <= buffer_size);
     }
 }

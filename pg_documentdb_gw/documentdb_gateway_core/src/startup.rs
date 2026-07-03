@@ -16,6 +16,7 @@ use crate::{
     error::Result,
     postgres::conn_mgmt::{self, PoolManager},
     service::TlsProvider,
+    shutdown_controller::SHUTDOWN_CONTROLLER,
 };
 
 pub fn get_service_context(
@@ -68,6 +69,7 @@ where
 {
     let max_time = Duration::from_secs(setup_configuration.postgres_startup_wait_time_seconds());
     let start = Instant::now();
+    let shutdown_token = SHUTDOWN_CONTROLLER.token();
 
     loop {
         match create_func().await {
@@ -77,7 +79,19 @@ where
                     "Exception when creating postgres object {error:?}. Retrying in \
                      {wait_time:?}."
                 );
-                tokio::time::sleep(wait_time).await;
+                // Race the retry backoff against the shutdown signal so a
+                // Ctrl+C received while we're stuck retrying triggers an
+                // immediate exit instead of waiting for the next attempt.
+                tokio::select! {
+                    () = tokio::time::sleep(wait_time) => {}
+                    () = shutdown_token.cancelled() => {
+                        tracing::info!(
+                            "Shutdown signal received during postgres startup. \
+                             Aborting immediately."
+                        );
+                        std::process::exit(0);
+                    }
+                }
             }
             Err(error) => {
                 panic!("Failed to create postgres object after {max_time:?}: {error}");

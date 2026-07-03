@@ -22,6 +22,7 @@ pub use pool_manager::{
 };
 pub use pool_metrics::{ConnectionPoolMetricSnapshot, ConnectionPoolStatus};
 pub use pool_settings::{
-    PgPoolSettings, CONN_IDLE_LIFETIME_SECS, CONN_LIFETIME_SECS, CONN_PRUNE_INTERVAL_SECS,
+    PgPoolSettings, CONN_BUFFER_SIZE, CONN_IDLE_LIFETIME_SECS, CONN_LIFETIME_SECS,
+    CONN_PRUNE_INTERVAL_SECS,
 };
 pub use query_dispatch::{run_request_with_retries, ConnectionSource, PullConnection};

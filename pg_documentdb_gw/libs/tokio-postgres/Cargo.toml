@@ -18,6 +18,10 @@ test = false
 name = "bench"
 harness = false
 
+[[bench]]
+name = "read_buffer_bench"
+harness = false
+
 [package.metadata.docs.rs]
 all-features = true
 

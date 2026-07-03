@@ -10,7 +10,7 @@ members = [
 # Locally vendored, patched copy of tokio-postgres (see [patch.crates-io] below).
 # Excluded so it is built only as a patched dependency, not as a workspace member.
 exclude = [
-    "vendor/tokio-postgres"
+    "libs/tokio-postgres"
 ]
 resolver = "2"
 

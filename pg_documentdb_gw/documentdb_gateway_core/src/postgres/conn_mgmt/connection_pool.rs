@@ -51,6 +51,7 @@ fn pg_configuration(
     user: &str,
     password: Option<&str>,
     application_name: &str,
+    buffer_size: usize,
 ) -> tokio_postgres::Config {
     let mut config = tokio_postgres::Config::new();
 
@@ -70,6 +71,7 @@ fn pg_configuration(
         .dbname(setup_configuration.postgres_database())
         .user(user)
         .application_name(application_name)
+        .buffer_size(buffer_size)
         .options(
             query_catalog.set_search_path_and_timeout(&command_timeout_ms, &transaction_timeout_ms),
         );
@@ -161,6 +163,7 @@ impl ConnectionPool {
             user,
             password,
             application_name,
+            pool_settings.connection_buffer_size(),
         );
 
         let metrics = Arc::new(ConnectionPoolMetrics::default());
@@ -512,7 +515,14 @@ mod tests {
         let setup_config = test_setup_configuration();
         let query_catalog = create_query_catalog();
 
-        let config = pg_configuration(&setup_config, &query_catalog, "user", Some("secret"), "app");
+        let config = pg_configuration(
+            &setup_config,
+            &query_catalog,
+            "user",
+            Some("secret"),
+            "app",
+            262_144,
+        );
         let password = config.get_password().expect("password should be set");
         assert_eq!(password, b"secret");
     }
@@ -522,7 +532,7 @@ mod tests {
         let setup_config = test_setup_configuration();
         let query_catalog = create_query_catalog();
 
-        let config = pg_configuration(&setup_config, &query_catalog, "user", None, "app");
+        let config = pg_configuration(&setup_config, &query_catalog, "user", None, "app", 262_144);
         assert!(config.get_password().is_none());
     }
 }
