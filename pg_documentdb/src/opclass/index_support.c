@@ -3463,7 +3463,7 @@ ConsiderIndexOrderByPushdownForId(PlannerInfo *root, RelOptInfo *rel, RangeTblEn
 }
 
 
-static void
+static bool
 ProcessOrderByStatements(PlannerInfo *root,
 						 IndexPath *path, int32_t minOrderByColumn,
 						 int32_t maxOrderByColumn, bool isMultiKeyIndex,
@@ -3483,7 +3483,7 @@ ProcessOrderByStatements(PlannerInfo *root,
 
 	if (list_length(sortDetails) == 0)
 	{
-		return;
+		return false;
 	}
 
 	if (isMultiKeyIndex && hasDistinct)
@@ -3492,6 +3492,7 @@ ProcessOrderByStatements(PlannerInfo *root,
 		 * However, we can push an $exists: true filter down to the index so that we
 		 * can reduce the overall data set to the index.
 		 */
+		bool pushedDistinctExistsFilter = false;
 		if (EnableDistinctMultiKeyFilterPushdown && list_length(sortDetails) >= 1)
 		{
 			SortIndexInputDetails *sortDetailsInput = linitial(sortDetails);
@@ -3537,19 +3538,29 @@ ProcessOrderByStatements(PlannerInfo *root,
 					IndexClause *indexClause = BuildPointReadIndexClause(
 						existsTrueRestrictInfo, 0);
 					path->indexclauses = lappend(path->indexclauses, indexClause);
+
+					/*
+					 * The exists clause is attached to the first index column
+					 * (indexcol 0), so it satisfies the first-column filter
+					 * requirement that the caller uses to keep this index path.
+					 * Since a multi-key distinct never pushes an actual order-by,
+					 * without this signal the caller would discard the path and
+					 * the index would only be usable via an explicit hint.
+					 */
+					pushedDistinctExistsFilter = true;
 				}
 			}
 		}
 
 		list_free(sortDetails);
-		return;
+		return pushedDistinctExistsFilter;
 	}
 
 	if (isMultiKeyIndex && hasGroupby)
 	{
 		/* We can't push down orderby on a multikey index if there is a group by */
 		list_free_deep(sortDetails);
-		return;
+		return false;
 	}
 
 	List *indexOrderBys = NIL;
@@ -3562,7 +3573,7 @@ ProcessOrderByStatements(PlannerInfo *root,
 		{
 			/* No orderby on the column */
 			list_free_deep(sortDetails);
-			return;
+			return false;
 		}
 	}
 
@@ -3678,6 +3689,7 @@ ProcessOrderByStatements(PlannerInfo *root,
 	path->path.pathkeys = indexPathKeys;
 
 	list_free_deep(sortDetails);
+	return false;
 }
 
 
@@ -4116,16 +4128,22 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 	}
 
 	/* One final pass to add the appropriate order by clauses to the index path */
+	bool distinctFilterSatisfiesFirstColumn = false;
 	if (indexCanOrder && maxOrderByColumn >= 0)
 	{
-		ProcessOrderByStatements(root, indexPath, minOrderByColumn,
-								 maxOrderByColumn, isMultiKeyIndex,
-								 multiKeyBitMask,
-								 queryOrderPaths, equalityPrefixes,
-								 nonEqualityPrefixes, pathSortOrders);
+		distinctFilterSatisfiesFirstColumn = ProcessOrderByStatements(
+			root, indexPath, minOrderByColumn,
+			maxOrderByColumn, isMultiKeyIndex,
+			multiKeyBitMask,
+			queryOrderPaths, equalityPrefixes,
+			nonEqualityPrefixes, pathSortOrders);
 
-		/* Trim the order by clauses from the index if there's filters */
-		if (firstFilterColumnFound && list_length(orderbyIndexClauses) > 0)
+		/* Trim the order by clauses from the index if there's filters. The
+		 * multi-key distinct branch does not push an order-by; it instead pushes
+		 * an $exists: true filter on the first column (distinctFilterSatisfiesFirstColumn),
+		 * so its stale order-by clauses must be trimmed here as well. */
+		if ((firstFilterColumnFound || distinctFilterSatisfiesFirstColumn) &&
+			list_length(orderbyIndexClauses) > 0)
 		{
 			/* If the index supports parallel scan, we need to duplicate this list
 			 * so that parallel scans can also see the trimmed clauses.
@@ -4195,8 +4213,13 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 		*canSupportIndexOnlyScan = indexOnlyScanPossible;
 	}
 
-	/* Valid if we pushed some order by or a filter path was found on at least the first column */
-	return firstFilterColumnFound || indexPath->indexorderbys != NIL;
+	/*
+	 * Valid if we pushed some order by, a filter path was found on at least the
+	 * first column, or a multi-key distinct pushed an $exists: true filter on
+	 * the first column (which stands in for an order-by that cannot be pushed).
+	 */
+	return firstFilterColumnFound || distinctFilterSatisfiesFirstColumn ||
+		   indexPath->indexorderbys != NIL;
 }
 
 

@@ -101,8 +101,11 @@ $cmd$);
 ROLLBACK;
 
 -- ============================================================
--- Test 6: EXPLAIN distinct on multikey field - pushdown should NOT apply
--- Multikey indexes cannot provide ordering for distinct
+-- Test 6: EXPLAIN distinct on multikey field
+-- A multikey index cannot provide ordering for distinct, so the order-by
+-- pushdown does NOT apply and the Sort remains. The multikey index is
+-- still selected (without a hint) with an $exists: true filter pushed on
+-- the distinct path to reduce the scanned data set.
 -- ============================================================
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "dist_push_mk", "indexes": [ { "key": { "arr": 1 }, "name": "idx_arr" } ] }', true);
 SELECT documentdb_api.insert_one('db', 'dist_push_mk', '{ "arr": [1, 2, 3], "x": "a" }');
@@ -126,7 +129,8 @@ ROLLBACK;
 -- ============================================================
 -- Test 7: Multikey transition - insert array into non-multikey collection
 -- After inserting an array value into field "a", the index becomes multikey
--- and pushdown should NO LONGER eliminate Sort.
+-- and the order-by pushdown should NO LONGER eliminate the Sort. The index
+-- is still used (with an $exists: true filter on "a") but the Sort reappears.
 -- ============================================================
 SELECT documentdb_api.insert_one('db', 'dist_push', '{ "_id": 999, "a": [100, 200, 300], "b": "Z" }');
 ANALYZE;
@@ -973,6 +977,27 @@ SET LOCAL documentdb.enable_distinct_multikey_filter_pushdown TO off;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "b": { "$gte": "C" } }, "hint": "idx_a_b" }')
+$cmd$);
+ROLLBACK;
+
+-- ============================================================
+-- Test 54: Same query as Test 50 (distinct on "a" with a filter on
+-- "b" over composite index { a: 1, b: 1 }, where "a" is multikey) but
+-- WITHOUT an explicit hint. The composite index idx_a_b should be
+-- auto-selected: because a multikey distinct pushes an $exists: true
+-- clause on the first index column instead of an order-by, the planner
+-- treats the first column as satisfied and keeps this index path as a
+-- candidate even without a hint. Expect an Index Scan using idx_a_b
+-- (not a fallback _id scan) with the "a" and "b" clauses.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "b": { "$gte": "C" } } }')
 $cmd$);
 ROLLBACK;
 

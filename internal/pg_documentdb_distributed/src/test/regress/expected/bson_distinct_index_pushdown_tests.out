@@ -232,9 +232,9 @@ $cmd$);
                            Sort Key: (documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text))
                            ->  ProjectSet
                                  Output: documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text)
-                                 ->  Index Scan using _id_ on documentdb_data.documents_1984601_198460002 collection
+                                 ->  Index Scan using idx_a on documentdb_data.documents_1984601_198460002 collection
                                        Output: collection.shard_key_value, collection.object_id, collection.document
-                                       Index Cond: (collection.shard_key_value = '1984601'::bigint)
+                                       Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "$minKey" : 1 } }'::documentdb_core.bson)
 (19 rows)
 
 ROLLBACK;
@@ -317,9 +317,9 @@ $cmd$);
                            Sort Key: (documentdb_api_catalog.bson_distinct_unwind(collection.document, 'arr'::text))
                            ->  ProjectSet
                                  Output: documentdb_api_catalog.bson_distinct_unwind(collection.document, 'arr'::text)
-                                 ->  Index Scan using _id_ on documentdb_data.documents_1984602_198460004 collection
+                                 ->  Index Scan using idx_arr on documentdb_data.documents_1984602_198460004 collection
                                        Output: collection.shard_key_value, collection.object_id, collection.document
-                                       Index Cond: (collection.shard_key_value = '1984602'::bigint)
+                                       Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "arr" : { "$minKey" : 1 } }'::documentdb_core.bson)
 (19 rows)
 
 ROLLBACK;
