@@ -183,7 +183,4 @@ void PgbsonHeapWriterEndArray(pgbson_heap_writer *writer,
 void PgbsonHeapWriterAppendValue(pgbson_heap_writer *writer, const char *path,
 								 uint32_t pathLength, const bson_value_t *value);
 bson_value_t PgbsonHeapWriterGetValue(pgbson_heap_writer *writer);
-
-#include "io/pgbson_builder.h"
-
 #endif
