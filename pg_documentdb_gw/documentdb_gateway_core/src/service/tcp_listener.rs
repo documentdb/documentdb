@@ -15,7 +15,10 @@ use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::TcpListener;
 
-use crate::error::{DocumentDBError, Result};
+use crate::{
+    error::{DocumentDBError, Result},
+    service::ListenerConfig,
+};
 
 /// Creates TCP listeners bound to the appropriate addresses.
 ///
@@ -34,10 +37,10 @@ use crate::error::{DocumentDBError, Result};
 /// - In localhost mode: binding to `127.0.0.1` fails.
 /// - In non-localhost mode: both IPv4 and IPv6 bindings fail.
 pub async fn create_tcp_listeners(
-    use_local_host: bool,
-    port: u16,
+    cfg: &ListenerConfig,
 ) -> Result<(Option<TcpListener>, Option<TcpListener>)> {
-    if use_local_host {
+    let port = cfg.port();
+    if cfg.use_local_host() {
         let listener = TcpListener::bind(format!("127.0.0.1:{port}")).await?;
         tracing::info!("Bound to localhost address 127.0.0.1:{port}.");
         Ok((Some(listener), None))
@@ -119,7 +122,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_tcp_listeners_localhost_binds_to_ipv4_loopback_only() {
-        let (ipv4_listener, ipv6_listener) = create_tcp_listeners(true, 0).await.unwrap();
+        let (ipv4_listener, ipv6_listener) = create_tcp_listeners(&ListenerConfig::for_test(0))
+            .await
+            .unwrap();
 
         // Localhost mode should return only IPv4 listener
         assert!(ipv4_listener.is_some(), "IPv4 listener should be present");
@@ -134,7 +139,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_tcp_listeners_non_localhost_returns_at_least_one_listener() {
-        let (ipv4_listener, ipv6_listener) = create_tcp_listeners(false, 0).await.unwrap();
+        let (ipv4_listener, ipv6_listener) =
+            create_tcp_listeners(&ListenerConfig::for_test_all_interfaces(0))
+                .await
+                .unwrap();
 
         // At least one listener should be present
         assert!(
@@ -155,7 +163,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_tcp_listeners_assigns_port() {
-        let (ipv4_listener, _) = create_tcp_listeners(true, 0).await.unwrap();
+        let (ipv4_listener, _) = create_tcp_listeners(&ListenerConfig::for_test(0))
+            .await
+            .unwrap();
         let addr = ipv4_listener.unwrap().local_addr().unwrap();
         assert_ne!(addr.port(), 0, "OS should assign a non-zero port");
     }
@@ -168,14 +178,18 @@ mod tests {
         drop(temp_listener);
 
         // Now bind using our function with that specific port
-        let (ipv4_listener, _) = create_tcp_listeners(true, port).await.unwrap();
+        let (ipv4_listener, _) = create_tcp_listeners(&ListenerConfig::for_test(port))
+            .await
+            .unwrap();
         let addr = ipv4_listener.unwrap().local_addr().unwrap();
         assert_eq!(addr.port(), port);
     }
 
     #[tokio::test]
     async fn test_create_tcp_listeners_localhost_does_not_bind_to_all_interfaces() {
-        let (ipv4_listener, ipv6_listener) = create_tcp_listeners(true, 0).await.unwrap();
+        let (ipv4_listener, ipv6_listener) = create_tcp_listeners(&ListenerConfig::for_test(0))
+            .await
+            .unwrap();
 
         // Localhost mode must NOT bind to all interfaces
         assert!(ipv4_listener.is_some());
@@ -201,7 +215,7 @@ mod tests {
 
             // Now try to create listeners on the same port
             // IPv6 bind will fail (port taken), but IPv4 should succeed
-            let result = create_tcp_listeners(false, port).await;
+            let result = create_tcp_listeners(&ListenerConfig::for_test_all_interfaces(port)).await;
 
             // The function should succeed as long as at least one listener works
             if let Ok((ipv4_listener, ipv6_listener)) = result {
@@ -233,7 +247,8 @@ mod tests {
 
         if let (Ok(_ipv4_pre), Ok(_ipv6_pre)) = (&ipv4_pre_bound, &ipv6_pre_bound) {
             // Both ports are now taken, create_tcp_listeners should fail
-            let result = create_tcp_listeners(false, TEST_PORT).await;
+            let result =
+                create_tcp_listeners(&ListenerConfig::for_test_all_interfaces(TEST_PORT)).await;
             assert!(result.is_err(), "Should fail when both addresses are taken");
         }
         // If either pre-bind failed (port already in use by another process),

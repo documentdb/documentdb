@@ -33,10 +33,15 @@ use documentdb_gateway_core::{
     shutdown_controller::SHUTDOWN_CONTROLLER,
     startup::{create_postgres_object, get_service_context},
     telemetry::{TelemetryConfig, TelemetryManager},
+    time::STARTUP_INSTANT,
 };
-use tokio::signal;
+use tokio::{signal, time::Instant};
 
 fn main() {
+    STARTUP_INSTANT.get_or_init(Instant::now);
+
+    tracing::debug!("Gateway process started");
+
     // Dispatch documentdb-gateway --help/--version/check subcommands; exits
     // if any matched. For `run [--config <path>]` returns Some(path) (path is
     // guaranteed to exist — cli validated). For the legacy invocation form

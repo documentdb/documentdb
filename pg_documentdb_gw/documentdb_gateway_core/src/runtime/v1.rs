@@ -12,6 +12,7 @@ use openssl::ssl::Ssl;
 use tokio::{
     io::BufStream,
     net::{unix::SocketAddr as UnixSocketAddr, TcpStream, UnixListener, UnixStream},
+    time::Instant,
 };
 use tokio_openssl::SslStream;
 use tokio_util::sync::CancellationToken;
@@ -21,8 +22,9 @@ use crate::{
     context::{ConnectionContext, ServiceContext},
     error::{DocumentDBError, Result},
     postgres::PgDataClient,
-    service,
-    telemetry::TelemetryProvider,
+    service::{self, ListenerConfig},
+    telemetry::{record_startup_metrics, TelemetryProvider},
+    time::STARTUP_INSTANT,
 };
 
 const TCP_KEEPALIVE_TIME_SECS: u64 = 180;
@@ -75,6 +77,16 @@ fn create_unix_socket_listener(socket_path: &str, permissions: u32) -> Result<Un
     Ok(listener)
 }
 
+/// Runs the `DocumentDB` gateway v1 runtime, binding listeners and accepting
+/// connections until the cancellation token is triggered.
+///
+/// The startup duration is recorded via [`crate::time::STARTUP_INSTANT`] once
+/// the listeners are bound and the gateway is ready to accept connections.
+///
+/// # Errors
+///
+/// Returns an error if listener binding fails or a fatal error occurs in the
+/// accept loop.
 pub async fn run_gateway<T>(
     service_context: ServiceContext,
     telemetry: Option<Box<dyn TelemetryProvider>>,
@@ -83,28 +95,27 @@ pub async fn run_gateway<T>(
 where
     T: PgDataClient + 'static,
 {
-    let (ipv4_listener, ipv6_listener) = service::create_tcp_listeners(
-        service_context.setup_configuration().use_local_host(),
-        service_context.setup_configuration().gateway_listen_port(),
-    )
-    .await?;
+    let listener_config = ListenerConfig::from(service_context.setup_configuration());
 
-    tracing::info!(
-        "TCP listener(s) bound to port {}",
-        service_context.setup_configuration().gateway_listen_port()
+    let (ipv4_listener, ipv6_listener) = service::create_tcp_listeners(&listener_config).await?;
+
+    tracing::info!("TCP listener(s) bound to port {}", listener_config.port());
+
+    let unix_listener = if let Some(unix_socket_path) = listener_config.unix_socket_path() {
+        let permissions = listener_config.unix_socket_permissions();
+        let unix_listener = create_unix_socket_listener(unix_socket_path, permissions)?;
+        Some(unix_listener)
+    } else {
+        tracing::info!("Unix socket disabled (not configured)");
+        None
+    };
+
+    // The listeners are bound, so the gateway is now ready to accept
+    // connections. Record the startup duration through a single shared site.
+    record_startup(
+        STARTUP_INSTANT.get_or_init(Instant::now).elapsed(),
+        telemetry.as_deref(),
     );
-
-    let unix_listener =
-        if let Some(unix_socket_path) = service_context.setup_configuration().unix_socket_path() {
-            let permissions = service_context
-                .setup_configuration()
-                .unix_socket_file_permissions();
-            let unix_listener = create_unix_socket_listener(unix_socket_path, permissions)?;
-            Some(unix_listener)
-        } else {
-            tracing::info!("Unix socket disabled (not configured)");
-            None
-        };
 
     loop {
         tokio::select! {
@@ -146,6 +157,24 @@ where
                 return Ok(())
             }
         }
+    }
+}
+
+/// Records the gateway startup duration through the single shared call site.
+///
+/// Routes through the [`TelemetryProvider`] when one is supplied (so providers
+/// like the Geneva provider can emit to their own sinks in addition to
+/// `OpenTelemetry`); otherwise records the `OpenTelemetry` startup metrics
+/// directly, matching the trait's default behavior.
+fn record_startup(elapsed: Duration, telemetry: Option<&dyn TelemetryProvider>) {
+    tracing::info!(
+        startup_duration_ms = elapsed.as_millis(),
+        "Gateway ready to accept connections."
+    );
+
+    match telemetry {
+        Some(provider) => provider.record_startup_duration(elapsed),
+        None => record_startup_metrics(elapsed),
     }
 }
 

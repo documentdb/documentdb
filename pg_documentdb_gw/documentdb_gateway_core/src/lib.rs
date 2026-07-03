@@ -41,6 +41,9 @@ use crate::{
 /// The runtime flag is evaluated once here so a gateway process runs either the
 /// legacy gateway implementation or the nacelle runtime implementation.
 ///
+/// The startup duration is recorded via [`crate::time::STARTUP_INSTANT`] once
+/// the gateway is ready to accept connections.
+///
 /// # Errors
 ///
 /// Returns an error if the selected gateway runtime fails while binding,
