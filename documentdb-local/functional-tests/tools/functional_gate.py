@@ -186,6 +186,40 @@ def load_allowlist_ids(path: str, engine_name: str) -> set[str]:
     return in_scope
 
 
+def shard_allowlist_ids(allowlist_path: str, engine_name: str,
+                        num_shards: int, shard_id: int, prefix: str = "") -> list[str]:
+    """Return the allowlisted test IDs assigned to one shard.
+
+    IDs are sorted for determinism, then distributed round-robin (stride
+    slicing ``ids[shard_id::num_shards]``) so every shard gets a roughly equal,
+    interleaved slice across all test areas — this keeps per-shard runtime even
+    rather than clustering a slow directory onto one shard. The union of all
+    shards is exactly the full allowlist with no overlap.
+
+    ``prefix`` (e.g. ``documentdb_tests/``) is prepended to each rootdir-relative
+    node ID so the result can be passed straight to pytest in the container.
+    """
+    if num_shards < 1:
+        raise ValueError(f"num_shards must be >= 1, got {num_shards}")
+    if not (0 <= shard_id < num_shards):
+        raise ValueError(f"shard_id must be in [0, {num_shards}), got {shard_id}")
+    ids = sorted(load_allowlist_ids(allowlist_path, engine_name))
+    return [prefix + tid for tid in ids[shard_id::num_shards]]
+
+
+def cmd_shard_allowlist(args):
+    ids = shard_allowlist_ids(args.allowlist, args.engine_name,
+                              args.num_shards, args.shard_id, args.prefix)
+    text = "\n".join(ids)
+    if args.output:
+        with open(args.output, "w") as f:
+            f.write(text + ("\n" if text else ""))
+    else:
+        if text:
+            print(text)
+    return 0
+
+
 def validate_allowlist_config(path: str) -> list[ConfigError]:
     """Validate allowlist.yml and return a list of errors (empty = valid)."""
     try:
@@ -914,6 +948,120 @@ def cmd_compare_engines(args):
     return 0
 
 
+def gate_failure_ids(allowlist_path: str, report_path: str, engine_name: str) -> list[str]:
+    """Return allowlisted test IDs that ran but did NOT pass (failed/skipped/
+    xfailed/xpassed/errored).
+
+    These are the candidates for a sequential re-run: the parallel full-suite
+    pass can intermittently crash the engine (a known RUM dynamic-cursor race
+    under -n4), and the backend's brief recovery window cascades into spurious
+    failures of unrelated, otherwise-passing allowlisted tests. Re-running just
+    these IDs sequentially (no parallel race) lets genuine passers recover while
+    genuinely-broken tests stay failed.
+
+    Missing (never-collected) allowlisted IDs are intentionally excluded — a
+    re-run cannot resurrect a test that was never collected, and that condition
+    indicates a real allowlist/image drift that must fail the gate.
+    """
+    result = summarize_gate(allowlist_path, report_path, engine_name=engine_name)
+    ids = [f["test_id"] for f in result.failed_tests]
+    ids += [e["test_id"] for e in result.errors
+            if e.get("subtype") in ("NON_PASS_OUTCOME", "ALLOWLISTED_XPASS")]
+    # De-duplicate while preserving order
+    seen = set()
+    unique = []
+    for tid in ids:
+        if tid not in seen:
+            seen.add(tid)
+            unique.append(tid)
+    return unique
+
+
+def cmd_gate_failures(args):
+    ids = gate_failure_ids(args.allowlist, args.report, args.engine_name)
+    text = "\n".join(ids)
+    if args.output:
+        with open(args.output, "w") as f:
+            f.write(text + ("\n" if text else ""))
+    else:
+        if text:
+            print(text)
+    return 0
+
+
+def merge_reports(base_path: str, overlay_paths: list[str],
+                  sum_collected: bool = False) -> dict:
+    """Merge one or more overlay pytest JSON reports into a base report.
+
+    For every test present in an overlay, the overlay's record (outcome and
+    detail) replaces the base record for that node ID. Overlays are applied in
+    order, so the last overlay wins. This is used to fold a sequential re-run of
+    failed allowlisted tests back into the full parallel report: a re-run that
+    passes overrides the original transient failure, while a re-run that fails
+    keeps the test failed.
+
+    ``summary.collected`` handling depends on the merge mode:
+
+    * ``sum_collected=False`` (default, **re-run merge**): the base report holds
+      the full collected population and each overlay is a subset re-run of it, so
+      the base's ``collected`` is preserved.
+    * ``sum_collected=True`` (**shard-combine merge**): the base and overlays are
+      *disjoint* shard reports, so ``collected`` is summed across all inputs so
+      the coverage-boundary math in summarize-gate reflects the whole set rather
+      than just shard 0's slice.
+    """
+    with open(base_path) as f:
+        base = json.load(f)
+
+    tests = base.get("tests", [])
+    index = {t.get("nodeid", ""): i for i, t in enumerate(tests)}
+    collected_total = (base.get("summary", {}) or {}).get("collected", 0) or 0
+
+    for overlay_path in overlay_paths:
+        with open(overlay_path) as f:
+            overlay = json.load(f)
+        if sum_collected:
+            collected_total += (overlay.get("summary", {}) or {}).get("collected", 0) or 0
+        for t in overlay.get("tests", []):
+            nid = t.get("nodeid", "")
+            if not nid:
+                continue
+            if nid in index:
+                tests[index[nid]] = t
+            else:
+                index[nid] = len(tests)
+                tests.append(t)
+
+    base["tests"] = tests
+
+    # Refresh the outcome tallies in summary so downstream readers see merged
+    # numbers. 'collected' is preserved (re-run) or summed (shard-combine).
+    summary = base.get("summary", {})
+    tally: dict[str, int] = {}
+    for t in tests:
+        tally[t.get("outcome", "unknown")] = tally.get(t.get("outcome", "unknown"), 0) + 1
+    for key in ("passed", "failed", "skipped", "error", "xfailed", "xpassed"):
+        if key in tally:
+            summary[key] = tally[key]
+        elif key in summary:
+            summary[key] = 0
+    summary["total"] = len(tests)
+    if sum_collected:
+        summary["collected"] = collected_total
+    base["summary"] = summary
+    return base
+
+
+def cmd_merge_reports(args):
+    merged = merge_reports(args.base, args.overlay,
+                           sum_collected=getattr(args, "sum_collected", False))
+    with open(args.out, "w") as f:
+        json.dump(merged, f)
+    print(f"Merged {len(args.overlay)} overlay report(s) into {args.out} "
+          f"({len(merged.get('tests', []))} tests)")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="DocumentDB Functional Test Gate Tooling (RFC-0007)")
@@ -961,6 +1109,38 @@ def main():
     compare_parser.add_argument("--output-dir", default="",
                                 help="Directory for output artifacts")
 
+    # gate-failures: list allowlisted tests that ran but did not pass (rerun set)
+    failures_parser = subparsers.add_parser(
+        "gate-failures",
+        help="Print allowlisted tests that ran but did not pass (for sequential re-run)")
+    failures_parser.add_argument("--report", required=True, help="Path to pytest JSON report")
+    failures_parser.add_argument("--output", default="",
+                                 help="Write node IDs (one per line) to this file instead of stdout")
+
+    # merge-reports: fold re-run outcomes back into the base report
+    merge_parser = subparsers.add_parser(
+        "merge-reports",
+        help="Merge overlay (re-run) pytest JSON reports into a base report")
+    merge_parser.add_argument("--base", required=True, help="Path to the base pytest JSON report")
+    merge_parser.add_argument("--overlay", required=True, nargs="+",
+                              help="Path(s) to overlay report(s); later overlays win")
+    merge_parser.add_argument("--out", required=True, help="Path to write the merged report")
+    merge_parser.add_argument("--sum-collected", action="store_true",
+                              help="Sum summary.collected across base+overlays (disjoint "
+                                   "shard-combine merge) instead of preserving the base's "
+                                   "(default: preserve, for re-run merges)")
+
+    # shard-allowlist: print the allowlisted node IDs assigned to one shard
+    shard_parser = subparsers.add_parser(
+        "shard-allowlist",
+        help="Print the allowlisted test node IDs for one shard (round-robin split)")
+    shard_parser.add_argument("--num-shards", type=int, required=True, help="Total number of shards")
+    shard_parser.add_argument("--shard-id", type=int, required=True, help="This shard's index [0, num-shards)")
+    shard_parser.add_argument("--prefix", default="",
+                              help="String prepended to each node ID (e.g. 'documentdb_tests/')")
+    shard_parser.add_argument("--output", default="",
+                              help="Write node IDs (one per line) to this file instead of stdout")
+
     args = parser.parse_args()
 
     if args.command == "validate-config":
@@ -971,6 +1151,12 @@ def main():
         return cmd_summarize_daily(args)
     elif args.command == "compare-engines":
         return cmd_compare_engines(args)
+    elif args.command == "gate-failures":
+        return cmd_gate_failures(args)
+    elif args.command == "merge-reports":
+        return cmd_merge_reports(args)
+    elif args.command == "shard-allowlist":
+        return cmd_shard_allowlist(args)
 
 
 if __name__ == "__main__":

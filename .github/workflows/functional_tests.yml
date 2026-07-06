@@ -105,7 +105,15 @@ jobs:
           retention-days: 1
 
   # -----------------------------------------------------------------------
-  # Job 3: PR gate - run allowlisted tests against documentdb-local
+  # Job 3: PR gate - run the allowlisted tests against documentdb-local,
+  # sharded across parallel runners for bounded, low-variance wall-clock.
+  #
+  # Each shard runs a disjoint, round-robin slice of the allowlist (its own
+  # engine container), sequentially re-runs its own transient failures, and
+  # uploads its slice's report. The combine job (Job 3b) merges all slices and
+  # enforces the allowlist contract. Sharding replaced a single full-suite job
+  # whose ~12.5k-test run took 60-120+min on 2-core hosted runners and
+  # intermittently tripped the job timeout.
   # -----------------------------------------------------------------------
   functional-pr-gate:
     if: >
@@ -114,7 +122,13 @@ jobs:
       (github.event_name == 'workflow_dispatch' && (inputs.test_scope || 'allowlist') == 'allowlist')
     needs: [validate-config, build-documentdb-local]
     runs-on: *functional_tests_runner
-    timeout-minutes: 30
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      NUM_SHARDS: 4
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -158,55 +172,116 @@ jobs:
           docker pull "$IMAGE"
           echo "FUNC_TEST_IMAGE=$IMAGE" >> $GITHUB_ENV
 
-      - name: Run allowlist gate
+      - name: Run allowlist gate shard
         run: |
+          set -uo pipefail
+          RESULTS=.test-results/functional-tests
+          mkdir -p "$RESULTS"
+          chmod 777 "$RESULTS"
+          GATE="python3 documentdb-local/functional-tests/tools/functional_gate.py \
+            --image documentdb-local/functional-tests/config/image.yml \
+            --allowlist documentdb-local/functional-tests/config/allowlist.yml \
+            --engine-name ${{ env.ENGINE_NAME }}"
           CONNECTION_STRING="mongodb://${{ env.DOCUMENTDB_USER }}:${DOCUMENTDB_PASSWORD}@localhost:${{ env.DOCUMENTDB_PORT }}/?tls=true&tlsAllowInvalidCertificates=true"
-          mkdir -p .test-results/functional-tests
-          chmod 777 .test-results/functional-tests
 
+          # Resolve this shard's slice of the allowlist (rootdir-relative IDs
+          # prefixed for the container's pytest rootdir). The allowlist already
+          # excludes the known engine-crasher files, so no --ignore is needed.
+          $GATE shard-allowlist \
+            --num-shards "$NUM_SHARDS" \
+            --shard-id "${{ matrix.shard }}" \
+            --prefix documentdb_tests/ \
+            --output "$RESULTS/shard_ids.txt"
+          SHARD_COUNT=$(grep -c . "$RESULTS/shard_ids.txt" 2>/dev/null || true)
+          echo "Shard ${{ matrix.shard }}/$NUM_SHARDS: running ${SHARD_COUNT:-0} allowlisted test(s)"
+
+          # Refuse to run unless shard-allowlist produced a NON-EMPTY id file. An
+          # empty OR missing shard_ids.txt would leave the docker pytest call
+          # below with NO positional args, making pytest collect the entire
+          # upstream suite (including the engine-crasher files the allowlist
+          # purposely excludes), which could spuriously pass this shard and mask
+          # problems. -s catches both the empty-slice case (NUM_SHARDS > allowlist
+          # size) and the case where shard-allowlist failed without writing the
+          # file (grep on a missing file would leave SHARD_COUNT empty, making an
+          # arithmetic [ -eq 0 ] test error out and silently fall through).
+          if [ ! -s "$RESULTS/shard_ids.txt" ]; then
+            echo "::error::Shard ${{ matrix.shard }}: empty or missing allowlist slice — refusing to run pytest with no positional args (shard-allowlist failed, or NUM_SHARDS too large for the allowlist?)"
+            exit 1
+          fi
+
+          # Run exactly this shard's allowlisted tests in parallel. set -f so
+          # parametrized IDs containing [brackets] are not glob-expanded.
+          set -f
           docker run --rm --network host \
-            -v "$(pwd)/documentdb-local/functional-tests/config/allowlist.yml:/allowlist.yml:ro" \
-            -v "$(pwd)/documentdb-local/functional-tests/tools/conftest_allowlist.py:/extra/conftest_allowlist.py:ro" \
-            -v "$(pwd)/.test-results/functional-tests:/results" \
-            -e "PYTHONPATH=/extra" \
+            -v "$(pwd)/$RESULTS:/results" \
             ${{ env.FUNC_TEST_IMAGE }} \
-            documentdb_tests/compatibility/tests \
-            -p conftest_allowlist \
-            --allowlist /allowlist.yml \
+            $(cat "$RESULTS/shard_ids.txt") \
             --engine-name "${{ env.ENGINE_NAME }}" \
-            --allowlist-engine-name "${{ env.ENGINE_NAME }}" \
             --connection-string "$CONNECTION_STRING" \
-            -m "not no_parallel" \
             -n ${{ env.PYTEST_WORKERS }} \
             --json-report --json-report-file=/results/report.json \
             --junitxml=/results/results.xml \
-            -v
+            -v \
+            || true
+          set +f
 
-      - name: Summarize gate results
-        if: always()
-        run: |
-          if [ -f .test-results/functional-tests/report.json ]; then
-            python3 documentdb-local/functional-tests/tools/functional_gate.py \
-              --image documentdb-local/functional-tests/config/image.yml \
-              --allowlist documentdb-local/functional-tests/config/allowlist.yml \
+          [ -f "$RESULTS/report.json" ] || { echo "::error::Shard produced no report.json"; exit 1; }
+
+          # The parallel pass can intermittently segfault the engine (known RUM
+          # dynamic-cursor race under -n4); its brief recovery window cascades
+          # spurious failures onto otherwise-passing allowlisted tests. Re-run
+          # just this shard's failures sequentially (-p no:xdist => no race) and
+          # merge so transient victims recover; genuine failures stay failed.
+          # The 200 cap is a PER-SHARD budget: round-robin sharding spreads a
+          # systemic regression evenly across shards, so a ~800 gate-wide budget
+          # maps to ~200/shard. Above it, treat the failures as a real regression,
+          # skip the re-run, and let them fail the gate.
+          $GATE gate-failures --report "$RESULTS/report.json" --output "$RESULTS/rerun_ids.txt"
+          RERUN_COUNT=$(grep -c . "$RESULTS/rerun_ids.txt" || true)
+          echo "Shard ${{ matrix.shard }} non-pass after parallel run: $RERUN_COUNT"
+
+          if [ "$RERUN_COUNT" -gt 0 ] && [ "$RERUN_COUNT" -le 200 ]; then
+            sed 's#^#documentdb_tests/#' "$RESULTS/rerun_ids.txt" > "$RESULTS/rerun_args.txt"
+            echo "Re-running $RERUN_COUNT test(s) sequentially after letting the engine settle..."
+            sleep 20
+            set -f
+            docker run --rm --network host \
+              -v "$(pwd)/$RESULTS:/results" \
+              ${{ env.FUNC_TEST_IMAGE }} \
+              $(cat "$RESULTS/rerun_args.txt") \
               --engine-name "${{ env.ENGINE_NAME }}" \
-              summarize-gate \
-              --report .test-results/functional-tests/report.json \
-              --output-dir .test-results/functional-tests
-          else
-            echo "::error::No report.json produced. Test execution may have failed."
-            exit 1
+              --connection-string "$CONNECTION_STRING" \
+              -p no:xdist \
+              --timeout=600 \
+              --json-report --json-report-file=/results/report_rerun.json \
+              -v \
+              || true
+            set +f
+            if [ -f "$RESULTS/report_rerun.json" ]; then
+              $GATE merge-reports \
+                --base "$RESULTS/report.json" \
+                --overlay "$RESULTS/report_rerun.json" \
+                --out "$RESULTS/report_shard.json"
+              echo "Merged sequential re-run results for shard ${{ matrix.shard }}"
+            fi
+          fi
+
+          # Canonical per-shard report for the combine job: merged if a re-run
+          # happened, otherwise the original parallel report. report.json is
+          # container-owned, so copy with python to avoid permission issues.
+          if [ ! -f "$RESULTS/report_shard.json" ]; then
+            python3 -c "import shutil; shutil.copy('$RESULTS/report.json', '$RESULTS/report_shard.json')"
           fi
 
       - name: Collect DocumentDB logs
         if: always()
-        run: docker logs documentdb > .test-results/functional-tests/documentdb.log 2>&1 || true
+        run: docker logs documentdb > .test-results/functional-tests/documentdb-shard-${{ matrix.shard }}.log 2>&1 || true
 
-      - name: Upload test results
+      - name: Upload shard report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: functional-test-results
+          name: gate-shard-${{ matrix.shard }}
           overwrite: true
           path: .test-results/functional-tests/
 
@@ -217,6 +292,73 @@ jobs:
           docker rm documentdb 2>/dev/null || true
 
   # -----------------------------------------------------------------------
+  # Job 3b: PR gate combine - merge all shard reports and enforce the
+  # allowlist contract once over the full set.
+  # -----------------------------------------------------------------------
+  functional-pr-gate-combine:
+    if: >
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.test_scope || 'allowlist') == 'allowlist')
+    needs: [functional-pr-gate]
+    runs-on: *functional_tests_runner
+    timeout-minutes: 15
+    env:
+      NUM_SHARDS: 4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install Python dependencies
+        run: pip install pyyaml
+
+      - name: Download shard reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: gate-shard-*
+          path: shard-artifacts
+
+      - name: Merge shard reports and enforce allowlist
+        run: |
+          set -uo pipefail
+          OUT=.test-results/functional-tests
+          mkdir -p "$OUT"
+          GATE="python3 documentdb-local/functional-tests/tools/functional_gate.py \
+            --image documentdb-local/functional-tests/config/image.yml \
+            --allowlist documentdb-local/functional-tests/config/allowlist.yml \
+            --engine-name ${{ env.ENGINE_NAME }}"
+
+          # Collect each shard's canonical report.
+          mapfile -t SHARD_REPORTS < <(find shard-artifacts -name report_shard.json | sort)
+          echo "Found ${#SHARD_REPORTS[@]} shard report(s) of $NUM_SHARDS expected:"
+          printf '  %s\n' "${SHARD_REPORTS[@]}"
+          if [ "${#SHARD_REPORTS[@]}" -ne "$NUM_SHARDS" ]; then
+            echo "::error::Expected $NUM_SHARDS shard reports but found ${#SHARD_REPORTS[@]}. A shard job likely failed to produce results."
+            exit 1
+          fi
+
+          # Merge disjoint shard reports into one combined report (first as base,
+          # the rest as overlays) and enforce the allowlist over the full set.
+          BASE="${SHARD_REPORTS[0]}"
+          OVERLAYS=("${SHARD_REPORTS[@]:1}")
+          $GATE merge-reports --base "$BASE" --overlay "${OVERLAYS[@]}" --out "$OUT/report.json" --sum-collected
+
+          # Preserve shard logs in the combined artifact for debugging.
+          find shard-artifacts -name 'documentdb-shard-*.log' -exec cp {} "$OUT/" \; 2>/dev/null || true
+
+          $GATE summarize-gate \
+            --report "$OUT/report.json" \
+            --output-dir "$OUT"
+
+      - name: Upload combined gate results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-test-results
+          overwrite: true
+          path: .test-results/functional-tests/
+
+  # -----------------------------------------------------------------------
   # Job 4: Daily delta - full suite visibility report
   # -----------------------------------------------------------------------
   daily-functional-delta:
@@ -225,7 +367,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.test_scope == 'all')
     needs: [validate-config, build-documentdb-local]
     runs-on: *functional_tests_runner
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -278,6 +420,10 @@ jobs:
             -v "$(pwd)/.test-results/functional-tests-daily:/results" \
             ${{ env.FUNC_TEST_IMAGE }} \
             documentdb_tests/compatibility/tests \
+            --ignore=documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_window.py \
+            --ignore=documentdb_tests/compatibility/tests/core/operator/stages/planCacheStats/test_planCacheStats_type_errors.py \
+            --ignore=documentdb_tests/compatibility/tests/core/operator/expressions/accumulator/setUnion/test_setUnion_core.py \
+            --ignore=documentdb_tests/compatibility/tests/core/operator/expressions/accumulator/setUnion/test_setUnion_type_dedup.py \
             --engine-name "${{ env.ENGINE_NAME }}" \
             --connection-string "$CONNECTION_STRING" \
             -n ${{ env.PYTEST_WORKERS }} \
@@ -285,6 +431,63 @@ jobs:
             --junitxml=/results/results.xml \
             -v \
             || true  # Don't fail on test failures; we analyze the report
+
+      - name: Re-run transient allowlisted failures sequentially
+        if: always()
+        run: |
+          set -uo pipefail
+          RESULTS=.test-results/functional-tests-daily
+          GATE="python3 documentdb-local/functional-tests/tools/functional_gate.py \
+            --image documentdb-local/functional-tests/config/image.yml \
+            --allowlist documentdb-local/functional-tests/config/allowlist.yml \
+            --engine-name ${{ env.ENGINE_NAME }}"
+
+          [ -f "$RESULTS/report.json" ] || { echo "No daily report.json; skipping re-run."; exit 0; }
+
+          # Same rationale as the PR gate: the parallel pass can intermittently
+          # segfault the engine (RUM dynamic-cursor race under -n4) and cascade
+          # spurious failures onto otherwise-passing allowlisted tests. Re-run
+          # just those sequentially so the daily allowlist contract is not
+          # tripped by transient crashes.
+          $GATE gate-failures --report "$RESULTS/report.json" --output "$RESULTS/rerun_ids.txt"
+          RERUN_COUNT=$(grep -c . "$RESULTS/rerun_ids.txt" || true)
+          echo "Allowlisted non-pass after parallel run: $RERUN_COUNT"
+
+          if [ "$RERUN_COUNT" -gt 0 ] && [ "$RERUN_COUNT" -le 800 ]; then
+            CONNECTION_STRING="mongodb://${{ env.DOCUMENTDB_USER }}:${DOCUMENTDB_PASSWORD}@localhost:${{ env.DOCUMENTDB_PORT }}/?tls=true&tlsAllowInvalidCertificates=true"
+            sed 's#^#documentdb_tests/#' "$RESULTS/rerun_ids.txt" > "$RESULTS/rerun_args.txt"
+            echo "Re-running $RERUN_COUNT allowlisted test(s) sequentially after letting the engine settle..."
+            sleep 20
+            set -f
+            docker run --rm --network host \
+              -v "$(pwd)/$RESULTS:/results" \
+              ${{ env.FUNC_TEST_IMAGE }} \
+              $(cat "$RESULTS/rerun_args.txt") \
+              --engine-name "${{ env.ENGINE_NAME }}" \
+              --connection-string "$CONNECTION_STRING" \
+              -p no:xdist \
+              --timeout=600 \
+              --json-report --json-report-file=/results/report_rerun.json \
+              -v \
+              || true
+            set +f
+            if [ -f "$RESULTS/report_rerun.json" ]; then
+              # report.json is written inside the container and owned by the
+              # container UID, so an in-place cp/truncate fails with "Permission
+              # denied". A single `mv -f` (atomic rename, governed by the
+              # world-writable results dir) replaces it only once a valid merged
+              # report exists — no deleted-but-not-replaced window.
+              if $GATE merge-reports \
+                  --base "$RESULTS/report.json" \
+                  --overlay "$RESULTS/report_rerun.json" \
+                  --out "$RESULTS/report_merged.json" \
+                && mv -f "$RESULTS/report_merged.json" "$RESULTS/report.json"; then
+                echo "Merged sequential re-run results into daily report.json"
+              else
+                echo "::warning::Re-run merge failed; enforcing original parallel results."
+              fi
+            fi
+          fi
 
       - name: Summarize daily delta
         if: always()
