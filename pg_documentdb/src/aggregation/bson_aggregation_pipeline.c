@@ -87,6 +87,7 @@ extern int MaxAggregationStagesAllowed;
 extern bool FailOnNonEmptyGroupCountArg;
 extern bool FailOnGroupIdDuplicate;
 extern bool ForceGroupSubqueryElimination;
+extern bool EnableTailableCursorMaxAwaitTime;
 extern bool RemoveMatchNamespaceFilters;
 extern bool EnableOrderByIndexTerm;
 extern bool EnableGroupByCompoundIdIndexPushdown;
@@ -3068,7 +3069,7 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
  */
 int64_t
 ParseGetMore(text **databaseName, pgbson *getMoreSpec, QueryData *queryData, bool
-			 setStatementTimeout)
+			 setStatementTimeout, bool isTailableCursor)
 {
 	bson_iter_t cursorSpecIter;
 	PgbsonInitIterator(getMoreSpec, &cursorSpecIter);
@@ -3102,7 +3103,33 @@ ParseGetMore(text **databaseName, pgbson *getMoreSpec, QueryData *queryData, boo
 		{
 			const bson_value_t *value = bson_iter_value(&cursorSpecIter);
 			EnsureTopLevelFieldIsNumberLike("getMore.maxTimeMS", value);
-			SetExplicitStatementTimeout(BsonValueAsInt32(value));
+			int32_t maxTimeMS = BsonValueAsInt32(value);
+
+			if (EnableTailableCursorMaxAwaitTime && isTailableCursor)
+			{
+				/*
+				 * For tailable cursors such as change streams, drivers stash the
+				 * application-specified awaitData timeout on the client
+				 * side and copy it into maxTimeMS on every getMore; the
+				 * literal "maxAwaitTimeMS" field is never sent on the
+				 * wire.  Here it indicates the maximum time the server
+				 * should block waiting for new data — NOT a statement
+				 * timeout.  Hand it to the tailable cursor handler so it
+				 * can return the polling interval to the gateway.
+				 */
+				queryData->maxAwaitTimeMS = (int64_t) maxTimeMS;
+			}
+			else
+			{
+				/*
+				 * For regular cursors, maxTimeMS is a statement timeout.
+				 * Also the fallback path when the maxAwaitTimeMS feature is
+				 * disabled via the EnableTailableCursorMaxAwaitTime kill switch:
+				 * we revert to the pre-feature behavior of treating maxTimeMS
+				 * as a statement timeout for tailable cursors as well.
+				 */
+				SetExplicitStatementTimeout(maxTimeMS);
+			}
 		}
 		else if (strcmp(pathKey, "$db") == 0)
 		{

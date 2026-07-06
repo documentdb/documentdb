@@ -8,7 +8,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use bson::{rawdoc, RawArrayBuf};
+use bson::{rawdoc, RawArrayBuf, RawDocumentBuf};
 
 use crate::{
     context::{
@@ -16,7 +16,10 @@ use crate::{
         TransactionNumber,
     },
     error::{DocumentDBError, ErrorCode, Result},
-    postgres::{conn_mgmt::PullConnection, PgDataClient, PgDocument},
+    postgres::{
+        conn_mgmt::{Connection, PullConnection},
+        PgDataClient, PgDocument,
+    },
     protocol::OK_SUCCEEDED,
     responses::{PgResponse, RawResponse, Response},
 };
@@ -139,6 +142,163 @@ pub async fn process_kill_cursors(
     })))
 }
 
+/// Reads maxAwaitTimeMS from the V2 getMore result.
+///
+/// The V2 getMore query projects only the columns this gateway consumes —
+/// `cursorPage, continuation, maxAwaitTimeMS` — so maxAwaitTimeMS is at column
+/// index 2. Returns 0 when the result has fewer than 3 columns (e.g. a V1
+/// result, which omits the column) or the value is null; 0 disables polling.
+fn extract_max_await_time_ms(results: &[tokio_postgres::Row]) -> i64 {
+    results
+        .first()
+        .filter(|row| row.columns().len() > 2)
+        .and_then(|row| row.try_get::<_, i64>(2).ok())
+        .unwrap_or(0)
+}
+
+/// Reads the continuation document from column index 1 of the result.
+///
+/// A failure here means the backend returned an unexpected shape, which must
+/// surface as an error instead of being silently treated as a drained cursor.
+fn extract_continuation(results: &[tokio_postgres::Row]) -> Result<Option<RawDocumentBuf>> {
+    let Some(row) = results.first() else {
+        return Ok(None);
+    };
+    let continuation: Option<PgDocument> = row.try_get(1)?;
+    Ok(continuation.map(|doc| doc.0.to_raw_document_buf()))
+}
+
+/// Groups parameters for the tailable cursor polling loop.
+struct PollCursorState<'a> {
+    cursor_id: i64,
+    cursor_connection: &'a Option<Arc<Connection>>,
+    db: &'a str,
+    max_await_time_ms: i64,
+}
+
+/// Polls a tailable cursor with `awaitData` until new data arrives or the
+/// `maxAwaitTimeMS` budget expires.
+async fn poll_tailable_cursor(
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+    initial_results: Vec<tokio_postgres::Row>,
+    state: &PollCursorState<'_>,
+) -> Result<(Vec<tokio_postgres::Row>, Option<RawDocumentBuf>)> {
+    let dynamic_config = connection_context.service_context.dynamic_configuration();
+    let slice_interval_ms = dynamic_config.tailable_cursor_await_time_slice_interval_ms();
+    // Clamp to >= 1ms so a misconfigured 0 (or negative) interval can't turn the
+    // poll loop into a busy-loop that hammers the backend with getMore calls.
+    let slice_interval =
+        Duration::from_millis(u64::try_from(slice_interval_ms).unwrap_or(1).max(1));
+
+    let start = tokio::time::Instant::now();
+    let max_await = Duration::from_millis(u64::try_from(state.max_await_time_ms).unwrap_or(0));
+    let mut current_results = initial_results;
+
+    loop {
+        // Recompute remaining budget each iteration so the total wait never
+        // exceeds max_await by more than the time spent in the getMore call
+        // itself. A fixed slice_duration sleep would otherwise overshoot the
+        // budget by up to one full slice interval near the deadline.
+        let remaining = max_await.saturating_sub(start.elapsed());
+        if remaining.is_zero() {
+            break;
+        }
+
+        // If there's no continuation, the cursor is exhausted.
+        let Some(continuation) = extract_continuation(&current_results)? else {
+            break;
+        };
+
+        let sleep_duration = std::cmp::min(slice_interval, remaining);
+        tokio::time::sleep(sleep_duration).await;
+
+        let poll_cursor = Cursor {
+            cursor_id: CursorId::from(state.cursor_id),
+            continuation,
+        };
+
+        current_results = pg_data_client
+            .execute_cursor_get_more(
+                request_context,
+                state.db,
+                &poll_cursor,
+                match state.cursor_connection {
+                    Some(conn) => PullConnection::Cursor(Arc::clone(conn)),
+                    None => PullConnection::PoolOrTransaction,
+                },
+                connection_context,
+            )
+            .await?;
+
+        // Backend returns maxAwaitTimeMS == 0 when data is present.
+        if extract_max_await_time_ms(&current_results) == 0 {
+            break;
+        }
+    }
+
+    let final_continuation = extract_continuation(&current_results)?;
+    Ok((current_results, final_continuation))
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "helper extracted from process_get_more"
+)]
+async fn post_process_get_more_results(
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+    results: Vec<tokio_postgres::Row>,
+    cursor_id: i64,
+    cursor_connection: Option<&Arc<Connection>>,
+    db: &str,
+    cursor_timeout: &mut Duration,
+) -> Result<(Vec<tokio_postgres::Row>, Option<RawDocumentBuf>)> {
+    if !connection_context
+        .service_context
+        .dynamic_configuration()
+        .enable_stateless_cursor_timeout()
+    {
+        *cursor_timeout = Duration::from_secs(
+            connection_context
+                .service_context
+                .dynamic_configuration()
+                .default_cursor_idle_timeout_sec(),
+        );
+    }
+
+    // Check if the backend returned maxAwaitTimeMS (column index 2 when present).
+    // If > 0, this is a tailable cursor with an empty batch — poll until data arrives
+    // or the timeout expires. Polling is gated by the enableTailableCursorMaxAwaitTime config.
+    let max_await_time_ms = extract_max_await_time_ms(&results);
+    let polling_enabled = connection_context
+        .service_context
+        .dynamic_configuration()
+        .enable_tailable_cursor_max_await_time();
+
+    if max_await_time_ms > 0 && polling_enabled {
+        let cursor_connection_owned = cursor_connection.cloned();
+        poll_tailable_cursor(
+            request_context,
+            connection_context,
+            pg_data_client,
+            results,
+            &PollCursorState {
+                cursor_id,
+                cursor_connection: &cursor_connection_owned,
+                db,
+                max_await_time_ms,
+            },
+        )
+        .await
+    } else {
+        let continuation = extract_continuation(&results)?;
+        Ok((results, continuation))
+    }
+}
+
 pub async fn process_get_more(
     request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
@@ -214,39 +374,35 @@ pub async fn process_get_more(
         )
         .await?;
 
-    if !connection_context
-        .service_context
-        .dynamic_configuration()
-        .enable_stateless_cursor_timeout()
-    {
-        cursor_timeout = Duration::from_secs(
-            connection_context
-                .service_context
-                .dynamic_configuration()
-                .default_cursor_idle_timeout_sec(),
+    let (final_results, final_continuation) = post_process_get_more_results(
+        request_context,
+        connection_context,
+        pg_data_client,
+        results,
+        id,
+        cursor_connection.as_ref(),
+        &db,
+        &mut cursor_timeout,
+    )
+    .await?;
+
+    if let Some(continuation) = final_continuation {
+        connection_context.add_cursor(
+            cursor_connection,
+            Cursor {
+                cursor_id: CursorId::from(id),
+                continuation,
+            },
+            &db,
+            &collection,
+            cursor_timeout,
+            lsid,
+            transaction_number,
+            caller,
         );
     }
 
-    if let Some(row) = results.first() {
-        let continuation: Option<PgDocument> = row.try_get(1)?;
-        if let Some(continuation) = continuation {
-            connection_context.add_cursor(
-                cursor_connection,
-                Cursor {
-                    cursor_id: CursorId::from(id),
-                    continuation: continuation.0.to_raw_document_buf(),
-                },
-                &db,
-                &collection,
-                cursor_timeout,
-                lsid,
-                transaction_number,
-                caller,
-            );
-        }
-    }
-
-    Ok(Response::Pg(PgResponse::new(results)))
+    Ok(Response::Pg(PgResponse::new(final_results)))
 }
 
 #[cfg(test)]

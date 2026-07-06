@@ -133,6 +133,11 @@ typedef struct
 	int32_t batchSize;
 
 	/*
+	 * The maxAwaitTimeMS in the query request for tailable cursors.
+	 */
+	int64_t maxAwaitTimeMS;
+
+	/*
 	 * The time system variables ($$NOW, $$CLUSTER_TIME).
 	 */
 	TimeSystemVariables timeSystemVariables;
@@ -194,7 +199,7 @@ AggregationQueryPlan * ParseAggregationQueryAndLookupCollection(text *database,
 Query * ApplyParsedAggregationQuery(AggregationQueryPlan *plan);
 
 int64_t ParseGetMore(text **databaseName, pgbson *getMoreSpec, QueryData *queryData, bool
-					 setStatementTimeout);
+					 setStatementTimeout, bool isTailableCursor);
 
 void ValidateAggregationPipeline(text *databaseDatum, const StringView *baseCollection,
 								 const bson_value_t *pipelineValue);

@@ -40,6 +40,8 @@
 extern bool UseFileBasedPersistedCursors;
 extern bool EnableDelayedHoldPortal;
 extern bool EnableDynamicCursors;
+extern bool EnableTailableCursorMaxAwaitTime;
+extern int DefaultTailableCursorMaxAwaitTimeMs;
 extern bool EnablePGPrngCursorId;
 
 /* --------------------------------------------------------- */
@@ -48,6 +50,8 @@ extern bool EnablePGPrngCursorId;
 
 
 static const int64_t CursorAcceptableBitsMask = 0x1FFFFFFFFFFFFF;
+
+static const int64_t NoMaxAwaitTimeMs = 0;
 
 static uint32_t current_cursor_count = 0;
 
@@ -764,6 +768,7 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 	bool queryFullyDrained;
 	pgbson *continuationDoc;
 	pgbson *postBatchResumeToken = NULL;
+	int64_t maxAwaitTimeMS = NoMaxAwaitTimeMs;
 	switch (getMoreInfo.cursorKind)
 	{
 		case CursorKind_PersistedFile:
@@ -878,6 +883,35 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 			{
 				pfree(tailableCursorSpec);
 			}
+
+			/*
+			 * For tailable cursors with an empty batch, we return maxAwaitTimeMS
+			 * so the gateway knows how long to poll.
+			 * When data is present (numIterations > 0), we leave it at 0
+			 * so the gateway returns the response immediately.
+			 *
+			 * When EnableTailableCursorMaxAwaitTime is off, we force the hint to
+			 * 0 so the gateway polling loop never engages — even if a v2 caller
+			 * provided a column for it in the result tuple.
+			 */
+			if (!EnableTailableCursorMaxAwaitTime)
+			{
+				maxAwaitTimeMS = NoMaxAwaitTimeMs;
+			}
+			else
+			{
+				maxAwaitTimeMS = getMoreInfo.queryData.maxAwaitTimeMS;
+				if (numIterations > 0)
+				{
+					/* Data returned, so no need to wait */
+					maxAwaitTimeMS = NoMaxAwaitTimeMs;
+				}
+				else if (maxAwaitTimeMS <= 0)
+				{
+					/* Empty batch, wait for default if not specified */
+					maxAwaitTimeMS = DefaultTailableCursorMaxAwaitTimeMs;
+				}
+			}
 			break;
 		}
 
@@ -889,13 +923,21 @@ aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
 	}
 
 	bool persistConnection = false;
+
+	/*
+	 * Pass maxAwaitTimeMS to the result tuple. Only tailable cursors
+	 * (CursorKind_Tailable) set this to a non-zero value; for all other
+	 * cursor kinds it remains 0.  FormFinalCursorResultTuple writes it into
+	 * values[4] only when the TupleDesc has > 4 attributes (i.e. the V2
+	 * SQL function is in use).
+	 */
 	int64_t cursorId = FinishWriteCursorPage(&cursorDoc, &arrayWriter, &writer,
 											 getMoreInfo.cursorId, continuationDoc,
 											 persistConnection, postBatchResumeToken);
 	pgbson *resultDocument = PgbsonWriterGetPgbson(&writer);
 	Datum responseDatum = FormFinalCursorResultTuple(resultDocument, continuationDoc,
 													 persistConnection,
-													 cursorId, tupleDesc);
+													 cursorId, maxAwaitTimeMS, tupleDesc);
 	return responseDatum;
 }
 
@@ -1526,7 +1568,8 @@ HandleLocalFirstPageRequest(text *database, pgbson *querySpec, int64_t cursorId,
 	return FormFinalCursorResultTuple(firstPageResult.resultDocument,
 									  firstPageResult.continuationDoc,
 									  firstPageResult.persistConnection,
-									  firstPageResult.cursorId, tupleDesc);
+									  firstPageResult.cursorId, NoMaxAwaitTimeMs,
+									  tupleDesc);
 }
 
 
@@ -1966,8 +2009,9 @@ ParseGetMoreSpec(text **databaseName, pgbson *getMoreSpec, pgbson *cursorSpec,
 	ParseCursorInputSpec(cursorSpec, getMoreInfo);
 
 	/* Parses the wire protocol getMore */
+	bool isTailableCursor = (getMoreInfo->cursorKind == CursorKind_Tailable);
 	int64_t cursorId = ParseGetMore(databaseName, getMoreSpec, &getMoreInfo->queryData,
-									setStatementTimeout);
+									setStatementTimeout, isTailableCursor);
 	if (cursorId != getMoreInfo->cursorId)
 	{
 		ereport(ERROR, (errmsg(
@@ -2252,8 +2296,8 @@ FormCursorResultDatum(pgbson *cursorPage, pgbson *continuation,
 					  bool persistConnection, int64_t cursorId,
 					  TupleDesc tupleDesc)
 {
-	Datum values[4];
-	bool nulls[4];
+	Datum values[5];
+	bool nulls[5];
 	memset(values, 0, sizeof(values));
 	memset(nulls, 0, sizeof(nulls));
 
@@ -2265,6 +2309,17 @@ FormCursorResultDatum(pgbson *cursorPage, pgbson *continuation,
 	nulls[2] = false;
 	values[3] = Int64GetDatum(cursorId);
 	nulls[3] = false;
+
+	/*
+	 * A V2 getMore passes a 5-attribute tuple descriptor (maxAwaitTimeMS).
+	 * The remote drain path never waits, so report 0. Mirrors
+	 * FormFinalCursorResultTuple's handling of natts > 4.
+	 */
+	if (tupleDesc->natts > 4)
+	{
+		values[4] = Int64GetDatum(0);
+		nulls[4] = false;
+	}
 
 	return HeapTupleGetDatum(heap_form_tuple(tupleDesc, values, nulls));
 }

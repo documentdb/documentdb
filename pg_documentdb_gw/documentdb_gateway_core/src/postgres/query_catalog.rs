@@ -52,6 +52,7 @@ pub struct QueryCatalog {
 
     // cursor.rs
     pub cursor_get_more: String,
+    pub cursor_get_more_v2: String,
     pub kill_cursors: String,
 
     // data_description.rs
@@ -275,6 +276,11 @@ impl QueryCatalog {
     #[must_use]
     pub fn cursor_get_more(&self) -> &str {
         &self.cursor_get_more
+    }
+
+    #[must_use]
+    pub fn cursor_get_more_v2(&self) -> &str {
+        &self.cursor_get_more_v2
     }
 
     // Delete getters

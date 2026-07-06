@@ -18,8 +18,8 @@ extern Datum find_cursor_first_page(text *database, pgbson *findSpec, int64_t cu
 extern Datum aggregate_cursor_first_page(text *database, pgbson *aggregationSpec,
 										 int64_t cursorId);
 extern Datum aggregation_cursor_get_more(text *database, pgbson *getMoreSpec,
-										 pgbson *cursorSpec, AttrNumber
-										 maxResponseAttributeNumber);
+										 pgbson *cursorSpec,
+										 AttrNumber maxResponseAttributeNumber);
 
 extern Datum list_collections_first_page(text *database, pgbson *listCollectionsSpec);
 extern Datum list_indexes_first_page(text *database, pgbson *listIndexesSpec);

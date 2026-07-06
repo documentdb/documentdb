@@ -273,7 +273,8 @@ static bool ProcessCursorResultRowDataAttribute(TerminationReason *reason,
 												int32_t *numRowsFetched,
 												uint64_t *currentAccumulatedSize,
 												MemoryContext writerContext,
-												pgbson_array_writer *writer);
+												pgbson_array_writer *writer,
+												bool isTailableCursor);
 
 static pgbson * ProcessCursorResultRowContinuationAttribute(HTAB *cursorMap,
 															MemoryContext writerContext);
@@ -603,7 +604,10 @@ DrainTailableQuery(pgbson *cursorSpec, Query *query, int batchSize,
 
 	SPI_finish();
 
-	(*numIterations)++;
+	if (accumulatedRows > 0)
+	{
+		(*numIterations)++;
+	}
 
 	return continuationDoc;
 }
@@ -1701,7 +1705,8 @@ FetchCursorAndWriteUntilPageOrSize(Portal portal, int32_t batchSize,
 																		  numRowsFetched,
 																		  currentAccumulatedSize,
 																		  writerContext,
-																		  writer);
+																		  writer,
+																		  false);
 
 			/* If the cursor is terminated due to batch iterm/size, return the reason */
 			if (isCursorTerminated)
@@ -1818,7 +1823,8 @@ ProcessCursorResultRowDataAttribute(TerminationReason *reason,
 									int32_t batchSize, int32_t *numRowsFetched,
 									uint64_t *currentAccumulatedSize,
 									MemoryContext writerContext,
-									pgbson_array_writer *writer)
+									pgbson_array_writer *writer,
+									bool isTailableCursor)
 {
 	pgbson *documentValue = NULL;
 	int tupleNumber = 0;
@@ -2089,7 +2095,7 @@ BuildContinuationMap(pgbson *continuationValue, HTAB *cursorMap)
 TupleDesc
 ConstructCursorResultTupleDesc(AttrNumber maxAttrNum)
 {
-	Assert(maxAttrNum >= 2 && maxAttrNum <= 4);
+	Assert(maxAttrNum >= 2 && maxAttrNum <= 5);
 	AttrNumber attrIndex = 0;
 
 	TupleDesc tupleDescriptor = CreateTemplateTupleDesc(maxAttrNum);
@@ -2104,6 +2110,12 @@ ConstructCursorResultTupleDesc(AttrNumber maxAttrNum)
 		TupleDescInitEntry(tupleDescriptor, ++attrIndex, "persistConnection", BOOLOID, -1,
 						   0);
 		TupleDescInitEntry(tupleDescriptor, ++attrIndex, "cursorId", INT8OID, -1, 0);
+	}
+
+	if (maxAttrNum > 4)
+	{
+		TupleDescInitEntry(tupleDescriptor, ++attrIndex, "maxAwaitTimeMS", INT8OID, -1,
+						   0);
 	}
 
 	if (tupleDescriptor->tdtypeid == RECORDOID && tupleDescriptor->tdtypmod < 0)
@@ -2351,7 +2363,8 @@ FinishWriteCursorPage(pgbson_writer *cursorDoc, pgbson_array_writer *arrayWriter
 Datum
 FormFinalCursorResultTuple(pgbson *resultDocument, pgbson *continuation, bool
 						   persistConnection,
-						   int64_t cursorId, TupleDesc cursorResultTupleDesc)
+						   int64_t cursorId, int64 maxAwaitTimeMS, TupleDesc
+						   cursorResultTupleDesc)
 {
 	/*
 	 * Defensive: a 0 cursorId is a closed (non-resumable) cursor, so treat it as
@@ -2364,8 +2377,8 @@ FormFinalCursorResultTuple(pgbson *resultDocument, pgbson *continuation, bool
 
 	/* Returns (continuation bson, cursorPage bson) */
 	/* Continuation is either an simple bson doc or NULL (if drained) */
-	Datum values[4];
-	bool nulls[4];
+	Datum values[5];
+	bool nulls[5];
 	memset(values, 0, sizeof(values));
 	memset(nulls, 0, sizeof(nulls));
 
@@ -2377,6 +2390,11 @@ FormFinalCursorResultTuple(pgbson *resultDocument, pgbson *continuation, bool
 	nulls[2] = false;
 	values[3] = Int64GetDatum(cursorId);
 	nulls[3] = false;
+	if (cursorResultTupleDesc->natts > 4)
+	{
+		values[4] = Int64GetDatum(maxAwaitTimeMS);
+		nulls[4] = false;
+	}
 
 	HeapTuple ret = heap_form_tuple(cursorResultTupleDesc, values, nulls);
 	return HeapTupleGetDatum(ret);

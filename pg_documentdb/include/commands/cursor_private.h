@@ -68,7 +68,7 @@ int64_t FinishWriteCursorPage(pgbson_writer *cursorDoc, pgbson_array_writer *arr
 							  pgbson *lastContinuationToken);
 Datum FormFinalCursorResultTuple(pgbson *resultDocument, pgbson *continuation,
 								 bool persistConnection, int64_t cursorId,
-								 TupleDesc cursorResultTupleDesc);
+								 int64 maxAwaitTimeMS, TupleDesc cursorResultTupleDesc);
 
 HTAB * CreateCursorHashSet(void);
 void BuildContinuationMap(pgbson *continuationValue, HTAB *cursorMap);

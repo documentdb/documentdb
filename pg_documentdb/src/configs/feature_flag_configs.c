@@ -353,6 +353,10 @@ bool EnableAddToSetAggregationRewrite = DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_RE
 #define DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS true
 bool RemoveMatchNamespaceFilters = DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS;
 
+/* Added in v115, enabled in v115, remove after v117 */
+#define DEFAULT_ENABLE_TAILABLE_CURSOR_MAX_AWAIT_TIME true
+bool EnableTailableCursorMaxAwaitTime = DEFAULT_ENABLE_TAILABLE_CURSOR_MAX_AWAIT_TIME;
+
 /* Added in v111, enabled in v111, Remove after v113 */
 #define DEFAULT_MULTIPLE_POSITIONAL_OPERATORS_NOT_ALLOWED true
 bool MultiplePositionalNotAllowed = DEFAULT_MULTIPLE_POSITIONAL_OPERATORS_NOT_ALLOWED;
@@ -1185,6 +1189,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable the new addToSet aggregation implementation that prevents crashes with the new delayed portal feature."),
 		NULL, &EnableAddToSetAggregationRewrite,
 		DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableTailableCursorMaxAwaitTime", newGucPrefix),
+		gettext_noop(
+			"Kill switch for tailable cursor maxAwaitTimeMS support. When off, the backend ignores the maxAwaitTimeMS getMore field, treats maxTimeMS as a statement timeout for all cursor kinds, and never returns a polling hint to the gateway."),
+		NULL, &EnableTailableCursorMaxAwaitTime,
+		DEFAULT_ENABLE_TAILABLE_CURSOR_MAX_AWAIT_TIME,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
