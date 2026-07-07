@@ -367,6 +367,15 @@ RunUpgradeActions(ExtensionVersion installedVersion, ExtensionVersion lastUpgrad
 		AddMetadataCollectionOptionsColumn();
 	}
 
+	if (ShouldRunSetupForVersion(&versions, DocDB_V0, 116, 0))
+	{
+		/*
+		 * Migrate the roles reference table primary key from role_oid to
+		 * role_name.
+		 */
+		AlterRolesTablePrimaryKey();
+	}
+
 	/* we call the post setup cluster hook to allow the extension to do any additional setup */
 	PostSetupClusterHook(&ShouldRunSetupForVersionForHook, &versions);
 
