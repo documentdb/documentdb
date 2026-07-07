@@ -972,6 +972,13 @@ fn get_stage_from_plan(
                     "DocumentDBApiExplainQueryScan" => ("ExplainWrapper".to_owned(), None),
                     "DocumentDBApiDistinctQueryScan" => ("DISTINCT_SCAN".to_owned(), None),
                     "DocumentDBApiReservoirSample" => ("SAMPLESORT".to_owned(), None),
+                    scan_type if query_catalog.scan_type_stage_override(scan_type).is_some() => (
+                        query_catalog
+                            .scan_type_stage_override(scan_type)
+                            .expect("checked")
+                            .to_owned(),
+                        None,
+                    ),
                     scan_type if query_catalog.scan_types().contains(&scan_type.to_owned()) => {
                         ("FETCH".to_owned(), None)
                     }

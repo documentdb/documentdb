@@ -416,6 +416,29 @@ pub trait PgDataClient: Send + Sync {
         connection_context: &ConnectionContext,
     ) -> Result<Response>;
 
+    async fn execute_create_search_indexes(
+        &self,
+        _request_context: &RequestContext<'_>,
+        _connection_context: &ConnectionContext,
+    ) -> Result<(bool, PgResponse)> {
+        Err(crate::error::DocumentDBError::documentdb_error(
+            crate::error::ErrorCode::CommandNotSupported,
+            "Command 'createSearchIndexes' not supported.".to_owned(),
+        ))
+    }
+
+    async fn execute_wait_for_search_index(
+        &self,
+        _request_context: &RequestContext<'_>,
+        _index_build_id: &PgDocument<'_>,
+        _connection_context: &ConnectionContext,
+    ) -> Result<(bool, bool, PgResponse)> {
+        Err(crate::error::DocumentDBError::documentdb_error(
+            crate::error::ErrorCode::CommandNotSupported,
+            "Command 'createSearchIndexes' not supported.".to_owned(),
+        ))
+    }
+
     /// Unified query execution that resolves a connection and dispatches to
     /// the retry loop.
     async fn run_query<T, F, Fut>(

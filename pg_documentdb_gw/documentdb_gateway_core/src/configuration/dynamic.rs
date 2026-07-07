@@ -98,8 +98,8 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
         self.get_bool("enableVerboseLoggingInGateway", false)
     }
 
-    fn index_build_sleep_milli_secs(&self) -> i32 {
-        self.get_i32("indexBuildWaitSleepTimeInMilliSec", 1000)
+    fn index_build_sleep_milli_secs(&self) -> u64 {
+        self.get_u64("indexBuildWaitSleepTimeInMilliSec", 1000)
     }
 
     fn is_postgres_writable(&self) -> bool {
