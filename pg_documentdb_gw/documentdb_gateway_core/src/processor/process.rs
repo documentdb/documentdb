@@ -81,7 +81,16 @@ pub async fn process_request(
             indexing::process_create_indexes(
                 request_context,
                 connection_context,
-                &dynamic_config,
+                dynamic_config.as_ref(),
+                pg_data_client,
+            )
+            .await
+        }
+        RequestType::CreateSearchIndexes => {
+            indexing::process_create_search_indexes(
+                request_context,
+                connection_context,
+                dynamic_config.as_ref(),
                 pg_data_client,
             )
             .await
