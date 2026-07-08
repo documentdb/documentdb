@@ -395,6 +395,7 @@ Oid BsonIntegralAggregateFunctionOid(void);
 Oid BsonDerivativeAggregateFunctionOid(void);
 Oid BsonAvgAggregateFunctionOid(void);
 Oid BsonRepathAndBuildFunctionOid(void);
+Oid BsonBuildDocumentFunctionOid(void);
 Oid BsonExpressionGetFunctionOid(void);
 Oid BsonExpressionGetWithLetFunctionOid(void);
 Oid BsonExpressionGetWithLetAndCollationFunctionOid(void);

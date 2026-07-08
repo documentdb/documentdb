@@ -43,6 +43,7 @@ IsShardTableForDocumentDbTable_HookType is_shard_table_for_documentdb_table_hook
 HandleColocation_HookType handle_colocation_hook = NULL;
 RewriteListCollectionsQueryForDistribution_HookType rewrite_list_collections_query_hook =
 	NULL;
+RewriteListExtendedIndexesQuery_HookType rewrite_list_extended_indexes_query_hook = NULL;
 RewriteConfigQueryForDistribution_HookType rewrite_config_shards_query_hook = NULL;
 RewriteConfigQueryForDistribution_HookType rewrite_config_chunks_query_hook = NULL;
 TryGetShardNameForUnshardedCollection_HookType
@@ -434,6 +435,19 @@ MutateListCollectionsQueryForDistribution(Query *listCollectionsQuery)
 	}
 
 	return listCollectionsQuery;
+}
+
+
+Query *
+RewriteListExtendedIndexesQuery(const bson_value_t *specValue, Query *query,
+								AggregationPipelineBuildContext *context)
+{
+	if (rewrite_list_extended_indexes_query_hook != NULL)
+	{
+		return rewrite_list_extended_indexes_query_hook(specValue, query, context);
+	}
+
+	return NULL;
 }
 
 

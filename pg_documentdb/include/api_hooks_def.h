@@ -193,6 +193,13 @@ typedef Query *(*RewriteListCollectionsQueryForDistribution_HookType)(Query *que
 extern RewriteListCollectionsQueryForDistribution_HookType
 	rewrite_list_collections_query_hook;
 
+typedef struct AggregationPipelineBuildContext AggregationPipelineBuildContext;
+typedef Query *(*RewriteListExtendedIndexesQuery_HookType)(const bson_value_t *specValue,
+														   Query *query,
+														   AggregationPipelineBuildContext
+														   *context);
+extern RewriteListExtendedIndexesQuery_HookType rewrite_list_extended_indexes_query_hook;
+
 typedef Query *(*RewriteConfigQueryForDistribution_HookType)(Query *query);
 extern RewriteConfigQueryForDistribution_HookType rewrite_config_shards_query_hook;
 extern RewriteConfigQueryForDistribution_HookType rewrite_config_chunks_query_hook;

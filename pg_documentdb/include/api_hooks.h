@@ -166,6 +166,17 @@ Query * MutateListCollectionsQueryForDistribution(Query *cosmosMetadataQuery);
 
 
 /*
+ * Hook wrapper for extended indexes result post-processing.
+ * Takes a base query that returns raw index data for extended indexes
+ * and transforms it to produce the desired output format.
+ * Returns NULL if no hook is registered.
+ */
+typedef struct AggregationPipelineBuildContext AggregationPipelineBuildContext;
+Query * RewriteListExtendedIndexesQuery(const bson_value_t *specValue, Query *query,
+										AggregationPipelineBuildContext *context);
+
+
+/*
  * Mutates the shards query for handling distributed scenario.
  */
 Query * MutateShardsQueryForDistribution(Query *metadataQuery);

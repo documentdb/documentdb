@@ -1,0 +1,61 @@
+SET search_path TO documentdb_api,documentdb_core;
+SET documentdb.next_collection_id TO 66600;
+SET documentdb.next_collection_index_id TO 66600;
+-- Setup
+SELECT documentdb_api.insert_one('listsearchindexes_db', 'test_coll', '{ "_id": 1, "a": "hello" }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- not enabled
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$listSearchIndexes": {} } ] }');
+ERROR:  $listSearchIndexes stage is not enabled
+-- not enabled
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$listSearchIndexes": { "name": "idx1" } } ] }');
+ERROR:  $listSearchIndexes stage is not enabled
+-- not enabled
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$match": {} }, { "$listSearchIndexes": {} } ] }');
+ERROR:  $listSearchIndexes stage is not enabled
+-- not enabled
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$listSearchIndexes": 1 } ] }');
+ERROR:  $listSearchIndexes stage is not enabled
+SET documentdb.enableExtendedIndexes TO true;
+-- not supported
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$listSearchIndexes": {} } ] }');
+ERROR:  $listSearchIndexes is not supported
+-- not supported
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$listSearchIndexes": { "name": "idx1" } } ] }');
+ERROR:  $listSearchIndexes is not supported
+-- $listSearchIndexes must be the first stage
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$match": {} }, { "$listSearchIndexes": {} } ] }');
+ERROR:  $listSearchIndexes is only valid as the first stage in a pipeline.
+-- $listSearchIndexes requires a document argument
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$listSearchIndexes": 1 } ] }');
+ERROR:  The BSON field '$listSearchIndexes' has an incorrect type 'int'; it should be of type 'object'.
+-- invalid filter field
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$listSearchIndexes": { "invalid": 1 } } ] }' );
+ERROR:  Unrecognized option to $listSearchIndexes: invalid
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$listSearchIndexes": { "name": "idx1", "invalid": 1 } } ] }' );
+ERROR:  Unrecognized option to $listSearchIndexes: invalid
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$listSearchIndexes": { "name": "idx1", "id": 123 } } ] }' );
+ERROR:  $listSearchIndexes 'id' must be a string.
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$listSearchIndexes": { "id": "12345abc" } } ] }' );
+ERROR:  $listSearchIndexes 'id' must represent a valid non-negative integer.
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$listSearchIndexes": { "id": "-12345" } } ] }' );
+ERROR:  $listSearchIndexes 'id' must represent a valid non-negative integer.
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$listSearchIndexes": { "id": "12345.6" } } ] }' );
+ERROR:  $listSearchIndexes 'id' must represent a valid non-negative integer.
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$listSearchIndexes": { "id": "123456789101112" } } ] }' );
+ERROR:  $listSearchIndexes 'id' must represent a valid non-negative integer.
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$listSearchIndexes": { "id": "" } } ] }' );
+ERROR:  $listSearchIndexes 'id' cannot be an empty string.
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$listSearchIndexes": { "id": " 123" } } ] }' );
+ERROR:  $listSearchIndexes 'id' must represent a valid non-negative integer.
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$listSearchIndexes": { "name": 12345 } } ] }' );
+ERROR:  $listSearchIndexes 'name' must be a string.
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$listSearchIndexes": { "name": "" } } ] }' );
+ERROR:  $listSearchIndexes 'name' cannot be an empty string.
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('listsearchindexes_db', '{ "aggregate": "test_coll", "pipeline": [ { "$listSearchIndexes": { "name": {} } } ] }' );
+ERROR:  $listSearchIndexes 'name' must be a string.
