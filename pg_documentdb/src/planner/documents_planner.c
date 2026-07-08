@@ -35,6 +35,8 @@
 #include <executor/spi.h>
 #include <parser/parse_relation.h>
 #include <optimizer/optimizer.h>
+#include <tcop/tcopprot.h>
+#include <executor/instrument.h>
 
 #include "geospatial/bson_geospatial_geonear.h"
 #include "metadata/collection.h"
@@ -50,6 +52,7 @@
 #include "aggregation/bson_aggregation_pipeline.h"
 #include "aggregation/bson_query_common.h"
 #include "utils/query_utils.h"
+#include "utils/guc_utils.h"
 #include "utils/docdb_make_funcs.h"
 #include "collation/collation.h"
 #include "api_hooks.h"
@@ -132,6 +135,8 @@ static List * AugmentBaseRestrictInfo(PlannerInfo *root, RelOptInfo *rel);
 
 extern bool ForceDisableSeqScan;
 extern bool EnableExtendedExplainPlans;
+extern bool EnableDefaultExtendedExplain;
+extern char *ApiGucPrefixV2;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableLogRelationIndexesOrder;
 extern bool EnableIndexOnlyScan;
@@ -151,7 +156,85 @@ planner_hook_type ExtensionPreviousPlannerHook = NULL;
 set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook = NULL;
 explain_get_index_name_hook_type ExtensionPreviousIndexNameHook = NULL;
 get_relation_info_hook_type ExtensionPreviousGetRelationInfoHook = NULL;
+ExplainOneQuery_hook_type ExtensionPreviousExplainOneQueryHook = NULL;
 node_worker_stmt_rewrite_hook_type node_worker_stmt_rewrite_hook = NULL;
+
+
+/*
+ * DocumentDBApiExplainOneQuery enables extended explain plans by default while
+ * an EXPLAIN runs so the additional DocumentDB explain annotations are always
+ * produced, then delegates to the prior hook chain (or the core behavior when
+ * no prior hook was installed). The behavior is gated by
+ * EnableDefaultExtendedExplain so tests (and callers that want the vanilla
+ * output) can opt out. The extended explain GUC is set locally within a new GUC
+ * nest level so it is rolled back once the explain finishes (and is also cleaned
+ * up automatically on error at transaction/subtransaction end). This avoids
+ * leaking the setting onto later queries on a pooled connection, since
+ * EnableExtendedExplainPlans is also consulted during cost estimation.
+ */
+void
+DocumentDBApiExplainOneQuery(Query *query, int cursorOptions, IntoClause *into,
+							 ExplainState *es, const char *queryString,
+							 ParamListInfo params, QueryEnvironment *queryEnv)
+{
+	int savedGUCLevel = -1;
+
+	if (EnableDefaultExtendedExplain)
+	{
+		savedGUCLevel = NewGUCNestLevel();
+		SetGUCLocally(psprintf("%s.enableExtendedExplainPlans", ApiGucPrefixV2),
+					  "true");
+	}
+
+	if (ExtensionPreviousExplainOneQueryHook != NULL)
+	{
+		ExtensionPreviousExplainOneQueryHook(query, cursorOptions, into, es,
+											 queryString, params, queryEnv);
+	}
+	else
+	{
+#if PG_VERSION_NUM >= 170000
+		standard_ExplainOneQuery(query, cursorOptions, into, es, queryString,
+								 params, queryEnv);
+#else
+
+		/*
+		 * standard_ExplainOneQuery is not exported before PG17, so replicate
+		 * the core behavior (identical between PG15 and PG16).
+		 */
+		PlannedStmt *plan;
+		instr_time planstart;
+		instr_time planduration;
+		BufferUsage bufusage_start;
+		BufferUsage bufusage;
+
+		if (es->buffers)
+		{
+			bufusage_start = pgBufferUsage;
+		}
+		INSTR_TIME_SET_CURRENT(planstart);
+
+		plan = pg_plan_query(query, queryString, cursorOptions, params);
+
+		INSTR_TIME_SET_CURRENT(planduration);
+		INSTR_TIME_SUBTRACT(planduration, planstart);
+
+		if (es->buffers)
+		{
+			memset(&bufusage, 0, sizeof(BufferUsage));
+			BufferUsageAccumDiff(&bufusage, &pgBufferUsage, &bufusage_start);
+		}
+
+		ExplainOnePlan(plan, into, es, queryString, params, queryEnv,
+					   &planduration, (es->buffers ? &bufusage : NULL));
+#endif
+	}
+
+	if (savedGUCLevel >= 0)
+	{
+		RollbackGUCChange(savedGUCLevel);
+	}
+}
 
 
 /*

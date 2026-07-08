@@ -78,6 +78,17 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
     // Needed to downcast to concrete type
     fn as_any(&self) -> &dyn std::any::Any;
 
+    /// Returns the `DocumentDB` instance identifier surfaced in explain output as
+    /// `instanceName`, or `None` when it is not configured. Reads the
+    /// `instanceName` dynamic-config key by default.
+    ///
+    /// TODO: The instance identifier is effectively fixed for the lifetime of the
+    /// process, so it should ideally be sourced from static/setup configuration
+    /// rather than dynamic configuration. Move it to static config in the future.
+    fn instance_name(&self) -> Option<String> {
+        self.get_str("instanceName")
+    }
+
     fn enable_change_streams(&self) -> bool {
         self.get_bool("enableChangeStreams", false)
     }

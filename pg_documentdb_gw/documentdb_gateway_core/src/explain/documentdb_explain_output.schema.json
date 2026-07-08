@@ -26,6 +26,10 @@
       "type": "string",
       "description": "Total size of tuple data received from distributed worker nodes, as reported by Citus. Only present for distributed (sharded) queries."
     },
+    "instanceName": {
+      "type": "string",
+      "description": "Identifier of the DocumentDB instance that produced the explain output. Sourced from the gateway configuration. Omitted when not configured."
+    },
     "queryPlanner": {
       "$ref": "#/$defs/QueryPlanner",
       "description": "Query planner information for non-aggregation commands (find, count, distinct). Present at the top level for simple cursor-based explains."
