@@ -112,6 +112,11 @@ Each version will have a support matrix modeled as below
 | Respond to all bugs and issues         | 15, 16, 17, 18
 | Ensure extension is compatible in code | 15, 16, 17, 18
 
+Packages are currently being built for the following distributions:
+deb11, deb12, ubuntu22.04, ubuntu24.04, rhel8, rhel9. New versions will be added
+as they are released. The one-year deprecation rule will apply to any version
+being removed from support to give ample time to either fork or update.
+
 ### Compatibility and Dependency Policy
 
 Each release should document the compatible versions of important bundled or
