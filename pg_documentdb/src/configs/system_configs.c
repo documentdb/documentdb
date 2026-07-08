@@ -146,6 +146,9 @@ bool EnableGeonearForceIndexPushdown = DEFAULT_ENABLE_GEONEAR_FORCE_INDEX_PUSHDO
 #define DEFAULT_ENABLE_EXTENDED_EXPLAIN_PLANS false
 bool EnableExtendedExplainPlans = DEFAULT_ENABLE_EXTENDED_EXPLAIN_PLANS;
 
+#define DEFAULT_ENABLE_DEFAULT_EXTENDED_EXPLAIN true
+bool EnableDefaultExtendedExplain = DEFAULT_ENABLE_DEFAULT_EXTENDED_EXPLAIN;
+
 /* Note that this is explicitly left disabled
  * This is primarily because the operator that sets default_transaction_readonly
  * would want to avoid new writes (perhaps due to high disk usage) and a background
@@ -465,6 +468,16 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 			"Enables extended explain plans for queries. "
 			"This will include additional information in the explain plans."),
 		NULL, &EnableExtendedExplainPlans, DEFAULT_ENABLE_EXTENDED_EXPLAIN_PLANS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_default_extended_explain", newGucPrefix),
+		gettext_noop(
+			"Enables extended explain plans by default when running EXPLAIN. "
+			"When enabled, the extended explain hook turns on extended explain "
+			"plans for the duration of the explain so the additional annotations "
+			"are always produced."),
+		NULL, &EnableDefaultExtendedExplain, DEFAULT_ENABLE_DEFAULT_EXTENDED_EXPLAIN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomIntVariable(

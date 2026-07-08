@@ -276,6 +276,12 @@ async fn run_explain(
                 explain.append("dataSize", data_size);
             }
 
+            if let Some(instance_name) = dynamic_config.instance_name() {
+                if !instance_name.is_empty() {
+                    explain.append("instanceName", instance_name);
+                }
+            }
+
             // Merge body fields into explain
             for (key, val) in body.into_iter().flatten() {
                 explain.append(key, val.to_raw_bson());

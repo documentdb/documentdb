@@ -291,3 +291,50 @@ SELECT documentdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": 
   "ok" : { "$numberDouble" : "1.0" } },
 (18 rows)
 
+-- Sanity test: the EXPLAIN hook enables extended explain plans by default.
+-- Returns whether a raw SQL EXPLAIN emits the extended explain custom scan node.
+CREATE OR REPLACE FUNCTION documentdb_test_helpers.explain_uses_extended(p_query text)
+ RETURNS boolean AS $$
+ DECLARE
+     line text;
+     found boolean := false;
+ BEGIN
+     FOR line IN EXECUTE 'EXPLAIN (COSTS OFF) ' || p_query LOOP
+         IF position('DocumentDBApiExplainQueryScan' in line) > 0 THEN
+             found := true;
+         END IF;
+     END LOOP;
+     RETURN found;
+ END;
+ $$ LANGUAGE plpgsql;
+-- The base extended-explain GUC is off; the hook is what turns it on for EXPLAIN.
+SHOW documentdb.enableExtendedExplainPlans;
+ documentdb.enableExtendedExplainPlans 
+---------------------------------------
+ off
+(1 row)
+
+-- With the guard on, the hook injects extended explain even though the base GUC is off.
+SET documentdb.enable_default_extended_explain TO on;
+SELECT documentdb_test_helpers.explain_uses_extended($Q$ SELECT document FROM documentdb_api.collection('expdb', 'coll1') WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "a": { "$gt": 1 } }' $Q$) AS extended_when_guard_on;
+ extended_when_guard_on 
+------------------------
+ t
+(1 row)
+
+-- With the guard off, the hook does not inject extended explain.
+SET documentdb.enable_default_extended_explain TO off;
+SELECT documentdb_test_helpers.explain_uses_extended($Q$ SELECT document FROM documentdb_api.collection('expdb', 'coll1') WHERE document OPERATOR(documentdb_api_catalog.@@) '{ "a": { "$gt": 1 } }' $Q$) AS extended_when_guard_off;
+ extended_when_guard_off 
+-------------------------
+ f
+(1 row)
+
+-- Running EXPLAIN through the hook must not leak the base GUC onto later queries.
+SHOW documentdb.enableExtendedExplainPlans;
+ documentdb.enableExtendedExplainPlans 
+---------------------------------------
+ off
+(1 row)
+
+RESET documentdb.enable_default_extended_explain;
