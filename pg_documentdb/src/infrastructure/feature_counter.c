@@ -483,6 +483,7 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_STAGE_INTERNAL_INHIBIT_OPTIMIZATION] = "_internalInhibitOptimization",
 	[FEATURE_STAGE_INVERSEMATCH] = "inverseMatch",
 	[FEATURE_STAGE_LIMIT] = "limit",
+	[FEATURE_STAGE_LIST_SEARCH_INDEXES] = "listSearchIndexes",
 	[FEATURE_STAGE_LOOKUP] = "lookup",
 	[FEATURE_STAGE_MATCH] = "match",
 	[FEATURE_STAGE_MERGE] = "merge",

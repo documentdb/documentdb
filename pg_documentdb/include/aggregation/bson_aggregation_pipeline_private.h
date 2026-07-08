@@ -63,6 +63,7 @@ typedef enum
 	Stage_IndexStats,
 	Stage_Limit,
 	Stage_ListLocalSessions,
+	Stage_ListSearchIndexes,
 	Stage_ListSessions,
 	Stage_Lookup,
 	Stage_Match,
@@ -132,7 +133,7 @@ typedef void (*UnwindParseErrorHandler)(int errCode, const char *errMessage,
 /*
  * Shared context during aggregation pipeline build phase.
  */
-typedef struct
+typedef struct AggregationPipelineBuildContext
 {
 	/* *********************************************************************
 	 * Query Builder Fields
@@ -338,6 +339,8 @@ Query * HandleIndexStats(const bson_value_t *existingValue, Query *query,
 						 AggregationPipelineBuildContext *context);
 Query * HandleCurrentOp(const bson_value_t *existingValue, Query *query,
 						AggregationPipelineBuildContext *context);
+Query * HandleListExtendedIndexes(const bson_value_t *existingValue, Query *query,
+								  AggregationPipelineBuildContext *context);
 Query * HandleChangeStream(const bson_value_t *existingValue, Query *query,
 						   AggregationPipelineBuildContext *context);
 

@@ -1016,6 +1016,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the bson_repath_and_build function */
 	Oid ApiCatalogBsonRepathAndBuildFunctionOid;
 
+	/* OID of the bson_build_document function */
+	Oid ApiCatalogBsonBuildDocumentFunctionOid;
+
 	/* OID of the BSONSTDDEVPOP aggregate function */
 	Oid ApiCatalogBsonStdDevPopAggregateFunctionOid;
 
@@ -5047,6 +5050,29 @@ BsonRepathAndBuildFunctionOid(void)
 	}
 
 	return Cache.ApiCatalogBsonRepathAndBuildFunctionOid;
+}
+
+
+Oid
+BsonBuildDocumentFunctionOid(void)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (Cache.ApiCatalogBsonBuildDocumentFunctionOid == InvalidOid)
+	{
+		/* Given it's a variadic function, we just look it up by name */
+		List *functionNameList = list_make2(makeString(CoreSchemaName),
+											makeString("bson_build_document"));
+		bool missingOK = false;
+		ObjectWithArgs args = { 0 };
+		args.args_unspecified = true;
+		args.objname = functionNameList;
+
+		Cache.ApiCatalogBsonBuildDocumentFunctionOid =
+			LookupFuncWithArgs(OBJECT_FUNCTION, &args, missingOK);
+	}
+
+	return Cache.ApiCatalogBsonBuildDocumentFunctionOid;
 }
 
 
