@@ -30,7 +30,8 @@ char * SerializeCompositeIndexKeyForExplain(bytea *entry);
 void DecodeCompositeOpClassQueryMetadata(void *options, uint64_t opclassMetadata,
 										 bool *hasMultiKey, uint32_t *multiKeyPathBitmask,
 										 bool *hasCorrelatedReducedTerms,
-										 bool *hasTruncation);
+										 bool *hasTruncation,
+										 uint32_t *perPathTruncationBitmask);
 void DecodeCompositeOpClassMetadata(void *options, uint64_t opclassMetadata,
 									bool *hasMultiKey, uint32_t *multiKeyBitMask,
 									List **multiKeyPerPathList,

@@ -878,6 +878,7 @@ CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath)
 	if (compositeOptions->enableMetadataBasedTracking && getOpclassMetadataFunc != NULL)
 	{
 		uint32_t multiKeyPerPathStatus = 0;
+		uint32_t truncatedPerPathStatus = 0;
 		bool hasReducedCorrelatedTerms = false;
 		uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
 													  getOpclassMetadataFunc,
@@ -885,7 +886,8 @@ CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath)
 		DecodeCompositeOpClassQueryMetadata(options, opclassMetadata, &multiKeyStatus,
 											&multiKeyPerPathStatus,
 											&hasReducedCorrelatedTerms,
-											&hasTruncatedTerms);
+											&hasTruncatedTerms,
+											&truncatedPerPathStatus);
 	}
 	else
 	{
@@ -1244,6 +1246,7 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 			if (options->enableMetadataBasedTracking &&
 				getopclassMetadataFunc != NULL)
 			{
+				uint32_t truncatedPerPathStatus = 0;
 				bool hasReducedCorrelatedTerms = false;
 				bool indexHasArrays = false;
 				bool indexHasTruncation = false;
@@ -1255,7 +1258,8 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 													&indexHasArrays,
 													&outerScanState->multiKeyPerPathStatus,
 													&hasReducedCorrelatedTerms,
-													&indexHasTruncation);
+													&indexHasTruncation,
+													&truncatedPerPathStatus);
 				outerScanState->multiKeyStatus = indexHasArrays ?
 												 IndexMultiKeyStatus_HasArrays :
 												 IndexMultiKeyStatus_HasNoArrays;
@@ -1394,6 +1398,7 @@ extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nsc
 		{
 			bool indexHasArraysBool = false;
 			bool indexHasTruncation = false;
+			uint32_t truncatedPerPathStatus = 0;
 			uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
 														  getopclassMetadataFunc,
 														  PointerGetDatum(
@@ -1402,7 +1407,8 @@ extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nsc
 												&indexHasArraysBool,
 												&multiKeyPerPathStatus,
 												&hasCorrelatedReducedTerms,
-												&indexHasTruncation);
+												&indexHasTruncation,
+												&truncatedPerPathStatus);
 			indexHasArrays = indexHasArraysBool ? IndexMultiKeyStatus_HasArrays :
 							 IndexMultiKeyStatus_HasNoArrays;
 		}
