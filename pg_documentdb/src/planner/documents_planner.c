@@ -149,6 +149,7 @@ extern bool EnableDistinctCustomScan;
 extern bool EnableGroupByDistinctScan;
 extern bool EnableDistinctScanForGroupFirst;
 extern bool EnableDollarSampleReservoirScan;
+extern bool EnableMergeSortForInPrefix;
 extern bool EnableDynamicCursorFastStartupScan;
 extern bool EnablePartialFilterEvalOnPlanner;
 
@@ -586,6 +587,11 @@ ExtensionRelPathlistHookCore(PlannerInfo *root, RelOptInfo *rel, Index rti,
 
 	ConsiderIndexOrderByPushdownForId(root, rel, rte, rti, &indexContext);
 
+	if (EnableMergeSortForInPrefix)
+	{
+		ConsiderMergeSortForInPrefix(root, rel, rte, rti, &indexContext);
+	}
+
 	if (EnableIndexOnlyScan)
 	{
 		ConsiderIndexOnlyScan(root, rel, rte, rti, &indexContext);
@@ -676,6 +682,12 @@ ExtensionRelPathlistHookCore(PlannerInfo *root, RelOptInfo *rel, Index rti,
 			Path *path = lfirst(cell);
 			path->total_cost += disable_cost;
 		}
+	}
+
+	if (EnableMergeSortForInPrefix)
+	{
+		RemoveMergeSortInPrefixMarkersFromPaths(rel->pathlist);
+		RemoveMergeSortInPrefixMarkersFromPaths(rel->partial_pathlist);
 	}
 }
 

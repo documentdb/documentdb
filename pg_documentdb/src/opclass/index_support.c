@@ -11,6 +11,7 @@
  */
 
 #include <postgres.h>
+#include <math.h>
 #include <miscadmin.h>
 #include <fmgr.h>
 #include <nodes/nodes.h>
@@ -51,6 +52,9 @@
 #include "vector/vector_spec.h"
 #include "utils/version_utils.h"
 #include "query/bson_compare.h"
+#include "utils/hashset_utils.h"
+#include "io/bsonvalue_utils.h"
+#include "io/bson_hash.h"
 #include "index_am/index_am_utils.h"
 #include "utils/docdb_make_funcs.h"
 #include "query/bson_dollar_selectivity.h"
@@ -166,6 +170,62 @@ typedef struct FieldCoverageState
 	bool hasUncoveredField;
 } FieldCoverageState;
 
+/* Per-$in metadata used to expand a $in (@*=) filter on an equality-prefix column of a composite index into one point-equality (@=) clause per value */
+typedef struct InPrefixOpInfo
+{
+	/* The index column the $in prefix maps to. */
+	AttrNumber indexcol;
+	Expr *leftExpr;
+
+	/* One bson Const per $in value, each of the form { "<path>": <value> }, ready to be the right-hand argument of a point-equality (@=) operator */
+	List *valueConsts;
+
+	/* The original $in RestrictInfo this prefix was expanded from. Each child carries
+	 * it back as a non-lossy placeholder IndexClause to keep the planner from re-attaching
+	 * it as a redundant per-child recheck Filter (see the child build loop).
+	 */
+	RestrictInfo *inRinfo;
+} InPrefixOpInfo;
+
+
+/*
+ * Output of TryBuildMergeSortInPrefixPlan: the per-index metadata that both the
+ * cost-estimate marking pass and the relpathlist rewrite need to drive the
+ * $in-prefix merge-sort explosion. Computing it in one place keeps the two
+ * passes in lockstep so they cannot disagree about whether (or how) an index
+ * qualifies.
+ */
+typedef struct MergeSortInPrefixPlan
+{
+	/* Suffix order-by index clauses shared by every exploded child scan. */
+	List *orderByClauses;
+
+	/* One InPrefixOpInfo per $in prefix column that must be exploded. */
+	List *inInfos;
+
+	/* Non-exploded index clauses carried unchanged into each child scan. */
+	List *otherClauses;
+
+	/* Equality-bound composite columns (from $in prefixes and point filters).
+	 * Used only as a cheap necessary pre-check by the marking pass; the rewrite
+	 * relies on per-child pathkey validation as the authoritative check. */
+	bool equalityPrefixes[INDEX_MAX_KEYS];
+
+	/* Lowest/highest composite-opclass column among the servable prefix sort
+	 * keys (see BuildMergeSortOrderByClauses). */
+	int32_t minSortColumn;
+	int32_t maxSortColumn;
+
+	/* Number of leading query sort keys the index-servable prefix covers. The
+	 * MergeAppend advertises this many leading pathkeys; any remaining sort keys
+	 * are sorted above it (a plain or incremental Sort, chosen by cost). Equals
+	 * the full sort length for the fully-covered case (no extra sort needed). */
+	int prefixLength;
+
+	/* Product of the exploded $in cardinalities (bounded by the cap). */
+	int numChildren;
+} MergeSortInPrefixPlan;
+
 extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
@@ -273,6 +333,15 @@ static bool TryUseAlternateIndexForPrimaryKeyLookup(PlannerInfo *root, RelOptInf
 static void PrimaryKeyLookupUnableToFindIndex(void);
 static bool IndexClauseIsValidForIndexOnlyScan(const IndexClause *clause,
 											   bytea *indexOptions);
+static OpExpr * CreateMergeSortInPrefixMarkerOpExpr(Expr *documentExpr);
+static List * RemoveMergeSortInPrefixMarkerClauses(List *indexClauses,
+												   bool *removedMarker);
+static List * RemoveReplacedMergeSortInPrefixMarkedPaths(List *pathsList,
+														 List *pathsToRemove);
+static int ProcessSingleCompositeFilter(Node *predQual, bytea *opClassOptions,
+										bool equalityPrefixes[INDEX_MAX_KEYS],
+										bool nonEqualityPrefixes[INDEX_MAX_KEYS],
+										int32_t *indexStrategy);
 
 static List * UpdateIndexListForExtendedIndex(List *existingIndex,
 											  ReplaceExtensionFunctionContext *context);
@@ -349,7 +418,23 @@ extern bool ForceIndexOnlyScanIfAvailable;
 extern bool EnableIndexOnlyScan;
 extern bool EnableIndexOnlyScanOnCostFunction;
 extern bool EnableOrderByIdOnCostFunction;
+extern int MaxMergeSortInValues;
 extern bool EnablePrimaryKeyCursorScan;
+
+/*
+ * Field path written into the internal $in-prefix merge-sort marker range qual
+ * ({ "<path>": { "mergeSortInPrefix": true } }). The marker is identified by
+ * MergeSortInPrefixMarkerKey in its value document (see
+ * IsMergeSortInPrefixMarkerExpr), not by this path, so the path is a
+ * non-load-bearing placeholder and need not be reserved/collision-proof.
+ */
+static const char *MergeSortInPrefixMarkerPath = "mergeSort";
+
+/*
+ * Discriminator key carried in the marker's range value document. Recognized by
+ * InitializeQueryDollarRange in src/aggregation/bson_query_common.c.
+ */
+static const char *MergeSortInPrefixMarkerKey = "mergeSortInPrefix";
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -2048,6 +2133,48 @@ IndexRestrictInfoSupportIndexOnlyScan(const RestrictInfo *rinfo,
 
 
 static bool
+IndexRestrictInfosSupportIndexOnlyScan(IndexPath *indexPath,
+									   RelOptInfo *rel,
+									   ReplaceExtensionFunctionContext *replaceContext)
+{
+	bytea *indexOptions = indexPath->indexinfo->opclassoptions != NULL ?
+						  indexPath->indexinfo->opclassoptions[0] : NULL;
+	if (indexOptions == NULL)
+	{
+		return false;
+	}
+
+	ListCell *rinfoCell;
+	foreach(rinfoCell, indexPath->indexinfo->indrestrictinfo)
+	{
+		RestrictInfo *baseRestrictInfo = (RestrictInfo *) lfirst(rinfoCell);
+
+		const RestrictInfo *shardKeyRestrictInfo = NULL;
+
+		/* at the planner layer these are trimmed out so we shouldn't see them for index only scan here. */
+		if (!IndexRestrictInfoSupportIndexOnlyScan(baseRestrictInfo, indexOptions,
+												   &shardKeyRestrictInfo, NULL))
+		{
+			return false;
+		}
+
+		/* if we have a shard key value filter we can only do index only scan for unsharded for RUM indexes because if it is sharded the shard key value needs to be evaluated at runtime and that goes against
+		 * the index only scan semantics.
+		 */
+		if (shardKeyRestrictInfo != NULL &&
+			(!replaceContext->plannerOrderByData.isShardKeyEqualityOnUnsharded ||
+			 shardKeyRestrictInfo !=
+			 replaceContext->plannerOrderByData.shardKeyEqualityExpr))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+
+static bool
 IndexClausesSupportIndexOnlyScan(IndexPath *indexPath,
 								 RelOptInfo *rel,
 								 ReplaceExtensionFunctionContext *replaceContext)
@@ -3459,6 +3586,1383 @@ ConsiderIndexOrderByPushdownForId(PlannerInfo *root, RelOptInfo *rel, RangeTblEn
 		/* now add the new paths */
 		Path *newPath = lfirst(cell);
 		add_path(rel, newPath);
+	}
+}
+
+
+/*
+ * Match callback for the $in-prefix de-duplication hash set. Two values are the
+ * same iff they compare equal under CompareBsonValueAndType, which is the same
+ * equality the per-child point scans recheck with. This is what determines
+ * whether two children would return overlapping rows.
+ */
+static int
+InPrefixDedupMatchFunc(const void *obj1, const void *obj2, Size objsize)
+{
+	bool isComparisonValidIgnore;
+	return CompareBsonValueAndType((const bson_value_t *) obj1,
+								   (const bson_value_t *) obj2,
+								   &isComparisonValidIgnore);
+}
+
+
+/*
+ * Hash callback for the $in-prefix de-duplication hash set.
+ *
+ * A hash set is only correct when match(a, b) implies hash(a) == hash(b). The
+ * match callback above is CompareBsonValueAndType, which treats numeric values
+ * that are equal across representations as the same (e.g. 1, 1.0 and
+ * NumberLong(1), or a double and a decimal128 of the same value).
+ *
+ * HashBsonValueComparable already collapses integer-valued numbers across
+ * representations, but for a non-integer double/decimal128 it hashes the raw
+ * decimal encoding. Numerically-equal decimal128 cohorts (e.g. 1.5 vs 1.50) and
+ * an equal double/decimal128 pair have different encodings, so they would hash
+ * to different buckets, the match callback would never run, and the values
+ * would not collapse, leaving overlapping per-child scans that emit duplicate
+ * rows. Normalize such values to their double representation, which is identical
+ * for equal values, before hashing. The conversion is the quiet variant so
+ * decimal128 values outside the double range collapse to +/-Inf or 0 instead of
+ * raising an error. The lossy projection only adds hash collisions, which the
+ * match callback resolves; it never separates equal values.
+ */
+static uint32
+InPrefixDedupHashFunc(const void *obj, Size objsize)
+{
+	const bson_value_t *value = (const bson_value_t *) obj;
+
+	bool checkFixedInteger = true;
+	if (BsonValueIsNumber(value) &&
+		!IsBsonValue64BitInteger(value, checkFixedInteger))
+	{
+		bson_value_t normalizedValue = { 0 };
+		normalizedValue.value_type = BSON_TYPE_DOUBLE;
+		normalizedValue.value.v_double = BsonValueAsDoubleQuiet(value);
+		return HashBsonValueComparable(&normalizedValue, 0);
+	}
+
+	return HashBsonValueComparable(value, 0);
+}
+
+
+/*
+ * Creates the hash set used to de-duplicate $in values for the merge-sort
+ * rewrite. It pairs CompareBsonValueAndType (the equality the children recheck
+ * with) as the match callback with a numeric-value-consistent hash, so that all
+ * values that would produce overlapping per-child scans collapse to one entry.
+ */
+static HTAB *
+CreateInPrefixDedupHashSet(void)
+{
+	HASHCTL hashInfo = CreateExtensionHashCTL(
+		sizeof(bson_value_t),
+		sizeof(bson_value_t),
+		InPrefixDedupMatchFunc,
+		InPrefixDedupHashFunc);
+	return hash_create("InPrefix Dollar In Dedup Hash Table", 32, &hashInfo,
+					   DefaultExtensionHashFlags);
+}
+
+
+/*
+ * Returns the composite-opclass column number (the logical bson-path position,
+ * e.g. 0 for the leading indexed path) of a $in (@*=) index clause, or -1 if it
+ * cannot be determined. clause->indexcol cannot be used for this: on a composite
+ * index every clause shares the single "document" Postgres index column.
+ */
+static int32_t
+GetInExprCompositeColumn(OpExpr *inExpr, void *opClassOptions)
+{
+	if (opClassOptions == NULL)
+	{
+		return -1;
+	}
+
+	if (list_length(inExpr->args) != 2)
+	{
+		return -1;
+	}
+
+	Expr *rhs = StripRelabels((Expr *) lsecond(inExpr->args));
+	pgbson *inBson = TryExtractPgbsonFromConst(rhs);
+	if (inBson == NULL)
+	{
+		return -1;
+	}
+
+	pgbsonelement inElement;
+	PgbsonToSinglePgbsonElement(inBson, &inElement);
+	int8_t sortDirIgnore = 0;
+
+	/* inElement.path points at the NUL-terminated BSON key, so it can be passed
+	 * straight to GetCompositeOpClassColumnNumber (which compares via strcmp)
+	 * without an intermediate copy. */
+	return GetCompositeOpClassColumnNumber(inElement.path, opClassOptions,
+										   &sortDirIgnore);
+}
+
+
+/*
+ * Deduplicates the right-hand bson array of a $in (@*=) composite-index OpExpr
+ * (of the form { "<path>": [ v1, v2, ... ] }) and returns the number of unique
+ * values, or -1 if the operand is not a usable constant array, carries a
+ * non-simple collation, contains a regex/null member, or has more than
+ * maxUniqueValues unique values -- the caller's remaining fan-out budget, beyond
+ * which the rewrite is rejected anyway, so we abandon early. An empty array
+ * returns 0.
+ *
+ * When valueConstsOut is non-NULL it is also filled with one bson Const per
+ * unique value, each of the form { "<path>": vN } (the per-value point-equality
+ * scans the rewrite builds). The cost-estimate marking pass passes NULL because
+ * it needs only the unique count for the fan-out cap; skipping the Const
+ * materialization there avoids building per-value nodes it never reads.
+ *
+ * Duplicate values are dropped because the MergeAppend has no cross-child
+ * de-duplication, so a repeated entry would otherwise emit each matching
+ * document once per repetition. Values that compare equal (including
+ * numerically-equal values across types) collapse to one child, matching the
+ * set semantics of $in; see the de-dup hash set below for how.
+ */
+static int
+GetInPrefixPointValues(OpExpr *inExpr, int maxUniqueValues, List **valueConstsOut)
+{
+	if (valueConstsOut != NULL)
+	{
+		*valueConstsOut = NIL;
+	}
+
+	if (list_length(inExpr->args) != 2)
+	{
+		return -1;
+	}
+
+	Expr *rhs = StripRelabels((Expr *) lsecond(inExpr->args));
+	pgbson *inBson = TryExtractPgbsonFromConst(rhs);
+	if (inBson == NULL)
+	{
+		return -1;
+	}
+
+	pgbsonelement inElement;
+	const char *collation = PgbsonToSinglePgbsonElementWithCollation(inBson,
+																	 &inElement);
+
+	/*
+	 * The per-value children built from this $in use binary point equality
+	 * (@=) and the duplicate check below is a binary comparison. Under a
+	 * non-simple collation those semantics are wrong: documents that compare
+	 * equal under the collation (e.g. "a" and "A" with a case-insensitive
+	 * collation) would be split across children or dropped entirely, and
+	 * distinct $in entries that fold together would fan out into overlapping
+	 * children. Abandon the rewrite so planning falls back to the blocking
+	 * Sort, which honors the collation correctly. When collation support is
+	 * disabled the qual carries no collation and this is a no-op.
+	 *
+	 * TODO: support collation when the index is collation-aware -- build the
+	 * per-value children and run the duplicate check using the index's
+	 * collation so collation-equal values collapse to one child, instead of
+	 * falling back to the blocking Sort.
+	 */
+	if (IsCollationApplicable(collation))
+	{
+		return -1;
+	}
+
+	if (inElement.bsonValue.value_type != BSON_TYPE_ARRAY)
+	{
+		return -1;
+	}
+
+	List *valueConsts = NIL;
+
+	/*
+	 * De-duplicate by bson value using a hash set rather than a linear scan so
+	 * a large $in array is processed in O(n) instead of O(n^2). The set's match
+	 * callback is CompareBsonValueAndType (the equality the children recheck
+	 * with) paired with a numeric-value-consistent hash, so values that compare
+	 * equal across numeric representations (e.g. 1 and 1.0, or a double and an
+	 * equal-valued decimal128) collapse to a single entry; otherwise they would
+	 * fan out into separate children that scan the same index term and emit
+	 * duplicate rows. The collation guard above already rejected non-simple
+	 * collations, so a collation-unaware set is correct here. It is allocated in
+	 * the current (planner) memory context and destroyed on every exit path.
+	 */
+	HTAB *seenValues = CreateInPrefixDedupHashSet();
+	int uniqueValueCount = 0;
+	bson_iter_t arrayIter;
+	BsonValueInitIterator(&inElement.bsonValue, &arrayIter);
+	while (bson_iter_next(&arrayIter))
+	{
+		const bson_value_t *value = bson_iter_value(&arrayIter);
+
+		/*
+		 * Some $in members cannot be represented as a binary point-equality
+		 * child without losing rows, because the original recheck is suppressed
+		 * on the rewritten children (lossy = false):
+		 *   - A regex matches by pattern, but @= tests for a document literally
+		 *     equal to the regex object, so it would select none of the strings
+		 *     the pattern should match.
+		 *   - null matches both an explicit null and a missing field. Its
+		 *     equality bound is a range (> MinKey .. null] that always requires
+		 *     a runtime recheck (SetEqualityBound), which the children drop.
+		 * In either case abandon the rewrite so planning falls back to the
+		 * blocking Sort over the ordinary index scan, which keeps the correct
+		 * bounds and recheck.
+		 */
+		if (value->value_type == BSON_TYPE_REGEX ||
+			value->value_type == BSON_TYPE_NULL)
+		{
+			hash_destroy(seenValues);
+			list_free_deep(valueConsts);
+			return -1;
+		}
+
+		/*
+		 * Skip values already seen so a repeated $in entry does not fan out
+		 * into multiple identical child scans (which would duplicate rows). The
+		 * hash set copies the key into its own entry; the bson_value_t may carry
+		 * pointers into the source bson buffer, which lives for the duration of
+		 * planning, so the shallow copy stays valid for the lookups here.
+		 */
+		bool foundDuplicate = false;
+		hash_search(seenValues, value, HASH_ENTER, &foundDuplicate);
+		if (foundDuplicate)
+		{
+			continue;
+		}
+
+		/*
+		 * Bail once this $in's unique count exceeds the caller's remaining
+		 * fan-out budget (maxUniqueValues = MaxMergeSortInValues / the product
+		 * of the $in cardinalities already accumulated): the running cartesian
+		 * product would exceed the cap and the rewrite be abandoned anyway, so
+		 * stop instead of hashing (and materializing Consts for) the rest of a
+		 * large array the cap will reject.
+		 */
+		if (++uniqueValueCount > maxUniqueValues)
+		{
+			hash_destroy(seenValues);
+			list_free_deep(valueConsts);
+			return -1;
+		}
+
+		/*
+		 * Only materialize the per-value Const when the caller needs it (the
+		 * rewrite). The cost-estimate marking pass passes valueConstsOut == NULL
+		 * and uses only the unique count, so these nodes would be discarded.
+		 */
+		if (valueConstsOut == NULL)
+		{
+			continue;
+		}
+
+		pgbson_writer writer;
+		PgbsonWriterInit(&writer);
+		PgbsonWriterAppendValue(&writer, inElement.path, inElement.pathLength,
+								value);
+		Const *valueConst = makeConst(BsonTypeId(), -1, InvalidOid, -1,
+									  PointerGetDatum(PgbsonWriterGetPgbson(&writer)),
+									  false, false);
+		valueConsts = lappend(valueConsts, valueConst);
+	}
+
+	hash_destroy(seenValues);
+	if (valueConstsOut != NULL)
+	{
+		*valueConstsOut = valueConsts;
+	}
+	return uniqueValueCount;
+}
+
+
+/*
+ * Builds the per-sort-column order-by index clauses (one $range "orderByScan"
+ * clause per servable sort key) that drive the ordered index scan, for the
+ * longest leading prefix of the requested sort that the composite index can
+ * stream: the leading sort keys that map to consecutive composite-opclass
+ * columns (starting at the first sort column) with a consistent scan direction.
+ * The first sort key that is not in the index, is not the next consecutive
+ * column, or flips the scan direction ends the prefix; the remaining sort keys
+ * are left for a sort above the MergeAppend (a plain or incremental Sort,
+ * chosen by cost). Returns the order-by clauses for that prefix, or NIL when
+ * even the first sort key is not servable (an empty prefix -- the caller then
+ * skips the rewrite), when the opclass options are missing, or when the index
+ * cannot produce any order at all.
+ *
+ * Reports, via *minSortColumn / *maxSortColumn, the lowest / highest
+ * composite-opclass column in the servable prefix. Callers use *maxSortColumn to
+ * decide which $in clauses are part of the equality prefix the ordering depends
+ * on (column <= *maxSortColumn) versus a trailing $in that can be carried as an
+ * in-scan filter instead of exploded. Both are only meaningful when the function
+ * returns a non-NIL list.
+ */
+static List *
+BuildMergeSortOrderByClauses(PlannerInfo *root, IndexOptInfo *indexInfo,
+							 List *sortDetails,
+							 int32_t *minSortColumn, int32_t *maxSortColumn)
+{
+	*minSortColumn = INT_MAX;
+	*maxSortColumn = -1;
+
+	bytea *opClassOptions = indexInfo->opclassoptions != NULL ?
+							indexInfo->opclassoptions[0] : NULL;
+	if (opClassOptions == NULL)
+	{
+		return NIL;
+	}
+
+	bool indexCanOrder = false;
+	bool indexSupportsReverse = GetIndexSupportsBackwardsScan(indexInfo->relam,
+															  &indexCanOrder);
+	if (!indexCanOrder)
+	{
+		return NIL;
+	}
+
+	List *orderByClauses = NIL;
+	ListCell *sortCell;
+	int32_t determinedScanDirection = 0;
+	int32_t expectedColumn = -1;
+	foreach(sortCell, sortDetails)
+	{
+		SortIndexInputDetails *sortInput = (SortIndexInputDetails *) lfirst(sortCell);
+
+		int8_t indexSortDirection = 0;
+		int32_t columnNumber = GetCompositeOpClassColumnNumber(
+			sortInput->sortPath, opClassOptions, &indexSortDirection);
+
+		/*
+		 * Extend the prefix only while each successive sort key maps to the next
+		 * consecutive composite-opclass column. Stop (rather than fail) at the
+		 * first sort key that is not in the index or is not the next column: the
+		 * leading keys collected so far are the index-servable prefix, and the
+		 * remaining keys are left for a sort above the MergeAppend.
+		 */
+		if (columnNumber < 0)
+		{
+			break;
+		}
+		if (expectedColumn < 0)
+		{
+			expectedColumn = columnNumber;
+		}
+		else if (columnNumber != expectedColumn)
+		{
+			break;
+		}
+
+		int32_t querySortDirection =
+			SortPathKeyStrategy(sortInput->sortPathKey) == BTGreaterStrategyNumber ?
+			-1 : 1;
+
+		/* A key whose direction the index cannot serve ends the prefix. */
+		if (querySortDirection != indexSortDirection && !indexSupportsReverse)
+		{
+			break;
+		}
+
+		int32_t scanDirection = querySortDirection == indexSortDirection ? 1 : -1;
+		if (determinedScanDirection == 0)
+		{
+			determinedScanDirection = scanDirection;
+		}
+		else if (scanDirection != determinedScanDirection)
+		{
+			/* A scan-direction flip within the prefix cannot stream; stop here. */
+			break;
+		}
+
+		/* This key is part of the servable prefix: account for its column. */
+		*minSortColumn = Min(*minSortColumn, columnNumber);
+		*maxSortColumn = Max(*maxSortColumn, columnNumber);
+		expectedColumn = columnNumber + 1;
+
+		OpExpr *orderByExpr = CreateFullScanOpExpr(
+			sortInput->sortVar, sortInput->sortPath, strlen(sortInput->sortPath),
+			querySortDirection);
+		RestrictInfo *orderByRinfo =
+			make_simple_restrictinfo(root, (Expr *) orderByExpr);
+		orderByClauses = lappend(orderByClauses,
+								 BuildPointReadIndexClause(orderByRinfo,
+														   columnNumber));
+	}
+
+	return orderByClauses;
+}
+
+
+static bool
+IsMergeSortInPrefixMarkerExpr(Expr *expr)
+{
+	expr = StripRelabels(expr);
+	if (!IsA(expr, OpExpr))
+	{
+		return false;
+	}
+
+	OpExpr *opExpr = (OpExpr *) expr;
+	if (opExpr->opno != BsonRangeMatchOperatorOid())
+	{
+		return false;
+	}
+
+	/*
+	 * The marker is a range operator carrying the internal
+	 * MergeSortInPrefixMarkerKey. Parse it with the shared range parser (see
+	 * InitializeQueryDollarRange); full-scan and order-by range quals do not set
+	 * isMergeSortInPrefixMarker, so only the marker matches.
+	 */
+	DollarRangeParams rangeParams = { 0 };
+	if (!TryGetRangeParamsForRangeArgs(opExpr->args, &rangeParams))
+	{
+		return false;
+	}
+
+	return rangeParams.isMergeSortInPrefixMarker;
+}
+
+
+static bool
+IsMergeSortInPrefixMarkerClause(IndexClause *clause)
+{
+	return clause->rinfo != NULL &&
+		   IsMergeSortInPrefixMarkerExpr(clause->rinfo->clause);
+}
+
+
+bool
+IndexPathHasMergeSortInPrefixMarker(IndexPath *indexPath)
+{
+	ListCell *clauseCell;
+	foreach(clauseCell, indexPath->indexclauses)
+	{
+		IndexClause *clause = (IndexClause *) lfirst(clauseCell);
+		if (IsMergeSortInPrefixMarkerClause(clause))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+
+static List *
+RemoveMergeSortInPrefixMarkerClauses(List *indexClauses, bool *removedMarker)
+{
+	List *filteredClauses = NIL;
+	*removedMarker = false;
+
+	ListCell *clauseCell;
+	foreach(clauseCell, indexClauses)
+	{
+		IndexClause *clause = (IndexClause *) lfirst(clauseCell);
+		if (IsMergeSortInPrefixMarkerClause(clause))
+		{
+			*removedMarker = true;
+			continue;
+		}
+
+		filteredClauses = lappend(filteredClauses, clause);
+	}
+
+	return filteredClauses;
+}
+
+
+static void
+RemoveMergeSortInPrefixMarkerFromPath(Path *path)
+{
+	check_stack_depth();
+	CHECK_FOR_INTERRUPTS();
+
+	if (path == NULL)
+	{
+		return;
+	}
+
+	if (IsA(path, IndexPath))
+	{
+		IndexPath *indexPath = (IndexPath *) path;
+		bool removedMarker = false;
+		List *filteredClauses =
+			RemoveMergeSortInPrefixMarkerClauses(indexPath->indexclauses, &removedMarker);
+		if (removedMarker)
+		{
+			indexPath->indexclauses = filteredClauses;
+			indexPath->path.pathkeys = NIL;
+		}
+	}
+	else if (IsA(path, BitmapHeapPath))
+	{
+		BitmapHeapPath *heapPath = (BitmapHeapPath *) path;
+		RemoveMergeSortInPrefixMarkerFromPath(heapPath->bitmapqual);
+	}
+	else if (IsA(path, BitmapAndPath))
+	{
+		BitmapAndPath *andPath = (BitmapAndPath *) path;
+		RemoveMergeSortInPrefixMarkersFromPaths(andPath->bitmapquals);
+	}
+	else if (IsA(path, BitmapOrPath))
+	{
+		BitmapOrPath *orPath = (BitmapOrPath *) path;
+		RemoveMergeSortInPrefixMarkersFromPaths(orPath->bitmapquals);
+	}
+	else if (IsA(path, CustomPath))
+	{
+		CustomPath *customPath = (CustomPath *) path;
+		RemoveMergeSortInPrefixMarkersFromPaths(customPath->custom_paths);
+	}
+}
+
+
+void
+RemoveMergeSortInPrefixMarkersFromPaths(List *pathsList)
+{
+	ListCell *pathCell;
+	foreach(pathCell, pathsList)
+	{
+		RemoveMergeSortInPrefixMarkerFromPath((Path *) lfirst(pathCell));
+	}
+}
+
+
+static List *
+RemoveReplacedMergeSortInPrefixMarkedPaths(List *pathsList, List *pathsToRemove)
+{
+	ListCell *pathCell;
+	foreach(pathCell, pathsList)
+	{
+		Path *path = (Path *) lfirst(pathCell);
+		if (list_member_ptr(pathsToRemove, path))
+		{
+			pathsList = foreach_delete_current(pathsList, pathCell);
+			continue;
+		}
+	}
+
+	return pathsList;
+}
+
+
+/*
+ * Builds the internal $in-prefix merge-sort marker range qual:
+ *   document @<> { "<MergeSortInPrefixMarkerPath>": { "mergeSortInPrefix": true } }
+ *
+ * The marker is recognized by its MergeSortInPrefixMarkerKey value-document key
+ * (see IsMergeSortInPrefixMarkerExpr), which lives in the same closed internal
+ * range-key namespace as "fullScan"/"orderByScan" and therefore cannot collide
+ * with a user field path. Mirrors CreateFullScanOpExpr's structure but emits the
+ * marker key rather than reusing "fullScan".
+ */
+static OpExpr *
+CreateMergeSortInPrefixMarkerOpExpr(Expr *documentExpr)
+{
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	pgbson_writer markerWriter;
+	PgbsonWriterStartDocument(&writer, MergeSortInPrefixMarkerPath,
+							  strlen(MergeSortInPrefixMarkerPath), &markerWriter);
+	PgbsonWriterAppendBool(&markerWriter, MergeSortInPrefixMarkerKey,
+						   strlen(MergeSortInPrefixMarkerKey), true);
+	PgbsonWriterEndDocument(&writer, &markerWriter);
+
+	Const *bsonConst = makeConst(BsonTypeId(), -1, InvalidOid, -1,
+								 PointerGetDatum(PgbsonWriterGetPgbson(&writer)),
+								 false, false);
+	OpExpr *opExpr = (OpExpr *) make_opclause(BsonRangeMatchOperatorOid(), BOOLOID,
+											  false, documentExpr,
+											  (Expr *) bsonConst, InvalidOid,
+											  InvalidOid);
+	opExpr->opfuncid = BsonRangeMatchFunctionId();
+	return opExpr;
+}
+
+
+static IndexClause *
+CreateMergeSortInPrefixMarkerClause(PlannerInfo *root, Expr *documentExpr)
+{
+	OpExpr *markerExpr = CreateMergeSortInPrefixMarkerOpExpr(documentExpr);
+	RestrictInfo *markerRinfo = make_simple_restrictinfo(root, (Expr *) markerExpr);
+	return BuildPointReadIndexClause(markerRinfo, 0);
+}
+
+
+/*
+ * Structural eligibility shared by the marking pass and the rewrite: the index
+ * must be an ordered composite index with more than one path and must not be
+ * multi-key (exploding a $in into per-value point scans is only sound when no
+ * single document can match more than one branch).
+ */
+static bool
+MergeSortInPrefixIndexEligible(IndexOptInfo *indexInfo)
+{
+	bytea *opClassOptions = indexInfo->opclassoptions != NULL ?
+							indexInfo->opclassoptions[0] : NULL;
+	if (indexInfo->opfamily == NULL ||
+		!IsCompositeOpFamilyOid(indexInfo->relam, indexInfo->opfamily[0]) ||
+		opClassOptions == NULL ||
+		GetCompositeOpClassPathCount(opClassOptions) <= 1)
+	{
+		return false;
+	}
+
+	/*
+	 * Any multi-key column currently disqualifies the whole index: exploding a
+	 * $in into per-value point scans is only sound when no document matches more
+	 * than one branch. CompositeIndexOptInfoIsMultiKey already reports which
+	 * columns are multi-key via multiKeyBitMask, so this check is coarser than
+	 * necessary.
+	 *
+	 * TODO (follow-up PR): use the per-column multiKeyBitMask to allow the
+	 * pushdown when only columns outside the $in equality prefix and the sort
+	 * key are multi-key.
+	 */
+	uint32_t multiKeyBitMask = 0;
+	if (CompositeIndexOptInfoIsMultiKey(indexInfo, &multiKeyBitMask))
+	{
+		return false;
+	}
+
+	return true;
+}
+
+
+/*
+ * Single source of truth for the $in-prefix merge-sort plan, used by both the
+ * cost-estimate marking pass (MaybeMarkIndexPathForMergeSortInPrefix) and the
+ * relpathlist rewrite (ConsiderMergeSortForInPrefix). Computing the order-by
+ * clauses, the $in split, and the fan-out here -- from the same traversal of
+ * indexClauses -- keeps marking and rewriting from drifting apart.
+ *
+ * indexClauses must already have the internal marker clause removed. The caller
+ * is responsible for the index-structural checks (MergeSortInPrefixIndexEligible)
+ * and the sort-shape checks (GetSortDetails); sortDetails is the result of the
+ * latter. Returns true and fills *plan when the index can host the rewrite. The
+ * equality-prefix coverage of the sort key is left to the caller, since the
+ * rewrite validates it authoritatively via per-child pathkeys.
+ *
+ * When materializeValues is false the per-$in value lists are left empty
+ * (plan->inInfos[i]->valueConsts == NIL): the cost-estimate marking pass needs
+ * only the fan-out count, so it skips building the value Consts it never reads.
+ * The relpathlist rewrite passes true to get the value lists it explodes into
+ * the per-value child scans.
+ */
+static bool
+TryBuildMergeSortInPrefixPlan(PlannerInfo *root, IndexOptInfo *indexInfo,
+							  List *indexClauses, List *sortDetails,
+							  bool materializeValues, MergeSortInPrefixPlan *plan)
+{
+	memset(plan, 0, sizeof(*plan));
+	plan->minSortColumn = INT_MAX;
+	plan->maxSortColumn = -1;
+	plan->numChildren = 1;
+
+	bytea *opClassOptions = indexInfo->opclassoptions != NULL ?
+							indexInfo->opclassoptions[0] : NULL;
+	if (opClassOptions == NULL)
+	{
+		return false;
+	}
+
+	plan->orderByClauses = BuildMergeSortOrderByClauses(root, indexInfo, sortDetails,
+														&plan->minSortColumn,
+														&plan->maxSortColumn);
+	if (plan->orderByClauses == NIL || plan->minSortColumn == INT_MAX)
+	{
+		return false;
+	}
+
+	/*
+	 * The number of order-by clauses is the length of the index-servable sort
+	 * prefix (one clause per leading sort key the index can stream). sortDetails
+	 * is built one-to-one, in order, from root->query_pathkeys, so this also
+	 * indexes the leading prefix of the query pathkeys.
+	 */
+	plan->prefixLength = list_length(plan->orderByClauses);
+
+	ListCell *clauseCell;
+	foreach(clauseCell, indexClauses)
+	{
+		IndexClause *clause = (IndexClause *) lfirst(clauseCell);
+
+		/*
+		 * Find the lowered $in (@*=) operator among the clause's index quals.
+		 * We deliberately look at indexquals rather than clause->rinfo->clause:
+		 * this helper runs both in the cost-estimate marking pass -- where the
+		 * top-level clause may still be in function form -- and in the
+		 * relpathlist rewrite, where it is the lowered OpExpr. indexquals carries
+		 * the lowered @*= form at both stages, so detecting it here keeps the two
+		 * passes in lockstep.
+		 */
+		OpExpr *inExpr = NULL;
+		if (clause->rinfo != NULL)
+		{
+			ListCell *qualCell;
+			foreach(qualCell, clause->indexquals)
+			{
+				RestrictInfo *qual = (RestrictInfo *) lfirst(qualCell);
+				if (qual != NULL && IsA(qual->clause, OpExpr) &&
+					((OpExpr *) qual->clause)->opno == BsonInOperatorId())
+				{
+					inExpr = (OpExpr *) qual->clause;
+					break;
+				}
+			}
+		}
+
+		if (inExpr != NULL)
+		{
+			/*
+			 * A $in strictly after every sort column does not participate in the
+			 * ordering, so carry it into each child as an ordinary in-scan index
+			 * condition rather than fanning it out. We compare the $in's
+			 * composite-opclass column (not clause->indexcol, which is the single
+			 * shared document column on a composite index) to the highest sort
+			 * column.
+			 */
+			int32_t inColumn = GetInExprCompositeColumn(inExpr, opClassOptions);
+			if (inColumn < 0)
+			{
+				return false;
+			}
+
+			if (inColumn > plan->maxSortColumn)
+			{
+				plan->otherClauses = lappend(plan->otherClauses, clause);
+				continue;
+			}
+
+			/*
+			 * Bound the running fan-out (product of $in cardinalities). Pass the
+			 * remaining budget so the dedup bails mid-walk once this $in alone
+			 * would push the product past the cap, instead of hashing the whole
+			 * array and rejecting afterward. The division also keeps the product
+			 * from overflowing: MaxMergeSortInValues is bounded by SHRT_MAX, and
+			 * plan->numChildren starts at 1 and never exceeds the cap, so the
+			 * budget is >= 1 and the resulting product fits comfortably in an int.
+			 */
+			int maxUniqueValues = MaxMergeSortInValues / plan->numChildren;
+			List *valueConsts = NIL;
+			int uniqueValueCount = GetInPrefixPointValues(
+				inExpr, maxUniqueValues, materializeValues ? &valueConsts : NULL);
+			if (uniqueValueCount <= 0)
+			{
+				return false;
+			}
+			plan->numChildren *= uniqueValueCount;
+
+			InPrefixOpInfo *info = palloc0(sizeof(InPrefixOpInfo));
+			info->indexcol = clause->indexcol;
+			info->leftExpr = (Expr *) linitial(inExpr->args);
+			info->valueConsts = valueConsts;
+			info->inRinfo = clause->rinfo;
+			plan->inInfos = lappend(plan->inInfos, info);
+			plan->equalityPrefixes[inColumn] = true;
+			continue;
+		}
+
+		plan->otherClauses = lappend(plan->otherClauses, clause);
+
+		/*
+		 * Track equality-bound non-$in prefix columns so the marking pass can
+		 * confirm every column ahead of the first sort key is pinned (otherwise
+		 * the per-value child scans cannot stream the sort suffix in order).
+		 */
+		ListCell *qualCell;
+		foreach(qualCell, clause->indexquals)
+		{
+			RestrictInfo *qual = (RestrictInfo *) lfirst(qualCell);
+			if (qual == NULL || !IsA(qual->clause, OpExpr))
+			{
+				continue;
+			}
+
+			bool clauseEqualityPrefixes[INDEX_MAX_KEYS] = { false };
+			bool clauseNonEqualityPrefixes[INDEX_MAX_KEYS] = { false };
+			int32_t indexStrategyIgnore = 0;
+			int columnNumber = ProcessSingleCompositeFilter(
+				(Node *) qual->clause, opClassOptions,
+				clauseEqualityPrefixes, clauseNonEqualityPrefixes,
+				&indexStrategyIgnore);
+			if (columnNumber >= 0 && clauseEqualityPrefixes[columnNumber])
+			{
+				plan->equalityPrefixes[columnNumber] = true;
+			}
+		}
+	}
+
+	if (plan->inInfos == NIL ||
+		plan->numChildren < 1 ||
+		plan->numChildren > MaxMergeSortInValues)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+
+static bool
+TryGetMergeSortInPrefixMarkingInfo(PlannerInfo *root, IndexPath *indexPath,
+								   int *prefixLength, Expr **documentExpr)
+{
+	*prefixLength = 0;
+	*documentExpr = NULL;
+
+	/*
+	 * TODO(parallel): the amcanparallel guard skips marking while the index AM
+	 * can produce parallel scans. The rewrite builds serial, unparameterized
+	 * per-$in-value child scans under a MergeAppend; until we design how to
+	 * orchestrate that across parallel workers (partial paths / parallel-aware
+	 * MergeAppend), marking would race the parallel plan.
+	 *
+	 * TODO: the pathkeys != NIL guard also skips a partial sort order (e.g. index
+	 * (a,b,c), $in on b, sort {a,c}) that a MergeAppend could serve. Revisit once
+	 * this change has stabilized.
+	 */
+	if (root->query_pathkeys == NIL ||
+		indexPath->path.pathtype == T_IndexOnlyScan ||
+		indexPath->indexinfo->amcanparallel ||
+		indexPath->path.param_info != NULL ||
+		indexPath->path.pathkeys != NIL ||
+		IndexPathHasMergeSortInPrefixMarker(indexPath) ||
+		!MergeSortInPrefixIndexEligible(indexPath->indexinfo))
+	{
+		return false;
+	}
+
+	/*
+	 * TODO: once this feature has stabilized, consider whether this sort-column
+	 * walk can be moved into the default path loop where we process the order-by
+	 * and filters.
+	 */
+	bool hasGroupby = false;
+	bool isOrderById = false;
+	bool hasDistinctScan = false;
+	List *sortDetails = GetSortDetails(root, indexPath->path.parent->relid, &hasGroupby,
+									   &isOrderById, &hasDistinctScan);
+	if (sortDetails == NIL || hasGroupby)
+	{
+		return false;
+	}
+
+	MergeSortInPrefixPlan plan;
+	bool materializeValues = false;
+	bool hasPlan = TryBuildMergeSortInPrefixPlan(root, indexPath->indexinfo,
+												 indexPath->indexclauses, sortDetails,
+												 materializeValues, &plan);
+	list_free_deep(sortDetails);
+	if (!hasPlan)
+	{
+		return false;
+	}
+
+	/*
+	 * Every column ahead of the first sort key must be equality-bound; otherwise
+	 * an unconstrained column sits between the $in prefix and the sort key and
+	 * the per-value child scans cannot stream rows in the requested order. This
+	 * is a cheap necessary pre-check for marking -- the rewrite re-validates it
+	 * authoritatively through per-child pathkeys.
+	 */
+	for (int i = 0; i < plan.minSortColumn; i++)
+	{
+		if (!plan.equalityPrefixes[i])
+		{
+			return false;
+		}
+	}
+
+	/*
+	 * The document Var is the left-hand side of the $in operators the plan
+	 * already collected, so reuse it for the marker instead of re-walking the
+	 * indexclauses. inInfos is non-empty whenever the plan is valid.
+	 */
+	*documentExpr = ((InPrefixOpInfo *) linitial(plan.inInfos))->leftExpr;
+	*prefixLength = plan.prefixLength;
+	return true;
+}
+
+
+void
+MaybeMarkIndexPathForMergeSortInPrefix(PlannerInfo *root, IndexPath *indexPath)
+{
+	int prefixLength = 0;
+	Expr *documentExpr = NULL;
+	if (!TryGetMergeSortInPrefixMarkingInfo(root, indexPath, &prefixLength,
+											&documentExpr))
+	{
+		return;
+	}
+
+	IndexClause *markerClause = CreateMergeSortInPrefixMarkerClause(root, documentExpr);
+	if (markerClause == NULL)
+	{
+		return;
+	}
+
+	/*
+	 * Copy the indexclauses list before appending the marker. PostgreSQL's
+	 * build_index_paths passes one index_clauses list to several
+	 * create_index_path calls (forward/backward/parallel siblings) and
+	 * create_index_path stores the pointer without copying, so sibling
+	 * IndexPaths can alias the same list. lappend mutates that shared list in
+	 * place, which would leak the marker into siblings; list_copy gives this
+	 * path its own list first. (Elements are shared, which is fine -- we only
+	 * append.)
+	 */
+	indexPath->indexclauses = lappend(list_copy(indexPath->indexclauses),
+									  markerClause);
+
+	/*
+	 * Advertise only the index-servable prefix of the requested sort -- the
+	 * pathkeys this candidate will actually produce once rewritten (the
+	 * MergeAppend streams the prefix; a sort above it handles the rest). For
+	 * a fully-covered sort prefixLength == list_length(query_pathkeys), so this
+	 * is the whole sort. Advertising only the honest prefix avoids the marked
+	 * path falsely dominating a genuinely fully-ordered competitor.
+	 */
+	indexPath->path.pathkeys = list_copy_head(root->query_pathkeys, prefixLength);
+}
+
+
+/*
+ * Whether the merge-sort child scans of this index can be served as index-only
+ * scans: the query must be index-only eligible and the composite index must
+ * cover every target with non-lossy, covered filters. This is a query/index
+ * level decision -- identical for every child of the same index -- so callers
+ * evaluate it once (on the first child) and reuse it for the rest.
+ *
+ * hasDocumentVar (the projection reads the whole document) is fine here: like
+ * the composite branch of ConsiderIndexOnlyScan, the document is reconstructed
+ * from the covering index, which AreAllTargetsCoveredByIndex verifies.
+ */
+static bool
+MergeSortInPrefixChildrenSupportIndexOnly(PlannerInfo *root, RelOptInfo *rel,
+										  IndexPath *childPath,
+										  ReplaceExtensionFunctionContext *context)
+{
+	if (!enable_indexonlyscan || !EnableIndexOnlyScan)
+	{
+		return false;
+	}
+
+	bool hasDocumentVar = false;
+	if (!IsQueryEligibleForIndexOnlyScan(root, childPath->path.parent->relid,
+										 &hasDocumentVar))
+	{
+		return false;
+	}
+
+	IndexOptInfo *indexInfo = childPath->indexinfo;
+	return indexInfo->nkeycolumns >= 1 &&
+		   IsOrderBySupportedOnOpClass(indexInfo->relam, indexInfo->opfamily[0]) &&
+		   CompositeIndexSupportsIndexOnlyScan(childPath) &&
+		   IndexRestrictInfosSupportIndexOnlyScan(childPath, rel, context) &&
+		   AreAllTargetsCoveredByIndex(root, childPath);
+}
+
+
+/*
+ * Convert a merge-sort child ordered index scan into an index-only scan so the
+ * MergeAppend never touches the heap. Mirrors the conversion in
+ * ConsiderIndexOnlyScan: copy the path and its IndexOptInfo, mark the leading
+ * column returnable, flip the path to T_IndexOnlyScan, and re-cost.
+ *
+ * The order-capable AM may not be able to serve an index-only scan in the
+ * requested direction -- the RUM AM, for instance, costs a *descending*
+ * ordered index-only scan as infinite. Only adopt the index-only child when it
+ * is not more expensive than the heap-fetching scan; otherwise return childPath
+ * unchanged so the MergeAppend keeps a viable (regular) child. Callers must
+ * first confirm MergeSortInPrefixChildrenSupportIndexOnly.
+ */
+static IndexPath *
+MaybeMakeMergeSortInPrefixChildIndexOnly(PlannerInfo *root, IndexPath *childPath)
+{
+	IndexPath *indexOnlyChild = makeNode(IndexPath);
+	memcpy(indexOnlyChild, childPath, sizeof(IndexPath));
+
+	indexOnlyChild->indexinfo = palloc(sizeof(IndexOptInfo));
+	memcpy(indexOnlyChild->indexinfo, childPath->indexinfo, sizeof(IndexOptInfo));
+
+	indexOnlyChild->indexinfo->canreturn = palloc0(sizeof(bool) *
+												   indexOnlyChild->indexinfo->ncolumns);
+	indexOnlyChild->indexinfo->canreturn[0] = true;
+	indexOnlyChild->path.pathtype = T_IndexOnlyScan;
+
+	bool partialPath = false;
+	double loopCount = 1.0;
+	cost_index(indexOnlyChild, root, loopCount, partialPath);
+
+	if (indexOnlyChild->path.total_cost > childPath->path.total_cost)
+	{
+		return childPath;
+	}
+
+	return indexOnlyChild;
+}
+
+
+/*
+ * Considers a merge-sort pushdown when a $in filter forms an equality prefix of
+ * the sort key on a composite index, where the index can stream at least a
+ * leading prefix of the requested sort (so that prefix cannot otherwise be
+ * pushed without a blocking Sort).
+ *
+ * For a query like a: { $in: [1, 4] }, sort: { b: 1 } on a composite (a, b) index
+ * this issues one ordered index scan per $in value (the cartesian product when
+ * several $in prefixes are present) - each a point-equality scan on the prefix
+ * ordered by the suffix - and combines them with a MergeAppend that preserves the
+ * requested order, eliminating the blocking Sort.
+ *
+ * When the index can stream only a leading prefix of the sort (e.g. index
+ * (a, b), filter a: $in, sort { b: 1, c: 1 }: each child can order by b but not
+ * c), the MergeAppend advertises just the servable prefix (b) and
+ * create_ordered_paths adds a sort above it for the remaining keys (c), chosen
+ * by cost between a plain Sort and an Incremental Sort that reuses the presorted
+ * prefix (cheaper than a full blocking Sort once a LIMIT or merge join consumes
+ * the leading order).
+ *
+ * Paths are only added (via add_path); the planner still cost-selects between
+ * this and the existing plan. Gated by documentdb.enable_merge_sort_for_in_prefix
+ * and bounded by documentdb.max_merge_sort_in_values.
+ */
+void
+ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
+							 Index rti, ReplaceExtensionFunctionContext *context)
+{
+	if (rte->rtekind != RTE_RELATION || root->query_pathkeys == NIL)
+	{
+		return;
+	}
+
+	bool hasGroupby = false;
+	bool isOrderById = false;
+	bool hasDistinctScan = false;
+	List *sortDetails = GetSortDetails(root, rti, &hasGroupby, &isOrderById,
+									   &hasDistinctScan);
+	if (sortDetails == NIL || hasGroupby)
+	{
+		return;
+	}
+
+	List *pathsToAdd = NIL;
+	List *markedPathsToRemove = NIL;
+	List *pathsToConsider = list_copy(rel->pathlist);
+	ListCell *pathCell;
+	foreach(pathCell, pathsToConsider)
+	{
+		Path *path = lfirst(pathCell);
+		Path *sourcePath = path;
+
+		if (IsA(path, BitmapHeapPath))
+		{
+			BitmapHeapPath *bitmapPath = (BitmapHeapPath *) path;
+			if (IsA(bitmapPath->bitmapqual, IndexPath))
+			{
+				path = (Path *) bitmapPath->bitmapqual;
+			}
+		}
+
+		if (!IsA(path, IndexPath))
+		{
+			continue;
+		}
+
+		IndexPath *indexPath = (IndexPath *) path;
+		IndexOptInfo *indexInfo = indexPath->indexinfo;
+
+		if (!IsBsonRegularIndexAm(indexInfo->relam))
+		{
+			continue;
+		}
+
+		bool hasMergeSortMarker = IndexPathHasMergeSortInPrefixMarker(indexPath);
+
+		/*
+		 * Only base (unparameterized) scans are rewritten. The per-value child
+		 * scans and the MergeAppend are built unparameterized (required_outer =
+		 * NULL), so a parameterized source -- whose index clauses reference outer
+		 * rels -- cannot be reproduced correctly. Parameterized paths also gain
+		 * nothing here: add_path ignores their pathkeys, so there is no candidate
+		 * to preserve.
+		 */
+		if (indexPath->path.param_info != NULL)
+		{
+			continue;
+		}
+
+		/*
+		 * Only target paths whose order is NOT already satisfied by the index.
+		 * If the existing path already carries pathkeys, the sort is pushed (e.g.
+		 * the sort starts at the index prefix) and no MergeAppend is needed.
+		 * Marked candidates carry placeholder pathkeys from the cost-estimate
+		 * pass, so they are still considered here.
+		 */
+		if (indexPath->path.pathkeys != NIL && !hasMergeSortMarker)
+		{
+			continue;
+		}
+
+		/*
+		 * Structural eligibility (ordered composite index, not multi-key).
+		 * Exploding a $in into per-value point scans is only sound when no single
+		 * document can match more than one branch, so multi-key indexes are
+		 * excluded and the blocking-Sort fallback is kept.
+		 */
+		if (!MergeSortInPrefixIndexEligible(indexInfo))
+		{
+			continue;
+		}
+
+		/*
+		 * Build the shared $in-prefix plan (suffix order-by clauses, the $in
+		 * split, and the fan-out) from the same helper the cost-estimate marking
+		 * pass uses, so marking and rewriting cannot drift apart. The internal
+		 * marker clause is stripped first so it never reaches a child scan.
+		 */
+		bool removedMarker = false;
+		List *candidateIndexClauses = RemoveMergeSortInPrefixMarkerClauses(
+			indexPath->indexclauses, &removedMarker);
+
+		MergeSortInPrefixPlan plan;
+		bool materializeValues = true;
+		if (!TryBuildMergeSortInPrefixPlan(root, indexInfo, candidateIndexClauses,
+										   sortDetails, materializeValues, &plan))
+		{
+			continue;
+		}
+
+		List *orderByClauses = plan.orderByClauses;
+		List *otherClauses = plan.otherClauses;
+
+		/*
+		 * Flatten the $in prefix infos into a mixed-radix counter for the
+		 * cartesian-product enumeration below. inInfos is non-empty and the
+		 * fan-out is within the cap (validated by TryBuildMergeSortInPrefixPlan).
+		 */
+		int numInOps = list_length(plan.inInfos);
+		InPrefixOpInfo **infoArray = palloc(sizeof(InPrefixOpInfo *) * numInOps);
+		int *radix = palloc(sizeof(int) * numInOps);
+		int *counter = palloc0(sizeof(int) * numInOps);
+		int numChildren = plan.numChildren;
+		int infoIndex = 0;
+		ListCell *infoCell;
+		foreach(infoCell, plan.inInfos)
+		{
+			InPrefixOpInfo *info = (InPrefixOpInfo *) lfirst(infoCell);
+			infoArray[infoIndex] = info;
+			radix[infoIndex] = list_length(info->valueConsts);
+			infoIndex++;
+		}
+
+		/* Enumerate the cartesian product of $in values into ordered scans. */
+		List *childPaths = NIL;
+		bool childrenValid = true;
+
+		/*
+		 * The number of leading query pathkeys every child supplies in common.
+		 * All children scan the same index with the same equality prefix, so they
+		 * share pathkeys; the running Min is defensive. This is the order the
+		 * MergeAppend can advertise; any remaining sort keys are left to a sort
+		 * above it.
+		 */
+		int commonPresorted = INT_MAX;
+
+		/*
+		 * Whether the children can be served as index-only scans is a query/index
+		 * level decision, identical for every child. Resolve it lazily on the
+		 * first child (-1 undetermined, 0 no, 1 yes) and reuse it for the rest.
+		 */
+		int childrenIndexOnly = -1;
+		for (int combo = 0; combo < numChildren; combo++)
+		{
+			CHECK_FOR_INTERRUPTS();
+
+			List *childClauses = list_concat(list_copy(otherClauses),
+											 list_copy(orderByClauses));
+			for (int i = 0; i < numInOps; i++)
+			{
+				Expr *valueConst = (Expr *) list_nth(infoArray[i]->valueConsts,
+													 counter[i]);
+				OpExpr *pointExpr = (OpExpr *) make_opclause(
+					BsonEqualMatchOperatorId(), BOOLOID, false,
+					infoArray[i]->leftExpr, valueConst, InvalidOid, InvalidOid);
+				pointExpr->opfuncid = BsonEqualMatchIndexFunctionId();
+
+				RestrictInfo *pointRinfo =
+					make_simple_restrictinfo(root, (Expr *) pointExpr);
+				IndexClause *pointClause =
+					BuildPointReadIndexClause(pointRinfo, infoArray[i]->indexcol);
+				childClauses = lappend(childClauses, pointClause);
+
+				/*
+				 * The original $in clause remains in rel->baserestrictinfo, so
+				 * without this the planner re-attaches it as a redundant recheck
+				 * Filter on every child scan. Carry it back as a non-lossy
+				 * placeholder whose rinfo pointer-matches the original: PG's
+				 * is_redundant_with_indexclauses() then drops it from the child's
+				 * qpqual. The placeholder contributes no index qual of its own
+				 * (indexquals = NIL) -- the point-equality clause appended just
+				 * above is what restricts this child to a single $in value. The
+				 * lossy = false claim is sound only because of that sibling point
+				 * clause: every row this child returns has the column fixed to one
+				 * $in value and therefore satisfies $in (the per-value union across
+				 * the MergeAppend supplies completeness). Multikey indexes are
+				 * excluded above, so a row cannot match more than one branch. This
+				 * must run after the point clause is appended and once per $in
+				 * column, since each child fixes all $in columns.
+				 */
+				Assert(infoArray[i]->inRinfo != NULL);
+				IndexClause *coverClause = makeNode(IndexClause);
+				coverClause->rinfo = infoArray[i]->inRinfo;
+				coverClause->indexquals = NIL;
+				coverClause->lossy = false;
+				coverClause->indexcol = infoArray[i]->indexcol;
+				coverClause->indexcols = NIL;
+				childClauses = lappend(childClauses, coverClause);
+			}
+
+			/*
+			 * Build the ordered index scan for this one combination of $in
+			 * values -- i.e. one child path per point in the cartesian product.
+			 * childClauses holds everything this child scans with: the shared
+			 * non-$in index clauses, the shared suffix order-by clauses, and (the
+			 * loop above) one point-equality clause per $in column plus its
+			 * non-lossy cover clause, so the child is pinned to exactly one value
+			 * on every $in column.
+			 *
+			 * create_index_path runs the index's cost callback, which reads those
+			 * order-by clauses and fills in childPath->path.pathkeys (and the cost)
+			 * for us, which the check below relies on.
+			 */
+			IndexPath *childPath = create_index_path(
+				root, indexInfo, childClauses, NIL, NIL, NIL,
+				ForwardScanDirection, false, NULL, 1, false);
+
+			/*
+			 * Verify the cost callback was able to push at least a leading
+			 * prefix of the requested order onto this child scan. It only assigns
+			 * pathkeys when the equality prefix and the sort suffix line up on the
+			 * index; if the scan produced no usable order (pathkeys == NIL) or one
+			 * that shares no leading key with the query sort (presorted == 0 --
+			 * e.g. an unconstrained column sits between the $in prefix and the
+			 * first sort key, or the direction cannot be served), then this index
+			 * cannot stream rows in the requested order. Abandon the rewrite for
+			 * this index entirely (the MergeAppend is only valid if every child is
+			 * individually ordered) and fall back to the blocking Sort.
+			 *
+			 * When the child supplies only a leading prefix of the sort (the index
+			 * orders the first N sort keys but not the rest), the MergeAppend
+			 * advertises that prefix and create_ordered_paths sorts the remaining
+			 * keys above it (a plain or incremental Sort, by cost). commonPresorted
+			 * tracks the prefix length shared by all children.
+			 */
+			int presortedKeys = 0;
+			pathkeys_count_contained_in(root->query_pathkeys,
+										childPath->path.pathkeys, &presortedKeys);
+			if (childPath->path.pathkeys == NIL || presortedKeys == 0)
+			{
+				childrenValid = false;
+				break;
+			}
+			if (presortedKeys < commonPresorted)
+			{
+				commonPresorted = presortedKeys;
+			}
+
+			if (childrenIndexOnly < 0)
+			{
+				childrenIndexOnly =
+					MergeSortInPrefixChildrenSupportIndexOnly(root, rel, childPath,
+															  context) ? 1 : 0;
+			}
+
+			if (childrenIndexOnly == 1)
+			{
+				childPath = MaybeMakeMergeSortInPrefixChildIndexOnly(root, childPath);
+			}
+
+			childPaths = lappend(childPaths, childPath);
+
+			/* Advance the mixed-radix combination counter. */
+			for (int i = numInOps - 1; i >= 0; i--)
+			{
+				if (++counter[i] < radix[i])
+				{
+					break;
+				}
+
+				counter[i] = 0;
+			}
+		}
+
+		if (!childrenValid || childPaths == NIL)
+		{
+			continue;
+		}
+
+		if (list_length(childPaths) == 1)
+		{
+			/* A single $in value just needs the ordered scan, no merge. */
+			Path *singleChildPath = (Path *) linitial(childPaths);
+
+			/*
+			 * The marked source path advertised placeholder pathkeys at the cost
+			 * of a plain scan; it has now served its purpose (keeping the
+			 * candidate alive through add_path) and is replaced by this ordered
+			 * scan. Remove it so the fake pathkeys cannot reach execution. We
+			 * deliberately keep the ordered scan's own honest cost: it carries the
+			 * index-ordered prefix of the requested sort, so it survives add_path
+			 * on its pathkeys regardless of cost, and an accurate cost lets
+			 * higher-level planning (LIMIT, joins, a sort for any uncovered
+			 * suffix) choose correctly.
+			 */
+			if (hasMergeSortMarker)
+			{
+				markedPathsToRemove = lappend(markedPathsToRemove, sourcePath);
+			}
+
+			pathsToAdd = lappend(pathsToAdd, singleChildPath);
+		}
+		else
+		{
+			/*
+			 * Advertise only the leading sort prefix the children share. When that
+			 * is the full sort, this is root->query_pathkeys and no Sort is needed
+			 * above; when it is a strict prefix, create_ordered_paths sorts the
+			 * remaining keys above the MergeAppend (a plain or incremental Sort,
+			 * chosen by cost).
+			 */
+			List *mergePathKeys = list_copy_head(root->query_pathkeys,
+												 commonPresorted);
+			MergeAppendPath *mergePath = create_merge_append_path(
+				root, rel, childPaths, mergePathKeys, NULL);
+
+			/*
+			 * As above: drop the marked source path once the MergeAppend that
+			 * supersedes it is built, but keep the MergeAppend's honest cost from
+			 * create_merge_append_path. Overwriting it with the source (plain
+			 * scan) cost would understate the true cost of the per-value child
+			 * scans and skew downstream cost comparisons.
+			 */
+			if (hasMergeSortMarker)
+			{
+				markedPathsToRemove = lappend(markedPathsToRemove, sourcePath);
+			}
+
+			pathsToAdd = lappend(pathsToAdd, mergePath);
+		}
+	}
+
+	rel->pathlist = RemoveReplacedMergeSortInPrefixMarkedPaths(rel->pathlist,
+															   markedPathsToRemove);
+	RemoveMergeSortInPrefixMarkersFromPaths(rel->pathlist);
+	RemoveMergeSortInPrefixMarkersFromPaths(rel->partial_pathlist);
+
+	foreach(pathCell, pathsToAdd)
+	{
+		add_path(rel, (Path *) lfirst(pathCell));
 	}
 }
 

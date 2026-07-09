@@ -31,6 +31,7 @@
 #endif
 
 #include "api_hooks.h"
+#include "opclass/bson_index_support.h"
 #include "planner/mongo_query_operator.h"
 #include "opclass/bson_gin_index_mgmt.h"
 #include "index_am/documentdb_rum.h"
@@ -50,6 +51,7 @@ extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
 extern bool EnableIndexPathKeySummarization;
+extern bool EnableMergeSortForInPrefix;
 
 bool RumHasMultiKeyPaths = false;
 
@@ -846,6 +848,11 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 								   path->indexinfo->pages, totalNumTuples,
 								   boundarySelectivity, numBoundaryQuals,
 								   dataPagesProportionFetched);
+	}
+
+	if (EnableMergeSortForInPrefix && isCompositeOpFamily)
+	{
+		MaybeMarkIndexPathForMergeSortInPrefix(root, path);
 	}
 }
 

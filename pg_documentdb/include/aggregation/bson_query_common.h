@@ -39,6 +39,11 @@ typedef struct DollarRangeParams
 	 * scan paths with a reservoir sampling CustomScan. */
 	bool isSample;
 	int64_t sampleSize;
+
+	/* Internal $in-prefix merge-sort marker. It must be stripped before
+	 * execution, so the index-bounds and runtime paths throw if it is ever
+	 * seen. */
+	bool isMergeSortInPrefixMarker;
 } DollarRangeParams;
 
 DollarRangeParams * ParseQueryDollarRange(pgbsonelement *filterElement);

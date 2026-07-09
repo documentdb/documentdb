@@ -214,6 +214,7 @@ PG_FUNCTION_INFO_V1(command_cursor_tracker);
 extern bool EnableRumCursorDynamicIndexScans;
 extern bool EnableRumDynamicIndexScansSkipToTid;
 extern bool EnableOrderByIdOnCostFunction;
+extern bool EnableMergeSortForInPrefix;
 extern bool EnableDynamicPersistentCursorsWithStats;
 extern bool EnableGroupByDynamicStreaming;
 
@@ -1088,6 +1089,35 @@ UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 	{
 		/* The planner info is not valid for dynamic cursor plans - use persisted */
 		return false;
+	}
+
+	/*
+	 * If any path is a merge-sort-in-prefix candidate, fall back to a persistent
+	 * cursor. The marker is added during cost estimation and is only rewritten
+	 * into a MergeAppend (and stripped) later in the relpathlist hook, after this
+	 * runs -- so the marked path here still carries placeholder pathkeys that do
+	 * not reflect a real streamable order. Streaming off it would be incorrect.
+	 */
+	if (EnableMergeSortForInPrefix)
+	{
+		foreach(cell, rel->pathlist)
+		{
+			Path *path = lfirst(cell);
+			if (IsA(path, BitmapHeapPath))
+			{
+				BitmapHeapPath *bitmapPath = (BitmapHeapPath *) path;
+				if (IsA(bitmapPath->bitmapqual, IndexPath))
+				{
+					path = (Path *) bitmapPath->bitmapqual;
+				}
+			}
+
+			if (IsA(path, IndexPath) &&
+				IndexPathHasMergeSortInPrefixMarker((IndexPath *) path))
+			{
+				return false;
+			}
+		}
 	}
 
 	/* Parse the continuation state */

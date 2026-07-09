@@ -108,6 +108,12 @@ void ConsiderIndexOrderByPushdownForId(PlannerInfo *root, RelOptInfo *rel,
 									   ReplaceExtensionFunctionContext *context);
 void ConsiderIndexOnlyScan(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 						   Index rti, ReplaceExtensionFunctionContext *context);
+void ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel,
+								  RangeTblEntry *rte, Index rti,
+								  ReplaceExtensionFunctionContext *context);
+void MaybeMarkIndexPathForMergeSortInPrefix(PlannerInfo *root, IndexPath *indexPath);
+void RemoveMergeSortInPrefixMarkersFromPaths(List *pathsList);
+bool IndexPathHasMergeSortInPrefixMarker(IndexPath *indexPath);
 bool IsOpExprShardKeyForUnshardedCollections(Expr *expr, uint64 collectionId);
 
 IndexPath * TrimIndexRestrictInfoForBtreePath(PlannerInfo *root,

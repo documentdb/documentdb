@@ -52,6 +52,16 @@ InitializeQueryDollarRange(const bson_value_t *filterValue,
 		{
 			rangeParams->isFullScan = true;
 		}
+		else if (strcmp(key, "mergeSortInPrefix") == 0)
+		{
+			/*
+			 * isFullScan keeps the marker benign if processed during planning,
+			 * while isMergeSortInPrefixMarker lets the index-bounds and runtime
+			 * paths throw if it ever reaches execution.
+			 */
+			rangeParams->isFullScan = true;
+			rangeParams->isMergeSortInPrefixMarker = true;
+		}
 		else if (strcmp(key, "orderByScan") == 0)
 		{
 			rangeParams->isFullScan = true;
