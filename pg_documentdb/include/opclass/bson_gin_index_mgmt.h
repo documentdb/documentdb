@@ -252,7 +252,8 @@ bool SubPathHasArrayIndexElements(const StringView *path, StringView subPath);
 
 struct PlannerInfo;
 bool TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct
-										PlannerInfo *root, bool *canSupportIndexOnlyScan);
+										PlannerInfo *root, bool *canSupportIndexOnlyScan,
+										List **addedRestrictInfos);
 List * ExtractBoundaryQualsForOrderedIndexPath(struct IndexPath *indexPath,
 											   int *num_sa_scans);
 OpExpr * CreateFullScanOpExpr(Expr *documentExpr, const char *sourcePath, uint32_t
