@@ -383,6 +383,10 @@ bool EnableProjectPushUpBeforeUnwindWithGroup =
 bool EnableSortPushToAccumulatorWithPrefix =
 	DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR_WITH_PREFIX;
 
+/* Added in v116, Pending stabilization, enable in v121 */
+#define DEFAULT_ENABLE_MERGE_SORT_FOR_IN_PREFIX false
+bool EnableMergeSortForInPrefix = DEFAULT_ENABLE_MERGE_SORT_FOR_IN_PREFIX;
+
 /* Added in v112, enabled in v112, remove after v114 */
 #define DEFAULT_ENABLE_DUPLICATE_FIELD_FIX true
 bool EnableDuplicateFieldFix = DEFAULT_ENABLE_DUPLICATE_FIELD_FIX;
@@ -1048,6 +1052,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to push suffix sort keys into accumulator when group keys are a prefix of sort keys in $sortGroup."),
 		NULL, &EnableSortPushToAccumulatorWithPrefix,
 		DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR_WITH_PREFIX,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_merge_sort_for_in_prefix", newGucPrefix),
+		gettext_noop(
+			"Whether to push a composite index sort to a merge of per-value ordered index scans when an $in filter is an equality prefix of the sort key."),
+		NULL, &EnableMergeSortForInPrefix,
+		DEFAULT_ENABLE_MERGE_SORT_FOR_IN_PREFIX,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

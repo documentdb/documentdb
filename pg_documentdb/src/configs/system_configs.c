@@ -45,6 +45,19 @@ int ShardingMaxChunks = DEFAULT_SHARDING_MAX_CHUNKS;
 #define DEFAULT_QUERY_PLAN_CACHE_SIZE_LIMIT 100
 int QueryPlanCacheSizeLimit = DEFAULT_QUERY_PLAN_CACHE_SIZE_LIMIT;
 
+/* Cap on the number of ordered scans merged for an $in prefix. */
+#define DEFAULT_MAX_MERGE_SORT_IN_VALUES 200
+
+/*
+ * Hard upper bound for the max_merge_sort_in_values GUC. The cap governs how many
+ * ordered index scans are fanned out into a single MergeAppend, which costs
+ * O(N) planner and executor memory/CPU, so the configurable value is bounded
+ * well below INT_MAX to keep a misconfiguration from building a pathologically
+ * large plan.
+ */
+#define MAX_MERGE_SORT_IN_VALUES_LIMIT SHRT_MAX
+int MaxMergeSortInValues = DEFAULT_MAX_MERGE_SORT_IN_VALUES;
+
 /* TODO: Raise this back to 100,000 once we can optimize sub-transaction */
 /* handling with multi-node clusters. */
 #define DEFAULT_MAX_WRITE_BATCH_SIZE 25000
@@ -247,6 +260,14 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.max_merge_sort_in_values", newGucPrefix),
+		gettext_noop(
+			"The maximum number of ordered index scans (product of $in array lengths) that may be merged for an $in-prefixed sort. Above this the optimization is skipped."),
+		NULL, &MaxMergeSortInValues,
+		DEFAULT_MAX_MERGE_SORT_IN_VALUES, 1, MAX_MERGE_SORT_IN_VALUES_LIMIT,
+		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.forceUseIndexIfAvailable", prefix),

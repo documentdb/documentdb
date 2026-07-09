@@ -1370,6 +1370,16 @@ bson_dollar_range(PG_FUNCTION_ARGS)
 	rangeState.isMinConditionSet = false;
 	rangeState.isMaxConditionSet = false;
 
+	if (rangeState.params.isMergeSortInPrefixMarker)
+	{
+		/* The $in-prefix merge-sort marker is a planner-only signal that must be
+		 * stripped before execution. If it reaches runtime evaluation, the planner
+		 * did not strip it and query results would be incorrect. */
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg("$in-prefix merge-sort marker must not be evaluated "
+							   "at runtime")));
+	}
+
 	if (rangeState.params.isFullScan || rangeState.params.isElemMatch ||
 		rangeState.params.isMinIndexKey || rangeState.params.isMaxIndexKey)
 	{

@@ -205,8 +205,30 @@ IsValidPath(Path *inputPath)
 
 		return true;
 	}
+	else if (inputPath->pathtype == T_MergeAppend)
+	{
+		/*
+		 * Wrap a MergeAppend so EXPLAIN still surfaces the per-branch index
+		 * details. The inner MergeAppend executes unchanged -- its pathkeys
+		 * are copied onto the wrapper, so it stays a valid ordered input. Each
+		 * branch is validated recursively.
+		 */
+		MergeAppendPath *mergeAppendPath = (MergeAppendPath *) inputPath;
 
-	/* we only wrap IndexScan, IndexOnlyScan, and BitmapHeapScan */
+		ListCell *subCell;
+		foreach(subCell, mergeAppendPath->subpaths)
+		{
+			Path *childPath = (Path *) lfirst(subCell);
+			if (!IsValidPath(childPath))
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/* we only wrap IndexScan/IndexOnlyScan, BitmapHeapScan, CustomScan and MergeAppend */
 	return false;
 }
 
@@ -540,6 +562,22 @@ WalkAndExplainScanState(PlanState *scanState, ExplainState *es)
 		for (int i = 0; i < bitmapOrState->nplans; i++)
 		{
 			WalkAndExplainScanState(bitmapOrState->bitmapplans[i], es);
+		}
+	}
+	else if (IsA(scanState, MergeAppendState))
+	{
+		MergeAppendState *mergeAppendState = (MergeAppendState *) scanState;
+		for (int i = 0; i < mergeAppendState->ms_nplans; i++)
+		{
+			WalkAndExplainScanState(mergeAppendState->mergeplans[i], es);
+		}
+	}
+	else if (IsA(scanState, AppendState))
+	{
+		AppendState *appendState = (AppendState *) scanState;
+		for (int i = 0; i < appendState->as_nplans; i++)
+		{
+			WalkAndExplainScanState(appendState->appendplans[i], es);
 		}
 	}
 	else if (IsA(scanState, CustomScanState))

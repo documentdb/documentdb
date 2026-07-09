@@ -2869,6 +2869,16 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 {
 	DollarRangeParams *params = ParseQueryDollarRange(queryElement);
 
+	if (params->isMergeSortInPrefixMarker)
+	{
+		/* The $in-prefix merge-sort marker is a planner-only signal that must be
+		 * stripped before execution; reaching index-bounds generation means it
+		 * leaked and would otherwise scan as a full scan with incorrect results. */
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg("$in-prefix merge-sort marker must not reach index "
+							   "bounds generation")));
+	}
+
 	if (params->isFullScan)
 	{
 		/* Don't update any bounds */
