@@ -70,6 +70,7 @@ pub struct QueryCatalog {
 
     // data_management.rs
     pub delete: String,
+    pub delete_txn_proc: String,
     pub find_cursor_first_page: String,
     pub insert: String,
     pub insert_txn_proc: String,
@@ -306,6 +307,11 @@ impl QueryCatalog {
     #[must_use]
     pub fn delete(&self) -> &str {
         &self.delete
+    }
+
+    #[must_use]
+    pub fn delete_txn_proc(&self) -> &str {
+        &self.delete_txn_proc
     }
 
     #[must_use]
@@ -630,6 +636,7 @@ pub fn create_query_catalog() -> QueryCatalog {
 
             // data_management.rs
             delete: "SELECT * FROM documentdb_api.delete($1, $2, $3, NULL)".to_owned(),
+            delete_txn_proc: "CALL documentdb_api.delete_txn_proc($1, $2, $3, NULL)".to_owned(),
             find_cursor_first_page: "SELECT cursorPage, continuation, persistConnection, cursorId FROM documentdb_api.find_cursor_first_page($1, $2)".to_owned(),
             insert: "SELECT * FROM documentdb_api.insert($1, $2, $3, NULL)".to_owned(),
             insert_txn_proc: "CALL documentdb_api.insert_txn_proc($1, $2, $3, NULL)".to_owned(),

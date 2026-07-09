@@ -284,6 +284,9 @@ SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id
 SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$unset": { "tags": "" }},"multi":false}]}');
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
+CALL documentdb_api.delete_txn_proc('db', '{"delete":"writeFC", "deletes":[{"q":{"_id":{"$eq":4}},"limit":0}]}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
 -- Test: Feature counter for list_databases command
 
 -- Reset feature counters

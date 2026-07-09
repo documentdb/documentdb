@@ -123,6 +123,7 @@ pub trait PgDataClient: Send + Sync {
         &self,
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
+        enable_write_procedures: bool,
     ) -> Result<Vec<Row>>;
 
     async fn execute_delete_when_readonly(
