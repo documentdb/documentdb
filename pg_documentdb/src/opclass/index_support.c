@@ -3471,7 +3471,9 @@ ProcessOrderByStatements(PlannerInfo *root,
 						 const char *queryOrderPaths[INDEX_MAX_KEYS],
 						 bool equalityPrefixes[INDEX_MAX_KEYS],
 						 bool nonEqualityPrefixes[INDEX_MAX_KEYS],
-						 int32_t pathSortOrders[INDEX_MAX_KEYS])
+						 bool anySpecifiedPrefixes[INDEX_MAX_KEYS],
+						 int32_t pathSortOrders[INDEX_MAX_KEYS],
+						 List **addedRestrictInfos)
 {
 	int i = 0, sortDetailsIndex = 0;
 
@@ -3526,8 +3528,7 @@ ProcessOrderByStatements(PlannerInfo *root,
 				 * would look at the wrong column's prefixes and must be revised
 				 * to resolve the exists target independently of the order-by.
 				 */
-				if (sortColumn >= 0 && !(equalityPrefixes[sortColumn] ||
-										 nonEqualityPrefixes[sortColumn]))
+				if (sortColumn >= 0 && !anySpecifiedPrefixes[sortColumn])
 				{
 					/* push down an $exists: true filter to the index for this path */
 					Expr *existsTrueOpExpr = (Expr *) CreateExistsTrueOpExpr(
@@ -3535,6 +3536,8 @@ ProcessOrderByStatements(PlannerInfo *root,
 						sortDetailsInput->sortPath, strlen(sortDetailsInput->sortPath));
 					RestrictInfo *existsTrueRestrictInfo = make_simple_restrictinfo(
 						root, (Expr *) existsTrueOpExpr);
+					*addedRestrictInfos = lappend(*addedRestrictInfos,
+												  existsTrueRestrictInfo);
 					IndexClause *indexClause = BuildPointReadIndexClause(
 						existsTrueRestrictInfo, 0);
 					path->indexclauses = lappend(path->indexclauses, indexClause);
@@ -3983,7 +3986,8 @@ ProcessSingleCompositeFilter(Node *predQual, bytea *opClassOptions,
 static bool
 ProcessCompositePartialFilter(List *indexPredicate, bytea *opClassOptions,
 							  bool equalityPrefixes[INDEX_MAX_KEYS],
-							  bool nonEqualityPrefixes[INDEX_MAX_KEYS])
+							  bool nonEqualityPrefixes[INDEX_MAX_KEYS],
+							  bool allFilterPrefixes[INDEX_MAX_KEYS])
 {
 	ListCell *cell;
 	bool hasFirstPathSpecified = false;
@@ -4002,6 +4006,8 @@ ProcessCompositePartialFilter(List *indexPredicate, bytea *opClassOptions,
 			continue;
 		}
 
+		allFilterPrefixes[columnNumber] = true;
+
 		if (columnNumber == 0)
 		{
 			hasFirstPathSpecified = true;
@@ -4014,7 +4020,8 @@ ProcessCompositePartialFilter(List *indexPredicate, bytea *opClassOptions,
 
 bool
 TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerInfo *root,
-								   bool *canSupportIndexOnlyScan)
+								   bool *canSupportIndexOnlyScan,
+								   List **addedRestrictInfos)
 {
 	ListCell *cell;
 	bool firstFilterColumnFound = false;
@@ -4040,6 +4047,7 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 	int32_t pathSortOrders[INDEX_MAX_KEYS] = { 0 };
 	bool equalityPrefixes[INDEX_MAX_KEYS] = { false };
 	bool nonEqualityPrefixes[INDEX_MAX_KEYS] = { false };
+	bool anySpecifiedPrefixes[INDEX_MAX_KEYS] = { false };
 	const char *queryOrderPaths[INDEX_MAX_KEYS] = { 0 };
 	int32_t minOrderByColumn = INT_MAX;
 	int32_t maxOrderByColumn = -1;
@@ -4099,6 +4107,7 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 					firstFilterColumnFound = true;
 				}
 
+				anySpecifiedPrefixes[columnNumber] = true;
 				continue;
 			}
 
@@ -4121,7 +4130,7 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 		if (ProcessCompositePartialFilter(
 				indexPath->indexinfo->indpred,
 				indexPath->indexinfo->opclassoptions[0],
-				equalityPrefixes, nonEqualityPrefixes))
+				equalityPrefixes, nonEqualityPrefixes, anySpecifiedPrefixes))
 		{
 			firstFilterColumnFound = true;
 		}
@@ -4136,7 +4145,8 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 			maxOrderByColumn, isMultiKeyIndex,
 			multiKeyBitMask,
 			queryOrderPaths, equalityPrefixes,
-			nonEqualityPrefixes, pathSortOrders);
+			nonEqualityPrefixes, anySpecifiedPrefixes,
+			pathSortOrders, addedRestrictInfos);
 
 		/* Trim the order by clauses from the index if there's filters. The
 		 * multi-key distinct branch does not push an order-by; it instead pushes
