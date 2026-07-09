@@ -29,6 +29,10 @@ char *ClusterAdminRole = DEFAULT_CLUSTER_ADMIN_ROLE;
 #define DEFAULT_ENABLE_MOVE_COLLECTION true
 bool EnableMoveCollection = DEFAULT_ENABLE_MOVE_COLLECTION;
 
+#define DEFAULT_ENABLE_SKIP_UPGRADE_FOR_UNINITIALIZED_CLUSTER false
+bool EnableSkipUpgradeForUninitializedCluster =
+	DEFAULT_ENABLE_SKIP_UPGRADE_FOR_UNINITIALIZED_CLUSTER;
+
 /* --------------------------------------------------------- */
 /* Top level exports */
 /* --------------------------------------------------------- */
@@ -58,6 +62,15 @@ InitDocumentDBDistributedConfigurations(const char *prefix)
 		gettext_noop(
 			"Determines whether or not to enable move collection."),
 		NULL, &EnableMoveCollection, DEFAULT_ENABLE_MOVE_COLLECTION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_skip_upgrade_for_uninitialized_cluster", prefix),
+		gettext_noop(
+			"Determines whether complete_upgrade is skipped when the cluster has "
+			"not been initialized yet."),
+		NULL, &EnableSkipUpgradeForUninitializedCluster,
+		DEFAULT_ENABLE_SKIP_UPGRADE_FOR_UNINITIALIZED_CLUSTER,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomStringVariable(
