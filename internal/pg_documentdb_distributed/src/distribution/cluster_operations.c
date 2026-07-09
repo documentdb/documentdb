@@ -35,6 +35,7 @@
 extern char *ApiExtensionName;
 extern char *ApiGucPrefix;
 extern char *ClusterAdminRole;
+extern bool EnableSkipUpgradeForUninitializedCluster;
 
 char *ApiDistributedSchemaName = "documentdb_api_distributed";
 char *ApiDistributedSchemaNameV2 = "documentdb_api_distributed";
@@ -160,6 +161,27 @@ SetupCluster(bool isInitialize)
 	 * otherwise, writes to cluster_data will fail.
 	 */
 	EnsureMetadataTableReplicated("collections");
+
+	if (!isInitialize && EnableSkipUpgradeForUninitializedCluster)
+	{
+		/* Check if the cluster metadata has an initialized version, and skip if the cluster
+		 * has not been initialized yet.
+		 */
+		bool isNull = false;
+		bool readOnly = true;
+		ExtensionExecuteQueryViaSPI(
+			FormatSqlQuery(
+				"SELECT %s.bson_get_value_text(metadata, 'initialized_version') FROM %s.%s_cluster_data",
+				CoreSchemaNameV2, ApiDistributedSchemaName, ExtensionObjectPrefix),
+			readOnly, SPI_OK_SELECT, &isNull);
+
+		if (isNull)
+		{
+			ereport(NOTICE, errmsg(
+						"Cluster has not been initialized. Skipping complete_upgrade."));
+			return false;
+		}
+	}
 
 	char *lastUpgradeVersionString = UpdateClusterMetadata();
 	ParseVersionString(&lastUpgradeVersion, lastUpgradeVersionString);
