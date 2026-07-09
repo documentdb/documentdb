@@ -207,6 +207,7 @@ static void AddOrderByRequiredClausesIfNecessary(IndexPath *indexPath, PlannerIn
 static void AddContinuationQualsToIndexPath(PlannerInfo *root, RelOptInfo *rel,
 											IndexPath *resumePath,
 											ParsedContinuationState *state);
+static bool IsGroupByFullyPushableForStreaming(PlannerInfo *root);
 
 PG_FUNCTION_INFO_V1(command_cursor_tracker);
 
@@ -214,6 +215,7 @@ extern bool EnableRumCursorDynamicIndexScans;
 extern bool EnableRumDynamicIndexScansSkipToTid;
 extern bool EnableOrderByIdOnCostFunction;
 extern bool EnableDynamicPersistentCursorsWithStats;
+extern bool EnableGroupByDynamicStreaming;
 
 /* Declaration of extensibility paths for query processing (See extensible.h) */
 static const struct CustomPathMethods DynamicExtensionCursorScanMethods = {
@@ -267,6 +269,32 @@ RegisterDynamicCursorScanNodes(void)
 }
 
 
+/*
+ * Returns true if the given plan node is a grouping/deduplication node that
+ * preserves the streaming (non-blocking) property of its input, i.e. it emits
+ * output rows incrementally as it consumes ordered input rather than
+ * materializing the whole input first.
+ *
+ * A sorted GroupAggregate (AGG_SORTED) and a Unique node both stream: they read
+ * input in group-key order and emit one row per group as soon as the group
+ * boundary is observed. A plain aggregate (AGG_PLAIN) produces a single row and
+ * is drained in one batch. A hashed/mixed aggregate (AGG_HASHED / AGG_MIXED)
+ * is blocking - it must consume the entire input before emitting any row - so
+ * it cannot back a streaming cursor and is rejected here.
+ */
+static bool
+IsStreamableGroupingPlan(Plan *plan)
+{
+	if (IsA(plan, Agg))
+	{
+		Agg *agg = (Agg *) plan;
+		return agg->aggstrategy == AGG_SORTED || agg->aggstrategy == AGG_PLAIN;
+	}
+
+	return IsA(plan, Unique);
+}
+
+
 bool
 IsDynamicCustomScanPath(Plan *plan)
 {
@@ -286,12 +314,42 @@ IsDynamicCustomScanPath(Plan *plan)
 		return IsDynamicCustomScanPath(subqueryScan->subplan);
 	}
 
+	/*
+	 * A streaming grouping node (sorted GroupAggregate / Unique) directly over
+	 * the dynamic cursor scan keeps the cursor streamable: it consumes ordered
+	 * rows from the custom scan and emits one row per group. Descend through it
+	 * to locate the custom scan. Blocking grouping strategies (hash aggregate)
+	 * are rejected by IsStreamableGroupingPlan, falling back to a persistent
+	 * cursor.
+	 */
+	if (IsStreamableGroupingPlan(plan))
+	{
+		return outerPlan(plan) != NULL && IsDynamicCustomScanPath(outerPlan(plan));
+	}
+
 	return false;
 }
 
 
+/*
+ * Locates the dynamic cursor custom scan state within the plan tree rooted at
+ * planState, descending through SubqueryScan wrappers and a single streaming
+ * grouping node (sorted GroupAggregate / Unique) that may sit above it. Returns
+ * NULL if no dynamic cursor custom scan is found.
+ *
+ * When isGroupReadAhead is non-NULL it is set to true iff the descent passed
+ * through a sorted GroupAggregate (AGG_SORTED). Such a node reads one input row
+ * *past* each group it emits in order to detect the group boundary, so the
+ * underlying scan is already positioned at the first row of the next group when
+ * a group is handed downstream. This "read-ahead" changes how a continuation
+ * must be captured on a batch boundary: the streaming DestReceiver snapshots it
+ * after each emitted group rather than at reject time (which would be one group
+ * too far ahead and would skip a group on the next page). Other streamable
+ * shapes (plain aggregate, Unique) do not read ahead and leave the flag unset.
+ * The caller must initialize *isGroupReadAhead before calling.
+ */
 CustomScanState *
-GetDynamicStreamingCustomScanState(PlanState *planState)
+GetDynamicStreamingCustomScanState(PlanState *planState, bool *isGroupReadAhead)
 {
 	CHECK_FOR_INTERRUPTS();
 	check_stack_depth();
@@ -310,7 +368,23 @@ GetDynamicStreamingCustomScanState(PlanState *planState)
 	if (IsA(planState, SubqueryScanState))
 	{
 		SubqueryScanState *subqueryScan = (SubqueryScanState *) planState;
-		return GetDynamicStreamingCustomScanState(subqueryScan->subplan);
+		return GetDynamicStreamingCustomScanState(subqueryScan->subplan,
+												  isGroupReadAhead);
+	}
+
+	/* Descend through a streaming grouping node (see IsDynamicCustomScanPath). */
+	if (IsStreamableGroupingPlan(planState->plan) &&
+		outerPlanState(planState) != NULL)
+	{
+		if (isGroupReadAhead != NULL &&
+			IsA(planState->plan, Agg) &&
+			((Agg *) planState->plan)->aggstrategy == AGG_SORTED)
+		{
+			*isGroupReadAhead = true;
+		}
+
+		return GetDynamicStreamingCustomScanState(outerPlanState(planState),
+												  isGroupReadAhead);
 	}
 
 	return NULL;
@@ -331,6 +405,22 @@ GetContinuationFromCustomScan(CustomScanState *scan)
 	/* Serialize necessary information to continue the scan */
 	ExtensionCursorScanState *cursorScanState = (ExtensionCursorScanState *) scan;
 
+	ScanState *ps = cursorScanState->innerScanState;
+
+	/*
+	 * A streaming sorted GroupAggregate detects the final group's boundary by
+	 * reading one row past it and hitting end-of-scan, which leaves the inner
+	 * scan's tuple slot empty. There is no next row to resume from in that case,
+	 * so the cursor is complete and there is no continuation to serialize.
+	 * Returning NULL here avoids reading attributes off an empty slot; the drain
+	 * loop then terminates as a natural cursor completion (which ignores the
+	 * continuation anyway).
+	 */
+	if (ps->ss_ScanTupleSlot == NULL || TTS_EMPTY(ps->ss_ScanTupleSlot))
+	{
+		return NULL;
+	}
+
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
 	PgbsonWriterAppendInt32(&writer, "type", 4, cursorScanState->scanType);
@@ -338,7 +428,6 @@ GetContinuationFromCustomScan(CustomScanState *scan)
 	const char *tableName = get_rel_name(cursorScanState->tableOid);
 	PgbsonWriterAppendUtf8(&writer, "tbl", 3, tableName);
 
-	ScanState *ps = cursorScanState->innerScanState;
 
 	WriteContinuationBasedOnScanTypeAndState(ps, &writer, cursorScanState->scanType);
 	return PgbsonWriterGetPgbson(&writer);
@@ -682,7 +771,19 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 		inputPath = UpdateAndClassifyPath(inputPath, root, rel, optCollectionId,
 										  &scanType);
 
-		if (root->sort_pathkeys != NIL)
+		/*
+		 * The scan feeding a streaming cursor must provide a deterministic
+		 * ordering. For ORDER BY that ordering is sort_pathkeys; for a fully
+		 * pushable $group (no ORDER BY) the GroupAggregate needs the index to
+		 * provide the grouping order, i.e. group_pathkeys.
+		 */
+		List *orderingPathKeys = root->sort_pathkeys;
+		if (orderingPathKeys == NIL && IsGroupByFullyPushableForStreaming(root))
+		{
+			orderingPathKeys = root->group_pathkeys;
+		}
+
+		if (orderingPathKeys != NIL)
 		{
 			bool isSupportedPath = scanType != QueryScanType_Unknown;
 			switch (scanType)
@@ -692,7 +793,7 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 				{
 					IndexPath *ipath = (IndexPath *) inputPath;
 					if (list_length(ipath->indexorderbys) != list_length(
-							root->sort_pathkeys))
+							orderingPathKeys))
 					{
 						/* The pathkeys required by the query are not provided by the index order by - we can't use this path for streaming */
 						isSupportedPath = false;
@@ -714,7 +815,7 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 					}
 
 					if (list_length(ipath->path.pathkeys) != list_length(
-							root->sort_pathkeys))
+							orderingPathKeys))
 					{
 						/* The pathkeys required by the query are not provided by the index order by - we can't use this path for streaming */
 						isSupportedPath = false;
@@ -771,15 +872,49 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 }
 
 
+/*
+ * Returns true when the query's $group can be satisfied entirely from an
+ * ordered index scan and is therefore eligible for a streaming dynamic cursor.
+ * This mirrors the "order by keys are fully pushed down" reasoning: the
+ * grouping keys must line up one-for-one with the query pathkeys so the index
+ * ordering alone provides the grouping order. This holds whether or not the
+ * $group carries accumulators ($sum/$max/...), because a sorted GroupAggregate
+ * over ordered input emits only complete groups - the read-ahead never spans
+ * more than the immediately following group.
+ */
+static bool
+IsGroupByFullyPushableForStreaming(PlannerInfo *root)
+{
+	return EnableGroupByDynamicStreaming &&
+		   root->group_pathkeys != NIL &&
+		   root->query_pathkeys != NIL &&
+		   list_length(root->group_pathkeys) == list_length(root->query_pathkeys);
+}
+
+
 static bool
 IsPlannerInfoValidForDynamicCursorPlans(PlannerInfo *root)
 {
 	check_stack_depth();
 	CHECK_FOR_INTERRUPTS();
 
+	/*
+	 * A GROUP BY whose group keys can be provided in order by an index can be
+	 * streamed: the planner produces a sorted GroupAggregate (or Unique for a
+	 * distinct-style group) over an ordered index scan, which emits one row per
+	 * group without materializing the whole input. Allow such queries through
+	 * (including those with accumulators) when the grouping order is fully
+	 * pushable; the final plan shape is still validated at execution time by
+	 * IsDynamicCustomScanPath(), which rejects blocking (hash) aggregates and
+	 * top-level Sort nodes and falls back to a persistent cursor.
+	 */
+	bool allowGroupByPushdown = IsGroupByFullyPushableForStreaming(root);
+
 	if (root->hasJoinRTEs || root->hasRecursion || root->hasLateralRTEs ||
-		root->group_pathkeys != NIL || root->distinct_pathkeys != NIL ||
-		root->agginfos != NIL || root->hasAlternativeSubPlans ||
+		(root->group_pathkeys != NIL && !allowGroupByPushdown) ||
+		root->distinct_pathkeys != NIL ||
+		(root->agginfos != NIL && !allowGroupByPushdown) ||
+		root->hasAlternativeSubPlans ||
 		root->window_pathkeys != NIL || root->parse->hasTargetSRFs)
 	{
 		/* Use persisted cursors for these scenarios */
@@ -1016,11 +1151,44 @@ UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 /* --------------------------------------------------------- */
 
 /*
+ * Builds the custom scan's output target list for the case where the node is a
+ * transparent wrapper that passes its inner plan's columns straight through:
+ * one Var per entry of sourceTlist, referencing the inner plan output.
+ *
+ * e.g. if the inner plan emits (document, object_id, shard_key_value), this
+ * returns three Vars - Var(1,1)=document, Var(1,2)=object_id,
+ * Var(1,3)=shard_key_value - forwarding those columns unchanged to the parent.
+ */
+static List *
+BuildCursorScanPassThroughTargetList(List *sourceTlist)
+{
+	List *outputTargetEntries = NIL;
+	ListCell *cell;
+	foreach(cell, sourceTlist)
+	{
+		TargetEntry *tle = (TargetEntry *) lfirst(cell);
+		Var *projVar = makeVar(1, tle->resno, exprType((Node *) tle->expr),
+							   exprTypmod((Node *) tle->expr),
+							   exprCollation((Node *) tle->expr), 0);
+		TargetEntry *outputTle = makeTargetEntry((Expr *) projVar, tle->resno,
+												 tle->resname, tle->resjunk);
+		outputTargetEntries = lappend(outputTargetEntries, outputTle);
+	}
+
+	return outputTargetEntries;
+}
+
+
+/*
  * Given a scan path for the extension path, generates a
  * Custom Plan for the path. Note that the inner path
- * is already planned since it is listed as an inner_path
- * in the custom path above.
+ * (e.g., Index scan etc. backing the cursor scan )is already
+ * planned since it is listed as an inner_path in the custom path above.
  * This is roughly the same as custom_scan_continuation's behavior.
+ *
+ * Its main responsibility is deciding the node's scan.plan.targetlist
+ * (the columns the custom scan outputs to its parent) and custom_scan_tlist
+ * (the scan-tuple schema the node exposes).
  */
 static Plan *
 ExtensionCursorScanPlanCustomPath(PlannerInfo *root,
@@ -1045,9 +1213,34 @@ ExtensionCursorScanPlanCustomPath(PlannerInfo *root,
 			cscan->custom_private);
 	if (tlist != NIL)
 	{
-		/* This is available when there's no projections */
+		/*
+		 * The planner already resolved this level's output columns against
+		 * this path and handed them to us as a non-NIL tlist, so we adopt it
+		 * verbatim - no projection to push down or pass-through Vars to
+		 * synthesize.
+		 *
+		 * e.g. find({x: 1}) with no projection -> tlist is just the single
+		 * `document` column.
+		 */
 		cscan->scan.plan.targetlist = tlist;
 		cscan->custom_scan_tlist = nestedPlan->plan.targetlist;
+	}
+	else if (root->group_pathkeys != NIL || root->agginfos != NIL)
+	{
+		/*
+		 * A grouping / aggregation node (and possibly a Sort) sits above the
+		 * custom scan, so root->processed_tlist describes the *grouped* output
+		 * - it references group keys and aggregates that this scan cannot
+		 * produce. The custom scan is a transparent wrapper over its inner
+		 * plan, so it simply passes through whatever columns the inner plan
+		 * emits; the upper grouping node computes processed_tlist from those.
+		 * Overwriting the inner plan's target list here (as the projection
+		 * pushdown branch below does) would corrupt it and lead to a "variable
+		 * not found in subplan target list" planner error.
+		 */
+		cscan->custom_scan_tlist = nestedPlan->plan.targetlist;
+		cscan->scan.plan.targetlist = BuildCursorScanPassThroughTargetList(
+			nestedPlan->plan.targetlist);
 	}
 	else if (continuation->scanType == QueryScanType_PrimaryKeyScan)
 	{
@@ -1055,33 +1248,44 @@ ExtensionCursorScanPlanCustomPath(PlannerInfo *root,
 		 * from the table, and apply the projection at the custom scan layer.
 		 * scanrelid is intentionally left unset (0): the PK scan path uses
 		 * a custom_scan_tlist to pull columns from the inner plan, so the
-		 * custom scan itself does not directly scan a relation. */
+		 * custom scan itself does not directly scan a relation.
+		 *
+		 * We can hand processed_tlist directly to the scan output (no
+		 * pass-through rebuild) because its Vars already reference the inner
+		 * plan's columns as it wraps a plain scan of the single base
+		 * documents relation.
+		 *
+		 * Crucially, we do NOT overwrite the inner plan's target list here
+		 * (unlike the default branch below). The PK cursor's continuation
+		 * token is rebuilt by reading shard_key_value and object_id straight
+		 * out of the scan tuple slot by position (tts_values[0]/[1] in
+		 * WriteContinuationBasedOnScanTypeAndState). That only works if the
+		 * inner plan keeps emitting the natural full base row in that order,
+		 * so the projection is applied at the custom scan layer instead.
+		 * Secondary/index-only scans don't need this: their continuation comes
+		 * from the index scan descriptor (index key + heap TID), independent
+		 * of the output tuple layout, so they can push projection down. */
 		cscan->scan.plan.targetlist = root->processed_tlist;
 		cscan->custom_scan_tlist = nestedPlan->plan.targetlist;
 	}
 	else
 	{
-		/* While we're responsible for doing projections here
-		 * Push the projection to the nestedPlan.
+		/*
+		 * No grouping/aggregation node sits above this scan, so
+		 * root->processed_tlist is exactly the columns this level must output,
+		 * and every entry is an expression over the raw document that the scan
+		 * itself can evaluate. So we push the projection down into the inner
+		 * plan and pass its result straight through - unlike the grouping
+		 * branch above, which must leave the inner plan untouched.
+		 *
+		 * e.g. {$project: {name: "$user.name"}} -> the inner scan computes
+		 * name = document->'user'->'name' directly.
 		 */
 		nestedPlan->plan.targetlist = root->processed_tlist;
 
-		ListCell *cell;
-		List *outputTargetEntries = NIL;
-		foreach(cell, root->processed_tlist)
-		{
-			TargetEntry *tle = (TargetEntry *) lfirst(cell);
-
-			/* Do something with each target entry */
-			Oid resultType = exprType((Node *) tle->expr);
-			Var *projVar = makeVar(1, tle->resno, resultType, -1, InvalidOid, 0);
-			TargetEntry *outputTle = makeTargetEntry((Expr *) projVar, tle->resno,
-													 tle->resname, tle->resjunk);
-			outputTargetEntries = lappend(outputTargetEntries, outputTle);
-		}
-
 		cscan->custom_scan_tlist = root->processed_tlist;
-		cscan->scan.plan.targetlist = outputTargetEntries;
+		cscan->scan.plan.targetlist = BuildCursorScanPassThroughTargetList(
+			root->processed_tlist);
 	}
 
 #if (PG_VERSION_NUM >= 150000)
@@ -2085,9 +2289,21 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 
 			IndexPath *inputPath = NULL;
 			bool rowCompareInclusive = true;
+
+			/*
+			 * The resumed primary-key scan must maintain the same ordering the
+			 * first page used. For ORDER BY that ordering comes from sort_pathkeys;
+			 * for a fully pushable $group (no ORDER BY) it comes from group_pathkeys -
+			 * sort_pathkeys is NULL in that case, so we must also push the index
+			 * order-by when the grouping is streamable (mirrors the first-page logic in
+			 * WalkRelPathsAndCreateCustomPathsForFirstPage).
+			 */
+			bool needsOrderingPushdown =
+				root->sort_pathkeys != NIL ||
+				IsGroupByFullyPushableForStreaming(root);
 			if (existingPkPath != NULL)
 			{
-				if (root->sort_pathkeys != NULL && existingPkPath->path.pathkeys == NIL)
+				if (needsOrderingPushdown && existingPkPath->path.pathkeys == NIL)
 				{
 					ConsiderBtreeOrderByPushdown(root, existingPkPath);
 				}
@@ -2104,7 +2320,7 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 															   state->indexScanDirection,
 															   rowCompareInclusive);
 
-				if (root->sort_pathkeys != NULL && inputPath->path.pathkeys == NIL)
+				if (needsOrderingPushdown && inputPath->path.pathkeys == NIL)
 				{
 					ConsiderBtreeOrderByPushdown(root, inputPath);
 
