@@ -277,6 +277,10 @@ bool EnableDynamicPersistentCursorsWithStats =
 #define DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STARTUP_SCAN true
 bool EnableDynamicCursorFastStartupScan = DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STARTUP_SCAN;
 
+/* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING true
+bool EnableGroupByDynamicStreaming = DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING;
+
 /* Added in v115, enabled in v115, remove after v117 */
 #define DEFAULT_ENABLE_PG_PRNG_CURSOR_ID true
 bool EnablePGPrngCursorId = DEFAULT_ENABLE_PG_PRNG_CURSOR_ID;
@@ -727,6 +731,16 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to enable fast startup scan for dynamic cursors."),
 		NULL, &EnableDynamicCursorFastStartupScan,
 		DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STARTUP_SCAN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_group_by_dynamic_streaming", newGucPrefix),
+		gettext_noop(
+			"Whether or not to allow a fully pushable $group (with or without "
+			"accumulators) whose group keys can be provided in order by an index "
+			"to use a dynamic streaming cursor instead of a persisted cursor."),
+		NULL, &EnableGroupByDynamicStreaming,
+		DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

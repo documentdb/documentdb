@@ -2369,3 +2369,302 @@ SELECT documentdb_api.drop_collection('runtime_sort_db', 'runtime_sort_coll');
  t
 (1 row)
 
+-- ===========================================================================
+-- SECTION I: $group streaming vs persistent cursors.
+--
+-- A $group normally forces a persistent cursor (a hash aggregate is blocking
+-- and has no resumable scan position). But when the group keys can be provided
+-- in order by a composite (ordered) index, the planner builds a sorted
+-- GroupAggregate over an ordered index-only scan with no blocking Sort, which
+-- streams one group at a time. documentdb.enable_group_by_dynamic_streaming
+-- gates whether that streamable shape is served by a dynamic (streaming) cursor
+-- or falls back to the persistent cursor.
+-- ===========================================================================
+-- Composite op class + compound-id pushdown + repath write are what turn the
+-- $group into a GroupAggregate over an ordered index scan (no Sort).
+SET documentdb.defaultUseCompositeOpClass TO on;
+SET documentdb.enableGroupByCompoundIdIndexPushdown TO on;
+SET documentdb_core.enableWriteDocumentsInRepath TO on;
+SET documentdb.enableDynamicCursors TO on;
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+SELECT documentdb_api.drop_collection('dyncur_grp_db', 'grp_coll');
+ drop_collection 
+-----------------
+ f
+(1 row)
+
+-- g = i % 5 -> 5 distinct values, 40 rows per group (multi-row groups);
+-- s = i     -> unique per row (single-row groups when grouping on {g,s});
+-- w = i * 3 -> a field that is NOT indexed (forces a heap fetch when accumulated).
+SELECT COUNT(documentdb_api.insert_one('dyncur_grp_db', 'grp_coll',
+    documentdb_core.bson_build_document('_id', i, 'g', i % 5, 's', i, 'w', i * 3)))
+FROM generate_series(1, 200) AS i;
+NOTICE:  creating collection
+ count 
+-------
+   200
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncur_grp_db',
+    '{ "createIndexes": "grp_coll", "indexes": [ { "key": { "g": 1, "s": 1 }, "name": "g_s_1" } ] }',
+    true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE;
+-- ---------------------------------------------------------------------------
+-- Helper: drain an aggregate ($group) cursor and report the cursor kind
+-- (streaming vs persistent), the total number of groups returned, and the scan
+-- type recorded in the first continuation (7 = streaming secondary index-only
+-- scan; NULL when the batch fully drains in the first page or when persistent).
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION grp_drain_kind(p_agg text, p_batch_size int, p_cursor_id bigint)
+RETURNS TABLE(cursor_kind text, total bigint, first_type int) AS $$
+DECLARE
+    v_page documentdb_core.bson;
+    v_cont documentdb_core.bson;
+    v_persist bool;
+    v_batch bigint;
+BEGIN
+    total := 0;
+    first_type := NULL;
+
+    SELECT fp.cursorPage, fp.continuation, fp.persistConnection
+    INTO v_page, v_cont, v_persist
+    FROM aggregate_cursor_first_page(
+        database => 'dyncur_grp_db', commandSpec => p_agg::documentdb_core.bson,
+        cursorId => p_cursor_id) fp;
+
+    cursor_kind := CASE WHEN v_persist THEN 'persistent' ELSE 'streaming' END;
+
+    SELECT (bson_dollar_project(v_page,
+        '{ "c": { "$size": { "$ifNull": ["$cursor.firstBatch", []] } } }') ->> 'c')::bigint
+        INTO v_batch;
+    total := total + COALESCE(v_batch, 0);
+
+    IF v_cont IS NOT NULL THEN
+        SELECT (bson_dollar_project(v_cont, '{ "dc.type": 1 }') ->> 'dc.type')::int
+            INTO first_type;
+    END IF;
+
+    WHILE v_cont IS NOT NULL LOOP
+        SELECT gm.cursorPage, gm.continuation INTO v_page, v_cont
+        FROM cursor_get_more(
+            database => 'dyncur_grp_db',
+            getMoreSpec => FORMAT('{ "getMore": { "$numberLong": "%s" }, "collection": "grp_coll", "batchSize": %s }', p_cursor_id, p_batch_size)::documentdb_core.bson,
+            continuationSpec => v_cont) gm;
+
+        SELECT (bson_dollar_project(v_page,
+            '{ "c": { "$size": { "$ifNull": ["$cursor.nextBatch", []] } } }') ->> 'c')::bigint
+            INTO v_batch;
+        total := total + COALESCE(v_batch, 0);
+    END LOOP;
+
+    RETURN NEXT;
+END;
+$$ LANGUAGE plpgsql;
+-- ---------------------------------------------------------------------------
+-- Helper: like grp_drain_kind, but strictly asserts the cursor stays streaming
+-- on EVERY page -- the first page AND every getMore page. For a $group served
+-- by a secondary (composite) index the resumed scan is rebuilt on each getMore
+-- from the continuation; this helper verifies that rebuilt path keeps the index
+-- ordering (no blocking Sort) so the continuation is always the streaming shape
+-- with dc.type = p_expected_type. It raises if any continuation-bearing page is
+-- persistent (dc.type NULL) or reports a different scan type, catching a getMore
+-- that silently flips a secondary-index $group to a persistent cursor.
+-- Returns the total groups drained and the number of getMore pages that carried
+-- a streaming continuation.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION grp_drain_assert_streaming(
+    p_agg text, p_batch_size int, p_cursor_id bigint, p_expected_type int)
+RETURNS TABLE(total bigint, getmore_streaming_pages int) AS $$
+DECLARE
+    v_page documentdb_core.bson;
+    v_cont documentdb_core.bson;
+    v_persist bool;
+    v_batch bigint;
+    v_type int;
+    v_page_num int := 1;
+BEGIN
+    total := 0;
+    getmore_streaming_pages := 0;
+
+    SELECT fp.cursorPage, fp.continuation, fp.persistConnection
+    INTO v_page, v_cont, v_persist
+    FROM aggregate_cursor_first_page(
+        database => 'dyncur_grp_db', commandSpec => p_agg::documentdb_core.bson,
+        cursorId => p_cursor_id) fp;
+
+    IF v_persist THEN
+        RAISE EXCEPTION 'Page 1: expected streaming cursor, got persistent';
+    END IF;
+
+    SELECT (bson_dollar_project(v_page,
+        '{ "c": { "$size": { "$ifNull": ["$cursor.firstBatch", []] } } }') ->> 'c')::bigint
+        INTO v_batch;
+    total := total + COALESCE(v_batch, 0);
+
+    IF v_cont IS NOT NULL THEN
+        SELECT (bson_dollar_project(v_cont, '{ "dc.type": 1 }') ->> 'dc.type')::int INTO v_type;
+        IF v_type IS DISTINCT FROM p_expected_type THEN
+            RAISE EXCEPTION 'Page 1: expected streaming dc.type=%, got %', p_expected_type, v_type;
+        END IF;
+    END IF;
+
+    WHILE v_cont IS NOT NULL LOOP
+        v_page_num := v_page_num + 1;
+        SELECT gm.cursorPage, gm.continuation INTO v_page, v_cont
+        FROM cursor_get_more(
+            database => 'dyncur_grp_db',
+            getMoreSpec => FORMAT('{ "getMore": { "$numberLong": "%s" }, "collection": "grp_coll", "batchSize": %s }', p_cursor_id, p_batch_size)::documentdb_core.bson,
+            continuationSpec => v_cont) gm;
+
+        SELECT (bson_dollar_project(v_page,
+            '{ "c": { "$size": { "$ifNull": ["$cursor.nextBatch", []] } } }') ->> 'c')::bigint
+            INTO v_batch;
+        total := total + COALESCE(v_batch, 0);
+
+        -- A non-NULL continuation means more pages remain; it must stay streaming.
+        IF v_cont IS NOT NULL THEN
+            SELECT (bson_dollar_project(v_cont, '{ "dc.type": 1 }') ->> 'dc.type')::int INTO v_type;
+            IF v_type IS NULL THEN
+                RAISE EXCEPTION 'Page %: getMore flipped to persistent (dc.type is NULL)', v_page_num;
+            END IF;
+            IF v_type <> p_expected_type THEN
+                RAISE EXCEPTION 'Page %: expected streaming dc.type=%, got %', v_page_num, p_expected_type, v_type;
+            END IF;
+            getmore_streaming_pages := getmore_streaming_pages + 1;
+        END IF;
+    END LOOP;
+
+    RETURN NEXT;
+END;
+$$ LANGUAGE plpgsql;
+-- ---------------------------------------------------------------------------
+-- Test I1: GUC on, compound-id $group ({g,s}) -> streaming cursor (type 7),
+-- draining all 200 single-row groups across small batches.
+-- ---------------------------------------------------------------------------
+SET documentdb.enable_group_by_dynamic_streaming TO on;
+SELECT * FROM grp_drain_kind(
+    '{ "aggregate": "grp_coll", "hint": "g_s_1", "pipeline": [ { "$group": { "_id": { "g": "$g", "s": "$s" } } } ], "cursor": { "batchSize": 7 } }',
+    7, 5101);
+ cursor_kind | total | first_type 
+-------------+-------+------------
+ streaming   |   200 |          7
+(1 row)
+
+-- ---------------------------------------------------------------------------
+-- Test I2: GUC on, multi-row group ({g}) with a $sum accumulator -> streaming
+-- cursor. Exercises the sorted GroupAggregate read-ahead: a group is only
+-- emitted after the first row of the next group is read, so the continuation
+-- must resume at the next group without dropping or duplicating a group.
+-- All 5 groups must be returned across every small batch size.
+-- ---------------------------------------------------------------------------
+DO $$
+DECLARE
+    v_bs int; v_kind text; v_total bigint; v_type int;
+BEGIN
+    FOREACH v_bs IN ARRAY ARRAY[1, 2, 3, 4, 5, 6] LOOP
+        SELECT cursor_kind, total, first_type INTO v_kind, v_total, v_type
+        FROM grp_drain_kind(
+            FORMAT('{ "aggregate": "grp_coll", "hint": "g_s_1", "pipeline": [ { "$group": { "_id": { "g": "$g" }, "n": { "$sum": 1 } } } ], "cursor": { "batchSize": %s } }', v_bs),
+            v_bs, 5102);
+        IF v_total <> 5 THEN
+            RAISE EXCEPTION 'multi-row group batchSize=%: got % groups, expected 5', v_bs, v_total;
+        END IF;
+        IF v_kind <> 'streaming' THEN
+            RAISE EXCEPTION 'multi-row group batchSize=%: expected streaming cursor, got %', v_bs, v_kind;
+        END IF;
+    END LOOP;
+    RAISE NOTICE 'multi-row group: all batch sizes stream 5 groups (read-ahead correct)';
+END $$;
+NOTICE:  multi-row group: all batch sizes stream 5 groups (read-ahead correct)
+-- ---------------------------------------------------------------------------
+-- Test I3: accumulator values are correct on the streamed groups
+-- (each g has 40 rows).
+-- ---------------------------------------------------------------------------
+SELECT bson_dollar_project(cursorPage, '{ "cursor.firstBatch": 1 }')
+FROM aggregate_cursor_first_page(
+    database => 'dyncur_grp_db',
+    commandSpec => '{ "aggregate": "grp_coll", "hint": "g_s_1", "pipeline": [ { "$group": { "_id": { "g": "$g" }, "n": { "$sum": 1 } } }, { "$sort": { "_id.g": 1 } } ], "cursor": { "batchSize": 100 } }'::documentdb_core.bson,
+    cursorId => 5103);
+                                                                                                                                                                                                          bson_dollar_project                                                                                                                                                                                                          
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "firstBatch" : [ { "_id" : { "g" : { "$numberInt" : "0" } }, "n" : { "$numberInt" : "40" } }, { "_id" : { "g" : { "$numberInt" : "1" } }, "n" : { "$numberInt" : "40" } }, { "_id" : { "g" : { "$numberInt" : "2" } }, "n" : { "$numberInt" : "40" } }, { "_id" : { "g" : { "$numberInt" : "3" } }, "n" : { "$numberInt" : "40" } }, { "_id" : { "g" : { "$numberInt" : "4" } }, "n" : { "$numberInt" : "40" } } ] } }
+(1 row)
+
+-- ---------------------------------------------------------------------------
+-- Test I4: GUC off -> the same streamable $group falls back to a persistent
+-- cursor, still returning all 5 groups correctly.
+-- ---------------------------------------------------------------------------
+SET documentdb.enable_group_by_dynamic_streaming TO off;
+SELECT * FROM grp_drain_kind(
+    '{ "aggregate": "grp_coll", "hint": "g_s_1", "pipeline": [ { "$group": { "_id": { "g": "$g" }, "n": { "$sum": 1 } } } ], "cursor": { "batchSize": 2 } }',
+    2, 5104);
+ cursor_kind | total | first_type 
+-------------+-------+------------
+ persistent  |     5 |           
+(1 row)
+
+-- ---------------------------------------------------------------------------
+-- Test I5: GUC on, group with an accumulator on a NON-indexed field ($sum: "$w")
+-- -> the ordering index still serves the group order, but the scan must fetch
+-- "w" from the heap, so it is a plain (heap-fetching) secondary index scan
+-- (dc.type 3) rather than an index-only scan (dc.type 7). It must still stream.
+-- ---------------------------------------------------------------------------
+SET documentdb.enable_group_by_dynamic_streaming TO on;
+SELECT * FROM grp_drain_kind(
+    '{ "aggregate": "grp_coll", "hint": "g_s_1", "pipeline": [ { "$group": { "_id": { "g": "$g" }, "sw": { "$sum": "$w" } } } ], "cursor": { "batchSize": 2 } }',
+    2, 5105);
+ cursor_kind | total | first_type 
+-------------+-------+------------
+ streaming   |     5 |          3
+(1 row)
+
+-- ---------------------------------------------------------------------------
+-- Test I6: GUC on, compound-id $group ({g,s}) on the secondary index, drained
+-- with a tiny batch size so the cursor is resumed across many getMore pages.
+-- Asserts the SecondaryIndexOnlyScan branch (dc.type 7) stays streaming on the
+-- first page AND on every getMore page -- i.e. the resumed secondary-index scan
+-- keeps its index ordering and never flips to a persistent cursor mid-stream.
+-- 200 single-row groups over batchSize 3 -> at least ~66 streaming getMore pages.
+-- ---------------------------------------------------------------------------
+SET documentdb.enable_group_by_dynamic_streaming TO on;
+SELECT total, (getmore_streaming_pages > 0) AS drained_across_getmores
+FROM grp_drain_assert_streaming(
+    '{ "aggregate": "grp_coll", "hint": "g_s_1", "pipeline": [ { "$group": { "_id": { "g": "$g", "s": "$s" } } } ], "cursor": { "batchSize": 3 } }',
+    3, 5106, 7);
+ total | drained_across_getmores 
+-------+-------------------------
+   200 | t
+(1 row)
+
+-- ---------------------------------------------------------------------------
+-- Test I7: GUC on, multi-row group ({g}) with a heap-fetching accumulator
+-- ($sum: "$w" on a non-indexed field). Asserts the plain SecondaryIndexScan
+-- branch (dc.type 3) also stays streaming across every getMore page while the
+-- read-ahead GroupAggregate resumes group-by-group over the ordered index.
+-- ---------------------------------------------------------------------------
+SELECT total, (getmore_streaming_pages > 0) AS drained_across_getmores
+FROM grp_drain_assert_streaming(
+    '{ "aggregate": "grp_coll", "hint": "g_s_1", "pipeline": [ { "$group": { "_id": { "g": "$g" }, "sw": { "$sum": "$w" } } } ], "cursor": { "batchSize": 1 } }',
+    1, 5107, 3);
+ total | drained_across_getmores 
+-------+-------------------------
+     5 | t
+(1 row)
+
+-- Cleanup
+DROP FUNCTION grp_drain_kind(text, int, bigint);
+DROP FUNCTION grp_drain_assert_streaming(text, int, bigint, int);
+SELECT documentdb_api.drop_collection('dyncur_grp_db', 'grp_coll');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SET documentdb.enable_group_by_dynamic_streaming TO off;

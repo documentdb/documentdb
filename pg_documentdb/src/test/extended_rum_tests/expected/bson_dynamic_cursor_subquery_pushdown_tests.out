@@ -731,11 +731,18 @@ $cmd$);
                Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'flightCount'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson), 'totalLegs'::text, bsonsum(bson_expression_get(collection.document, '{ "" : { "$size" : "$legs" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
                Group Key: bson_expression_get(collection.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
                Filter: (bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'flightCount'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson), 'totalLegs'::text, bsonsum(bson_expression_get(collection.document, '{ "" : { "$size" : "$legs" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))) #>= '{ "flightCount" : { "$numberInt" : "4" } }'::bsonquery)
-               ->  Index Scan using "idx_routeId" on documentdb_data.documents_90101 collection
+               ->  Custom Scan (DocumentDBApiCursorScan)
                      Output: bson_expression_get(collection.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
-                     Index Cond: (collection.document @<> '{ "routeId" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-                     Order By: (collection.document |-<> '{ "routeId" : { "$numberInt" : "1" } }'::bson)
-(13 rows)
+                     cursorScanType: Secondary Index Scan
+                     indexName: idx_routeId
+                     indexKey: {"routeId": 1}
+                     isMultiKey: false
+                     indexBounds: ["routeId": (MinKey, MaxKey)]
+                     ->  Index Scan using "idx_routeId" on documentdb_data.documents_90101 collection
+                           Output: collection.document
+                           Index Cond: (collection.document @<> '{ "routeId" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (collection.document |-<> '{ "routeId" : { "$numberInt" : "1" } }'::bson)
+(20 rows)
 
 -- ===========================================================================
 -- SECTION H: $unwind + $match — streamable stage chain
@@ -1572,10 +1579,14 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('
                      ->  Subquery Scan on agg_stage_1
                            Output: bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
                            Filter: (agg_stage_1.document #= '{ "phase" : "enroute" }'::bsonquery)
-                           ->  Index Scan using _id_ on documentdb_data.documents_90101 collection
+                           ->  Custom Scan (DocumentDBApiCursorScan)
                                  Output: bson_dollar_project(collection.document, '{ "routeId" : { "$numberInt" : "1" }, "phase" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-                                 Index Cond: (collection.shard_key_value = '90101'::bigint)
-(17 rows)
+                                 cursorScanType: Primary Key Scan
+                                 indexName: _id_
+                                 ->  Index Scan using _id_ on documentdb_data.documents_90101 collection
+                                       Output: collection.shard_key_value, collection.object_id, collection.document
+                                       Index Cond: (collection.shard_key_value = '90101'::bigint)
+(21 rows)
 
 -- Test K3: With a trailing $match after $replaceRoot + $project
 -- Ensures rows are not lost when match follows replaceRoot
@@ -1628,10 +1639,14 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('
                            ->  Subquery Scan on agg_stage_1
                                  Output: bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
                                  Filter: (agg_stage_1.document #= '{ "phase" : "enroute" }'::bsonquery)
-                                 ->  Index Scan using _id_ on documentdb_data.documents_90101 collection
+                                 ->  Custom Scan (DocumentDBApiCursorScan)
                                        Output: bson_dollar_project(collection.document, '{ "routeId" : { "$numberInt" : "1" }, "phase" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-                                       Index Cond: (collection.shard_key_value = '90101'::bigint)
-(20 rows)
+                                       cursorScanType: Primary Key Scan
+                                       indexName: _id_
+                                       ->  Index Scan using _id_ on documentdb_data.documents_90101 collection
+                                             Output: collection.shard_key_value, collection.object_id, collection.document
+                                             Index Cond: (collection.shard_key_value = '90101'::bigint)
+(24 rows)
 
 -- ===========================================================================
 -- Cleanup
