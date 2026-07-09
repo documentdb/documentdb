@@ -14,6 +14,7 @@ SELECT documentdb_api.insert_one('db', 'fl_grp_test', '{ "_id": 7, "g": "A", "v"
 SELECT documentdb_api.insert_one('db', 'fl_grp_test', '{ "_id": 8, "g": "B" }', NULL);
 
 -- 2. $first/$last without $sort - GUC off then on
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } }], "cursor": {} }');
 
@@ -173,6 +174,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_numeric_order');
 -- =============================================================================
 
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$name" } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -191,7 +193,9 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collati
 -- Reset GUCs and cleanup
 RESET documentdb.skipFailOnCollation;
 SET documentdb_core.enableCollation TO off;
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 
@@ -232,6 +236,7 @@ SET documentdb.enableNewWithExprAccumulators TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$v" }, "l": { "$last": "$v" } } }], "cursor": {} }');
 
 -- 21b. GUC off, no $sort → bsonfirstonsorted / bsonlastonsorted
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$v" }, "l": { "$last": "$v" } } }], "cursor": {} }');
 
@@ -240,6 +245,7 @@ SET documentdb.enableNewWithExprAccumulators TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$sort": { "v": 1 } }, { "$group": { "_id": "$g", "f": { "$first": "$v" }, "l": { "$last": "$v" } } }], "cursor": {} }');
 
 -- 21d. GUC off, with $sort → bsonfirst / bsonlast (sorted path)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$sort": { "v": 1 } }, { "$group": { "_id": "$g", "f": { "$first": "$v" }, "l": { "$last": "$v" } } }], "cursor": {} }');
 
@@ -253,6 +259,7 @@ SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "sortBy": { "v": 1 }, "output": { "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
 
 -- 23. $first/$last without sortBy in $setWindowFields - GUC off (old OnSorted path)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "output": { "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
 
@@ -277,6 +284,7 @@ SET documentdb.enableNewWithExprAccumulators TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "sortBy": { "v": 1 }, "output": { "f": { "$first": "$v" }, "l": { "$last": "$name" } } } }], "cursor": {} }');
 
 -- 27b. GUC off, no sortBy → bsonfirstonsorted / bsonlastonsorted
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "output": { "f": { "$first": "$v" }, "l": { "$last": "$name" } } } }], "cursor": {} }');
 
@@ -431,6 +439,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 --     this exercises the legacy BsonFirstOnSortedAggregate path.
 -- =============================================================================
 SET documentdb.enableSortGroupStage TO on;
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');

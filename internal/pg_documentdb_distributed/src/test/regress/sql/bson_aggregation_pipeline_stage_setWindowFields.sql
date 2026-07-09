@@ -3,6 +3,8 @@ SET search_path TO documentdb_api_catalog;
 SET citus.next_shard_id TO 455000;
 SET documentdb.next_collection_id TO 4550;
 SET documentdb.next_collection_index_id TO 4550;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 SELECT 1 from documentdb_api.drop_collection('db','setWindowFields');
 
@@ -278,6 +280,7 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$sum": 1, "window": {"range": ["current", "current"], "unit": "day"}}}}}]}');
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 
@@ -438,6 +441,7 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$avg": "$quantity", "window": {"range": [-5, 5], "unit": "minute"}}}}}]}');
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 
@@ -1796,6 +1800,7 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$min": "$quantity", "window": {"range": ["current", "current"], "unit": "day"}}}}}]}');
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 
@@ -1920,6 +1925,7 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "setWindowFields", "pipeline":  [{"$setWindowFields": {"partitionBy": "$a", "sortBy": { "date": 1 }, "output": {"totalInGroup": { "$max": "$quantity", "window": {"range": ["current", "current"], "unit": "day"}}}}}]}');
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 

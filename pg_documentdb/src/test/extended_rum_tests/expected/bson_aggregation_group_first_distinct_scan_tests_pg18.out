@@ -22,6 +22,8 @@ SELECT documentdb_api.drop_collection('db', 'setup_sentinel_first');
 -- bson_aggregation_group_distinct_scan_tests.sql (which uses 20000-range).
 SET documentdb.next_collection_id TO 21000;
 SET documentdb.next_collection_index_id TO 21000;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 -- Primary collection: 8 documents with three distinct values of x in
 -- insertion order. The first y-value seen per x (and thus what $first
 -- should return when ordered by x) is:
@@ -36,7 +38,7 @@ SET documentdb.next_collection_index_id TO 21000;
 -- if the wrapper incorrectly fires, the result will be the insertion-
 -- order first (10/20/40) instead of the sort-required first (60/80/70).
 SELECT documentdb_api.insert_one('db', 'grp_first', '{ "_id": 1, "x": "a", "y": 10 }', NULL);
-psql:sql/bson_aggregation_group_first_distinct_scan_tests.sql:29: NOTICE:  creating collection
+psql:sql/bson_aggregation_group_first_distinct_scan_tests.sql:31: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -110,7 +112,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
 
 -- Multikey collection for C6 (array-valued indexed field).
 SELECT documentdb_api.insert_one('db', 'grp_first_mk', '{ "_id": 1, "tags": ["t1", "t2"], "v": 10 }', NULL);
-psql:sql/bson_aggregation_group_first_distinct_scan_tests.sql:51: NOTICE:  creating collection
+psql:sql/bson_aggregation_group_first_distinct_scan_tests.sql:53: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -137,7 +139,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
 
 -- Companion collection used by C9 ($unwind).
 SELECT documentdb_api.insert_one('db', 'grp_first_unwind', '{ "_id": 1, "x": "a", "vals": [1, 2] }', NULL);
-psql:sql/bson_aggregation_group_first_distinct_scan_tests.sql:59: NOTICE:  creating collection
+psql:sql/bson_aggregation_group_first_distinct_scan_tests.sql:61: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -168,7 +170,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
 -- the divergent shape (no $match) is a known hazard if the planner ever
 -- lets the partial index serve a non-subsuming predicate.
 SELECT documentdb_api.insert_one('db', 'grp_first_part', '{ "_id": 1, "x": "a", "y": 60 }', NULL);
-psql:sql/bson_aggregation_group_first_distinct_scan_tests.sql:70: NOTICE:  creating collection
+psql:sql/bson_aggregation_group_first_distinct_scan_tests.sql:72: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

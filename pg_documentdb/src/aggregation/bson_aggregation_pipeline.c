@@ -6738,6 +6738,22 @@ GetDocumentExprForGroupAccumulatorValue(const bson_value_t *accumulatorValue,
 
 
 /*
+ * True when the document is read through the distributed table rather than
+ * directly off a local, unsharded shard base table: either the collection is
+ * sharded, or the shard base table wasn't usable for this query. In that case
+ * the document column is typed as core-schema bson and must be converted to the
+ * API bson type before being consumed by aggregates that expect it.
+ */
+inline static bool
+IsDistributedShardContext(AggregationPipelineBuildContext *context)
+{
+	return context->mongoCollection != NULL &&
+		   (context->mongoCollection->shardKey != NULL ||
+			!context->allowShardBaseTable);
+}
+
+
+/*
  * Simple helper method that has logic to insert a Group accumulator to a query.
  * This adds the group aggregate to the TargetEntry (for projection)
  * and also adds the necessary data to the bson_repath_and_build arguments.
@@ -6801,7 +6817,7 @@ AddSimpleGroupAccumulatorWithExpr(Query *query, const bson_value_t *accumulatorV
 								  List *repathArgs, Const *accumulatorText,
 								  ParseState *parseState, char *identifiers,
 								  Expr *documentExpr, Oid aggregateFunctionOid,
-								  Expr *variableSpec, const char *collationString,
+								  AggregationPipelineBuildContext *context,
 								  TargetEntry **createdAccumulatorEntry)
 {
 	Expr *exprConst = (Expr *) MakeBsonConst(BsonValueToDocumentPgbson(accumulatorValue));
@@ -6809,12 +6825,21 @@ AddSimpleGroupAccumulatorWithExpr(Query *query, const bson_value_t *accumulatorV
 	documentExpr = GetDocumentExprForGroupAccumulatorValue(accumulatorValue,
 														   documentExpr);
 
-	Const *collationConst = IsCollationApplicable(collationString) ?
-							MakeTextConst(collationString,
-										  strlen(collationString)) :
+	if (IsDistributedShardContext(context) &&
+		BsonTypeId() != DocumentDBCoreBsonTypeId())
+	{
+		documentExpr = (Expr *) makeFuncExpr(
+			DocumentDBCoreBsonToBsonFunctionOId(), BsonTypeId(), list_make1(documentExpr),
+			InvalidOid,
+			InvalidOid, COERCE_EXPLICIT_CALL);
+	}
+
+	Const *collationConst = IsCollationApplicable(context->collationString) ?
+							MakeTextConst(context->collationString,
+										  strlen(context->collationString)) :
 							makeNullConst(TEXTOID, -1, InvalidOid);
 
-	List *aggregateArgs = list_make4(documentExpr, exprConst, variableSpec,
+	List *aggregateArgs = list_make4(documentExpr, exprConst, context->variableSpec,
 									 collationConst);
 	List *argTypesList = list_make4_oid(BsonTypeId(), BsonTypeId(), BsonTypeId(),
 										TEXTOID);
@@ -6839,8 +6864,8 @@ inline static List *
 AddSumGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 					   List *repathArgs, Const *accumulatorText,
 					   ParseState *parseState, char *identifiers,
-					   Expr *documentExpr, Expr *variableSpec, const
-					   char *collationString, bool isGroupIdConst)
+					   Expr *documentExpr, bool isGroupIdConst,
+					   AggregationPipelineBuildContext *context)
 {
 	bool canUseBsonCountAggregate = isGroupIdConst;
 
@@ -6862,8 +6887,7 @@ AddSumGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 													 parseState, identifiers,
 													 documentExpr,
 													 BsonSumWithExprAggregateFunctionOid(),
-													 variableSpec,
-													 collationString,
+													 context,
 													 NULL);
 		}
 		else
@@ -6872,7 +6896,7 @@ AddSumGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 											 accumulatorText, parseState,
 											 identifiers, documentExpr,
 											 BsonSumAggregateFunctionOid(),
-											 variableSpec,
+											 context->variableSpec,
 											 NULL);
 		}
 	}
@@ -7553,9 +7577,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 				fieldGroupFunc = makeFuncExpr(
 					BsonExpressionGetWithLetFunctionOid(), BsonTypeId(),
 					fieldArgs, InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
-				if (context->mongoCollection != NULL &&
-					(context->mongoCollection->shardKey != NULL ||
-					 !context->allowShardBaseTable) &&
+				if (IsDistributedShardContext(context) &&
 					BsonTypeId() != DocumentDBCoreBsonTypeId())
 				{
 					fieldGroupFunc = makeFuncExpr(
@@ -7609,9 +7631,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 			groupFunc = makeFuncExpr(
 				bsonExpressionGetFunction, BsonTypeId(), groupArgs, InvalidOid,
 				InvalidOid, COERCE_EXPLICIT_CALL);
-			if (isGroupByValidForIndexPushdown && context->mongoCollection != NULL &&
-				(context->mongoCollection->shardKey != NULL ||
-				 !context->allowShardBaseTable) &&
+			if (isGroupByValidForIndexPushdown && IsDistributedShardContext(context) &&
 				BsonTypeId() != DocumentDBCoreBsonTypeId())
 			{
 				groupFunc = makeFuncExpr(
@@ -7698,8 +7718,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 					accumulatorText, parseState,
 					identifiers, origEntry->expr,
 					BsonAvgWithExprAggregateFunctionOid(),
-					context->variableSpec,
-					context->collationString,
+					context,
 					NULL);
 			}
 			else
@@ -7723,9 +7742,8 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 												accumulatorText, parseState,
 												identifiers,
 												origEntry->expr,
-												context->variableSpec,
-												context->collationString,
-												isGroupConstant);
+												isGroupConstant,
+												context);
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$max"))
 		{
@@ -7739,8 +7757,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 					accumulatorText, parseState,
 					identifiers, origEntry->expr,
 					BsonMaxWithExprAggregateFunctionOid(),
-					context->variableSpec,
-					context->collationString,
+					context,
 					NULL);
 			}
 			else
@@ -7768,8 +7785,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 					accumulatorText, parseState,
 					identifiers, origEntry->expr,
 					BsonMinWithExprAggregateFunctionOid(),
-					context->variableSpec,
-					context->collationString,
+					context,
 					NULL);
 			}
 			else
@@ -7835,8 +7851,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 						accumulatorText, parseState,
 						identifiers, origEntry->expr,
 						BsonFirstWithExprAggregateFunctionOid(),
-						context->variableSpec,
-						context->collationString,
+						context,
 						&accumulatorTle);
 				}
 				else
@@ -7885,8 +7900,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 						accumulatorText, parseState,
 						identifiers, origEntry->expr,
 						BsonLastWithExprAggregateFunctionOid(),
-						context->variableSpec,
-						context->collationString,
+						context,
 						NULL);
 				}
 				else

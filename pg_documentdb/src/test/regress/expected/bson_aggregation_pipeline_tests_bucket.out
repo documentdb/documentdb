@@ -1,6 +1,8 @@
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 5100;
 SET documentdb.next_collection_index_id TO 5100;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 /* Insert data */
 SELECT documentdb_api.insert_one('db','dollarBucket',' { "_id" : 1, "product" : "apple", "pricing" : { "bulk": 10, "store": 15 }, "stock" : 2, "year": 2020 }', NULL);
 NOTICE:  creating collection
