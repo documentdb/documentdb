@@ -53,6 +53,7 @@ SELECT documentdb_api.insert_one('db', 'fl_grp_test', '{ "_id": 8, "g": "B" }', 
 (1 row)
 
 -- 2. $first/$last without $sort - GUC off then on
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } }], "cursor": {} }');
                                   document                                  
@@ -84,7 +85,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_tes
 -- 4. Empty collection - $first
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT documentdb_api.create_collection('db', 'fl_empty');
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:29: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:30: NOTICE:  creating collection
  create_collection 
 -------------------
  t
@@ -103,7 +104,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_empty');
 
 -- 5. Nested/embedded documents as accumulator input
 SELECT documentdb_api.insert_one('db', 'fl_nested', '{ "_id": 1, "g": "X", "info": { "city": "SEA", "zip": 98101 } }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:34: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:35: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -152,7 +153,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_nested');
 
 -- 6. Different BSON types: date, ObjectId, boolean, double
 SELECT documentdb_api.insert_one('db', 'fl_types', '{ "_id": 1, "g": "T", "d": { "$date": "2024-01-15T00:00:00Z" }, "oid": { "$oid": "aaaaaaaaaaaaaaaaaaaaaaaa" }, "b": true, "f": 3.14 }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:48: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:49: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -193,7 +194,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_types');
 
 -- 7. Type-agnostic first/last: mixed types within the same group
 SELECT documentdb_api.insert_one('db', 'fl_mixed', '{ "_id": 1, "g": "M", "v": 42 }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:59: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:60: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -272,7 +273,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_tes
 -- =============================================================================
 -- 10. Setup collation test data
 SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 1, "g": "A", "name": "cherry" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:84: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:85: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -402,7 +403,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collati
 -- 15. Collation with mixed types (string, number, null)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_collation_mixed', '{ "_id": 1, "g": "G", "val": "banana" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:138: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:139: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -451,7 +452,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_collation_mixed');
 -- With numericOrdering: "item10" > "item2" (numeric), without: "item10" < "item2" (lexical)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_numeric_order', '{ "_id": 1, "g": "N", "val": "item10" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:156: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:157: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -500,9 +501,10 @@ SELECT documentdb_api.drop_collection('db', 'fl_numeric_order');
 -- 17. GUC gating: enableCollationWithNewGroupAccumulators off → error
 -- =============================================================================
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$name" } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:177: ERROR:  collation is not supported in $group stage yet.
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:179: ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableNewWithExprAccumulators TO on;
 SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 -- =============================================================================
@@ -522,7 +524,9 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collati
 -- Reset GUCs and cleanup
 RESET documentdb.skipFailOnCollation;
 SET documentdb_core.enableCollation TO off;
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SELECT documentdb_api.drop_collection('db', 'fl_collation_test');
@@ -536,7 +540,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_collation_test');
 --     nested field, even though a later document has the field defined.
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_first_missing', '{ "_id": 1, "category": "electronics" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:204: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:208: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -567,7 +571,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_first_missing');
 --     (Flipped version of test 19.)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_last_missing', '{ "_id": 1, "category": "electronics", "profile": { "email": "bob@test.com" } }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:217: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:221: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -615,6 +619,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 (11 rows)
 
 -- 21b. GUC off, no $sort → bsonfirstonsorted / bsonlastonsorted
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$v" }, "l": { "$last": "$v" } } }], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                        
@@ -656,6 +661,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 (16 rows)
 
 -- 21d. GUC off, with $sort → bsonfirst / bsonlast (sorted path)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$sort": { "v": 1 } }, { "$group": { "_id": "$g", "f": { "$first": "$v" }, "l": { "$last": "$v" } } }], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                              QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                              
@@ -698,6 +704,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_tes
 (8 rows)
 
 -- 23. $first/$last without sortBy in $setWindowFields - GUC off (old OnSorted path)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "output": { "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
                                                                           document                                                                          
@@ -784,6 +791,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 (16 rows)
 
 -- 27b. GUC off, no sortBy → bsonfirstonsorted / bsonlastonsorted
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "output": { "f": { "$first": "$v" }, "l": { "$last": "$name" } } } }], "cursor": {} }');
                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                        
@@ -891,7 +899,7 @@ RESET documentdb.enableSortGroupStage;
 -- =============================================================================
 -- Insert test data: 10 rows across 4 groups
 SELECT documentdb_api.insert_one('db','fl_sortgroup_test','{ "_id": 1, "g": "X", "seq": 30, "val": "third" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:309: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:317: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1446,6 +1454,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 --     this exercises the legacy BsonFirstOnSortedAggregate path.
 -- =============================================================================
 SET documentdb.enableSortGroupStage TO on;
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                  document                 
@@ -1590,7 +1599,7 @@ RESET documentdb.enableOrderByIndexTerm;
 --     decomposition bails out (dotted paths) and Sort node remains.
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','fl_nested_sort','{ "_id": 1, "g": "A", "info": { "priority": 3 }, "val": "low-pri" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:481: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:490: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1657,7 +1666,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_nested_sort');
 --     while case-insensitive collation (strength=1) sorts alphabetically ("apple" < "Banana").
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','fl_collation_sortpush','{ "_id": 1, "g": "A", "name": "cherry", "seq": 2 }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:499: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:508: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

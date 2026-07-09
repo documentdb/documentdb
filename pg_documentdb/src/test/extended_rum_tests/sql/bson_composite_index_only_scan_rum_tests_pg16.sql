@@ -2,6 +2,8 @@ SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 
 SET documentdb.next_collection_id TO 9100;
 SET documentdb.next_collection_index_id TO 9100;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- Tests for composite on non-primary key
 
@@ -556,6 +558,7 @@ SET documentdb.enableIndexOnlyScanForCoveredAggregateTargets TO on;
 
 -- Result correctness must hold both with the legacy $sum accumulator and the
 -- new with-expr accumulator path; both runs should produce the same counts.
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate": "sum_const_test", "pipeline": [ { "$match": { "region": 100, "dept": 20, "level": 5 } }, { "$group": { "_id": "$tag", "count": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "cursor": {}, "hint": "region_1_dept_1_level_1_tag_1" }');
 SET documentdb.enableNewWithExprAccumulators TO on;

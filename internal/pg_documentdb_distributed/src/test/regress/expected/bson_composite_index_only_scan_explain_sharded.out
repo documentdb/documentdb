@@ -58,11 +58,11 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim(
        p_ignore_heap_fetches => true,
        p_ignore_distributed_runtime_details => true
 );
-                                                                                                                                                                                                                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                       
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Output: remote_scan.document
-   ->  Distributed Subplan 34_1
+   ->  Distributed Subplan 35_1
          Intermediate Data Size: xxx bytes
          Result destination: Write locally
          ->  HashAggregate (actual rows=3 loops=1)
@@ -74,11 +74,11 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim(
                      Tuple data received from nodes: xxx bytes
                      Tasks Shown: One of 8
                      ->  Task
-                           Query: SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2, 'cnt'::text AS c3, worker_partial_agg('documentdb_api_catalog.bsonsum(documentdb_core.bson)'::regprocedure, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson) AS c4 FROM documentdb_data.documents_x_x collection WHERE documentdb_api_internal.bson_dollar_fullscan(document, '{ "city" : { "$numberInt" : "1" } }'::documentdb_core.bson) GROUP BY (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                           Query: SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2, 'cnt'::text AS c3, pg_catalog.worker_partial_agg('documentdb_api_internal.bsonsumwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW('{ }'::documentdb_core.bson, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS c4 FROM documentdb_data.documents_x_x collection WHERE documentdb_api_internal.bson_dollar_fullscan(document, '{ "city" : { "$numberInt" : "1" } }'::documentdb_core.bson) GROUP BY (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
                            Tuple data received from node: xxx bytes
                            Node: host=localhost port=58070 dbname=regression
                            ->  GroupAggregate (actual rows=2 loops=1)
-                                 Output: '_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'cnt'::text, worker_partial_agg('xxxx'::oid, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                                 Output: '_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'cnt'::text, worker_partial_agg('xxxx'::oid, '("{ }","{ """" : { ""$numberInt"" : ""1"" } }","{ ""now"" : NOW_SYS_VARIABLE }",)'::record)
                                  Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
                                  ->  Index Only Scan using city_rent_1 on documentdb_data.documents_x_x collection (actual rows=5 loops=1)
                                        Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
@@ -89,7 +89,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim(
    Tuple data received from nodes: xxx bytes
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM (SELECT documentdb_core.bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('34_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_0) agg_stage_1 ORDER BY (documentdb_api_catalog.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
+         Query: SELECT document FROM (SELECT documentdb_core.bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('35_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_0) agg_stage_1 ORDER BY (documentdb_api_catalog.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
          Tuple data received from node: xxx bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Sort (actual rows=3 loops=1)
@@ -98,7 +98,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim(
                Sort Method: quicksort  Memory: xxxkB
                ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
                      Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4), documentdb_api_catalog.bson_orderby(documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4), '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-                     Function Call: read_intermediate_result('34_1'::text, 'binary'::citus_copy_format)
+                     Function Call: read_intermediate_result('35_1'::text, 'binary'::citus_copy_format)
 (39 rows)
 
 ROLLBACK;

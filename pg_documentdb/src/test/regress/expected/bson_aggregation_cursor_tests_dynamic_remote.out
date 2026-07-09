@@ -472,6 +472,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                                             |         |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | f
 (6 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
                                                                                                                 filtereddoc                                                                                                                 | docsize |                                                                                                                                                                                                                                                                                                              continuationfiltered                                                                                                                                                                                                                                                                                                               | persistconnection 
@@ -496,6 +497,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                                             |         |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | f
 (6 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }, { "$limit": 1 }]}');
                                                                                                 filtereddoc                                                                                                | docsize | continuationfiltered | persistconnection 
@@ -513,7 +515,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pa
 
 BEGIN;
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pageSize => 0, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }, { "$limit": 1 }, { "$addFields": { "c": "$a" }}]}');
-psql:sql/bson_aggregation_cursor_tests_core.sql:196: NOTICE:  There are open held portals. Closing them
+psql:sql/bson_aggregation_cursor_tests_core.sql:198: NOTICE:  There are open held portals. Closing them
                                                                                          filtereddoc                                                                                          | docsize |                                                                                                continuationfiltered                                                                                                | persistconnection 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "db.get_aggregation_cursor_test" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "0" }, "ids" : [  ] } |      98 | { "qi" : { "$numberLong" : "4294967294" }, "qp" : true, "qk" : { "$numberInt" : "2" }, "qn" : "cursor_4294967294", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | f
@@ -524,7 +526,7 @@ ROLLBACK;
 -- inside a transaction block
 BEGIN;
 SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 100000, skipVal => 2);
-psql:sql/bson_aggregation_cursor_tests_core.sql:201: NOTICE:  There are open held portals. Closing them
+psql:sql/bson_aggregation_cursor_tests_core.sql:203: NOTICE:  There are open held portals. Closing them
                                                                                                                 filtereddoc                                                                                                                 | docsize  |                                                                                                continuationfiltered                                                                                                | persistconnection 
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "db.get_aggregation_cursor_test" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } | 11307968 | { "qi" : { "$numberLong" : "4294967294" }, "qp" : true, "qk" : { "$numberInt" : "1" }, "qn" : "cursor_4294967294", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | f
@@ -582,7 +584,7 @@ SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize 
 (6 rows)
 
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$skip": 2 }]}');
-psql:sql/bson_aggregation_cursor_tests_core.sql:207: NOTICE:  There are open held portals. Closing them
+psql:sql/bson_aggregation_cursor_tests_core.sql:209: NOTICE:  There are open held portals. Closing them
                                                                                                                 filtereddoc                                                                                                                 | docsize  |                                                                                                continuationfiltered                                                                                                | persistconnection 
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "db.get_aggregation_cursor_test" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } | 11307968 | { "qi" : { "$numberLong" : "4294967294" }, "qp" : true, "qk" : { "$numberInt" : "2" }, "qn" : "cursor_4294967294", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | f
@@ -662,6 +664,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                                             |         |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | f
 (6 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
                                                                                                                 filtereddoc                                                                                                                 | docsize |                                                                                                                                                                                                                                                                                                              continuationfiltered                                                                                                                                                                                                                                                                                                               | persistconnection 
@@ -708,6 +711,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                                             |         |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | f
 (6 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 ROLLBACK;
 -- with sharded
@@ -743,7 +747,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 6, pa
 
 -- FIND: Test streaming vs not
 SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 100000, skipVal => 2);
-psql:sql/bson_aggregation_cursor_tests_core.sql:234: NOTICE:  There are open held portals. Closing them
+psql:sql/bson_aggregation_cursor_tests_core.sql:238: NOTICE:  There are open held portals. Closing them
                                                                                                                 filtereddoc                                                                                                                 | docsize  |                                                                                                continuationfiltered                                                                                                | persistconnection 
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "db.get_aggregation_cursor_test" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "3" }, { "$numberInt" : "4" } ] } | 11307968 | { "qi" : { "$numberLong" : "4294967294" }, "qp" : true, "qk" : { "$numberInt" : "1" }, "qn" : "cursor_4294967294", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | t
@@ -790,7 +794,7 @@ SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 1, pageSize 
 (2 rows)
 
 SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 100000, sort => '{ "_id": -1 }');
-psql:sql/bson_aggregation_cursor_tests_core.sql:239: NOTICE:  There are open held portals. Closing them
+psql:sql/bson_aggregation_cursor_tests_core.sql:243: NOTICE:  There are open held portals. Closing them
                                                                                                                  filtereddoc                                                                                                                 | docsize  |                                                                                                continuationfiltered                                                                                                | persistconnection 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "db.get_aggregation_cursor_test" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "10" }, { "$numberInt" : "9" } ] } | 11307968 | { "qi" : { "$numberLong" : "4294967294" }, "qp" : true, "qk" : { "$numberInt" : "1" }, "qn" : "cursor_4294967294", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | t
@@ -849,7 +853,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pa
 (2 rows)
 
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$sort": { "_id": -1 } }]}');
-psql:sql/bson_aggregation_cursor_tests_core.sql:247: NOTICE:  There are open held portals. Closing them
+psql:sql/bson_aggregation_cursor_tests_core.sql:251: NOTICE:  There are open held portals. Closing them
                                                                                                                  filtereddoc                                                                                                                 | docsize  |                                                                                                continuationfiltered                                                                                                | persistconnection 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "db.get_aggregation_cursor_test" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "10" }, { "$numberInt" : "9" } ] } | 11307968 | { "qi" : { "$numberLong" : "4294967294" }, "qp" : true, "qk" : { "$numberInt" : "2" }, "qn" : "cursor_4294967294", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | t
@@ -883,6 +887,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                                              |         |                                                                                                                                                                                                                    | f
 (6 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
                                                                                                                  filtereddoc                                                                                                                 | docsize |                                                                                                continuationfiltered                                                                                                | persistconnection 
@@ -929,6 +934,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                                              |         |                                                                                                                                                                                                                    | f
 (6 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 6, pageSize => 2, pipeline => '{ "": [{ "$unwind": "$c" }, { "$limit": 10 }] }', collection_name => 'get_aggregation_cursor_smalldoc_test');
                                                                                                                      filtereddoc                                                                                                                     | docsize |                                                                                                continuationfiltered                                                                                                | persistconnection 
@@ -991,7 +997,7 @@ SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 1, pageSize 
 (2 rows)
 
 SELECT * FROM aggregation_cursor_test.drain_find_query(loopCount => 5, pageSize => 100000, sort => '{ "_id": -1 }');
-psql:sql/bson_aggregation_cursor_tests_core.sql:272: NOTICE:  There are open held portals. Closing them
+psql:sql/bson_aggregation_cursor_tests_core.sql:278: NOTICE:  There are open held portals. Closing them
                                                                                                                  filtereddoc                                                                                                                 | docsize  |                                                                                                continuationfiltered                                                                                                | persistconnection 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "db.get_aggregation_cursor_test" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "10" }, { "$numberInt" : "9" } ] } | 11307968 | { "qi" : { "$numberLong" : "4294967294" }, "qp" : true, "qk" : { "$numberInt" : "1" }, "qn" : "cursor_4294967294", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | f
@@ -1049,7 +1055,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pa
 (2 rows)
 
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$sort": { "_id": -1 } }]}');
-psql:sql/bson_aggregation_cursor_tests_core.sql:278: NOTICE:  There are open held portals. Closing them
+psql:sql/bson_aggregation_cursor_tests_core.sql:284: NOTICE:  There are open held portals. Closing them
                                                                                                                  filtereddoc                                                                                                                 | docsize  |                                                                                                continuationfiltered                                                                                                | persistconnection 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "db.get_aggregation_cursor_test" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "2" }, "ids" : [ { "$numberInt" : "10" }, { "$numberInt" : "9" } ] } | 11307968 | { "qi" : { "$numberLong" : "4294967294" }, "qp" : true, "qk" : { "$numberInt" : "2" }, "qn" : "cursor_4294967294", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | f
@@ -1083,6 +1089,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                                              |         |                                                                                                                                                                                                                    | f
 (6 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
                                                                                                                  filtereddoc                                                                                                                 | docsize |                                                                                                continuationfiltered                                                                                                | persistconnection 
@@ -1129,6 +1136,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 5, pa
                                                                                                                                                                                                                                              |         |                                                                                                                                                                                                                    | f
 (6 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 6, pageSize => 2, pipeline => '{ "": [{ "$unwind": "$c" }, { "$limit": 10 }] }', collection_name => 'get_aggregation_cursor_smalldoc_test');
                                                                                                                      filtereddoc                                                                                                                     | docsize |                                                                                                continuationfiltered                                                                                                | persistconnection 
@@ -1145,7 +1153,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 6, pa
 ROLLBACK;
 -- test for errors when returnKey is set to true
 SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "movies", "filter" : { "title" : "a" }, "limit" : 1, "singleBatch" : true, "batchSize" : 1, "returnKey" : true, "lsid" : { "id" : { "$binary" : { "base64": "apfUje6LTzKH9YfO3smIGA==", "subType" : "04" } } }, "$db" : "db" }');
-psql:sql/bson_aggregation_cursor_tests_core.sql:294: ERROR:  The key returnKey is currently not supported
+psql:sql/bson_aggregation_cursor_tests_core.sql:302: ERROR:  The key returnKey is currently not supported
 -- test for no errors when returnKey is set to false
 SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "movies", "filter" : { "title" : "a" }, "limit" : 1, "singleBatch" : true, "batchSize" : 1, "returnKey" : false, "lsid" : { "id" : { "$binary" : { "base64": "apfUje6LTzKH9YfO3smIGA==", "subType" : "04" } } }, "$db" : "db" }');
                                                            cursorpage                                                           
@@ -1155,10 +1163,10 @@ SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "
 
 -- test for errors when returnKey and showRecordId are set to true
 SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "movies", "filter" : { "title" : "a" }, "limit" : 1, "singleBatch" : true, "batchSize" : 1, "showRecordId": true, "returnKey" : true, "lsid" : { "id" : { "$binary" : { "base64": "apfUje6LTzKH9YfO3smIGA==", "subType" : "04" } } }, "$db" : "db" }');
-psql:sql/bson_aggregation_cursor_tests_core.sql:300: ERROR:  The key showRecordId is currently not supported
+psql:sql/bson_aggregation_cursor_tests_core.sql:308: ERROR:  The key showRecordId is currently not supported
 -- test for ntoreturn in find command with unset documentdb.version
 SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "movies",  "limit" : 1,  "batchSize" : 1, "ntoreturn":1 ,"$db" : "db" }');
-psql:sql/bson_aggregation_cursor_tests_core.sql:303: ERROR:  'limit' or 'batchSize' fields can not be set with 'ntoreturn' field
+psql:sql/bson_aggregation_cursor_tests_core.sql:311: ERROR:  'limit' or 'batchSize' fields can not be set with 'ntoreturn' field
 SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find" : "movies", "ntoreturn":1 ,"$db" : "db" }');
                                                            cursorpage                                                           
 --------------------------------------------------------------------------------------------------------------------------------
@@ -1215,7 +1223,7 @@ SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pa
 
 -- now run a new query - this should close the cursor above, and continue with a fresh query
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 1, pageSize => 1, pipeline => '{ "": [{ "$skip": 2 }]}');
-psql:sql/bson_aggregation_cursor_tests_core.sql:327: NOTICE:  There are open held portals. Closing them
+psql:sql/bson_aggregation_cursor_tests_core.sql:335: NOTICE:  There are open held portals. Closing them
                                                                                                     filtereddoc                                                                                                     | docsize |                                                                                                continuationfiltered                                                                                                | persistconnection 
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "db.get_aggregation_cursor_test" }, "ok" : { "$numberDouble" : "1.0" }, "batchCount" : { "$numberInt" : "1" }, "ids" : [ { "$numberInt" : "3" } ] } | 5654033 | { "qi" : { "$numberLong" : "4294967294" }, "qp" : true, "qk" : { "$numberInt" : "2" }, "qn" : "cursor_4294967294", "numIters" : { "$numberInt" : "0" }, "sn" : NOW_SYS_VARIABLE } | t
@@ -1231,7 +1239,7 @@ PERFORM documentdb_api.insert_one('db', 'bitmap_cursor_continuation', FORMAT('{ 
 END LOOP;
 END;
 $$;
-psql:sql/bson_aggregation_cursor_tests_core.sql:338: NOTICE:  creating collection
+psql:sql/bson_aggregation_cursor_tests_core.sql:346: NOTICE:  creating collection
 -- create an index on field 'a'
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "bitmap_cursor_continuation", "indexes": [{"key": {"a": 1}, "name": "a_1" }]}', TRUE);
                                                                                                    create_indexes_non_concurrently                                                                                                    
@@ -1420,7 +1428,7 @@ SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find": "n
 
 -- Persistent cursor (find with sort)
 SELECT cursorPage FROM documentdb_api.find_cursor_first_page('db', '{ "find": "nonexistent_coll_484", "filter": {}, "sort": {"a": 1} }');
-psql:sql/bson_aggregation_cursor_tests_core.sql:444: NOTICE:  There are open held portals. Closing them
+psql:sql/bson_aggregation_cursor_tests_core.sql:452: NOTICE:  There are open held portals. Closing them
                                                                   cursorpage                                                                  
 ----------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.nonexistent_coll_484", "firstBatch" : [  ] }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1517,7 +1525,7 @@ PERFORM documentdb_api.insert_one('db', 'partial_final_batch_coll', FORMAT('{ "_
 END LOOP;
 END;
 $$;
-psql:sql/bson_aggregation_cursor_tests_core.sql:489: NOTICE:  creating collection
+psql:sql/bson_aggregation_cursor_tests_core.sql:497: NOTICE:  creating collection
 -- Streaming aggregate: 7 docs with batchSize=3 → batches of [3, 3, 1] then empty
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 3, collection_name => 'partial_final_batch_coll');
                                                                                                                            filtereddoc                                                                                                                           | docsize |                                                                                                                                                                                                                   continuationfiltered                                                                                                                                                                                                                   | persistconnection 
@@ -1625,7 +1633,7 @@ SELECT documentdb_api.drop_collection('db', 'bitmap_cursor_continuation');
 (1 row)
 
 DROP SCHEMA aggregation_cursor_test CASCADE;
-psql:sql/bson_aggregation_cursor_tests_core.sql:520: NOTICE:  drop cascades to 3 other objects
+psql:sql/bson_aggregation_cursor_tests_core.sql:528: NOTICE:  drop cascades to 3 other objects
 DETAIL:  drop cascades to type aggregation_cursor_test.drain_result
 drop cascades to function aggregation_cursor_test.drain_find_query(integer,integer,bson,integer,integer,bson,bson,boolean)
 drop cascades to function aggregation_cursor_test.drain_aggregation_query(integer,integer,bson,boolean,boolean,text)

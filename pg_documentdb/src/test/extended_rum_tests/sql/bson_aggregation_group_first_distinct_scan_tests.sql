@@ -12,6 +12,8 @@ SELECT documentdb_api.drop_collection('db', 'setup_sentinel_first');
 -- bson_aggregation_group_distinct_scan_tests.sql (which uses 20000-range).
 SET documentdb.next_collection_id TO 21000;
 SET documentdb.next_collection_index_id TO 21000;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- Primary collection: 8 documents with three distinct values of x in
 -- insertion order. The first y-value seen per x (and thus what $first

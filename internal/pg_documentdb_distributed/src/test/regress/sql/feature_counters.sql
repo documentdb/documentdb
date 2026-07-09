@@ -71,10 +71,13 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_co
 -- sortByCount
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$sortByCount": { "$eq": [ { "$mod": [ { "$toInt": "$_id" }, 2 ] }, 0  ] } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
 -- $group
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- $group with $count with non-empty arg (tracks group_count_with_arg feature counter)
@@ -82,6 +85,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_co
 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$sum": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- $group with first/last

@@ -3,6 +3,8 @@ SET search_path TO documentdb_api_catalog;
 SET citus.next_shard_id TO 5110000;
 SET documentdb.next_collection_id TO 51100;
 SET documentdb.next_collection_index_id TO 51100;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 /* Insert data */
 SELECT documentdb_api.insert_one('db','dollarBucketAuto',' { "_id" : 1, "product" : "apple", "price" : 1, "year": 2021 }', NULL);
