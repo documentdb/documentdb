@@ -337,8 +337,15 @@ impl PgDataClient for DocumentDBDataClient {
         &self,
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
+        enable_write_procedures: bool,
     ) -> Result<Vec<Row>> {
         let request = request_context.request();
+
+        let query = if enable_write_procedures && connection_context.transaction.is_none() {
+            self.service_context.query_catalog().delete_txn_proc()
+        } else {
+            self.service_context.query_catalog().delete()
+        };
 
         let db = request.db();
         let doc = request.document();
@@ -346,7 +353,7 @@ impl PgDataClient for DocumentDBDataClient {
 
         let run_delete = |conn: Arc<Connection>| async move {
             conn.query(
-                self.service_context.query_catalog().delete(),
+                query,
                 &[Type::TEXT, Type::BYTEA, Type::BYTEA],
                 &[&db, &PgDocument(doc), &extra],
             )

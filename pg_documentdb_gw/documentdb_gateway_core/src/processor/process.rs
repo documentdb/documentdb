@@ -101,6 +101,7 @@ pub async fn process_request(
                 connection_context,
                 &dynamic_config,
                 pg_data_client,
+                dynamic_config.enable_write_procedures(),
             )
             .await
         }

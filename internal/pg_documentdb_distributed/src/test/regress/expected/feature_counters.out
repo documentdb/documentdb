@@ -841,6 +841,18 @@ SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
  {"Feature_usage":[{"command_update" : 4}, {"command_update_one" : 4}, {"update_operator_bit" : 1}, {"update_operator_currentdate" : 1}, {"update_operator_mul" : 1}, {"update_operator_unset" : 1}]}
 (1 row)
 
+CALL documentdb_api.delete_txn_proc('db', '{"delete":"writeFC", "deletes":[{"q":{"_id":{"$eq":4}},"limit":0}]}');
+                               p_result                               | p_success 
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } } | t
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                         get_feature_counter_pretty                         
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_delete_proc" : 1}, {"query_operator_eq" : 1}]}
+(1 row)
+
 -- Test: Feature counter for list_databases command
 -- Reset feature counters
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);

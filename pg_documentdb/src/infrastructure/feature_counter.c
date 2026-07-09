@@ -294,6 +294,7 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_COMMAND_CURRENTOP] = "command_current_op",
 	[FEATURE_COMMAND_DBSTATS] = "command_dbstats",
 	[FEATURE_COMMAND_DELETE] = "command_delete",
+	[FEATURE_COMMAND_DELETE_PROC] = "command_delete_proc",
 	[FEATURE_COMMAND_DISTINCT] = "command_distinct",
 	[FEATURE_COMMAND_FINDANDMODIFY] = "command_findAndModify",
 	[FEATURE_COMMAND_FIND_CURSOR_FIRST_PAGE] = "command_find_cursor_first_page",
