@@ -2822,48 +2822,6 @@ $cmd$);
                            Index Cond: (collection_0_1.shard_key_value = '8808'::bigint)
 (23 rows)
 
--- lookup with id join optimized (explicitly asked to make _id join collation agnostic)
-BEGIN;
-SET LOCAL documentdb.enableLookupIdJoinOptimizationOnCollation to true;
-SET LOCAL documentdb_core.enableCollation TO on;
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', 
-    '{ "aggregate": "coll_lookup", "pipeline": [ { "$lookup": { "from": "coll_lookup", "as": "matched_docs", "localField": "_id", "foreignField": "_id", "pipeline": [ { "$match": { "$or" : [ { "a.b": "cat" }, { "a.b": "dog" } ] } } ] } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }')
-$cmd$);
-                                                                   run_explain_and_trim                                                                    
------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on lookup_non_inlined_stage_1
-   Output: documentdb_api_internal.bson_dollar_merge_documents(lookup_non_inlined_stage_1."left", (SubPlan 1), true)
-   ->  Nested Loop
-         Output: collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson))
-         ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: collection.document, collection.object_id
-               namespaceName: coll_q_db.coll_lookup
-               indexName: _id_
-               ->  Bitmap Heap Scan on documentdb_data.documents_8808 collection
-                     Output: collection.document, collection.object_id
-                     Recheck Cond: (collection.shard_key_value = '8808'::bigint)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection.shard_key_value = '8808'::bigint)
-         ->  Aggregate
-               Output: COALESCE(bson_array_agg(collection_0_1.document, 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)
-               ->  Custom Scan (DocumentDBApiExplainQueryScan)
-                     Output: collection_0_1.document
-                     namespaceName: coll_q_db.coll_lookup
-                     indexName: _id_
-                     ->  Index Scan using _id_ on documentdb_data.documents_8808 collection_0_1
-                           Output: collection_0_1.document
-                           Index Cond: ((collection_0_1.shard_key_value = '8808'::bigint) AND (collection_0_1.object_id = collection.object_id))
-   SubPlan 1
-     ->  Aggregate
-           Output: COALESCE(bson_array_agg(lookup_subpipeline_substage_0.lookup_unwind, 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)
-           ->  Function Scan on documentdb_api_catalog.bson_lookup_unwind lookup_subpipeline_substage_0
-                 Output: lookup_subpipeline_substage_0.lookup_unwind
-                 Function Call: bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'matched_docs'::text)
-                 Filter: bson_dollar_in(lookup_subpipeline_substage_0.lookup_unwind, '{ "a.b" : [ "cat", "dog" ], "collation" : "en-u-ks-level1" }'::bson)
-(29 rows)
-
-ROLLBACK;
 -- lookup with non-id join (collation aware)
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', 

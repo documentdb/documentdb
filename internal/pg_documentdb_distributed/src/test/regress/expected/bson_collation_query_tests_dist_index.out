@@ -138,24 +138,6 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
 (4 rows)
 
 END;
--- _id join optimization GUC has no effect on sharded collections;
--- the join remains collation-aware.
-BEGIN;
-SET LOCAL documentdb.enableLookupIdJoinOptimizationOnCollation TO true;
-SET LOCAL documentdb_core.enableCollation TO on;
-SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
-SET LOCAL enable_seqscan TO OFF;
-SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
-    '{ "aggregate": "coll_lookup_d", "pipeline": [ { "$lookup": { "from": "coll_lookup_d", "as": "matched_docs", "localField": "_id", "foreignField": "_id", "pipeline": [ { "$match": { "$or" : [ { "a.b": "cat" }, { "a.b": "dog" } ] } } ] } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }');
-                                                                     document                                                                      
----------------------------------------------------------------------
- { "_id" : "dog", "a" : { "b" : "dog" }, "matched_docs" : [ { "_id" : "dog", "a" : { "b" : "dog" } }, { "_id" : "DOG", "a" : { "b" : "DOG" } } ] }
- { "_id" : "DOG", "a" : { "b" : "DOG" }, "matched_docs" : [ { "_id" : "dog", "a" : { "b" : "dog" } }, { "_id" : "DOG", "a" : { "b" : "DOG" } } ] }
- { "_id" : "Cat", "a" : { "b" : "Cat" }, "matched_docs" : [ { "_id" : "Cat", "a" : { "b" : "Cat" } }, { "_id" : "cAT", "a" : { "b" : "cAT" } } ] }
- { "_id" : "cAT", "a" : { "b" : "cAT" }, "matched_docs" : [ { "_id" : "Cat", "a" : { "b" : "Cat" } }, { "_id" : "cAT", "a" : { "b" : "cAT" } } ] }
-(4 rows)
-
-END;
 -- ======================================================================
 -- SECTION 2: Aggregation pipeline routing on sharded collection
 -- ======================================================================
@@ -469,7 +451,7 @@ SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_qm_d');
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_qm_d', '{ "_id": "cAt", "a": "cAt" }');
-psql:sql/bson_collation_query_tests_dist_core.sql:173: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_dist_core.sql:162: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -556,7 +538,7 @@ SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
 SET LOCAL enable_seqscan TO OFF;
 SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
     '{ "aggregate": "coll_graph_src_d", "pipeline": [ { "$graphLookup": { "from": "coll_graph_dst_d", "startWith": "$pet", "connectFromField": "name", "connectToField": "_id", "as": "destinations", "depthField": "depth" } } ],  "collation": { "locale": "en", "strength" : 1} }');
-psql:sql/bson_collation_query_tests_dist_core.sql:212: ERROR:  $graphLookup using 'from' on a sharded collection is currently unsupported
+psql:sql/bson_collation_query_tests_dist_core.sql:201: ERROR:  $graphLookup using 'from' on a sharded collection is currently unsupported
 END;
 -- ======================================================================
 -- CLEANUP

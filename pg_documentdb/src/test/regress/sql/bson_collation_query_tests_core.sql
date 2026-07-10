@@ -395,6 +395,12 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
 SELECT document FROM bson_aggregation_pipeline('coll_q_db', 
     '{ "aggregate": "coll_lookup_src", "pipeline": [ { "$lookup": { "from": "coll_lookup_src", "as": "matched_docs", "localField": "a.b", "foreignField": "a.b", "pipeline": [ { "$match": { "$or" : [ { "a.b": "cat" }, { "a.b": "dog" } ] } } ] } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }');
 
+-- $lookup joining a non-_id localField to the _id foreignField. Because the foreign key is
+-- _id this exercises the right-side _id-join path; under a collation the match is collation-
+-- aware (never byte-wise), so each a.b value matches every _id the collation deems equal.
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', 
+    '{ "aggregate": "coll_lookup_src", "pipeline": [ { "$lookup": { "from": "coll_lookup_src", "as": "matched_docs", "localField": "a.b", "foreignField": "_id" } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }');
+
 -- $facet — sub-pipelines inherit command collation.
 SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_lookup_src", "pipeline": [ { "$facet": { "a" : [ { "$match": { "a.b": "cat" } }, { "$count": "catCount" } ], "b" : [ { "$match": { "a.b": "dog" } }, { "$count": "dogCount" } ]  } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}}');
 

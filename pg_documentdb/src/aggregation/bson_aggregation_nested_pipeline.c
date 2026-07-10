@@ -54,7 +54,6 @@
 #define NESTED_PIPELINE_VAR_FLAG 0x0F000000
 
 const int MaximumLookupPipelineDepth = 20;
-extern bool EnableLookupIdJoinOptimizationOnCollation;
 extern bool EnableOperatorVariablesInLookup;
 
 /*
@@ -2110,13 +2109,13 @@ OptimizeLookup(LookupArgs *lookupArgs,
 		StringViewEquals(&lookupArgs->foreignField, &IdFieldStringView) &&
 		!optimizationArgs->isLookupAgnostic;
 
-	if (IsCollationApplicable(leftQueryContext->collationString) &&
-		!EnableLookupIdJoinOptimizationOnCollation)
+	if (IsCollationApplicable(leftQueryContext->collationString))
 	{
-		/* Can't perform _id join when collation is applicable (since _id can
-		 * contain UTF8 which is collation aware), unless it is explicitly instructed
-		 * via GUC `EnableLookupIdJoinOptimizationOnCollation` (e.g., for cases when _id
-		 * contains collation agnostic datatype) */
+		/* Can't perform the _id join when collation is applicable. The optimization
+		 * joins on the physical id via byte-wise equality, which is not
+		 * collation-aware, so an _id that holds collation-sensitive values (UTF8
+		 * strings or documents) would incorrectly drop matches that the collation
+		 * considers equal. Fall back to the collation-aware filter path. */
 		optimizationArgs->isLookupJoinOnRightId = false;
 	}
 
