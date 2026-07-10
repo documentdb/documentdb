@@ -4,7 +4,6 @@ SET documentdb.next_collection_id TO 69000;
 SET documentdb.next_collection_index_id TO 69000;
 SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_api_internal,documentdb_core;
 SET documentdb.enableExtendedExplainPlans to on;
-SET documentdb.enableIndexOnlyScan to on;
 -- if documentdb_extended_rum exists, set alternate index handler
 SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extended_rum', false), extname FROM pg_extension WHERE extname = 'documentdb_extended_rum';
   set_config  |         extname         
@@ -19,7 +18,7 @@ SELECT documentdb_api.drop_collection('idx_only_scan_db', 'idx_only_scan_coll') 
 (1 row)
 
 SELECT documentdb_api.create_collection('idx_only_scan_db', 'idx_only_scan_coll');
-psql:sql/bson_composite_index_only_scan_tests.sql:13: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:12: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t
@@ -947,8 +946,8 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                Index Cond: (collection.document @*= '{ "country" : [ "USA", [  ] ] }'::bson)
 (12 rows)
 
--- if we turn the GUC off by it shouldn't use index only scan
-set documentdb.enableIndexOnlyScan to off;
+-- if we turn index only scan off it shouldn't use index only scan
+set enable_indexonlyscan to off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
                                                 run_explain_and_trim                                                 
 ---------------------------------------------------------------------
@@ -966,10 +965,9 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                Index Cond: (collection.document @< '{ "country" : "Mexico" }'::bson)
 (12 rows)
 
-set documentdb.enableIndexOnlyScan to on;
+set enable_indexonlyscan to on;
 -- test with force and planner path
 set documentdb.forceIndexOnlyScanIfAvailable to on;
-set documentdb.enableIndexOnlyScanOnCost to off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
                                                    run_explain_and_trim                                                   
 ---------------------------------------------------------------------
@@ -989,7 +987,6 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 (13 rows)
 
 reset documentdb.forceIndexOnlyScanIfAvailable;
-reset documentdb.enableIndexOnlyScanOnCost;
 -- if we insert a multi-key value, it shouldn't use index only scan
 SELECT documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_coll', '{"_id": 17, "country": "Mexico", "provider": ["AWS", "GCP"]}');
                               insert_one                              
@@ -1056,7 +1053,7 @@ SELECT documentdb_api.delete('idx_only_scan_db', '{ "delete": "idx_only_scan_col
 CALL documentdb_distributed_test_helpers.wait_for_vacuum_horizon();
 set client_min_messages to DEBUG1;
 VACUUM (FREEZE ON) documentdb_data.documents_69001;
-psql:sql/bson_composite_index_only_scan_tests.sql:189: LOG:  Vacuum[index=87786,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=0, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0
+psql:sql/bson_composite_index_only_scan_tests.sql:186: LOG:  Vacuum[index=87786,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=0, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0
 reset client_min_messages;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$eq": "Mexico"}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
                                                    run_explain_and_trim                                                   
@@ -1122,7 +1119,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 
 -- Sharded collections can't be supported with a shard key filter because in RUM indexes the shard_key_value becomes a runtime filter and for index only scans everything needs to be satisfied by the index. 
 SELECT COUNT(documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_sharded', bson_build_document('_id'::text, i, 'shardKey'::text, i % 10, 'value'::text, i))) FROM generate_series(1, 1000) i;
-psql:sql/bson_composite_index_only_scan_tests.sql:201: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:198: NOTICE:  creating collection
  count 
 ---------------------------------------------------------------------
   1000
@@ -1189,7 +1186,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 ROLLBACK;
 -- test index only scan is not enabled for wildcard indexes
 SELECT documentdb_api.insert_one('idx_only_scan_db', 'compwildcard2', '{ "a": { "b": 1, "c": 5 }}');
-psql:sql/bson_composite_index_only_scan_tests.sql:220: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:217: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1247,7 +1244,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 RESET documentdb.forceIndexOnlyScanIfAvailable;
 -- test $sum/$avg on numeric field with ordered index (future index-only scan optimization candidate)
 SELECT documentdb_api.create_collection('idx_only_scan_db', 'idx_only_scan_numeric');
-psql:sql/bson_composite_index_only_scan_tests.sql:233: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:230: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t
@@ -1492,7 +1489,7 @@ SET documentdb.enableNewWithExprAccumulators TO off;
 -- Sharded collection: verify index-only scan with covered $group accumulators pushes down to shard workers
 ---------------------------------------------------------------------
 SELECT documentdb_api.create_collection('idx_only_scan_db', 'ios_sharded_accum');
-psql:sql/bson_composite_index_only_scan_tests.sql:277: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:274: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t

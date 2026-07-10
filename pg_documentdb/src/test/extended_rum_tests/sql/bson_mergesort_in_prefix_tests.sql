@@ -1415,7 +1415,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
   '{ "createIndexes": "coll_ios", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "ios_a_1_b_1" } ] }', true);
 
 SET documentdb.forceDisableSeqScan TO on;
-SET documentdb.enableIndexOnlyScan TO on;
+SET enable_indexonlyscan TO on;
 SET documentdb.enableIndexOnlyScanForFindProject TO on;
 
 -- Correctness (covered projection {a,b}): result order identical feature off vs on.
@@ -1452,7 +1452,7 @@ $cmd$) AS line;
 
 -- Plan (index-only scans disabled): the children fall back to regular ordered
 -- Index Scans even though the projection is covered.
-SET documentdb.enableIndexOnlyScan TO off;
+SET enable_indexonlyscan TO off;
 SELECT bool_or(line ~ 'Merge Append') AS has_merge_append,
        NOT bool_or(line ~ 'Index Only Scan') AS no_index_only_scan
 FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
@@ -1460,7 +1460,7 @@ FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
     SELECT document FROM bson_aggregation_find('msdb',
       '{ "find": "coll_ios", "filter": { "a": { "$in": [1, 4] } }, "projection": { "a": 1, "b": 1, "_id": 0 }, "sort": { "b": 1 } }')
 $cmd$) AS line;
-SET documentdb.enableIndexOnlyScan TO on;
+SET enable_indexonlyscan TO on;
 RESET enable_sort;
 
 -- Plan (single $in value, covered projection): the fast path emits one ordered
@@ -1560,7 +1560,7 @@ FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
 $cmd$) AS line;
 RESET enable_sort;
 
-RESET documentdb.enableIndexOnlyScan;
+RESET enable_indexonlyscan;
 RESET documentdb.enableIndexOnlyScanForFindProject;
 RESET documentdb.enable_merge_sort_for_in_prefix;
 

@@ -415,8 +415,6 @@ static const ForceIndexSupportFuncs ForceIndexOperatorSupport[] =
 extern bool EnableVectorForceIndexPushdown;
 extern bool EnableGeonearForceIndexPushdown;
 extern bool ForceIndexOnlyScanIfAvailable;
-extern bool EnableIndexOnlyScan;
-extern bool EnableIndexOnlyScanOnCostFunction;
 extern bool EnableOrderByIdOnCostFunction;
 extern int MaxMergeSortInValues;
 extern bool EnablePrimaryKeyCursorScan;
@@ -2846,9 +2844,9 @@ ConsiderIndexOnlyScan(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 		}
 		else
 		{
-			if (!ForceIndexOnlyScanIfAvailable && EnableIndexOnlyScanOnCostFunction)
+			if (!ForceIndexOnlyScanIfAvailable)
 			{
-				/* Only convert on the planner if we want to force it or if the cost function is not enabled. */
+				/* Only convert on the planner if we want to force it. */
 				continue;
 			}
 
@@ -3001,7 +2999,7 @@ documentdb_btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	}
 
 	bool hasDocumentVar = false;
-	if (enable_indexonlyscan && EnableIndexOnlyScan &&
+	if (enable_indexonlyscan &&
 		IsQueryEligibleForIndexOnlyScan(root, path->path.parent->relid,
 										&hasDocumentVar) &&
 		!hasDocumentVar)
@@ -4542,7 +4540,7 @@ MergeSortInPrefixChildrenSupportIndexOnly(PlannerInfo *root, RelOptInfo *rel,
 										  IndexPath *childPath,
 										  ReplaceExtensionFunctionContext *context)
 {
-	if (!enable_indexonlyscan || !EnableIndexOnlyScan)
+	if (!enable_indexonlyscan)
 	{
 		return false;
 	}
@@ -5536,9 +5534,7 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 	bool indexSupportsOrderByDesc = GetIndexSupportsBackwardsScan(
 		indexPath->indexinfo->relam, &indexCanOrder);
 
-	bool indexOnlyScanPossible = EnableIndexOnlyScan &&
-								 enable_indexonlyscan &&
-								 EnableIndexOnlyScanOnCostFunction &&
+	bool indexOnlyScanPossible = enable_indexonlyscan &&
 								 indexPath->path.pathtype != T_IndexOnlyScan &&
 								 IsQueryEligibleForIndexOnlyScan(root,
 																 indexPath->path.parent->

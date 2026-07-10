@@ -117,7 +117,7 @@ PGDLLEXPORT bool RumEnableParallelIndexBuild = RUM_DEFAULT_ENABLE_PARALLEL_INDEX
 #define RUM_DEFAULT_SKIP_RETRY_ON_DELETE_PAGE true
 PGDLLEXPORT bool RumSkipRetryOnDeletePage = RUM_DEFAULT_SKIP_RETRY_ON_DELETE_PAGE;
 
-/* FeatureFlag: Added in v108, Pending stabilization, enable on v115  */
+/* FeatureFlag: Added in v108, Pending stabilization, enable on v116  */
 #define RUM_DEFAULT_PRUNE_EMPTY_PAGES false
 PGDLLEXPORT bool RumPruneEmptyPages = RUM_DEFAULT_PRUNE_EMPTY_PAGES;
 

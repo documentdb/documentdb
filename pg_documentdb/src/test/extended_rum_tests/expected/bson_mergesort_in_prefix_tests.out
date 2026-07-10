@@ -3569,7 +3569,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
 (1 row)
 
 SET documentdb.forceDisableSeqScan TO on;
-SET documentdb.enableIndexOnlyScan TO on;
+SET enable_indexonlyscan TO on;
 SET documentdb.enableIndexOnlyScanForFindProject TO on;
 -- Correctness (covered projection {a,b}): result order identical feature off vs on.
 -- Expected b ascending: 0,1,2,3,5,7,9 (a in {1,4}).
@@ -3634,7 +3634,7 @@ $cmd$) AS line;
 
 -- Plan (index-only scans disabled): the children fall back to regular ordered
 -- Index Scans even though the projection is covered.
-SET documentdb.enableIndexOnlyScan TO off;
+SET enable_indexonlyscan TO off;
 SELECT bool_or(line ~ 'Merge Append') AS has_merge_append,
        NOT bool_or(line ~ 'Index Only Scan') AS no_index_only_scan
 FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
@@ -3647,7 +3647,7 @@ $cmd$) AS line;
  t                | t
 (1 row)
 
-SET documentdb.enableIndexOnlyScan TO on;
+SET enable_indexonlyscan TO on;
 RESET enable_sort;
 -- Plan (single $in value, covered projection): the fast path emits one ordered
 -- scan with no MergeAppend; it is still served as an Index Only Scan.
@@ -3855,7 +3855,7 @@ $cmd$) AS line;
 (1 row)
 
 RESET enable_sort;
-RESET documentdb.enableIndexOnlyScan;
+RESET enable_indexonlyscan;
 RESET documentdb.enableIndexOnlyScanForFindProject;
 RESET documentdb.enable_merge_sort_for_in_prefix;
 -- =====================================================================

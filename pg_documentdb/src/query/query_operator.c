@@ -140,7 +140,6 @@ typedef struct MatchNamespaceFiltersContext
 	bool isInvalidNSFilters;
 } MatchNamespaceFiltersContext;
 
-extern bool EnableDollarInToScalarArrayOpExprConversion;
 extern bool EnableObjectIdFuncExprConversion;
 extern bool EnablePartialFilterEvalOnPlanner;
 
@@ -2590,8 +2589,7 @@ CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 				return CreateFuncExprForQueryOperator(context, path, actualOperator,
 													  &currentValue);
 			}
-			else if (EnableDollarInToScalarArrayOpExprConversion &&
-					 context->convertSupportedInToScalarArrayOp &&
+			else if (context->convertSupportedInToScalarArrayOp &&
 					 context->coerceOperatorExprIfApplicable &&
 					 context->inputType == MongoQueryOperatorInputType_Bson &&
 					 numValues >= 1 &&
