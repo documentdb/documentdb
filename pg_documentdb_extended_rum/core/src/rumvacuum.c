@@ -361,6 +361,24 @@ rumCleanPostingTreeLeafTids(RumVacuumState *gvs,
 		MarkBufferDirtyHint(buffer, true);
 	}
 
+	/*
+	 * TODO(vacuum): hasVoidPage only reports leaves emptied *this* cycle
+	 * (guarded by oldMaxOff != newMaxOff above). A leaf that was emptied in a
+	 * prior cycle but never deleted -- e.g. its single-pass inline delete
+	 * bailed on contention -- reaches here with oldMaxOff == newMaxOff == 0 and
+	 * returns false, so the single-pass caller never revisits it, and an empty
+	 * leaf can never shed more tids to re-trigger. Validated that vacuumcleanup
+	 * cannot reclaim it either: rumvacuumcleanup only prunes posting-tree pages
+	 * via TraverseAndPrunePostingTrees, which is gated on
+	 * gvs.inlineVacuumBulkDelDataPages -- the mutually exclusive non-single-pass
+	 * path (single-pass runs only from rumBulkDeleteOneEntryPage's
+	 * !inlineVacuumBulkDelDataPages branch). Its recyclable scan only frees
+	 * pages already marked deleted/half-dead; a still-linked empty leaf is a
+	 * live data page and is skipped. Future work: run posting-tree page pruning
+	 * (by page state, not by this-cycle emptiness) in vacuumcleanup so stale
+	 * empty leaves are reclaimed in a later vacuum cycle.
+	 */
+
 	*maxOffsetAfterPrune = newMaxOff;
 	return hasVoidPage;
 }
@@ -371,8 +389,7 @@ rumCleanPostingTreeLeafTids(RumVacuumState *gvs,
  */
 static bool
 rumDeletePage(RumVacuumState *gvs, BlockNumber deleteBlkno,
-			  BlockNumber parentBlkno, OffsetNumber myoff, bool isParentRoot,
-			  bool isNewScan)
+			  BlockNumber parentBlkno, OffsetNumber myoff)
 {
 	BlockNumber leftBlkno,
 				rightBlkno;
@@ -429,6 +446,12 @@ restart:
 
 		/* Even when bailing, retry a few times before
 		 * moving on and trying again next time.
+		 *
+		 * No CHECK_FOR_INTERRUPTS() or vacuum delay here: the enclosing
+		 * posting-tree scan holds the root cleanup lock and exclusive locks
+		 * (plus pins) on the ancestor pages across this call, so yielding while
+		 * those are held would stall other backends. The loop is bounded via
+		 * maxRetryCount instead.
 		 */
 		if (RumSkipRetryOnDeletePage &&
 			retryCount >= maxRetryCount)
@@ -440,11 +463,12 @@ restart:
 		goto restart;
 	}
 	LockBuffer(rBuffer, RUM_EXCLUSIVE);
-	if (!isParentRoot && !isNewScan)          /* parent is already locked by
-	                                           * LockBufferForCleanup() */
-	{
-		LockBuffer(pBuffer, RUM_EXCLUSIVE);
-	}
+
+	/*
+	 * The parent page is already held exclusively locked by the caller (the
+	 * posting-tree DFS holds every ancestor down to this page locked while it
+	 * descends), so we only pin it here and modify it in place below.
+	 */
 
 	lPage = BufferGetPage(lBuffer);
 	rPage = BufferGetPage(rBuffer);
@@ -458,10 +482,6 @@ restart:
 	{
 		OffsetNumber dMaxoff = RumDataPageMaxOff(dPage);
 
-		if (!isParentRoot && !isNewScan)
-		{
-			LockBuffer(pBuffer, RUM_UNLOCK);
-		}
 		ReleaseBuffer(pBuffer);
 		UnlockReleaseBuffer(lBuffer);
 		UnlockReleaseBuffer(dBuffer);
@@ -474,6 +494,14 @@ restart:
 
 		/* Even when bailing, retry a few times before
 		 * moving on and trying again next time.
+		 *
+		 * This retry deliberately does NOT run CHECK_FOR_INTERRUPTS() or a
+		 * vacuum delay: although this frame has released its own buffers, the
+		 * enclosing posting-tree scan still holds the posting-tree root cleanup
+		 * lock and exclusive content locks (and pins) on the ancestor pages for
+		 * the whole descent. Yielding here would service a cancel / sleep while
+		 * those cleanup/exclusive locks are held, stalling every backend blocked
+		 * on them. The loop is instead kept bounded via maxRetryCount.
 		 */
 		if (RumSkipRetryOnDeletePage &&
 			retryCount >= maxRetryCount)
@@ -522,10 +550,6 @@ restart:
 
 	GenericXLogFinish(state);
 
-	if (!isParentRoot && !isNewScan)
-	{
-		LockBuffer(pBuffer, RUM_UNLOCK);
-	}
 	ReleaseBuffer(pBuffer);
 	UnlockReleaseBuffer(lBuffer);
 	UnlockReleaseBuffer(dBuffer);
@@ -620,10 +644,8 @@ rumPostingTreePruneEmptyPagesUnderRootLock(RumVacuumState *gvs,
 		 * Release the buffer because in rumDeletePage() we need to pin it again
 		 * and call ConditionalLockBufferForCleanup().
 		 */
-		bool isNewScan = true;
 		UnlockReleaseBuffer(buffer);
-		meDelete = rumDeletePage(gvs, blkno, me->parent->blkno, myoff,
-								 me->parent->isRoot, isNewScan);
+		meDelete = rumDeletePage(gvs, blkno, me->parent->blkno, myoff);
 
 		if (meDelete)
 		{
@@ -735,6 +757,12 @@ rumCleanPostingTreeLeavesTidsByRightlink(RumVacuumState *gvs, OffsetNumber attnu
 			{
 				/* Single-pass vacuum: prune the now-empty leaf inline instead
 				 * of deferring it to the second pass in rumVacuumPostingTree.
+				 *
+				 * TODO(vacuum): if this inline delete bails (contention), the
+				 * leaf stays empty-but-linked and is never retried -- see the
+				 * TODO in rumCleanPostingTreeLeafTids. Reclaiming stale empty
+				 * leaves needs posting-tree page pruning to run in
+				 * vacuumcleanup so a future cycle can handle them.
 				 */
 				RumItem *maxEntry = RumDataPageGetRightBound(page);
 				RumPostingTreeDeleteEntry deleteEntry = { 0 };
@@ -999,6 +1027,9 @@ CheckAndPruneEmptyRumPage(RumState *rumState, BufferAccessStrategy bufferStrateg
 	OffsetNumber off;
 	List *postingRootList = NIL;
 	ListCell *postingRootCell;
+	Buffer *postingRootBuffers = NULL;
+	int nPostingRootBuffers = 0;
+	int postingRootIdx;
 	bool parentNeedsUnlock = false, bufferNeedsUnlock = false;
 	bool cleanedPage = false;
 	Datum key;
@@ -1064,11 +1095,15 @@ CheckAndPruneEmptyRumPage(RumState *rumState, BufferAccessStrategy bufferStrateg
 	/* We found our page - recheck that it's empty:
 	 * Prune and revalidate that the page is genuinely empty
 	 * Trimming posting trees as we encounter them.
+	 *
+	 * We released the target lock above and reacquire all locks below, so the
+	 * definitive list of empty posting-tree roots is collected under the final
+	 * lock (not here) to avoid acting on a stale set.
 	 */
 	page = BufferGetPage(stack->buffer);
 
 	if (!IsRumEntryPageEmptyCheck(page, rumState->index, bufferStrategy,
-								  &postingRootList))
+								  NULL))
 	{
 		/* page is no longer empty - skip */
 		goto cleanupState;
@@ -1157,8 +1192,12 @@ CheckAndPruneEmptyRumPage(RumState *rumState, BufferAccessStrategy bufferStrateg
 		goto cleanupState;
 	}
 
-	/* Now that the page is locked for the final time, check that the page is still empty */
-	if (!IsRumEntryPageEmptyCheck(page, rumState->index, bufferStrategy, NULL))
+	/* Now that the page is locked for the final time, check that the page is
+	 * still empty and collect the definitive set of empty posting-tree roots
+	 * under this final lock.
+	 */
+	if (!IsRumEntryPageEmptyCheck(page, rumState->index, bufferStrategy,
+								  &postingRootList))
 	{
 		/* page is no longer empty - skip */
 		goto cleanupState;
@@ -1168,6 +1207,20 @@ CheckAndPruneEmptyRumPage(RumState *rumState, BufferAccessStrategy bufferStrateg
 	leftPage = BufferGetPage(leftBuffer);
 	rightPage = BufferGetPage(rightBuffer);
 
+	/* Revalidate the sibling links now that all pages are locked. We captured
+	 * leftBlkNo/rightBlkNo and then released the target lock, so a concurrent
+	 * split of the left sibling could have inserted a new page between it and
+	 * the target, leaving our captured leftBlkNo stale. Relinking a stale left
+	 * sibling would drop the newly split page (and the target) out of the leaf
+	 * chain and corrupt the index. Only proceed if both siblings still bracket
+	 * the target.
+	 */
+	if (RumPageGetOpaque(leftPage)->rightlink != blkno ||
+		RumPageGetOpaque(rightPage)->leftlink != blkno)
+	{
+		goto cleanupState;
+	}
+
 	if (RumPageIsHalfDead(rightPage))
 	{
 		/* Can't delete current entry page since right sibling is half-dead
@@ -1175,6 +1228,36 @@ CheckAndPruneEmptyRumPage(RumState *rumState, BufferAccessStrategy bufferStrateg
 		 * try again in the next vacuum cycle.
 		 */
 		goto cleanupState;
+	}
+
+	/* Acquire cleanup locks on all empty posting-tree roots up front, before we
+	 * modify any pages. We must not block on a concurrent pinner while holding
+	 * the sibling/parent/target locks (that would stall every backend waiting on
+	 * those pages), so take the cleanup locks conditionally. If any can't be
+	 * acquired, abandon this attempt with all pages still intact and retry in a
+	 * later vacuum cycle. Holding the target's cleanup lock guarantees no new
+	 * scan can reach these roots, so their empty state (verified just above)
+	 * cannot change before we delete them.
+	 */
+	if (postingRootList != NIL)
+	{
+		postingRootBuffers = (Buffer *) palloc(sizeof(Buffer) *
+											   list_length(postingRootList));
+		foreach(postingRootCell, postingRootList)
+		{
+			BlockNumber postingTreeBlock = (BlockNumber) lfirst_int(postingRootCell);
+			Buffer postingRootBuffer = ReadBufferExtended(rumState->index,
+														  MAIN_FORKNUM,
+														  postingTreeBlock,
+														  RBM_NORMAL, bufferStrategy);
+			if (!ConditionalLockBufferForCleanup(postingRootBuffer))
+			{
+				ReleaseBuffer(postingRootBuffer);
+				goto cleanupState;
+			}
+
+			postingRootBuffers[nPostingRootBuffers++] = postingRootBuffer;
+		}
 	}
 
 	/* Start XLog: From here on out all operations are non-conditional */
@@ -1194,7 +1277,7 @@ CheckAndPruneEmptyRumPage(RumState *rumState, BufferAccessStrategy bufferStrateg
 	page = GenericXLogRegisterBuffer(state, stack->buffer, GENERIC_XLOG_FULL_IMAGE);
 	RumPageSetHalfDead(page);
 	RumPageSetDeleteXid(page, ReadNextTransactionId());
-	for (off = FirstOffsetNumber; off < PageGetMaxOffsetNumber(page); off++)
+	for (off = FirstOffsetNumber; off <= PageGetMaxOffsetNumber(page); off++)
 	{
 		/* Trim any remaining tuples from the page */
 		if (off != PageGetMaxOffsetNumber(page))
@@ -1234,31 +1317,73 @@ CheckAndPruneEmptyRumPage(RumState *rumState, BufferAccessStrategy bufferStrateg
 	/* Since we can only register 4 xlog pages per xlog, do the posting tree in a new xlog */
 	GenericXLogFinish(state);
 
-	/* For all the posting tree roots found, delete them with separate XLogs */
-	foreach(postingRootCell, postingRootList)
+	/*
+	 * TODO(vacuum): this ordering can orphan posting-tree pages on crash. WAL
+	 * record 1 above already removes the parent downlink and half-deletes the
+	 * leaf, but the empty posting roots are force-deleted below in *separate*
+	 * WAL records (forced because GenericXLog caps at MAX_GENERIC_XLOG_PAGES==4,
+	 * already used by parent/leaf/left/right). A crash between record 1 and the
+	 * posting-root records leaves the roots as ordinary RUM_DATA pages with no
+	 * referencing entry -- unreachable and never reclaimed by vacuumcleanup,
+	 * which only frees deleted/half-dead/new pages. Ideally we should prune the
+	 * posting trees (delete the empty roots) and remove their entries BEFORE
+	 * deleting/half-deleting the empty leaf page, so a crash leaves the leaf
+	 * still pointing at an intact (empty) posting tree that a later vacuum cycle
+	 * can re-attempt, rather than an orphan.
+	 */
+
+	/* For all the posting tree roots found, delete them with separate XLogs.
+	 * We already hold cleanup locks on these buffers from the up-front step. */
+	for (postingRootIdx = 0; postingRootIdx < nPostingRootBuffers; postingRootIdx++)
 	{
-		BlockNumber postingTreeBlock = (BlockNumber) lfirst_int(postingRootCell);
-		Buffer postingRootBuffer = ReadBufferExtended(rumState->index, MAIN_FORKNUM,
-													  postingTreeBlock,
-													  RBM_NORMAL, bufferStrategy);
+		Buffer postingRootBuffer = postingRootBuffers[postingRootIdx];
 		Page postingRootPage;
 
 		state = GenericXLogStart(rumState->index);
-		LockBufferForCleanup(postingRootBuffer);
 		postingRootPage = GenericXLogRegisterBuffer(state, postingRootBuffer,
 													GENERIC_XLOG_FULL_IMAGE);
 		RumPageForceSetDeleted(postingRootPage);
+
+		/*
+		 * Stamp the delete horizon so the page is not recycled until every
+		 * scan that could still hold this block number has drained. Without
+		 * it RumPageIsRecyclable() would treat the stale pd_prune_xid as
+		 * InvalidTransactionId and recycle the block immediately, bypassing
+		 * the GlobalVisCheckRemovableXid gate that every other deleted page
+		 * (rumDeletePage and the entry leaf above) relies on.
+		 */
+		RumPageSetDeleteXid(postingRootPage, ReadNextTransactionId());
 		GenericXLogFinish(state);
 		UnlockReleaseBuffer(postingRootBuffer);
 
 		(*numPostingTreesDeleted)++;
 	}
+
+	/* All posting-root buffers have been released above; prevent cleanupState
+	 * from releasing them again. */
+	nPostingRootBuffers = 0;
 	cleanedPage = true;
 
 cleanupState:
 	if (rightMostTuple)
 	{
 		pfree(rightMostTuple);
+	}
+
+	/* Release any posting-root cleanup locks still held (bail-out paths). On the
+	 * success path nPostingRootBuffers was reset to 0 after releasing each. */
+	if (postingRootBuffers)
+	{
+		for (postingRootIdx = 0; postingRootIdx < nPostingRootBuffers; postingRootIdx++)
+		{
+			UnlockReleaseBuffer(postingRootBuffers[postingRootIdx]);
+		}
+		pfree(postingRootBuffers);
+	}
+
+	if (postingRootList != NIL)
+	{
+		list_free(postingRootList);
 	}
 
 	if (leftBuffer != InvalidBuffer)
@@ -2092,6 +2217,29 @@ rumvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 		{
 			idxStat.nDataPages++;
 		}
+		else if (RumPageIsDeleted(page) && !RumPageIsLeaf(page))
+		{
+			/*
+			 * A deleted page that has not yet reached its recycle horizon (so
+			 * RumPageIsRecyclable() above returned false). Posting-tree pruning
+			 * deletes pages with RumPageForceSetDeleted(), which overwrites the
+			 * flags word with exactly RUM_DELETED and therefore clears both
+			 * RUM_DATA and RUM_LEAF, so RumPageIsData() no longer recognizes it.
+			 * Without this branch such a page would fall through to the
+			 * entry-page bucket below and inflate both the logged numEntryPages
+			 * and the metapage's nEntryPages (rumUpdateStats).
+			 *
+			 * We deliberately require !RumPageIsLeaf here to validate that we are
+			 * not misclassifying an entry page as an empty posting page: a
+			 * deleted entry leaf keeps its RUM_LEAF flag (RumPageMarkAsDeleted
+			 * uses RumPageSetDeleted, which preserves the existing flags) and is
+			 * only ever marked deleted once already recyclable (accounted as free
+			 * above), so it never reaches here. Any leaf-flagged deleted page
+			 * therefore falls through to the entry bucket rather than being
+			 * counted as a posting page.
+			 */
+			vacStats.numEmptyPostingTreePages++;
+		}
 		else
 		{
 			idxStat.nEntryPages++;
@@ -2534,15 +2682,20 @@ TryDeletePostingTreePage(RumVacuumState *gvs, BlockNumber blkno, bool isRoot,
 	if (RumDataPageMaxOff(page) < FirstOffsetNumber && !isRoot)
 	{
 		/*
+		 * Capture the leaf flag before releasing the buffer: once the pin is
+		 * dropped the frame can be evicted and refilled with an unrelated block,
+		 * so the page must not be dereferenced afterwards.
+		 */
+		bool wasLeaf = RumPageIsLeaf(page);
+
+		/*
 		 * Release the buffer because in rumDeletePage() we need to pin it again
 		 * and call ConditionalLockBufferForCleanup().
 		 */
-		bool isNewScan = true;
 		UnlockReleaseBuffer(buffer);
-		if (deleteEntry->deleteBlock == blkno || !RumPageIsLeaf(page))
+		if (deleteEntry->deleteBlock == blkno || !wasLeaf)
 		{
-			meDelete = rumDeletePage(gvs, blkno, me->parent->blkno, myoff,
-									 me->parent->isRoot, isNewScan);
+			meDelete = rumDeletePage(gvs, blkno, me->parent->blkno, myoff);
 			if (meDelete)
 			{
 				if (deleteEntry->deleteBlock == blkno)
