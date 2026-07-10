@@ -226,3 +226,130 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "scalar_coll", "filter": { "a": { "$gt": 1, "$lt": 10 } }, "hint": "a_b_c_1" }') $cmd$);
 
 set documentdb.enablePerPathMultiKeySortPushdown to on;
+-- ============================================================================
+-- Per-path multi-key RUNTIME RECHECK gating for $eq null and the range operators
+-- against null ($gt / $gte / $lt / $lte), plus the scalar-value negations
+-- $ne <scalar> / $nin <scalars>.
+--
+-- The [MinKey, null] bound generated for $eq null (and $gte / $lte null) also
+-- matches undefined index terms -- missing fields AND empty arrays. A missing
+-- field is a genuine match for these operators (null matches a missing path), but
+-- an empty array must NOT match, so historically they always forced a heap
+-- runtime recheck to filter the empty-array false positive.
+--
+-- With per-path multi-key metadata tracking (mkp=true) an empty array marks its
+-- path multi-key, so a path reported as NON-multi-key is guaranteed to contain no
+-- arrays at all. On such a path the bound is exact and the runtime recheck can be
+-- skipped. The optimization is therefore gated on mkp: only a metadata-tracked
+-- index may drop the recheck; a legacy (mkp=false) index conservatively keeps it,
+-- because without tracking an empty array would not be reflected in the multi-key
+-- state and would leak through.
+--
+-- The negations $ne / $nin also match undefined index terms (missing fields and
+-- empty arrays). They register a term-level recheck that, on a NON-multi-key path,
+-- is exact -- it excludes a missing / literal-null term directly (no arrays exist,
+-- so an undefined term can only be missing / literal null) and excludes the
+-- matching scalar term. So on a non-multi-key path the heap runtime recheck is
+-- skipped for $ne / $nin as well, whether or not null is among the excluded values.
+-- On a multi-key path the empty-array ambiguity remains, so the heap recheck is
+-- preserved. The null-excluding negations ($ne null / $nin [.., null]) are covered
+-- in bson_composite_index_null_recheck_gating_tests.
+--
+-- Observability: when the recheck runs and removes a false positive, explain
+-- reports "Rows Removed by Index Recheck: N" on the inner Index Scan. When the
+-- recheck is skipped, that line is absent.
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- Case R1 (mkp=true, non-multi-key path -> recheck SKIPPED). The path "a" holds
+-- only scalars, missing fields, and literal null (no arrays), so it is not
+-- multi-key. $eq null and the scalar negations $ne 5 / $nin [5] drop the recheck:
+-- no "Rows Removed by Index Recheck" line, and the results are still correct.
+-- ----------------------------------------------------------------------------
+SELECT documentdb_api_internal.create_indexes_non_concurrently('mkf_db', '{ "createIndexes": "null_scalar_coll", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": 1 } ] }');
+SELECT documentdb_api.insert_one('mkf_db', 'null_scalar_coll', '{ "_id": 1, "a": null, "b": 1 }');
+SELECT documentdb_api.insert_one('mkf_db', 'null_scalar_coll', '{ "_id": 2, "b": 1 }');
+SELECT documentdb_api.insert_one('mkf_db', 'null_scalar_coll', '{ "_id": 3, "a": 5, "b": 1 }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_scalar_coll", "filter": { "a": null }, "hint": "a_b_1" }') $cmd$);
+-- $eq null matches literal null and missing (_id 1, 2), not the scalar (_id 3).
+SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_scalar_coll", "filter": { "a": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "a_b_1" }');
+-- $ne 5 matches everything except the scalar 5 (_id 1, 2).
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_scalar_coll", "filter": { "a": { "$ne": 5 } }, "hint": "a_b_1" }') $cmd$);
+SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_scalar_coll", "filter": { "a": { "$ne": 5 } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "a_b_1" }');
+-- $nin [5] behaves like $ne 5 here (_id 1, 2).
+SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_scalar_coll", "filter": { "a": { "$nin": [ 5 ] } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "a_b_1" }');
+
+-- ----------------------------------------------------------------------------
+-- Case R2 (mkp=true, multi-key path -> recheck PRESERVED). An empty array on "a"
+-- makes the path multi-key (isMultiKey: true). The empty array indexes as an
+-- undefined term that falls inside the [MinKey, null] bound, so the recheck fires
+-- and removes it: "Rows Removed by Index Recheck: 1". $eq null must NOT return the
+-- empty-array document.
+-- ----------------------------------------------------------------------------
+SELECT documentdb_api_internal.create_indexes_non_concurrently('mkf_db', '{ "createIndexes": "null_mk_coll", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": 1 } ] }');
+SELECT documentdb_api.insert_one('mkf_db', 'null_mk_coll', '{ "_id": 1, "a": null, "b": 1 }');
+SELECT documentdb_api.insert_one('mkf_db', 'null_mk_coll', '{ "_id": 2, "b": 1 }');
+SELECT documentdb_api.insert_one('mkf_db', 'null_mk_coll', '{ "_id": 3, "a": [ ], "b": 1 }');
+SELECT documentdb_api.insert_one('mkf_db', 'null_mk_coll', '{ "_id": 4, "a": 5, "b": 1 }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_mk_coll", "filter": { "a": null }, "hint": "a_b_1" }') $cmd$);
+-- The empty array (_id 3) is excluded; only literal null and missing match (_id 1, 2).
+SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_mk_coll", "filter": { "a": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "a_b_1" }');
+
+-- ----------------------------------------------------------------------------
+-- Case R3 (mkp=false, empty array present -> recheck PRESERVED by the gate). The
+-- index is built with metadata tracking OFF, so the empty array is NOT reflected
+-- in the multi-key state and the path still reports isMultiKey: false. The gate
+-- must therefore fall back to the conservative behavior and keep the recheck --
+-- "Rows Removed by Index Recheck: 1" -- so the empty array is still excluded from
+-- $eq null. This is the case the mkp restriction protects: dropping the recheck
+-- here would wrongly return the empty-array document.
+-- ----------------------------------------------------------------------------
+set documentdb.enableIndexMetadataGlobalTracking to off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('mkf_db', '{ "createIndexes": "null_legacy_coll", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": 1 } ] }');
+set documentdb.enableIndexMetadataGlobalTracking to on;
+SELECT documentdb_api.insert_one('mkf_db', 'null_legacy_coll', '{ "_id": 1, "a": null, "b": 1 }');
+SELECT documentdb_api.insert_one('mkf_db', 'null_legacy_coll', '{ "_id": 2, "b": 1 }');
+SELECT documentdb_api.insert_one('mkf_db', 'null_legacy_coll', '{ "_id": 3, "a": [ ], "b": 1 }');
+SELECT documentdb_api.insert_one('mkf_db', 'null_legacy_coll', '{ "_id": 4, "a": 5, "b": 1 }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_legacy_coll", "filter": { "a": null }, "hint": "a_b_1" }') $cmd$);
+-- Despite isMultiKey: false, the recheck still runs and excludes the empty array
+-- (_id 3): only literal null and missing match (_id 1, 2).
+SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_legacy_coll", "filter": { "a": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "a_b_1" }');
+
+-- ----------------------------------------------------------------------------
+-- Case R4: the same recheck gating applies to the null-anchored range operators
+-- $gte / $lte (and $gt / $lt). $gte null and $lte null both generate a
+-- [MinKey, null] bound that spans the undefined region (missing fields + empty
+-- arrays), exactly like $eq null.
+--
+-- R4a (mkp=true, non-multi-key path -> recheck SKIPPED): $gte null and $lte null
+-- on the scalar-only "null_scalar_coll" report isMultiKey: false with NO "Rows
+-- Removed by Index Recheck" line, and still match literal null and missing
+-- (_id 1, 2) but not the scalar (_id 3).
+-- ----------------------------------------------------------------------------
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_scalar_coll", "filter": { "a": { "$gte": null } }, "hint": "a_b_1" }') $cmd$);
+SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_scalar_coll", "filter": { "a": { "$gte": null } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "a_b_1" }');
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_scalar_coll", "filter": { "a": { "$lte": null } }, "hint": "a_b_1" }') $cmd$);
+SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_scalar_coll", "filter": { "a": { "$lte": null } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "a_b_1" }');
+
+-- ----------------------------------------------------------------------------
+-- R4b (mkp=true, multi-key path -> recheck PRESERVED): $gte null and $lte null on
+-- "null_mk_coll" (multi-key via the empty array on _id 3) report isMultiKey: true
+-- and "Rows Removed by Index Recheck: 1", excluding the empty array. Only literal
+-- null and missing match (_id 1, 2).
+-- ----------------------------------------------------------------------------
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_mk_coll", "filter": { "a": { "$gte": null } }, "hint": "a_b_1" }') $cmd$);
+SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_mk_coll", "filter": { "a": { "$gte": null } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "a_b_1" }');
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_mk_coll", "filter": { "a": { "$lte": null } }, "hint": "a_b_1" }') $cmd$);
+SELECT document FROM bson_aggregation_find('mkf_db', '{ "find": "null_mk_coll", "filter": { "a": { "$lte": null } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "a_b_1" }');
