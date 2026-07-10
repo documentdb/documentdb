@@ -64,63 +64,14 @@ $cmd$);
                                                                                   run_explain_and_trim                                                                                  
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 31_1
+   ->  Distributed Subplan 30_1
          ->  Custom Scan (Citus Adaptive)
                Task Count: 8
                Tasks Shown: One of 8
                ->  Task
                      Node: host=localhost port=58070 dbname=regression
                      ->  Seq Scan on documents_95650_95650002 collection
-   ->  Distributed Subplan 31_2
-         ->  Custom Scan (Citus Adaptive)
-               Task Count: 8
-               Tasks Shown: One of 8
-               ->  Task
-                     Node: host=localhost port=58070 dbname=regression
-                     ->  Custom Scan (DocumentDBApiExplainQueryScan)
-                           indexName: idx_ab_en_s1
-                           indexKey: {"a.b": 1}
-                           isMultiKey: false
-                           indexBounds: ["a.b": ["cat", "cat"]], ["a.b": ["dog", "dog"]]
-                           ->  Bitmap Heap Scan on documents_95650_95650002 collection_0_1
-                                 Recheck Cond: (document OPERATOR(documentdb_api_catalog.@*=) '{ "a.b" : [ "cat", "dog" ], "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-                                 ->  Bitmap Index Scan on idx_ab_en_s1
-                                       Index Cond: (document OPERATOR(documentdb_api_catalog.@*=) '{ "a.b" : [ "cat", "dog" ], "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Node: host=localhost port=58070 dbname=regression
-         ->  Nested Loop
-               ->  Function Scan on read_intermediate_result intermediate_result
-               ->  Aggregate
-                     ->  Function Scan on read_intermediate_result intermediate_result_1
-                           Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(document, intermediate_result.lookup_filter, '_id'::text)
-(32 rows)
-
-END;
--- _id join optimization GUC has no effect on sharded collections;
--- the join remains collation-aware.
-BEGIN;
-SET LOCAL documentdb.enableLookupIdJoinOptimizationOnCollation TO true;
-SET LOCAL documentdb_core.enableCollation TO on;
-SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
-SET LOCAL enable_seqscan TO OFF;
-SET LOCAL documentdb.enableExtendedExplainPlans TO on;
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
-    '{ "aggregate": "coll_lookup_d", "pipeline": [ { "$lookup": { "from": "coll_lookup_d", "as": "matched_docs", "localField": "_id", "foreignField": "_id", "pipeline": [ { "$match": { "$or" : [ { "a.b": "cat" }, { "a.b": "dog" } ] } } ] } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }')
-$cmd$);
-                                                                                  run_explain_and_trim                                                                                  
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 35_1
-         ->  Custom Scan (Citus Adaptive)
-               Task Count: 8
-               Tasks Shown: One of 8
-               ->  Task
-                     Node: host=localhost port=58070 dbname=regression
-                     ->  Seq Scan on documents_95650_95650002 collection
-   ->  Distributed Subplan 35_2
+   ->  Distributed Subplan 30_2
          ->  Custom Scan (Citus Adaptive)
                Task Count: 8
                Tasks Shown: One of 8

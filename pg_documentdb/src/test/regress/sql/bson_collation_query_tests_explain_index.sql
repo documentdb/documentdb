@@ -741,16 +741,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     '{ "aggregate": "coll_lookup", "pipeline": [ { "$lookup": { "from": "coll_lookup", "as": "matched_docs", "localField": "_id", "foreignField": "_id", "pipeline": [ { "$match": { "$or" : [ { "a.b": "cat" }, { "a.b": "dog" } ] } } ] } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }')
 $cmd$);
 
--- lookup with id join optimized (explicitly asked to make _id join collation agnostic)
-BEGIN;
-SET LOCAL documentdb.enableLookupIdJoinOptimizationOnCollation to true;
-SET LOCAL documentdb_core.enableCollation TO on;
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', 
-    '{ "aggregate": "coll_lookup", "pipeline": [ { "$lookup": { "from": "coll_lookup", "as": "matched_docs", "localField": "_id", "foreignField": "_id", "pipeline": [ { "$match": { "$or" : [ { "a.b": "cat" }, { "a.b": "dog" } ] } } ] } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }')
-$cmd$);
-ROLLBACK;
-
 -- lookup with non-id join (collation aware)
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', 

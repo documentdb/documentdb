@@ -19,17 +19,6 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
     '{ "aggregate": "coll_lookup_d", "pipeline": [ { "$lookup": { "from": "coll_lookup_d", "as": "matched_docs", "localField": "_id", "foreignField": "_id", "pipeline": [ { "$match": { "$or" : [ { "a.b": "cat" }, { "a.b": "dog" } ] } } ] } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }');
 END;
 
--- _id join optimization GUC has no effect on sharded collections;
--- the join remains collation-aware.
-BEGIN;
-SET LOCAL documentdb.enableLookupIdJoinOptimizationOnCollation TO true;
-SET LOCAL documentdb_core.enableCollation TO on;
-SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
-SET LOCAL enable_seqscan TO OFF;
-SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
-    '{ "aggregate": "coll_lookup_d", "pipeline": [ { "$lookup": { "from": "coll_lookup_d", "as": "matched_docs", "localField": "_id", "foreignField": "_id", "pipeline": [ { "$match": { "$or" : [ { "a.b": "cat" }, { "a.b": "dog" } ] } } ] } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }');
-END;
-
 -- ======================================================================
 -- SECTION 2: Aggregation pipeline routing on sharded collection
 -- ======================================================================

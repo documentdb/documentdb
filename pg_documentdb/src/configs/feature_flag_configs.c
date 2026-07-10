@@ -432,11 +432,6 @@ bool EnableOperatorVariablesInLookup =
 #define DEFAULT_SKIP_FAIL_ON_COLLATION false
 bool SkipFailOnCollation = DEFAULT_SKIP_FAIL_ON_COLLATION;
 
-/* Added in v109, Pending stabilization, enable in v115 */
-#define DEFAULT_ENABLE_LOOKUP_ID_JOIN_OPTIMIZATION_ON_COLLATION false
-bool EnableLookupIdJoinOptimizationOnCollation =
-	DEFAULT_ENABLE_LOOKUP_ID_JOIN_OPTIMIZATION_ON_COLLATION;
-
 /* Added in v110, Pending stabilization, enable in v118 */
 #define DEFAULT_ENABLE_COLLATION_WITH_NON_UNIQUE_ORDERED_INDEXES false
 bool EnableCollationWithNonUniqueOrderedIndexes =
@@ -636,14 +631,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Determines whether we can skip failing when collation is specified but collation is not supported"),
 		NULL, &SkipFailOnCollation, DEFAULT_SKIP_FAIL_ON_COLLATION,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableLookupIdJoinOptimizationOnCollation", newGucPrefix),
-		gettext_noop(
-			"Determines whether we can perform _id join opetimization on collation. It would be a customer input confiriming that _id does not contain collation aware data types (i.e., UTF8 and DOCUMENT)."),
-		NULL, &EnableLookupIdJoinOptimizationOnCollation,
-		DEFAULT_ENABLE_LOOKUP_ID_JOIN_OPTIMIZATION_ON_COLLATION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

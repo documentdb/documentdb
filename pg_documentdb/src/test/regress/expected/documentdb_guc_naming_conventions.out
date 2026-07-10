@@ -82,7 +82,6 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.enableIndexPathKeySummarization'),
     ('documentdb.enableInsertDuplicateInlineHandling'),
     ('documentdb.enableLocalRetryTable'),
-    ('documentdb.enableLookupIdJoinOptimizationOnCollation'),
     ('documentdb.enableMultiIndexRumJoin'),
     ('documentdb.enableNativeColocation'),
     ('documentdb.enableNewMinMaxAccumulators'),
