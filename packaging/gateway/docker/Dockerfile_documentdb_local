@@ -152,6 +152,12 @@ ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 FROM runtime-base AS final
 ARG POSTGRES_VERSION
 
+# Identity labels baked into the image so tooling (e.g. the VS Code DocumentDB
+# extension) can discover a running DocumentDB Local container by label alone —
+# no container-name, port, log, or env inspection required. Every container
+# inherits these regardless of the --name / -p / --label chosen at `docker run`.
+LABEL org.opencontainers.image.title="DocumentDB Local" \
+      com.documentdb.documentdb.local="true"
 
 ENV LANGUAGE=en_US.UTF-8 \
     TERM=xterm-256color
