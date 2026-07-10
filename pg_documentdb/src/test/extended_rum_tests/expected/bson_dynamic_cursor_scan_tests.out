@@ -848,18 +848,18 @@ $cmd$);
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on documentdb_data.documents_9203 collection
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "$or" : [ { "$and" : [ { "a" : { "$numberInt" : "1" } }, { "b" : { "$numberInt" : "2" } } ] }, { "$and" : [ { "a" : { "$numberInt" : "3" } }, { "b" : { "$numberInt" : "4" } } ] }, { "c" : { "$numberInt" : "5" } } ] }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   Recheck Cond: (((collection.document @= '{ "b" : { "$numberInt" : "2" } }'::bson) AND (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)) OR ((collection.document @= '{ "b" : { "$numberInt" : "4" } }'::bson) AND (collection.document @= '{ "a" : { "$numberInt" : "3" } }'::bson)) OR (collection.document @= '{ "c" : { "$numberInt" : "5" } }'::bson))
+   Recheck Cond: (((collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson) AND (collection.document @= '{ "b" : { "$numberInt" : "2" } }'::bson)) OR ((collection.document @= '{ "a" : { "$numberInt" : "3" } }'::bson) AND (collection.document @= '{ "b" : { "$numberInt" : "4" } }'::bson)) OR (collection.document @= '{ "c" : { "$numberInt" : "5" } }'::bson))
    ->  BitmapOr
          ->  BitmapAnd
-               ->  Bitmap Index Scan on b_1
-                     Index Cond: (collection.document @= '{ "b" : { "$numberInt" : "2" } }'::bson)
                ->  Bitmap Index Scan on a_1
                      Index Cond: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-         ->  BitmapAnd
                ->  Bitmap Index Scan on b_1
-                     Index Cond: (collection.document @= '{ "b" : { "$numberInt" : "4" } }'::bson)
+                     Index Cond: (collection.document @= '{ "b" : { "$numberInt" : "2" } }'::bson)
+         ->  BitmapAnd
                ->  Bitmap Index Scan on a_1
                      Index Cond: (collection.document @= '{ "a" : { "$numberInt" : "3" } }'::bson)
+               ->  Bitmap Index Scan on b_1
+                     Index Cond: (collection.document @= '{ "b" : { "$numberInt" : "4" } }'::bson)
          ->  Bitmap Index Scan on c_1
                Index Cond: (collection.document @= '{ "c" : { "$numberInt" : "5" } }'::bson)
 (16 rows)
@@ -1007,13 +1007,13 @@ $cmd$);
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on documentdb_data.documents_9203 collection
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "$or" : [ { "$and" : [ { "a" : { "$numberInt" : "1" } }, { "b" : { "$numberInt" : "2" } } ] }, { "$or" : [ { "a" : { "$numberInt" : "5" } }, { "b" : { "$numberInt" : "6" } } ] }, { "c" : { "$numberInt" : "9" } } ] }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   Recheck Cond: (((collection.document @= '{ "b" : { "$numberInt" : "2" } }'::bson) AND (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)) OR (collection.document @= '{ "a" : { "$numberInt" : "5" } }'::bson) OR (collection.document @= '{ "b" : { "$numberInt" : "6" } }'::bson) OR (collection.document @= '{ "c" : { "$numberInt" : "9" } }'::bson))
+   Recheck Cond: (((collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson) AND (collection.document @= '{ "b" : { "$numberInt" : "2" } }'::bson)) OR (collection.document @= '{ "a" : { "$numberInt" : "5" } }'::bson) OR (collection.document @= '{ "b" : { "$numberInt" : "6" } }'::bson) OR (collection.document @= '{ "c" : { "$numberInt" : "9" } }'::bson))
    ->  BitmapOr
          ->  BitmapAnd
-               ->  Bitmap Index Scan on b_1
-                     Index Cond: (collection.document @= '{ "b" : { "$numberInt" : "2" } }'::bson)
                ->  Bitmap Index Scan on a_1
                      Index Cond: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
+               ->  Bitmap Index Scan on b_1
+                     Index Cond: (collection.document @= '{ "b" : { "$numberInt" : "2" } }'::bson)
          ->  Bitmap Index Scan on a_1
                Index Cond: (collection.document @= '{ "a" : { "$numberInt" : "5" } }'::bson)
          ->  Bitmap Index Scan on b_1

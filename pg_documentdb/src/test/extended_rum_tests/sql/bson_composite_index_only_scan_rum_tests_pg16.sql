@@ -87,10 +87,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$in": ["USA", null]}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$in": ["USA", []]}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
 
--- turning off enableIndexOnlyScan should prevent index only scan
-set documentdb.enableIndexOnlyScan to off;
+-- turning off index only scan should prevent index only scan
+set enable_indexonlyscan to off;
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
-set documentdb.enableIndexOnlyScan to on;
+set enable_indexonlyscan to on;
 
 -- turning off enableIndexOnlyScanForCoveredAggregateTargets should keep count IOS enabled,
 -- but disable the new covered aggregate-target IOS path
@@ -111,13 +111,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -- forceIndexOnlyScan + uncovered accumulator (provider not in country_1): should NOT use IOS
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$group" : { "_id" : 1, "maxProvider" : { "$max" : "$provider" } } }]}') $$, p_ignore_heap_fetches => true);
 reset documentdb.forceIndexOnlyScanIfAvailable;
-
--- disable index only scan on cost to go through the legacy path
-set documentdb.enableIndexOnlyScanOnCost to off;
-SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
--- enableIndexOnlyScanOnCost=off + uncovered accumulator (provider not in country_1): should NOT use IOS
-SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$group" : { "_id" : 1, "maxProvider" : { "$max" : "$provider" } } }]}') $$, p_ignore_heap_fetches => true);
-reset documentdb.enableIndexOnlyScanOnCost;
 
 -- Multi-key value should prevent index only scan
 SELECT documentdb_api.insert_one('iosdb_rum', 'iosc_comp', '{"_id": 17, "country": "Mexico", "provider": ["AWS", "GCP"]}');

@@ -4,7 +4,6 @@ SET documentdb.next_collection_index_id TO 6960;
 SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_api_internal,documentdb_core;
 
 SET documentdb.enableExtendedExplainPlans TO on;
-SET documentdb.enableIndexOnlyScan TO on;
 SET documentdb.enableIndexOnlyScanForFindProject TO on;
 SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;

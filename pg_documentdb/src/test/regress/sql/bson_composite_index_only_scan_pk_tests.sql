@@ -7,7 +7,6 @@ SELECT COUNT(documentdb_api.insert_one('iosdb', 'iosc', bson_build_document('_id
 
 VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_301;
 
-set documentdb.enableIndexOnlyScan to on;
 set seq_page_cost to 1000;
 
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb', '{ "aggregate" : "iosc", "pipeline" : [{ "$match" : {"_id": {"$gt": 5 }} }, { "$count": "count" }]}') $$);

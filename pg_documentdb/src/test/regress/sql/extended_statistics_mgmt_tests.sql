@@ -10,6 +10,7 @@ SELECT documentdb_api.create_collection('stats_db', 'planner_stats');
 SELECT documentdb_api_internal.create_indexes_non_concurrently('stats_db', '{ "createIndexes": "planner_stats", "indexes": [ { "key": { "b": 1, "c": 1 }, "name": "b_c_1" } ] }', TRUE);
 
 -- enable planner statistics for the collection (should fail)
+set documentdb.enablePerCollectionPlannerStatistics to off;
 SELECT documentdb_api.coll_mod('stats_db', 'planner_stats', '{ "collMod": "planner_stats", "enableStats": true }');
 
 -- enable the feature and try again (should succeed)
@@ -364,10 +365,10 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('stats_db', '{ "c
 -- statistics to be USED during query planning, the
 -- enablePerCollectionPlannerStatistics GUC must also be on at query time.
 ------------------------------------------------------------------------------
-RESET documentdb.enablePerCollectionPlannerStatistics;
 RESET documentdb.enablePlannerStatisticsNewCollections;
 
 -- Baseline: with both GUCs off, a new collection has stats disabled.
+set documentdb.enablePerCollectionPlannerStatistics to off;
 SELECT documentdb_api.create_collection('stats_db', 'auto_off');
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "auto_off" }') ORDER BY 1;
 \d documentdb_data.documents_6402

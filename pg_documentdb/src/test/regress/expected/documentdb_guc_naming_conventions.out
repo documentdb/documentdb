@@ -60,11 +60,9 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.enableDistinctCustomScan'),
     ('documentdb.enableDistinctIndexPushdown'),
     ('documentdb.enableDistinctScanForGroupFirst'),
-    ('documentdb.enableDollarInToScalarArrayOpExprConversion'),
     ('documentdb.enableDollarSampleHeapSkipReservoirScan'),
     ('documentdb.enableDollarSampleReservoirScan'),
     ('documentdb.enableDottedValueTextIndexTerms'),
-    ('documentdb.enableDropInvalidIndexesOnReadOnly'),
     ('documentdb.enableDuplicateFieldFix'),
     ('documentdb.enableDynamicCursorFastStartupScan'),
     ('documentdb.enableDynamicCursors'),
@@ -78,11 +76,9 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.enableGroupByCompoundIdIndexPushdown'),
     ('documentdb.enableGroupByDistinctScan'),
     ('documentdb.enableIndexMetadataGlobalTracking'),
-    ('documentdb.enableIndexOnlyScan'),
     ('documentdb.enableIndexOnlyScanForCoveredAggregateTargets'),
     ('documentdb.enableIndexOnlyScanForFindProject'),
     ('documentdb.enableIndexOnlyScanForRangeMatch'),
-    ('documentdb.enableIndexOnlyScanOnCost'),
     ('documentdb.enableIndexPathKeySummarization'),
     ('documentdb.enableInsertDuplicateInlineHandling'),
     ('documentdb.enableLocalRetryTable'),
@@ -195,7 +191,6 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.useIndexHintsForTTLTask'),
     ('documentdb.useLocalExecutionShardQueries'),
     ('documentdb.useNewUniqueHashEqualityFunction'),
-    ('documentdb.usePgStatsLiveTuplesForCount'),
     ('documentdb.vectorPreFilterIterativeScanMode');
 -- Non-conforming GUCs that are not grandfathered by the baseline.
 SELECT

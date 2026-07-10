@@ -12,7 +12,6 @@ SET documentdb.next_collection_id TO 9600;
 SET documentdb.next_collection_index_id TO 9600;
 
 SET documentdb.enableDynamicCursors TO on;
-SET documentdb.enableIndexOnlyScan TO on;
 SET documentdb.enableIndexOnlyScanForFindProject TO on;
 SET enable_seqscan TO off;
 

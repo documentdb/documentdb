@@ -400,8 +400,8 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          Index Cond: (collection.document @*= '{ "country" : [ "USA", [  ] ] }'::bson)
 (5 rows)
 
--- turning off enableIndexOnlyScan should prevent index only scan
-set documentdb.enableIndexOnlyScan to off;
+-- turning off index only scan should prevent index only scan
+set enable_indexonlyscan to off;
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
                                          run_explain_and_trim                                          
 -------------------------------------------------------------------------------------------------------
@@ -412,7 +412,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          Index Cond: (collection.document @< '{ "country" : "Mexico" }'::bson)
 (5 rows)
 
-set documentdb.enableIndexOnlyScan to on;
+set enable_indexonlyscan to on;
 -- turning off enableIndexOnlyScanForCoveredAggregateTargets should keep count IOS enabled,
 -- but disable the new covered aggregate-target IOS path
 set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
@@ -480,31 +480,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 (5 rows)
 
 reset documentdb.forceIndexOnlyScanIfAvailable;
--- disable index only scan on cost to go through the legacy path
-set documentdb.enableIndexOnlyScanOnCost to off;
-SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
-                                            run_explain_and_trim                                            
-------------------------------------------------------------------------------------------------------------
- Aggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('count'::text, documentdb_api_internal.bsoncount(1))
-   ->  Index Only Scan using country_1 on documentdb_data.documents_9101 collection (actual rows=7 loops=1)
-         Output: collection.document
-         Index Cond: (collection.document @< '{ "country" : "Mexico" }'::bson)
-         Heap Fetches: xxx
-(6 rows)
-
--- enableIndexOnlyScanOnCost=off + uncovered accumulator (provider not in country_1): should NOT use IOS
-SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$group" : { "_id" : 1, "maxProvider" : { "$max" : "$provider" } } }]}') $$, p_ignore_heap_fetches => true);
-                                                                                                                                                      run_explain_and_trim                                                                                                                                                      
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'maxProvider'::text, bsonmax(documentdb_api_internal.bson_expression_get(document, '{ "" : "$provider" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), '{ "" : { "$numberInt" : "1" } }'::bson
-   ->  Index Scan using country_1 on documentdb_data.documents_9101 collection (actual rows=7 loops=1)
-         Output: shard_key_value, object_id, document
-         Index Cond: (collection.document @< '{ "country" : "Mexico" }'::bson)
-(5 rows)
-
-reset documentdb.enableIndexOnlyScanOnCost;
 -- Multi-key value should prevent index only scan
 SELECT documentdb_api.insert_one('iosdb_rum', 'iosc_comp', '{"_id": 17, "country": "Mexico", "provider": ["AWS", "GCP"]}');
                               insert_one                              

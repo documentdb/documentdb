@@ -139,7 +139,6 @@ extern bool EnableDefaultExtendedExplain;
 extern char *ApiGucPrefixV2;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableLogRelationIndexesOrder;
-extern bool EnableIndexOnlyScan;
 extern bool EnableCursorsOnAggregationQueryRewrite;
 extern bool EnableCompositeParallelIndexScan;
 extern bool ForceParallelScanIfAvailable;
@@ -592,10 +591,7 @@ ExtensionRelPathlistHookCore(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		ConsiderMergeSortForInPrefix(root, rel, rte, rti, &indexContext);
 	}
 
-	if (EnableIndexOnlyScan)
-	{
-		ConsiderIndexOnlyScan(root, rel, rte, rti, &indexContext);
-	}
+	ConsiderIndexOnlyScan(root, rel, rte, rti, &indexContext);
 
 	/*
 	 * Update any paths with custom scans as appropriate.

@@ -106,15 +106,6 @@ bool DefaultUseCompositeOpClass = DEFAULT_USE_NEW_COMPOSITE_INDEX_OPCLASS;
 #define DEFAULT_ENABLE_COMPOSITE_INDEX_PLANNER false
 bool EnableCompositeIndexPlanner = DEFAULT_ENABLE_COMPOSITE_INDEX_PLANNER;
 
-/* We can enable by default once we stabilize by moving it's creation to the cost estimate. */
-/* Added in v107, enabled in v111, remove after v113. */
-#define DEFAULT_ENABLE_INDEX_ONLY_SCAN true
-bool EnableIndexOnlyScan = DEFAULT_ENABLE_INDEX_ONLY_SCAN;
-
-/* Added in v111, enabled in v111, remove after v113 */
-#define DEFAULT_ENABLE_INDEX_ONLY_SCAN_ON_COST true
-bool EnableIndexOnlyScanOnCostFunction = DEFAULT_ENABLE_INDEX_ONLY_SCAN_ON_COST;
-
 /* Added in v113, enabled in v113, remove after v115 */
 #define DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_COVERED_AGGREGATE_TARGETS true
 bool EnableIndexOnlyScanForCoveredAggregateTargets =
@@ -187,10 +178,14 @@ bool EnableIndexCorrelationFromStatistics =
 #define DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS true
 bool EnableCompositeShardDocumentTerms = DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS;
 
-/* Added in v111, Pending stabilization, enable in v115 */
-#define DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS false
+/* Added in v111, enabled in v115, remove after v118 */
+#define DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS true
 bool EnablePerCollectionPlannerStatistics =
 	DEFAULT_ENABLE_PER_COLLECTION_PLANNER_STATISTICS;
+
+/* Added in v116, enabled in v116, remove after v119 */
+#define DEFAULT_SKIP_LEGACY_ID_INDEX_STATS_CHECK true
+bool SkipLegacyIdIndexStatsCheck = DEFAULT_SKIP_LEGACY_ID_INDEX_STATS_CHECK;
 
 /* Added in v113, Pending stabilization, enable in v120 */
 #define DEFAULT_ENABLE_PLANNER_STATISTICS_NEW_COLLECTIONS false
@@ -344,12 +339,6 @@ bool EnableRumDynamicIndexScansSkipToTid =
 	DEFAULT_ENABLE_RUM_DYNAMIC_INDEX_SCANS_SKIP_TO_TID;
 
 /* Added in v110, enabled in v110, remove after v113 */
-#define DEFAULT_ENABLE_DOLLAR_IN_TO_SCALAR_ARRAY_OP_EXPR_CONVERSION true
-bool EnableDollarInToScalarArrayOpExprConversion =
-	DEFAULT_ENABLE_DOLLAR_IN_TO_SCALAR_ARRAY_OP_EXPR_CONVERSION;
-
-
-/* Added in v110, enabled in v110, remove after v113 */
 #define DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE true
 bool EnableAddToSetAggregationRewrite = DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE;
 
@@ -448,7 +437,7 @@ bool SkipFailOnCollation = DEFAULT_SKIP_FAIL_ON_COLLATION;
 bool EnableLookupIdJoinOptimizationOnCollation =
 	DEFAULT_ENABLE_LOOKUP_ID_JOIN_OPTIMIZATION_ON_COLLATION;
 
-/* Added in v110, Pending stabilization, enable in v115 */
+/* Added in v110, Pending stabilization, enable in v118 */
 #define DEFAULT_ENABLE_COLLATION_WITH_NON_UNIQUE_ORDERED_INDEXES false
 bool EnableCollationWithNonUniqueOrderedIndexes =
 	DEFAULT_ENABLE_COLLATION_WITH_NON_UNIQUE_ORDERED_INDEXES;
@@ -470,10 +459,6 @@ bool EnableLocalRetryTable = DEFAULT_ENABLE_LOCAL_RETRY_TABLE;
 #define DEFAULT_ENABLE_SCHEMA_ENFORCEMENT_FOR_CSFLE true
 bool EnableSchemaEnforcementForCSFLE = DEFAULT_ENABLE_SCHEMA_ENFORCEMENT_FOR_CSFLE;
 
-/* Added in v108, enabled in v108, remove after v113 */
-#define DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT true
-bool UsePgStatsLiveTuplesForCount = DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT;
-
 /* Added in v109, enabled in v114, remove after v118 */
 #define DEFAULT_ENABLE_PREPARE_UNIQUE true
 bool EnablePrepareUnique = DEFAULT_ENABLE_PREPARE_UNIQUE;
@@ -494,10 +479,6 @@ bool EnableNonBlockingUniqueIndexBuild =
 /* Added in v114, Pending stabilization, enable in v120 */
 #define DEFAULT_ENABLE_COMPACT_VACUUM_FULL false
 bool EnableCompactVacuumFull = DEFAULT_ENABLE_COMPACT_VACUUM_FULL;
-
-/* Added in v110, enabled in v110, remove after v113 */
-#define DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ONLY true
-bool EnableDropInvalidIndexesOnReadOnly = DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ONLY;
 
 /* Added in v112, enabled in v112, remove after v114 */
 #define DEFAULT_ENABLE_ONLY_COLLECTION_CACHE_INVALIDATE_ON_COLLECTION_CHANGES true
@@ -860,20 +841,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enableIndexOnlyScan", newGucPrefix),
-		gettext_noop(
-			"Whether to enable index only scan for queries that can be satisfied by an index without accessing the table."),
-		NULL, &EnableIndexOnlyScan, DEFAULT_ENABLE_INDEX_ONLY_SCAN,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableIndexOnlyScanOnCost", newGucPrefix),
-		gettext_noop(
-			"Whether to enable index only scan on cost function or planner."),
-		NULL, &EnableIndexOnlyScanOnCostFunction, DEFAULT_ENABLE_INDEX_ONLY_SCAN_ON_COST,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enableIndexOnlyScanForCoveredAggregateTargets",
 				 newGucPrefix),
 		gettext_noop(
@@ -942,27 +909,12 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.usePgStatsLiveTuplesForCount", newGucPrefix),
-		gettext_noop(
-			"Whether to use pg_stat_all_tables live tuples for count in collStats."),
-		NULL, &UsePgStatsLiveTuplesForCount,
-		DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enableDelayedHoldPortal", newGucPrefix),
 		gettext_noop(
 			"Whether to delay holding the portal until we know there is more data to be fetched."),
 		NULL, &EnableDelayedHoldPortal, DEFAULT_ENABLE_DELAYED_HOLD_PORTAL,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
-	DefineCustomBoolVariable(
-		psprintf("%s.enableDollarInToScalarArrayOpExprConversion", newGucPrefix),
-		gettext_noop(
-			"Whether to enable conversion of $in with scalar array to OpExpr."),
-		NULL, &EnableDollarInToScalarArrayOpExprConversion,
-		DEFAULT_ENABLE_DOLLAR_IN_TO_SCALAR_ARRAY_OP_EXPR_CONVERSION,
-		PGC_USERSET, 0, NULL, NULL, NULL);
 	DefineCustomBoolVariable(
 		psprintf("%s.enableUsersAdminDBCheck", newGucPrefix),
 		gettext_noop(
@@ -1292,19 +1244,21 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
+		psprintf("%s.skip_legacy_id_index_stats_check", newGucPrefix),
+		gettext_noop(
+			"Whether to skip the legacy _id_ index-options fallback when "
+			"checking if a collection has planner statistics enabled. Skipped "
+			"by default; retained for backward compatibility and will be retired."),
+		NULL, &SkipLegacyIdIndexStatsCheck,
+		DEFAULT_SKIP_LEGACY_ID_INDEX_STATS_CHECK,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
 		psprintf("%s.enablePlannerStatisticsNewCollections", newGucPrefix),
 		gettext_noop(
 			"Whether to enable custom planner statistics for any new collections."),
 		NULL, &EnablePlannerStatisticsNewCollections,
 		DEFAULT_ENABLE_PLANNER_STATISTICS_NEW_COLLECTIONS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableDropInvalidIndexesOnReadOnly", newGucPrefix),
-		gettext_noop(
-			"Whether to enable dropping invalid indexes on read only database state."),
-		NULL, &EnableDropInvalidIndexesOnReadOnly,
-		DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ONLY,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
