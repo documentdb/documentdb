@@ -204,8 +204,11 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
     }
 
     fn gateway_connection_buffer_size(&self) -> usize {
-        usize::try_from(self.get_u64("gatewayConnectionBufferSize", conn_mgmt::CONN_BUFFER_SIZE))
-            .unwrap_or(usize::MAX)
+        usize::try_from(self.get_u64(
+            "gateway_connection_buffer_size_bytes",
+            conn_mgmt::CONN_BUFFER_SIZE as u64,
+        ))
+        .unwrap_or(conn_mgmt::CONN_BUFFER_SIZE)
     }
 
     fn slow_query_log_interval_ms(&self) -> u64 {
