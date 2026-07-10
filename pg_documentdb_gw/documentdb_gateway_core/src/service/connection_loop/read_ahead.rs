@@ -79,7 +79,7 @@ mod tests {
 
     use crate::protocol::opcode::OpCode;
 
-    const NON_EXPIRING_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+    const NON_EXPIRING_IDLE_TIMEOUT: Duration = Duration::from_mins(1);
 
     fn assert_header_matches(
         header: &Header,

@@ -988,7 +988,7 @@ mod timeout_tests {
 
     use crate::protocol::reader::read_header_with_timeout;
 
-    const NON_EXPIRING_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+    const NON_EXPIRING_IDLE_TIMEOUT: Duration = Duration::from_mins(1);
 
     struct ErrorReader {
         kind: io::ErrorKind,

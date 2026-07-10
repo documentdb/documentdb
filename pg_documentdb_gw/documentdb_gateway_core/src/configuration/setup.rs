@@ -931,9 +931,7 @@ impl SetupConfiguration for DocumentDBSetupConfiguration {
 
     fn async_runtime_worker_threads(&self) -> usize {
         self.async_runtime_worker_threads.unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map(std::num::NonZero::get)
-                .unwrap_or(1)
+            std::thread::available_parallelism().map_or(1, std::num::NonZero::get)
         })
     }
 

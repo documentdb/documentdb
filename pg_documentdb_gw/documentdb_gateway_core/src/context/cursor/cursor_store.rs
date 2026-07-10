@@ -167,7 +167,7 @@ mod tests {
             db: "testdb".to_owned(),
             collection: "testcol".to_owned(),
             timestamp: Instant::now(),
-            cursor_timeout: Duration::from_secs(600),
+            cursor_timeout: Duration::from_mins(10),
             lsid,
             transaction_number: Some(TransactionNumber::new(1)),
         }
