@@ -66,15 +66,6 @@ static IndexAmRoutine rum_index_routine = { 0 };
 
 static PGFunction rum_index_multi_key_update_func = NULL;
 
-typedef enum IndexMultiKeyStatus
-{
-	IndexMultiKeyStatus_Unknown = 0,
-
-	IndexMultiKeyStatus_HasArrays = 1,
-
-	IndexMultiKeyStatus_HasNoArrays = 2
-} IndexMultiKeyStatus;
-
 typedef struct DocumentDBRumIndexState
 {
 	IndexScanDesc innerScan;

@@ -42,6 +42,16 @@ SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
 SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
     '{ "a": [{ "b": 1, "c": 10 }, { "b": 2, "c": 20 }] }', '[ "a.b", "a.c" ]', 2000, false);
 
+-- nested no-term positions at two different array levels each emit their own
+-- all-undefined correlated tuple. Here the inner "b" array's empty sub-document
+-- ({}) and the outer "a" array's empty "b" sub-document ({ "b": {} }) both
+-- descend into a document that lacks the leaf paths, so each records an
+-- [undefined, undefined] diagonal tuple. The generator only collapses duplicate
+-- all-undefined tuples WITHIN a single array level, so two identical tuples are
+-- emitted here by design; RUM de-duplicates identical index entries at insert.
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "a": [ { "b": [ { "c": 1, "d": 2 }, {} ] }, { "b": {} } ] }', '[ "a.b.c", "a.b.d" ]', 2000, false);
+
 -- scalars only
 SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
     '{ "a": 1, "b": 2 }', '[ "a", "b" ]', 2000, false);

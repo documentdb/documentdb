@@ -1272,6 +1272,11 @@ GenerateArrayPath(bson_iter_t *bsonIter, const char *pathToInsert,
 
 	bool someArrayPathsHaveTerms[INDEX_MAX_KEYS] = { 0 };
 	bool someArrayPathsHaveNoTerms[INDEX_MAX_KEYS] = { 0 };
+
+	/* The all-undefined tuple is recorded at most once per array;
+	 * multiple no-term sub-documents (e.g. [ {}, {}, {} ]) would otherwise emit
+	 * identical tuples and inflate the term count. */
+	bool recordedAllUndefined = false;
 	while (bson_iter_next(&containerIter))
 	{
 		bson_iter_t containerCopy = containerIter;
@@ -1322,15 +1327,15 @@ GenerateArrayPath(bson_iter_t *bsonIter, const char *pathToInsert,
 						 isCheckForArrayTermsWithNestedDocumentInner,
 						 &pathBuilderBuffer);
 
-		bool someArrayPathsHaveTermsOuter = false;
 		int32_t originalTermCount[INDEX_MAX_KEYS] = { 0 };
+		bool elementProducedTerm = false;
 		for (int i = 0; i < context->maxPaths; i++)
 		{
 			GinEntryPathData *pathData = context->getPathDataFunc(context->pathDataState,
 																  i);
 			if (pathData->terms.index > termCount[i])
 			{
-				someArrayPathsHaveTermsOuter = true;
+				elementProducedTerm = true;
 				someArrayPathsHaveTerms[i] = true;
 			}
 			else
@@ -1344,17 +1349,37 @@ GenerateArrayPath(bson_iter_t *bsonIter, const char *pathToInsert,
 													i)->terms.index;
 		}
 
+		/* A position occupies a diagonal slot if it is a sub-document (an empty {}
+		 * yields an all-undefined tuple) or produced a term; scalar/null positions
+		 * do not. */
+		bool elementIsReducedCorrelatedCandidate =
+			BSON_ITER_HOLDS_DOCUMENT(&containerIter) || elementProducedTerm;
+		bool isAllUndefined = elementIsReducedCorrelatedCandidate &&
+							  !elementProducedTerm;
+
 		if (context->enableCompositeReducedCorrelatedTerms &&
 			context->currentRecursivePathIndex(context->pathDataState) ==
 			currentRecursivePathCount &&
-			considerNestedDocumentTerms && someArrayPathsHaveTermsOuter &&
+			considerNestedDocumentTerms &&
+			elementIsReducedCorrelatedCandidate &&
 			context->updateCorrelatedTermPaths)
 		{
-			/* We have multiple terms with a recursive match this means we should treat these terms
-			 * generated as a correlated in terms of terms
-			 */
-			context->updateCorrelatedTermPaths(context->pathDataState, originalTermCount,
-											   recursiveMatchStatus);
+			if (isAllUndefined && !recordedAllUndefined)
+			{
+				/* Record this position's correlated tuple. For a no-term sub-document
+				 * (e.g. {} or a sibling-only { c: 9 }) this emits an all-undefined slot,
+				 * so a null / $exists predicate on the sub-path still matches. */
+				context->updateCorrelatedTermPaths(context->pathDataState,
+												   originalTermCount,
+												   recursiveMatchStatus);
+				recordedAllUndefined = true;
+			}
+			else if (!isAllUndefined)
+			{
+				context->updateCorrelatedTermPaths(context->pathDataState,
+												   originalTermCount,
+												   recursiveMatchStatus);
+			}
 		}
 
 		currentRecursivePathCount = context->currentRecursivePathIndex(
@@ -1523,6 +1548,7 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 
 			/* path is valid and a match */
 			bson_type_t type = bson_iter_type(bsonIter);
+			bool isEmptyArrayMatch = false;
 
 			/* Construct the { <path> : <typecode> <value> } BSON and add it to index entries */
 			pgbsonelement element = { 0 };
@@ -1540,6 +1566,7 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 				if (IsBsonValueEmptyArray(&element.bsonValue))
 				{
 					element.bsonValue.value_type = BSON_TYPE_UNDEFINED;
+					isEmptyArrayMatch = true;
 				}
 				else
 				{
@@ -1550,6 +1577,14 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 
 			GinEntryPathData *pathData = context->getPathDataFunc(context->pathDataState,
 																  pathIndex);
+
+			/* An empty array makes the path multi-key; record it when per-path
+			 * multi-key metadata tracking is enabled. */
+			if (isEmptyArrayMatch && context->markEmptyArrayAsMultiKey)
+			{
+				pathData->hasArrayValues = true;
+			}
+
 			if (pathData->skipGenerateTopLevelDocumentTerm &&
 				element.bsonValue.value_type == BSON_TYPE_DOCUMENT &&
 				option == IndexTraverse_MatchAndRecurse)

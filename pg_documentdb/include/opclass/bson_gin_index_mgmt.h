@@ -16,6 +16,20 @@
 #include "nodes/primnodes.h"
 
 /*
+ * Tri-state multi-key status of an index path. Unknown means the multi-key state
+ * is not tracked/known (callers must treat the path conservatively as multi-key);
+ * HasArrays / HasNoArrays are the known states.
+ */
+typedef enum IndexMultiKeyStatus
+{
+	IndexMultiKeyStatus_Unknown = 0,
+
+	IndexMultiKeyStatus_HasArrays = 1,
+
+	IndexMultiKeyStatus_HasNoArrays = 2
+} IndexMultiKeyStatus;
+
+/*
  * Enum identifying the kind of index based on the options.
  */
 typedef enum IndexOptionsType

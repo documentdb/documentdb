@@ -232,7 +232,10 @@ static void ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const
 											int32_t wildcardPathIndex,
 											ScanDirection *scanDirection,
 											VariableIndexBounds *variableBounds,
-											const char *indexCollation);
+											const char *indexCollation,
+											bool hasArrayPaths,
+											uint32_t multiKeyBitMask,
+											bool isGlobalIndexMetadataTracked);
 static bytea * BuildTermForBounds(CompositeQueryRunData *runData,
 								  IndexTermCreateMetadata *singlePathMetadata,
 								  IndexTermCreateMetadata *compositeMetadata,
@@ -554,7 +557,9 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 		ParseOperatorStrategy(indexPaths, indexPathLengths, sortOrders, numPaths,
 							  metaInfo->wildcardPathIndex, &singleElement, strategy,
 							  &scanDir, &variableBounds,
-							  metaInfo->collation);
+							  metaInfo->collation,
+							  hasArrayPaths, multiKeyBitMask,
+							  options->enableMetadataBasedTracking);
 	}
 	else
 	{
@@ -568,7 +573,9 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 										metaInfo->wildcardPathIndex,
 										&scanDir,
 										&variableBounds,
-										metaInfo->collation);
+										metaInfo->collation,
+										hasArrayPaths, multiKeyBitMask,
+										options->enableMetadataBasedTracking);
 	}
 
 	metaInfo->hasArrayPaths = hasArrayPaths;
@@ -4703,6 +4710,11 @@ BuildSinglePathTermsForCompositeTerms(pgbson *bson,
 	context.options = (void *) termState;
 	context.traverseOptionsFunc = &GetCompositePathGenerateTraverseOption;
 	SetGenerateTermsContextFlags(&context);
+
+	/* Empty arrays make a path multi-key; only surfaced when the index tracks
+	* per-path multi-key status via opclass metadata (the "mkp" reloption). */
+	context.markEmptyArrayAsMultiKey = options->enableMetadataBasedTracking;
+
 	GenerateTermsForPath(bson, &context);
 
 	/* We will have at least 1 term */
@@ -4713,7 +4725,8 @@ BuildSinglePathTermsForCompositeTerms(pgbson *bson,
 		entries[i].index = termState->pathData[i].terms.index;
 		entries[i].entryCapacity = termState->pathData[i].terms.entryCapacity;
 
-		if (termState->pathData[i].hasArrayValues)
+		if (termState->pathData[i].hasArrayValues ||
+			termState->pathData[i].hasArrayAncestors)
 		{
 			*pathMultiKeyBitMask |= (UINT32_C(1) << i);
 		}
@@ -5321,7 +5334,9 @@ ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const char **index
 								numPaths,
 								int32_t wildcardPathIndex, ScanDirection *scanDirection,
 								VariableIndexBounds *variableBounds,
-								const char *indexCollation)
+								const char *indexCollation,
+								bool hasArrayPaths, uint32_t multiKeyBitMask,
+								bool isGlobalIndexMetadataTracked)
 {
 	if (singleElement->bsonValue.value_type != BSON_TYPE_ARRAY)
 	{
@@ -5374,7 +5389,9 @@ ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const char **index
 		ParseOperatorStrategy(indexPaths, indexPathsLengths, sortOrders, numPaths,
 							  wildcardPathIndex,
 							  &queryElement, queryStrategy, scanDirection,
-							  variableBounds, indexCollation);
+							  variableBounds, indexCollation,
+							  hasArrayPaths, multiKeyBitMask,
+							  isGlobalIndexMetadataTracked);
 	}
 }
 

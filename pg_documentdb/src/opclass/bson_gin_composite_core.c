@@ -71,21 +71,26 @@ static void ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 										  int8_t sortOrder,
 										  ScanDirection *scanDirection,
 										  VariableIndexBounds *indexBounds,
-										  const char *indexCollation);
+										  const char *indexCollation,
+										  IndexMultiKeyStatus pathMultiKeyState);
 static void ProcessBoundForQuery(CompositeSingleBound *bound,
 								 const char *termPath,
 								 uint32_t termPathLength, const
 								 IndexTermCreateMetadata *metadata);
 static void SetEqualityBound(const bson_value_t *queryValue,
-							 CompositeIndexBounds *queryBounds);
+							 CompositeIndexBounds *queryBounds,
+							 IndexMultiKeyStatus pathMultiKeyState);
 static void SetArrayEqualityBound(const bson_value_t *queryValue,
-								  CompositeIndexBounds *bounds);
+								  CompositeIndexBounds *bounds,
+								  IndexMultiKeyStatus pathMultiKeyState);
 static void SetGreaterThanBounds(const bson_value_t *queryValue,
 								 BsonIndexStrategy queryStrategy,
-								 CompositeIndexBounds *queryBounds);
+								 CompositeIndexBounds *queryBounds,
+								 IndexMultiKeyStatus pathMultiKeyState);
 static void SetLessThanBounds(const bson_value_t *queryValue,
 							  BsonIndexStrategy queryStrategy,
-							  CompositeIndexBounds *queryBounds);
+							  CompositeIndexBounds *queryBounds,
+							  IndexMultiKeyStatus pathMultiKeyState);
 static void SetBoundsExistsTrue(CompositeIndexBounds *queryBounds);
 static void SetSingleBoundsDollarType(const bson_value_t *queryValue,
 									  CompositeIndexBounds *queryBounds);
@@ -93,7 +98,8 @@ static void SetSingleBoundsDollarRegex(const bson_value_t *queryValue,
 									   CompositeIndexBounds *queryBounds,
 									   bool isNegationOp);
 static void SetBoundsForNotEqual(const bson_value_t *queryValue,
-								 CompositeIndexBounds *queryBounds);
+								 CompositeIndexBounds *queryBounds,
+								 IndexMultiKeyStatus pathMultiKeyState);
 
 
 static void SetUpperBound(CompositeSingleBound *currentBoundValue, const
@@ -103,7 +109,8 @@ static void SetLowerBound(CompositeSingleBound *currentBoundValue, const
 
 static void AddMultiBoundaryForDollarIn(int32_t indexAttribute, const char *wildcardPath,
 										pgbsonelement *queryElement,
-										VariableIndexBounds *indexBounds);
+										VariableIndexBounds *indexBounds,
+										IndexMultiKeyStatus pathMultiKeyState);
 static void AddMultiBoundaryForDollarType(int32_t indexAttribute, const
 										  char *wildcardPath,
 										  pgbsonelement *queryElement,
@@ -111,7 +118,8 @@ static void AddMultiBoundaryForDollarType(int32_t indexAttribute, const
 static void AddMultiBoundaryForDollarNotIn(int32_t indexAttribute, const
 										   char *wildcardPath,
 										   pgbsonelement *queryElement,
-										   VariableIndexBounds *indexBounds);
+										   VariableIndexBounds *indexBounds,
+										   IndexMultiKeyStatus pathMultiKeyState);
 static void AddMultiBoundaryForBitwiseOperator(BsonIndexStrategy strategy,
 											   int32_t indexAttribute, const
 											   char *wildcardPath,
@@ -130,7 +138,8 @@ static void AddMultiBoundaryForDollarRange(int32_t indexAttribute, const
 										   pgbsonelement *queryElement,
 										   int8_t sortOrder, ScanDirection *scanDirection,
 										   VariableIndexBounds *indexBounds,
-										   const char *indexCollation);
+										   const char *indexCollation,
+										   IndexMultiKeyStatus pathMultiKeyState);
 static CompositeIndexBoundsSet * AddMultiBoundaryForDollarRegex(int32_t indexAttribute,
 																const char *wildcardPath,
 																pgbsonelement *
@@ -1092,7 +1101,9 @@ ParseOperatorStrategy(const char **indexPaths, uint32_t *indexPathLengths,
 					  BsonIndexStrategy queryStrategy,
 					  ScanDirection *scanDirection,
 					  VariableIndexBounds *indexBounds,
-					  const char *indexCollation)
+					  const char *indexCollation,
+					  bool hasArrayPaths, uint32_t multiKeyBitMask,
+					  bool isGlobalIndexMetadataTracked)
 {
 	/* First figure out which query path matches */
 	int32_t i = 0;
@@ -1125,9 +1136,30 @@ ParseOperatorStrategy(const char **indexPaths, uint32_t *indexPathLengths,
 							queryElement->path)));
 	}
 
+	/*
+	 * Per-path multi-key state is only known when the index tracks it via metadata
+	 * (the "mkp" reloption); otherwise it stays Unknown and callers treat the path
+	 * conservatively.
+	 */
+	IndexMultiKeyStatus pathMultiKeyState;
+	if (!isGlobalIndexMetadataTracked)
+	{
+		pathMultiKeyState = IndexMultiKeyStatus_Unknown;
+	}
+	else if (hasArrayPaths &&
+			 (multiKeyBitMask == 0 || !EnablePerPathMultiKeySortPushdown ||
+			  (multiKeyBitMask & (UINT32_C(1) << i)) != 0))
+	{
+		pathMultiKeyState = IndexMultiKeyStatus_HasArrays;
+	}
+	else
+	{
+		pathMultiKeyState = IndexMultiKeyStatus_HasNoArrays;
+	}
+
 	ParseOperatorStrategyWithPath(i, queryElement, queryStrategy, wildcardPath,
 								  sortOrders[i], scanDirection, indexBounds,
-								  indexCollation);
+								  indexCollation, pathMultiKeyState);
 }
 
 
@@ -1166,7 +1198,8 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 							  int8_t sortOrder,
 							  ScanDirection *scanDirection,
 							  VariableIndexBounds *indexBounds,
-							  const char *indexCollation)
+							  const char *indexCollation,
+							  IndexMultiKeyStatus pathMultiKeyState)
 {
 	bool isNegationOp = false;
 
@@ -1181,7 +1214,8 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 				int numterms = 2;
 				CompositeIndexBoundsSet *set = CreateCompositeIndexBoundsSet(numterms, i,
 																			 wildcardPath);
-				SetArrayEqualityBound(&queryElement->bsonValue, &set->bounds[0]);
+				SetArrayEqualityBound(&queryElement->bsonValue, &set->bounds[0],
+									  pathMultiKeyState);
 				indexBounds->variableBoundsList = lappend(indexBounds->variableBoundsList,
 														  set);
 			}
@@ -1189,7 +1223,8 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 			{
 				CompositeIndexBoundsSet *set = CreateAndRegisterSingleIndexBoundsSet(
 					indexBounds, i, wildcardPath);
-				SetEqualityBound(&queryElement->bsonValue, &set->bounds[0]);
+				SetEqualityBound(&queryElement->bsonValue, &set->bounds[0],
+								 pathMultiKeyState);
 			}
 
 			break;
@@ -1201,7 +1236,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 			CompositeIndexBoundsSet *set = CreateAndRegisterSingleIndexBoundsSet(
 				indexBounds, i, wildcardPath);
 			SetGreaterThanBounds(&queryElement->bsonValue, queryStrategy,
-								 &set->bounds[0]);
+								 &set->bounds[0], pathMultiKeyState);
 			break;
 		}
 
@@ -1210,7 +1245,8 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 		{
 			CompositeIndexBoundsSet *set = CreateAndRegisterSingleIndexBoundsSet(
 				indexBounds, i, wildcardPath);
-			SetLessThanBounds(&queryElement->bsonValue, queryStrategy, &set->bounds[0]);
+			SetLessThanBounds(&queryElement->bsonValue, queryStrategy, &set->bounds[0],
+							  pathMultiKeyState);
 			break;
 		}
 
@@ -1244,6 +1280,16 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 				args->queryStrategy = BSON_INDEX_STRATEGY_DOLLAR_EXISTS;
 				set->bounds[0].indexRecheckFunctions =
 					lappend(set->bounds[0].indexRecheckFunctions, args);
+
+				/*
+				 * The term-level recheck (isValueUndefined) is per-term, so on a
+				 * multi-key path an undefined term is a false positive when another
+				 * array element does have the field. Only the heap runtime recheck
+				 * can see the whole document, so require it there. On a HasNoArrays
+				 * path the term-level recheck is exact.
+				 */
+				set->bounds[0].requiresRuntimeRecheck =
+					pathMultiKeyState != IndexMultiKeyStatus_HasNoArrays;
 			}
 
 			break;
@@ -1273,7 +1319,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 				/* This is an empty scan with a runtime recheck */
 				bson_value_t undefinedValue = { 0 };
 				undefinedValue.value_type = BSON_TYPE_NULL;
-				SetEqualityBound(&undefinedValue, &set->bounds[0]);
+				SetEqualityBound(&undefinedValue, &set->bounds[0], pathMultiKeyState);
 			}
 			else
 			{
@@ -1309,7 +1355,8 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 		{
 			CompositeIndexBoundsSet *set = CreateAndRegisterSingleIndexBoundsSet(
 				indexBounds, i, wildcardPath);
-			SetBoundsForNotEqual(&queryElement->bsonValue, &set->bounds[0]);
+			SetBoundsForNotEqual(&queryElement->bsonValue, &set->bounds[0],
+								 pathMultiKeyState);
 			break;
 		}
 
@@ -1337,7 +1384,7 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 		{
 			AddMultiBoundaryForDollarRange(i, wildcardPath, queryElement,
 										   sortOrder, scanDirection, indexBounds,
-										   indexCollation);
+										   indexCollation, pathMultiKeyState);
 			break;
 		}
 
@@ -1359,13 +1406,15 @@ ParseOperatorStrategyWithPath(int i, pgbsonelement *queryElement,
 
 		case BSON_INDEX_STRATEGY_DOLLAR_IN:
 		{
-			AddMultiBoundaryForDollarIn(i, wildcardPath, queryElement, indexBounds);
+			AddMultiBoundaryForDollarIn(i, wildcardPath, queryElement, indexBounds,
+										pathMultiKeyState);
 			break;
 		}
 
 		case BSON_INDEX_STRATEGY_DOLLAR_NOT_IN:
 		{
-			AddMultiBoundaryForDollarNotIn(i, wildcardPath, queryElement, indexBounds);
+			AddMultiBoundaryForDollarNotIn(i, wildcardPath, queryElement, indexBounds,
+										   pathMultiKeyState);
 			break;
 		}
 
@@ -1500,16 +1549,28 @@ IsValidRecheckForIndexValue(SerializedCompositeTermPair *termPair,
 				return true;
 			}
 
-			/* In the case of NULL and if we see undefined, we don't know if it's literal
-			 * undefined or an empty array - thunk to runtime
-			 * TODO(Composite): Can we differentiate between empty array and literal null?
+			/*
+			 * $ne null on an undefined term is ambiguous (missing/null vs empty
+			 * array). Non-multi-key paths have no arrays, so it's a missing/null and
+			 * excluded exactly here; multi-key paths defer to the heap recheck.
 			 */
 			InitializeBsonIndexTermIfNeeded(termPair);
 			if (notEqualQuery->value_type == BSON_TYPE_NULL)
 			{
-				/* if the value is *maybe* undefined then there's another value that's defined
-				 * let the other value determine matched-ness
-				 */
+				if (recheckArgs->pathMultiKeyState == IndexMultiKeyStatus_HasNoArrays)
+				{
+					/* No arrays: an undefined term is a missing field and a
+					 * literal-null term equals null; exclude both, keep defined
+					 * non-null. Exact -- no heap recheck. */
+					return !IsIndexTermValueUndefined(&termPair->term) &&
+						   !BsonValueEqualsWithCollation(
+						&termPair->term.element.bsonValue, notEqualQuery,
+						indexCollation);
+				}
+
+				/* Multi-key: a maybe-undefined term yields to a defined sibling; a
+				 * definite-undefined term may be an empty array, so let the heap
+				 * recheck disambiguate. */
 				return !IsIndexTermMaybeUndefined(&termPair->term);
 			}
 
@@ -1732,7 +1793,8 @@ SetBoundsExistsTrue(CompositeIndexBounds *queryBounds)
 
 static void
 SetArrayEqualityBound(const bson_value_t *queryValue,
-					  CompositeIndexBounds *bounds)
+					  CompositeIndexBounds *bounds,
+					  IndexMultiKeyStatus pathMultiKeyState)
 {
 	/* This is a special case for $eq on an array, since we don't index top level arrays
 	 * We need to push this as 2 bounds:
@@ -1741,13 +1803,13 @@ SetArrayEqualityBound(const bson_value_t *queryValue,
 	 */
 
 	/* Equality on the array itself */
-	SetEqualityBound(queryValue, &bounds[0]);
+	SetEqualityBound(queryValue, &bounds[0], pathMultiKeyState);
 
 	/* Equality on the first element of the array */
 	bson_value_t firstElement = { 0 };
 	GetFirstElementFromQueryArray(queryValue, &firstElement);
 
-	SetEqualityBound(&firstElement, &bounds[1]);
+	SetEqualityBound(&firstElement, &bounds[1], pathMultiKeyState);
 
 	/* Add a runtime recheck */
 	bounds[1].requiresRuntimeRecheck = true;
@@ -1755,7 +1817,8 @@ SetArrayEqualityBound(const bson_value_t *queryValue,
 
 
 static void
-SetEqualityBound(const bson_value_t *queryValue, CompositeIndexBounds *queryBounds)
+SetEqualityBound(const bson_value_t *queryValue, CompositeIndexBounds *queryBounds,
+				 IndexMultiKeyStatus pathMultiKeyState)
 {
 	CompositeSingleBound equalsBounds = { 0 };
 	equalsBounds.bound = *queryValue;
@@ -1779,10 +1842,13 @@ SetEqualityBound(const bson_value_t *queryValue, CompositeIndexBounds *queryBoun
 
 	if (queryValue->value_type == BSON_TYPE_NULL)
 	{
-		/* TODO(Composite): See if this is needed
-		 * Special case, requires runtime recheck always
+		/*
+		 * The [MinKey, NULL] bound also matches undefined terms (missing/empty
+		 * array). Non-multi-key paths have no arrays, so all in-range terms are
+		 * true $eq null matches; multi-key paths recheck to drop empty arrays.
 		 */
-		queryBounds->requiresRuntimeRecheck = true;
+		queryBounds->requiresRuntimeRecheck =
+			pathMultiKeyState != IndexMultiKeyStatus_HasNoArrays;
 	}
 }
 
@@ -1790,7 +1856,8 @@ SetEqualityBound(const bson_value_t *queryValue, CompositeIndexBounds *queryBoun
 static void
 SetGreaterThanBounds(const bson_value_t *queryValue,
 					 BsonIndexStrategy queryStrategy,
-					 CompositeIndexBounds *queryBounds)
+					 CompositeIndexBounds *queryBounds,
+					 IndexMultiKeyStatus pathMultiKeyState)
 {
 	bool isMinBoundInclusive = queryStrategy == BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL;
 	if (queryValue->value_type == BSON_TYPE_MINKEY)
@@ -1879,8 +1946,14 @@ SetGreaterThanBounds(const bson_value_t *queryValue,
 
 	if (queryValue->value_type == BSON_TYPE_NULL)
 	{
-		/* Special case, requires runtime recheck always */
-		queryBounds->requiresRuntimeRecheck = true;
+		/*
+		 * The null-anchored range also matches undefined terms (missing/empty
+		 * array). Multi-key paths recheck to drop empty-array false positives;
+		 * non-multi-key paths are exact. Preserve any recheck forced above.
+		 */
+		queryBounds->requiresRuntimeRecheck = queryBounds->requiresRuntimeRecheck ||
+											  pathMultiKeyState !=
+											  IndexMultiKeyStatus_HasNoArrays;
 	}
 }
 
@@ -1888,7 +1961,8 @@ SetGreaterThanBounds(const bson_value_t *queryValue,
 static void
 SetLessThanBounds(const bson_value_t *queryValue,
 				  BsonIndexStrategy queryStrategy,
-				  CompositeIndexBounds *queryBounds)
+				  CompositeIndexBounds *queryBounds,
+				  IndexMultiKeyStatus pathMultiKeyState)
 {
 	bson_value_t compareValue = *queryValue;
 	bool skipTypeBracketing = false;
@@ -1968,15 +2042,22 @@ SetLessThanBounds(const bson_value_t *queryValue,
 
 	if (compareValue.value_type == BSON_TYPE_NULL)
 	{
-		/* Special case, requires runtime recheck always */
-		queryBounds->requiresRuntimeRecheck = true;
+		/*
+		 * The null-anchored range also matches undefined terms (missing/empty
+		 * array). Multi-key paths recheck to drop empty-array false positives;
+		 * non-multi-key paths are exact. Preserve any recheck forced above.
+		 */
+		queryBounds->requiresRuntimeRecheck = queryBounds->requiresRuntimeRecheck ||
+											  pathMultiKeyState !=
+											  IndexMultiKeyStatus_HasNoArrays;
 	}
 }
 
 
 static void
 SetBoundsForNotEqual(const bson_value_t *queryValue,
-					 CompositeIndexBounds *queryBounds)
+					 CompositeIndexBounds *queryBounds,
+					 IndexMultiKeyStatus pathMultiKeyState)
 {
 	const char *indexCollation = NULL;
 
@@ -1991,15 +2072,17 @@ SetBoundsForNotEqual(const bson_value_t *queryValue,
 	IndexRecheckArgs *args = palloc0(sizeof(IndexRecheckArgs));
 	args->queryDatum = (Pointer) equalsValue;
 	args->queryStrategy = BSON_INDEX_STRATEGY_DOLLAR_NOT_EQUAL;
+	args->pathMultiKeyState = pathMultiKeyState;
 	queryBounds->indexRecheckFunctions =
 		lappend(queryBounds->indexRecheckFunctions, args);
 
 	/*
-	 * For $ne (and other negation scenarios), we need to revalidate
-	 * in the runtime since you could have a: [ 1, 2, 3 ]
-	 * a != 2 will match for the 3rd term.
+	 * Multi-key negations need the heap recheck (mixed array elements, or an
+	 * empty-array term that matches $ne null). IndexMultiKeyStatus_HasNoArrays paths are handled
+	 * exactly by the term-level recheck (IsValidRecheckForIndexValue).
 	 */
-	queryBounds->requiresRuntimeRecheck = true;
+	queryBounds->requiresRuntimeRecheck = pathMultiKeyState !=
+										  IndexMultiKeyStatus_HasNoArrays;
 }
 
 
@@ -2394,7 +2477,8 @@ SetSingleBoundsDollarType(const bson_value_t *queryValue,
 
 static void
 AddMultiBoundaryForDollarIn(int32_t indexAttribute, const char *wildcardPath,
-							pgbsonelement *queryElement, VariableIndexBounds *indexBounds)
+							pgbsonelement *queryElement, VariableIndexBounds *indexBounds,
+							IndexMultiKeyStatus pathMultiKeyState)
 {
 	if (queryElement->bsonValue.value_type != BSON_TYPE_ARRAY)
 	{
@@ -2406,7 +2490,6 @@ AddMultiBoundaryForDollarIn(int32_t indexAttribute, const char *wildcardPath,
 	bson_iter_init_from_data(&arrayIter, queryElement->bsonValue.value.v_doc.data,
 							 queryElement->bsonValue.value.v_doc.data_len);
 
-	bool arrayHasNull = false;
 	int32_t inArraySize = 0;
 	while (bson_iter_next(&arrayIter))
 	{
@@ -2431,8 +2514,6 @@ AddMultiBoundaryForDollarIn(int32_t indexAttribute, const char *wildcardPath,
 			/* array equals has 2 boundaries */
 			inArraySize++;
 		}
-
-		arrayHasNull = arrayHasNull || arrayValue->value_type == BSON_TYPE_NULL;
 	}
 
 	bson_iter_init_from_data(&arrayIter, queryElement->bsonValue.value.v_doc.data,
@@ -2471,12 +2552,14 @@ AddMultiBoundaryForDollarIn(int32_t indexAttribute, const char *wildcardPath,
 		else if (element.bsonValue.value_type == BSON_TYPE_ARRAY)
 		{
 			/* Array equality has 2 boundaries */
-			SetArrayEqualityBound(&element.bsonValue, &set->bounds[index]);
+			SetArrayEqualityBound(&element.bsonValue, &set->bounds[index],
+								  pathMultiKeyState);
 			index += 2;
 		}
 		else
 		{
-			SetEqualityBound(&element.bsonValue, &set->bounds[index]);
+			SetEqualityBound(&element.bsonValue, &set->bounds[index],
+							 pathMultiKeyState);
 			index++;
 		}
 	}
@@ -2487,7 +2570,8 @@ AddMultiBoundaryForDollarIn(int32_t indexAttribute, const char *wildcardPath,
 static void
 AddMultiBoundaryForDollarNotIn(int32_t indexAttribute, const char *wildcardPath,
 							   pgbsonelement *queryElement,
-							   VariableIndexBounds *indexBounds)
+							   VariableIndexBounds *indexBounds,
+							   IndexMultiKeyStatus pathMultiKeyState)
 {
 	if (queryElement->bsonValue.value_type != BSON_TYPE_ARRAY)
 	{
@@ -2499,7 +2583,6 @@ AddMultiBoundaryForDollarNotIn(int32_t indexAttribute, const char *wildcardPath,
 	bson_iter_init_from_data(&arrayIter, queryElement->bsonValue.value.v_doc.data,
 							 queryElement->bsonValue.value.v_doc.data_len);
 
-	bool arrayHasNull = false;
 	int32_t inArraySize = 0;
 	bool isNegationOp = true;
 	while (bson_iter_next(&arrayIter))
@@ -2519,8 +2602,6 @@ AddMultiBoundaryForDollarNotIn(int32_t indexAttribute, const char *wildcardPath,
 			/* Regex has 2 boundaries */
 			inArraySize++;
 		}
-
-		arrayHasNull = arrayHasNull || arrayValue->value_type == BSON_TYPE_NULL;
 	}
 
 	if (inArraySize == 0)
@@ -2541,6 +2622,12 @@ AddMultiBoundaryForDollarNotIn(int32_t indexAttribute, const char *wildcardPath,
 																 indexAttribute,
 																 wildcardPath);
 
+	/*
+	 * TODO: For $nin generate a single [MinKey, MaxKey] bound and do a binary
+	 * search of the query elements for equality during the index check function. That
+	 * turns the scan into NumElements walks from MinKey to MaxKey instead of one
+	 * bound per element.
+	 */
 	int index = 0;
 	while (bson_iter_next(&arrayIter))
 	{
@@ -2570,7 +2657,8 @@ AddMultiBoundaryForDollarNotIn(int32_t indexAttribute, const char *wildcardPath,
 		else
 		{
 			SetBoundsForNotEqual(&element.bsonValue,
-								 &set->bounds[index]);
+								 &set->bounds[index],
+								 pathMultiKeyState);
 			index++;
 		}
 	}
@@ -2865,7 +2953,8 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 							   pgbsonelement *queryElement,
 							   int8_t sortOrder, ScanDirection *scanDirection,
 							   VariableIndexBounds *indexBounds,
-							   const char *indexCollation)
+							   const char *indexCollation,
+							   IndexMultiKeyStatus pathMultiKeyState)
 {
 	DollarRangeParams *params = ParseQueryDollarRange(queryElement);
 
@@ -2974,13 +3063,17 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 				}
 
 				ScanDirection scanDirIgnore = NoMovementScanDirection;
+
+				/* $elemMatch implies array semantics, so force the multi-key path. */
+				IndexMultiKeyStatus multiKeyHasArrays = IndexMultiKeyStatus_HasArrays;
 				if (isTopLevelPath)
 				{
 					/* Top level path conditions are mergable */
 					ParseOperatorStrategyWithPath(indexAttribute, &innerElemMatchElement,
 												  queryStrategy, wildcardPath,
 												  sortOrder, &scanDirIgnore,
-												  &localBounds, indexCollation);
+												  &localBounds, indexCollation,
+												  multiKeyHasArrays);
 				}
 				else
 				{
@@ -2988,7 +3081,8 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 					ParseOperatorStrategyWithPath(indexAttribute, &innerElemMatchElement,
 												  queryStrategy, wildcardPath,
 												  sortOrder, &scanDirIgnore, indexBounds,
-												  indexCollation);
+												  indexCollation,
+												  multiKeyHasArrays);
 				}
 			}
 		}
@@ -3069,7 +3163,7 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 		boundElement.path = queryElement->path;
 		boundElement.pathLength = queryElement->pathLength;
 		SetGreaterThanBounds(&boundElement.bsonValue,
-							 queryStrategy, &set->bounds[0]);
+							 queryStrategy, &set->bounds[0], pathMultiKeyState);
 		indexBounds->variableBoundsList = lappend(indexBounds->variableBoundsList, set);
 	}
 
@@ -3084,7 +3178,8 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 		boundElement.bsonValue = params->maxValue;
 		boundElement.path = queryElement->path;
 		boundElement.pathLength = queryElement->pathLength;
-		SetLessThanBounds(&boundElement.bsonValue, queryStrategy, &set->bounds[0]);
+		SetLessThanBounds(&boundElement.bsonValue, queryStrategy, &set->bounds[0],
+						  pathMultiKeyState);
 		indexBounds->variableBoundsList = lappend(indexBounds->variableBoundsList, set);
 	}
 }
