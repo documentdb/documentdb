@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn test_cache_configuration_initial_capacity_minimum() {
         let config = CacheConfiguration::new(
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             Some(512),
             Some(1024),
             Some(CapacityEnforcement::Relaxed),
@@ -106,7 +106,7 @@ mod tests {
     #[should_panic(expected = "Initial capacity cannot be greater than max capacity")]
     fn test_cache_configuration_initial_capacity_greater_than_max_capacity() {
         let _config = CacheConfiguration::new(
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             Some(2048),
             Some(1024),
             Some(CapacityEnforcement::Relaxed),
@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn test_cache_configuration_initial_capacity_equal_to_max_capacity() {
         let _config = CacheConfiguration::new(
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             Some(1),
             Some(1),
             Some(CapacityEnforcement::Relaxed),

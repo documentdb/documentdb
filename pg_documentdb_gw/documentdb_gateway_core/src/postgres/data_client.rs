@@ -56,8 +56,7 @@ pub trait PgDataClient: Send + Sync {
         let pool_connection = self.acquire_pool_connection().await?;
         let sql_commenter_enabled = self
             .connection_pool()
-            .map(ConnectionPool::sql_commenter_enabled)
-            .unwrap_or(false);
+            .is_ok_and(ConnectionPool::sql_commenter_enabled);
 
         Ok(Connection::new(
             pool_connection,

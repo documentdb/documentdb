@@ -402,21 +402,12 @@ fn transform_explain(
     Ok((base_result, planning_time, execution_time, data_size))
 }
 
-#[expect(clippy::expect_used, reason = "values are checked before access")]
 fn decompose_distributed_plan(mut explain_plan: ExplainPlan) -> ExplainPlan {
-    if explain_plan.distributed_plan.is_some()
-        && explain_plan
-            .distributed_plan
-            .as_ref()
-            .is_some_and(|dplan| dplan.subplans.is_some())
+    if let Some(mut subplans) = explain_plan
+        .distributed_plan
+        .as_mut()
+        .and_then(|dplan| dplan.subplans.take())
     {
-        let mut subplans = explain_plan
-            .distributed_plan
-            .as_mut()
-            .expect("Checked")
-            .subplans
-            .take()
-            .expect("Checked");
         return decompose_plan_with_subplans(explain_plan, &mut subplans);
     }
 
@@ -1002,7 +993,7 @@ fn get_stage_from_plan(
             if let Some(function_name) = plan.function_name.as_deref() {
                 match function_name {
                     "empty_data_table" => return ("EOF".to_owned(), None),
-                    "bson_lookup_unwind" => {
+                    "bson_lookup_unwind"
                         // A lookup unwind as the base RTE
                         if (plan.inner_plans.is_none()
                             || plan
@@ -1013,10 +1004,9 @@ fn get_stage_from_plan(
                                 || plan
                                     .parent_relationship
                                     .as_ref()
-                                    .is_some_and(|pr| pr != "Outer"))
-                        {
-                            return ("DOCUMENTS_AGG".to_owned(), None);
-                        }
+                                    .is_some_and(|pr| pr != "Outer")) =>
+                    {
+                        return ("DOCUMENTS_AGG".to_owned(), None);
                     }
                     "coll_stats_aggregation" => {
                         if parent_stage.is_some_and(|x| x == "COUNT") {
