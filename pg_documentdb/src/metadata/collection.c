@@ -610,7 +610,8 @@ TrySetCollectionShard(MongoCollection *collection)
 
 	/* Get shard table name (distributed) or original tableName (single node) */
 	const char *shardName = TryGetShardNameForUnshardedCollection(
-		collection->relationId, collection->collectionId, collection->tableName);
+		collection->relationId, collection->collectionId, collection->tableName,
+		&collection->isSingleShardTable);
 	RollbackGUCChange(savedGUCLevel);
 	if (shardName != NULL)
 	{

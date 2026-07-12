@@ -477,15 +477,17 @@ MutateChunksQueryForDistribution(Query *chunksQuery)
 
 const char *
 TryGetShardNameForUnshardedCollection(Oid relationOid, uint64 collectionId, const
-									  char *tableName)
+									  char *tableName, bool *isSingleShardTable)
 {
 	if (try_get_shard_name_for_unsharded_collection_hook != NULL)
 	{
 		return try_get_shard_name_for_unsharded_collection_hook(relationOid, collectionId,
-																tableName);
+																tableName,
+																isSingleShardTable);
 	}
 
 	/* Single node: return tableName to enable direct Executor path */
+	*isSingleShardTable = true;
 	return tableName;
 }
 

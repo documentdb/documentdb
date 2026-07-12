@@ -374,11 +374,12 @@ RunMultiValueQueryWithNestedDistributionCore(const char *query, int nArgs, Oid *
  */
 static const char *
 TryGetShardNameForUnshardedCollectionCore(Oid relationId, uint64 collectionId, const
-										  char *tableName)
+										  char *tableName, bool *isSingleShardTable)
 {
 	if (!UseLocalExecutionShardQueries)
 	{
 		/* Defensive - only turn this on with feature flag */
+		*isSingleShardTable = false;
 		return "";
 	}
 
@@ -400,6 +401,7 @@ TryGetShardNameForUnshardedCollectionCore(Oid relationId, uint64 collectionId, c
 	if (resultNulls[0])
 	{
 		/* Not a distributed table */
+		*isSingleShardTable = false;
 		return NULL;
 	}
 
@@ -411,8 +413,11 @@ TryGetShardNameForUnshardedCollectionCore(Oid relationId, uint64 collectionId, c
 	if (!resultNulls[1] || !resultNulls[2])
 	{
 		/* has at least some shard values */
+		*isSingleShardTable = false;
 		return "";
 	}
+
+	*isSingleShardTable = true;
 
 	/* Construct the shard table name */
 	char *shardTableName = psprintf("%s_%ld", tableName, shardIdValue);

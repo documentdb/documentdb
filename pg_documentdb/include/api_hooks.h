@@ -195,7 +195,8 @@ Query * MutateChunksQueryForDistribution(Query *cosmosMetadataQuery);
  * NULL implies that the request can be tried again. "" implies that the shard cannot be resolved locally.
  */
 const char * TryGetShardNameForUnshardedCollection(Oid relationOid, uint64 collectionId,
-												   const char *tableName);
+												   const char *tableName,
+												   bool *isSingleShardTable);
 
 const char * GetDistributedApplicationName(void);
 

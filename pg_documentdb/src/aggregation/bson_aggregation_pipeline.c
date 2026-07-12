@@ -96,7 +96,6 @@ extern bool EnableProjectPushUpBeforeUnwindWithGroup;
 extern bool EnableSortPushToAccumulatorWithPrefix;
 extern bool EnableSampleScanFixOnSharded;
 extern bool EnableDistinctIndexPushdown;
-extern bool EnableAddShardKeyOnlyOnPrimaryKeyFilters;
 extern bool EnableSubqueryPushdownForMatch;
 extern bool EnableDollarSampleReservoirScan;
 
@@ -425,7 +424,7 @@ static Query * ApplyFindSpec(const FindSpec *spec, MongoCollection *collection,
 static Query * ApplyFindSpecCore(const FindSpec *spec, Query *query, Query *baseQuery,
 								 QueryData *queryData, CursorParamKind cursorParamKind,
 								 AggregationPipelineBuildContext *context);
-static Const * AddCollationToSortSpec(pgbsonelement *sortElement,
+static Const * AddCollationToSortSpec(const pgbsonelement *sortElement,
 									  const char *collationString);
 
 #define COMPATIBLE_CHANGE_STREAM_STAGES_COUNT 8
@@ -1261,20 +1260,6 @@ CheckMaxAllowedAggregationStages(int numberOfStages)
 							"The pipeline length cannot exceed a maximum of %d stages.",
 							MaxAggregationStagesAllowed)));
 	}
-}
-
-
-inline static bool
-ShouldSkipShardKeyFilterOnBaseTable(AggregationPipelineBuildContext *context)
-{
-	if (!EnableAddShardKeyOnlyOnPrimaryKeyFilters)
-	{
-		return false;
-	}
-
-	return context->mongoCollection != NULL &&
-		   context->mongoCollection->shardKey == NULL &&
-		   context->allowShardBaseTable;
 }
 
 
@@ -4926,8 +4911,7 @@ AddShardKeyAndIdFilters(const bson_value_t *existingValue, Query *query,
 			context->isPointReadQuery = isPointRead;
 
 			/* If we skipped writing the shard key on the base table, write it now */
-			if (ShouldSkipShardKeyFilterOnBaseTable(context) &&
-				context->mongoCollection->shardKey == NULL)
+			if (ShouldSkipShardKeyFilterOnBaseTable(context))
 			{
 				Expr *zeroShardKeyFilter = CreateNonShardedShardKeyValueFilter(
 					var->varno,
@@ -5308,6 +5292,59 @@ CreateSingleArgAggregate(Oid aggregateFunctionId, Expr *argument, ParseState *pa
 }
 
 
+static List *
+AddFullScanQualsToJoinTreeForOrderByPushdown(List *currentQuals, Expr *documentExpr,
+											 const pgbsonelement *sortSpecElement,
+											 AggregationPipelineBuildContext *context,
+											 bool *addedShardKeyFilter)
+{
+	Const *sortConst = AddCollationToSortSpec(sortSpecElement,
+											  context->collationString);
+	List *rangeArgs = list_make2(documentExpr, sortConst);
+	Expr *fullScanExpr = (Expr *) makeFuncExpr(
+		BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
+		InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+	currentQuals = lappend(currentQuals, fullScanExpr);
+
+	if (sortSpecElement->pathLength == 3 && strncmp(sortSpecElement->path, "_id", 3) ==
+		0 &&
+		ShouldSkipShardKeyFilterOnBaseTable(context) && !*addedShardKeyFilter &&
+		IsA(documentExpr, Var))
+	{
+		Var *documentVar = (Var *) documentExpr;
+
+		/* If we are sorting on the _id for sort or group on an unsharded table,
+		 * and we haven't added the zero shard key filter, add it now.
+		 */
+		Expr *zeroShardKeyFilter = CreateNonShardedShardKeyValueFilter(
+			documentVar->varno,
+			context->mongoCollection);
+		currentQuals = lappend(currentQuals, zeroShardKeyFilter);
+		*addedShardKeyFilter = true;
+	}
+
+	return currentQuals;
+}
+
+
+static void
+AddFullScanQualsForOrderByPushdown(Query *query, Expr *documentExpr,
+								   const pgbsonelement *sortSpecElement,
+								   AggregationPipelineBuildContext *context)
+{
+	List *currentQuals = make_ands_implicit(
+		(Expr *) query->jointree->quals);
+
+	bool addedShardKeyFilter = false;
+	currentQuals = AddFullScanQualsToJoinTreeForOrderByPushdown(currentQuals,
+																documentExpr,
+																sortSpecElement, context,
+																&addedShardKeyFilter);
+	query->jointree->quals = (Node *) make_ands_explicit(
+		currentQuals);
+}
+
+
 static Query *
 HandleDistinct(const StringView *distinctKey, Query *query,
 			   AggregationPipelineBuildContext *context)
@@ -5359,17 +5396,8 @@ HandleDistinct(const StringView *distinctKey, Query *query,
 		sortSpecElement.bsonValue.value_type = BSON_TYPE_INT32;
 		sortSpecElement.bsonValue.value.v_int32 = 1;
 
-		Const *sortConst = AddCollationToSortSpec(&sortSpecElement,
-												  context->collationString);
-		List *rangeArgs = list_make2(currentProjection, sortConst);
-		Expr *fullScanExpr = (Expr *) makeFuncExpr(
-			BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
-			InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
-		List *currentQuals = make_ands_implicit(
-			(Expr *) query->jointree->quals);
-		currentQuals = lappend(currentQuals, fullScanExpr);
-		query->jointree->quals = (Node *) make_ands_explicit(
-			currentQuals);
+		AddFullScanQualsForOrderByPushdown(query, currentProjection, &sortSpecElement,
+										   context);
 	}
 
 	query = MigrateQueryToSubQuery(query, context);
@@ -5679,11 +5707,11 @@ CanPushSortFilterToIndex(Query *query, AggregationPipelineBuildContext *context)
 
 
 static Const *
-AddCollationToSortSpec(pgbsonelement *sortElement, const char *collationString)
+AddCollationToSortSpec(const pgbsonelement *sortElement, const char *collationString)
 {
 	if (!IsCollationValid(collationString))
 	{
-		return MakeBsonConst(PgbsonElementToPgbson(sortElement));
+		return MakeBsonConst(PgbsonElementToPgbson((pgbsonelement *) sortElement));
 	}
 
 	pgbson_writer writer;
@@ -5892,17 +5920,8 @@ HandleSort(const bson_value_t *existingValue, Query *query,
 				 */
 				if (CanPushSortFilterToIndex(query, context))
 				{
-					Const *fullScanSortConst = AddCollationToSortSpec(
-						&element, context->collationString);
-					List *rangeArgs = list_make2(sortInput, fullScanSortConst);
-					Expr *fullScanExpr = (Expr *) makeFuncExpr(
-						BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
-						InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
-					List *currentQuals = make_ands_implicit(
-						(Expr *) query->jointree->quals);
-					currentQuals = lappend(currentQuals, fullScanExpr);
-					query->jointree->quals = (Node *) make_ands_explicit(
-						currentQuals);
+					AddFullScanQualsForOrderByPushdown(query, sortInput, &element,
+													   context);
 				}
 
 				/* If sort by is descending use the new operators: this allows for
@@ -8261,6 +8280,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		List *currentQuals = make_ands_implicit(
 			(Expr *) query->jointree->quals);
 
+		bool addedShardKeyFilter = false;
 		for (int i = 0; i < numGroupByFields; i++)
 		{
 			pgbsonelement sortElement = { 0 };
@@ -8268,13 +8288,10 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 			sortElement.pathLength = groupByFieldPaths[i].length;
 			sortElement.bsonValue.value_type = BSON_TYPE_INT32;
 			sortElement.bsonValue.value.v_int32 = 1;
-			Const *sortConst = AddCollationToSortSpec(&sortElement,
-													  context->collationString);
-			List *rangeArgs = list_make2(origEntry->expr, sortConst);
-			Expr *fullScanExpr = (Expr *) makeFuncExpr(
-				BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
-				InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
-			currentQuals = lappend(currentQuals, fullScanExpr);
+
+			currentQuals = AddFullScanQualsToJoinTreeForOrderByPushdown(
+				currentQuals, origEntry->expr, &sortElement,
+				context, &addedShardKeyFilter);
 		}
 
 		/* When the group-by keys form a prefix of the sort spec, the suffix
@@ -8295,13 +8312,10 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 			{
 				pgbsonelement suffixSortElement;
 				BsonIterToPgbsonElement(&suffixSortIter, &suffixSortElement);
-				Const *suffixSortConst = AddCollationToSortSpec(
-					&suffixSortElement, context->collationString);
-				List *rangeArgs = list_make2(origEntry->expr, suffixSortConst);
-				Expr *fullScanExpr = (Expr *) makeFuncExpr(
-					BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
-					InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
-				currentQuals = lappend(currentQuals, fullScanExpr);
+
+				currentQuals = AddFullScanQualsToJoinTreeForOrderByPushdown(
+					currentQuals, origEntry->expr, &suffixSortElement,
+					context, &addedShardKeyFilter);
 			}
 		}
 
