@@ -6,7 +6,24 @@
  *-------------------------------------------------------------------------
  */
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+
+/// Deserialize an optional integer counter, tolerating fractional values.
+///
+/// `PostgreSQL` 18 prints per-node runtime counters averaged over `Actual
+/// Loops`, so they can arrive as floats (e.g. `2.33`) when loops > 1. We round
+/// back to `i64` so both the PG18 and pre-18 wire formats parse.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "runtime counters are small; rounding an averaged f64 back to i64 is intentional"
+)]
+fn de_opt_round_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value: Option<f64> = Option::deserialize(deserializer)?;
+    Ok(value.map(|v| v.round() as i64))
+}
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "PascalCase")]
@@ -66,7 +83,7 @@ pub struct PostgresExplain {
 #[derive(Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "PascalCase")]
 pub struct ExplainPlan {
-    #[serde(rename = "Actual Rows")]
+    #[serde(rename = "Actual Rows", default, deserialize_with = "de_opt_round_i64")]
     pub actual_rows: Option<i64>,
 
     #[serde(rename = "Actual Total Time")]
@@ -89,7 +106,7 @@ pub struct ExplainPlan {
     #[serde(rename = "Group Key")]
     pub group_key: Option<Vec<String>>,
 
-    #[serde(rename = "Heap Fetches")]
+    #[serde(rename = "Heap Fetches", default, deserialize_with = "de_opt_round_i64")]
     pub heap_fetches: Option<i64>,
 
     #[serde(rename = "Index Cond")]
@@ -139,10 +156,18 @@ pub struct ExplainPlan {
     #[serde(rename = "Parent Relationship")]
     pub parent_relationship: Option<String>,
 
-    #[serde(rename = "Rows Removed by Filter")]
+    #[serde(
+        rename = "Rows Removed by Filter",
+        default,
+        deserialize_with = "de_opt_round_i64"
+    )]
     pub rows_removed_by_filter: Option<i64>,
 
-    #[serde(rename = "Rows Removed by Index Recheck")]
+    #[serde(
+        rename = "Rows Removed by Index Recheck",
+        default,
+        deserialize_with = "de_opt_round_i64"
+    )]
     pub rows_removed_by_index: Option<i64>,
 
     #[serde(rename = "Scan Direction")]
@@ -160,7 +185,7 @@ pub struct ExplainPlan {
     #[serde(rename = "Sort Space Type")]
     pub sort_space_type: Option<String>,
 
-    #[serde(rename = "Sort Space Used")]
+    #[serde(rename = "Sort Space Used", default, deserialize_with = "de_opt_round_i64")]
     pub sort_space_used: Option<i64>,
 
     #[serde(rename = "Startup Cost")]
@@ -172,19 +197,19 @@ pub struct ExplainPlan {
     #[serde(rename = "Function Name")]
     pub function_name: Option<String>,
 
-    #[serde(rename = "Exact Heap Blocks")]
+    #[serde(rename = "Exact Heap Blocks", default, deserialize_with = "de_opt_round_i64")]
     pub exact_heap_blocks: Option<i64>,
 
-    #[serde(rename = "Lossy Heap Blocks")]
+    #[serde(rename = "Lossy Heap Blocks", default, deserialize_with = "de_opt_round_i64")]
     pub lossy_heap_blocks: Option<i64>,
 
-    #[serde(rename = "Shared Hit Blocks")]
+    #[serde(rename = "Shared Hit Blocks", default, deserialize_with = "de_opt_round_i64")]
     pub shared_hit_blocks: Option<i64>,
 
-    #[serde(rename = "Shared Read Blocks")]
+    #[serde(rename = "Shared Read Blocks", default, deserialize_with = "de_opt_round_i64")]
     pub shared_read_blocks: Option<i64>,
 
-    #[serde(rename = "I/O Read Time")]
+    #[serde(rename = "I/O Read Time", default, deserialize_with = "de_opt_round_i64")]
     pub io_read_time: Option<i64>,
 
     #[serde(rename = "Workers Launched")]
