@@ -207,7 +207,9 @@ extern RewriteConfigQueryForDistribution_HookType rewrite_config_chunks_query_ho
 typedef const char *(*TryGetShardNameForUnshardedCollection_HookType)(Oid relationOid,
 																	  uint64 collectionId,
 																	  const char *
-																	  tableName);
+																	  tableName,
+																	  bool *
+																	  isSingleShardTable);
 extern TryGetShardNameForUnshardedCollection_HookType
 	try_get_shard_name_for_unsharded_collection_hook;
 

@@ -380,6 +380,9 @@ Stage GetAggregationStageAtPosition(const List *aggregationStages, int position)
 
 /* Helper methods */
 
+/* GUC defined in feature_flag_configs.c; consumed by the inline helpers below. */
+extern bool EnableAddShardKeyOnlyOnPrimaryKeyFilters;
+
 /*
  * Helper function that creates a UNION ALL Set operation statement
  * that returns a single BSON field.
@@ -394,6 +397,20 @@ MakeBsonSetOpStatement(void)
 	setOpStatement->colTypes = list_make1_oid(BsonTypeId());
 	setOpStatement->colTypmods = list_make1_int(-1);
 	return setOpStatement;
+}
+
+
+inline static bool
+ShouldSkipShardKeyFilterOnBaseTable(AggregationPipelineBuildContext *context)
+{
+	if (!EnableAddShardKeyOnlyOnPrimaryKeyFilters)
+	{
+		return false;
+	}
+
+	return context->mongoCollection != NULL &&
+		   context->mongoCollection->shardKey == NULL &&
+		   context->mongoCollection->isSingleShardTable;
 }
 
 
