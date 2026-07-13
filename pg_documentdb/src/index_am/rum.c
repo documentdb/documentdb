@@ -700,7 +700,6 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 	int numBoundaryQuals = 0;
 	double dataPagesProportionFetched = 0;
 	bool convertedToIndexOnlyScan = false;
-	List *addedRestrictInfos = NIL;
 
 	bool isCompositeOpFamily = IsCompositeOpFamilyOid(path->indexinfo->relam,
 													  path->indexinfo->opfamily[0]);
@@ -708,8 +707,7 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 	{
 		bool canSupportIndexOnlyScan = false;
 		bool firstColumnSpecified = TraverseIndexPathForCompositeIndex(
-			path, root, &canSupportIndexOnlyScan,
-			&addedRestrictInfos);
+			path, root, &canSupportIndexOnlyScan);
 
 		/* Even if the first column was not specified and the index covers the query entirely we should consider doing
 		 * an index-only scan even though the cost will be set to INFINITY. This way we support index only scan when hinting is used and the first column is not part of the filters. */
@@ -770,24 +768,6 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 
 		/* if possible also record correlation via stats if available */
 		GetCorrelationFromStatistics(root, path, indexCorrelation);
-
-		if (addedRestrictInfos != NIL)
-		{
-			/*
-			 * path->path.rows is derived by the core planner solely from the
-			 * relation's baserestrictinfo, so it does not account for the
-			 * boundary quals we injected onto the index path here (e.g. the
-			 * multi-key distinct $exists:true filter). Those are net-new
-			 * restrictinfos that never flow back into baserel->rows, so we
-			 * fold their selectivity into the path row estimate ourselves;
-			 * otherwise the index path would be costed as if it returned the
-			 * full, unfiltered row count.
-			 */
-			Selectivity updatedSel = clauselist_selectivity(root, addedRestrictInfos,
-															path->indexinfo->rel->relid,
-															JOIN_INNER, NULL);
-			path->path.rows = clamp_row_est(path->path.rows * updatedSel);
-		}
 	}
 	else
 	{
@@ -796,11 +776,6 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 			root, path, loop_count, indexStartupCost, indexTotalCost,
 			indexSelectivity, indexCorrelation, indexPages);
 		boundarySelectivity = *indexSelectivity;
-	}
-
-	if (addedRestrictInfos != NIL)
-	{
-		list_free(addedRestrictInfos);
 	}
 
 	/* Do a pass to check for text indexes (We force push down with cost == 0) */

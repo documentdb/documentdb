@@ -1577,10 +1577,18 @@ SELECT document FROM documentdb_api.count_query('db', '{ "count": "get_aggregati
 document
 { "n" : { "$numberInt" : "5" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
-SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "get_aggregation_cursor_test", "key": "_id" }');
-document
-{ "values" : [ { "$numberInt" : "3" }, { "$numberInt" : "2" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "1" } ], "ok" : { "$numberDouble" : "1.0" } }
-(1 row)
+-- distinct output has no ordering guarantee and this collection is hash-sharded,
+-- so the values-array order varies by environment. Unwind and sort the values for
+-- a deterministic assertion while still exercising the distinct_query
+-- PG_DETOAST_DATUM_COPY path on this large-document collection.
+SELECT documentdb_api_catalog.bson_dollar_unwind(document, '$values') FROM documentdb_api.distinct_query('db', '{ "distinct": "get_aggregation_cursor_test", "key": "_id" }') ORDER BY 1;
+bson_dollar_unwind
+{ "values" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+{ "values" : { "$numberInt" : "2" }, "ok" : { "$numberDouble" : "1.0" } }
+{ "values" : { "$numberInt" : "3" }, "ok" : { "$numberDouble" : "1.0" } }
+{ "values" : { "$numberInt" : "4" }, "ok" : { "$numberDouble" : "1.0" } }
+{ "values" : { "$numberInt" : "5" }, "ok" : { "$numberDouble" : "1.0" } }
+(5 rows)
 -- Count/Distinct on a nonexistent collection (exercises error/default handling)
 SELECT document FROM documentdb_api.count_query('db', '{ "count": "completely_nonexistent_collection" }');
 document
@@ -1603,7 +1611,7 @@ PERFORM documentdb_api.insert_one('db', 'partial_final_batch_coll', FORMAT('{ "_
 END LOOP;
 END;
 $$;
-psql:sql/bson_aggregation_cursor_tests_core.sql:621: NOTICE:  creating collection
+psql:sql/bson_aggregation_cursor_tests_core.sql:625: NOTICE:  creating collection
 -- Streaming aggregate: 7 docs with batchSize=3 → batches of [3, 3, 1] then empty
 SELECT * FROM aggregation_cursor_test.drain_aggregation_query(loopCount => 4, pageSize => 3, collection_name => 'partial_final_batch_coll');
 filtereddoc|docsize|continuationfiltered|persistconnection
@@ -1683,7 +1691,7 @@ f
 -- The specific document the query targets.
 SELECT documentdb_api.insert_one('db', 'pointLookup',
     '{ "_id": "dsdsdasdasdasdadewe68676wqeeq", "createdDateTime": { "$date": { "$numberLong": "1744859493000" } }, "app": "iconic" }');
-psql:sql/bson_aggregation_cursor_tests_core.sql:658: NOTICE:  creating collection
+psql:sql/bson_aggregation_cursor_tests_core.sql:662: NOTICE:  creating collection
 insert_one
 { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -1751,7 +1759,7 @@ drop_collection
 t
 (1 row)
 DROP SCHEMA aggregation_cursor_test CASCADE;
-psql:sql/bson_aggregation_cursor_tests_core.sql:692: NOTICE:  drop cascades to 5 other objects
+psql:sql/bson_aggregation_cursor_tests_core.sql:696: NOTICE:  drop cascades to 5 other objects
 DETAIL:  drop cascades to type aggregation_cursor_test.drain_result
 drop cascades to function aggregation_cursor_test.mask_continuation(bson)
 drop cascades to function aggregation_cursor_test.mask_drain_continuation(bson)

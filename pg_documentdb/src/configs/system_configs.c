@@ -71,6 +71,14 @@ int BatchWriteSubTransactionCount = DEFAULT_BATCH_WRITE_SUB_TRANSACTION_COUNT;
 int BatchUpdateLockTimeoutMs = DEFAULT_BATCH_UPDATE_LOCK_TIMEOUT_MS;
 
 /*
+ * Default per-call row estimate the distinct-unwind planner support function
+ * uses for a document whose unwound path holds an array. Exposed as a GUC so
+ * the expansion factor can be tuned without a code change.
+ */
+#define DEFAULT_DISTINCT_UNWIND_DEFAULT_ROWS 10
+int DistinctUnwindDefaultRows = DEFAULT_DISTINCT_UNWIND_DEFAULT_ROWS;
+
+/*
  * Default maxAwaitTimeMS for tailable cursors on getMore when the client
  * does not specify a value. The wire-protocol default is 1000 ms.
  * Exposed as a GUC so that it can be tuned if needed.
@@ -267,6 +275,14 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 			"The maximum number of ordered index scans (product of $in array lengths) that may be merged for an $in-prefixed sort. Above this the optimization is skipped."),
 		NULL, &MaxMergeSortInValues,
 		DEFAULT_MAX_MERGE_SORT_IN_VALUES, 1, MAX_MERGE_SORT_IN_VALUES_LIMIT,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.distinct_unwind_default_rows", newGucPrefix),
+		gettext_noop(
+			"The per-call row estimate the distinct-unwind planner support function uses for a document whose unwound path holds an array."),
+		NULL, &DistinctUnwindDefaultRows,
+		DEFAULT_DISTINCT_UNWIND_DEFAULT_ROWS, 1, INT_MAX,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

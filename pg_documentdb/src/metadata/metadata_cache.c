@@ -481,6 +481,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* Oid of the bson_full_scan function */
 	Oid BsonFullScanFunctionId;
 
+	/* Oid of the bson_dollar_distinct_exists function */
+	Oid BsonDistinctExistsFunctionId;
+
 	/* Oid of the index hint function */
 	Oid BsonIndexHintFunctionId;
 
@@ -2105,6 +2108,19 @@ BsonFullScanFunctionOid(void)
 	return GetSchemaFunctionIdWithNargs(&Cache.BsonFullScanFunctionId,
 										ApiInternalSchemaNameV2,
 										"bson_dollar_fullscan", nargs, argTypes,
+										missingOk);
+}
+
+
+Oid
+BsonDollarDistinctExistsFunctionOid(void)
+{
+	int nargs = 2;
+	Oid argTypes[2] = { BsonTypeId(), BsonTypeId() };
+	bool missingOk = true;
+	return GetSchemaFunctionIdWithNargs(&Cache.BsonDistinctExistsFunctionId,
+										ApiInternalSchemaNameV2,
+										"bson_dollar_distinct_exists", nargs, argTypes,
 										missingOk);
 }
 

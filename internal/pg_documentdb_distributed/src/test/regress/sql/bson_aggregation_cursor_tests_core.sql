@@ -600,7 +600,11 @@ SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "get_agg
 
 -- Count/Distinct on a large-document collection (exercises PG_DETOAST_DATUM_COPY path)
 SELECT document FROM documentdb_api.count_query('db', '{ "count": "get_aggregation_cursor_test" }');
-SELECT document FROM documentdb_api.distinct_query('db', '{ "distinct": "get_aggregation_cursor_test", "key": "_id" }');
+-- distinct output has no ordering guarantee and this collection is hash-sharded,
+-- so the values-array order varies by environment. Unwind and sort the values for
+-- a deterministic assertion while still exercising the distinct_query
+-- PG_DETOAST_DATUM_COPY path on this large-document collection.
+SELECT documentdb_api_catalog.bson_dollar_unwind(document, '$values') FROM documentdb_api.distinct_query('db', '{ "distinct": "get_aggregation_cursor_test", "key": "_id" }') ORDER BY 1;
 
 -- Count/Distinct on a nonexistent collection (exercises error/default handling)
 SELECT document FROM documentdb_api.count_query('db', '{ "count": "completely_nonexistent_collection" }');
