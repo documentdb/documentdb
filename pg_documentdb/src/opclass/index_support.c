@@ -236,7 +236,6 @@ extern bool EnableObjectIdFuncExprConversion;
 extern bool EnableExtendedIndexes;
 extern bool EnableDynamicCursors;
 extern bool EnableDistinctIndexPushdown;
-extern bool EnableDistinctMultiKeyFilterPushdown;
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool EnablePerPathMultiKeySortPushdown;
 
@@ -269,6 +268,8 @@ static bool IsMatchingPathForQueryOperator(RelOptInfo *rel, Path *path,
 										   MatchIndexPath matchIndexPath,
 										   void *matchContext);
 static Expr * ProcessFullScanForOrderBy(SupportRequestIndexCondition *req, List *args);
+static Expr * ProcessDistinctExistsForIndex(SupportRequestIndexCondition *req,
+											List *args);
 static Expr * CreateKnownFullScanExpr(Datum queryValue, Expr *documentExpr, int
 									  sortDirection);
 static OpExpr * CreateExistsTrueOpExpr(Expr *documentExpr, const char *sourcePath,
@@ -1897,7 +1898,9 @@ IsFuncExprTrimmable(const FuncExpr *funcExpr)
 	return funcExpr->funcid == BsonIndexHintFunctionOid() ||
 		   funcExpr->funcid == BsonFullScanFunctionOid() ||
 		   (IsClusterVersionAtleast(DocDB_V0, 112, 1) &&
-			funcExpr->funcid == ApiCursorTrackerFunctionId());
+			funcExpr->funcid == ApiCursorTrackerFunctionId()) ||
+		   (IsClusterVersionAtleast(DocDB_V0, 116, 0) &&
+			funcExpr->funcid == BsonDollarDistinctExistsFunctionOid());
 }
 
 
@@ -4965,17 +4968,44 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 }
 
 
-static bool
+/*
+ * build_index_paths builds a single index_clauses list and hands the same
+ * pointer to every create_index_path call (forward / backward / parallel
+ * siblings); create_index_path stores it without copying, so those sibling
+ * IndexPaths all alias the same list. Any code that appends to or trims
+ * path->indexclauses during cost estimation must therefore give the path its
+ * own copy first when the index supports a parallel scan, otherwise the
+ * in-place mutation (which may repalloc the list out from under a sibling)
+ * corrupts the aliased parallel path so it is discarded and the plan falls
+ * back to a scan that lost the pushed-down clauses.
+ *
+ * The order-by trim mutates path->indexclauses within a
+ * TraverseIndexPathForCompositeIndex pass, so this copy-on-write keys off the
+ * original shared list pointer: it copies only while path->indexclauses still
+ * aliases sharedIndexClauses, and is a no-op once the path already owns a
+ * private list. That keeps the copy to at most one per path.
+ */
+static void
+EnsureIndexClausesOwned(IndexPath *path, List *sharedIndexClauses)
+{
+	if (path->indexinfo->amcanparallel &&
+		path->indexclauses == sharedIndexClauses)
+	{
+		path->indexclauses = list_copy(path->indexclauses);
+	}
+}
+
+
+static void
 ProcessOrderByStatements(PlannerInfo *root,
-						 IndexPath *path, int32_t minOrderByColumn,
+						 IndexPath *path,
+						 int32_t minOrderByColumn,
 						 int32_t maxOrderByColumn, bool isMultiKeyIndex,
 						 uint32_t multiKeyBitMask,
 						 const char *queryOrderPaths[INDEX_MAX_KEYS],
 						 bool equalityPrefixes[INDEX_MAX_KEYS],
 						 bool nonEqualityPrefixes[INDEX_MAX_KEYS],
-						 bool anySpecifiedPrefixes[INDEX_MAX_KEYS],
-						 int32_t pathSortOrders[INDEX_MAX_KEYS],
-						 List **addedRestrictInfos)
+						 int32_t pathSortOrders[INDEX_MAX_KEYS])
 {
 	int i = 0, sortDetailsIndex = 0;
 
@@ -4987,85 +5017,21 @@ ProcessOrderByStatements(PlannerInfo *root,
 
 	if (list_length(sortDetails) == 0)
 	{
-		return false;
+		return;
 	}
 
 	if (isMultiKeyIndex && hasDistinct)
 	{
-		/* if it's multi-key and there's a distinct, we can't push down an order by.
-		 * However, we can push an $exists: true filter down to the index so that we
-		 * can reduce the overall data set to the index.
-		 */
-		bool pushedDistinctExistsFilter = false;
-		if (EnableDistinctMultiKeyFilterPushdown && list_length(sortDetails) >= 1)
-		{
-			SortIndexInputDetails *sortDetailsInput = linitial(sortDetails);
-			if (sortDetailsInput->funcOid == BsonDistinctUnwindFunctionOid())
-			{
-				int sortColumn = -1;
-				for (int col = minOrderByColumn; col <= maxOrderByColumn; col++)
-				{
-					if (queryOrderPaths[col] != NULL &&
-						strcmp(sortDetailsInput->sortPath, queryOrderPaths[col]) == 0)
-					{
-						sortColumn = col;
-						break;
-					}
-				}
-
-				/*
-				 * Only push the $exists: true filter when the distinct path
-				 * maps to a column of this index (sortColumn >= 0) that does
-				 * not already carry an equality or non-equality bound. If the
-				 * column already has a bound, the exists clause is redundant;
-				 * if the distinct path is not part of the index at all, there
-				 * is no column to constrain.
-				 *
-				 * NOTE: sortColumn and the prefix arrays are both keyed off the
-				 * distinct path (the first sort detail). Today a distinct always
-				 * drives the leading order-by, so this is safe. If a future
-				 * shape allows the distinct key (e.g. "a") to differ from the
-				 * column that carries the order-by/filter (e.g. an order and
-				 * filter on "b" over an index on "b"), this single-column check
-				 * would look at the wrong column's prefixes and must be revised
-				 * to resolve the exists target independently of the order-by.
-				 */
-				if (sortColumn >= 0 && !anySpecifiedPrefixes[sortColumn])
-				{
-					/* push down an $exists: true filter to the index for this path */
-					Expr *existsTrueOpExpr = (Expr *) CreateExistsTrueOpExpr(
-						(Expr *) sortDetailsInput->sortVar,
-						sortDetailsInput->sortPath, strlen(sortDetailsInput->sortPath));
-					RestrictInfo *existsTrueRestrictInfo = make_simple_restrictinfo(
-						root, (Expr *) existsTrueOpExpr);
-					*addedRestrictInfos = lappend(*addedRestrictInfos,
-												  existsTrueRestrictInfo);
-					IndexClause *indexClause = BuildPointReadIndexClause(
-						existsTrueRestrictInfo, 0);
-					path->indexclauses = lappend(path->indexclauses, indexClause);
-
-					/*
-					 * The exists clause is attached to the first index column
-					 * (indexcol 0), so it satisfies the first-column filter
-					 * requirement that the caller uses to keep this index path.
-					 * Since a multi-key distinct never pushes an actual order-by,
-					 * without this signal the caller would discard the path and
-					 * the index would only be usable via an explicit hint.
-					 */
-					pushedDistinctExistsFilter = true;
-				}
-			}
-		}
-
+		/* if it's multi-key and there's a distinct, we can't push down an order by. */
 		list_free(sortDetails);
-		return pushedDistinctExistsFilter;
+		return;
 	}
 
 	if (isMultiKeyIndex && hasGroupby)
 	{
 		/* We can't push down orderby on a multikey index if there is a group by */
 		list_free_deep(sortDetails);
-		return false;
+		return;
 	}
 
 	List *indexOrderBys = NIL;
@@ -5078,7 +5044,7 @@ ProcessOrderByStatements(PlannerInfo *root,
 		{
 			/* No orderby on the column */
 			list_free_deep(sortDetails);
-			return false;
+			return;
 		}
 	}
 
@@ -5194,7 +5160,6 @@ ProcessOrderByStatements(PlannerInfo *root,
 	path->path.pathkeys = indexPathKeys;
 
 	list_free_deep(sortDetails);
-	return false;
 }
 
 
@@ -5522,8 +5487,7 @@ ProcessCompositePartialFilter(List *indexPredicate, bytea *opClassOptions,
 
 bool
 TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerInfo *root,
-								   bool *canSupportIndexOnlyScan,
-								   List **addedRestrictInfos)
+								   bool *canSupportIndexOnlyScan)
 {
 	ListCell *cell;
 	bool firstFilterColumnFound = false;
@@ -5552,6 +5516,13 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 	int32_t minOrderByColumn = INT_MAX;
 	int32_t maxOrderByColumn = -1;
 	List *orderbyIndexClauses = NIL;
+
+	/*
+	 * Snapshot the (potentially sibling-shared) index-clause list pointer up
+	 * front so the copy-on-write in EnsureIndexClausesOwned can tell whether
+	 * this path already owns a private copy. See EnsureIndexClausesOwned.
+	 */
+	List *sharedIndexClauses = indexPath->indexclauses;
 	foreach(cell, indexPath->indexclauses)
 	{
 		IndexClause *clause = (IndexClause *) lfirst(cell);
@@ -5637,31 +5608,24 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 	}
 
 	/* One final pass to add the appropriate order by clauses to the index path */
-	bool distinctFilterSatisfiesFirstColumn = false;
 	if (indexCanOrder && maxOrderByColumn >= 0)
 	{
-		distinctFilterSatisfiesFirstColumn = ProcessOrderByStatements(
+		ProcessOrderByStatements(
 			root, indexPath, minOrderByColumn,
 			maxOrderByColumn, isMultiKeyIndex,
 			multiKeyBitMask,
 			queryOrderPaths, equalityPrefixes,
-			nonEqualityPrefixes, anySpecifiedPrefixes,
-			pathSortOrders, addedRestrictInfos);
+			nonEqualityPrefixes,
+			pathSortOrders);
 
-		/* Trim the order by clauses from the index if there's filters. The
-		 * multi-key distinct branch does not push an order-by; it instead pushes
-		 * an $exists: true filter on the first column (distinctFilterSatisfiesFirstColumn),
-		 * so its stale order-by clauses must be trimmed here as well. */
-		if ((firstFilterColumnFound || distinctFilterSatisfiesFirstColumn) &&
+		/* Trim the order by clauses from the index if there's filters. */
+		if (firstFilterColumnFound &&
 			list_length(orderbyIndexClauses) > 0)
 		{
-			/* If the index supports parallel scan, we need to duplicate this list
-			 * so that parallel scans can also see the trimmed clauses.
+			/* Duplicate the sibling-shared clause list before trimming so
+			 * parallel scans are not corrupted.
 			 */
-			if (indexPath->indexinfo->amcanparallel)
-			{
-				indexPath->indexclauses = list_copy(indexPath->indexclauses);
-			}
+			EnsureIndexClausesOwned(indexPath, sharedIndexClauses);
 
 			foreach(cell, orderbyIndexClauses)
 			{
@@ -5724,12 +5688,10 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 	}
 
 	/*
-	 * Valid if we pushed some order by, a filter path was found on at least the
-	 * first column, or a multi-key distinct pushed an $exists: true filter on
-	 * the first column (which stands in for an order-by that cannot be pushed).
+	 * Valid if we pushed some order by, or a filter path was found on at least
+	 * the first column.
 	 */
-	return firstFilterColumnFound || distinctFilterSatisfiesFirstColumn ||
-		   indexPath->indexorderbys != NIL;
+	return firstFilterColumnFound || indexPath->indexorderbys != NIL;
 }
 
 
@@ -6588,6 +6550,34 @@ ProcessRestrictionInfoAndRewriteFuncExpr(Expr *clause,
 				{
 					return NULL;
 				}
+			}
+
+			if (IsClusterVersionAtleast(DocDB_V0, 116, 0) &&
+				funcExpr->funcid == BsonDollarDistinctExistsFunctionOid())
+			{
+				/*
+				 * On an index path the distinct-exists marker is matched to the
+				 * index, so lower it to the equivalent "path >= MinKey" OpExpr.
+				 * This keeps the bitmap recheck expressed with the same operator
+				 * as the index condition instead of the raw FuncExpr, so the
+				 * planner treats it as index-handled rather than a redundant
+				 * runtime recheck. On non-index (baserestrictinfo) paths the
+				 * marker is trimmed above, since distinct already excludes
+				 * documents missing the path.
+				 */
+				Expr *secondArg = lsecond(funcExpr->args);
+				if (!IsA(secondArg, Const) || ((Const *) secondArg)->constisnull)
+				{
+					return clause;
+				}
+
+				pgbsonelement pathElement;
+				PgbsonToSinglePgbsonElement(
+					DatumGetPgBson(((Const *) secondArg)->constvalue),
+					&pathElement);
+				return (Expr *) CreateExistsTrueOpExpr(
+					linitial(funcExpr->args), pathElement.path,
+					pathElement.pathLength);
 			}
 
 			if (funcExpr->funcid == BsonFullScanFunctionOid())
@@ -8288,6 +8278,164 @@ ProcessFullScanForOrderBy(SupportRequestIndexCondition *req, List *args)
 	}
 
 	return CreateKnownFullScanExpr(queryValue, linitial(args), querySortDirection);
+}
+
+
+/*
+ * Planner support handler for the distinct-exists filter
+ * (bson_dollar_distinct_exists). It is dispatched from the distinct planner
+ * support function and lowers the filter to a "path >= MinKey" comparison for
+ * index pushdown, together with matching selectivity and cost estimates.
+ * Requests for any other function, or on clusters below the introducing
+ * version, are declined by returning NULL so the planner falls back to its
+ * defaults.
+ */
+Pointer
+HandleDistinctExistsSupportRequest(Node *supportRequest)
+{
+	if (!IsClusterVersionAtleast(DocDB_V0, 116, 0))
+	{
+		return NULL;
+	}
+
+	if (IsA(supportRequest, SupportRequestIndexCondition))
+	{
+		SupportRequestIndexCondition *req =
+			(SupportRequestIndexCondition *) supportRequest;
+		if (req->funcid != BsonDollarDistinctExistsFunctionOid() ||
+			!IsA(req->node, FuncExpr))
+		{
+			return NULL;
+		}
+
+		List *args = ((FuncExpr *) req->node)->args;
+		if (list_length(args) != 2)
+		{
+			return NULL;
+		}
+
+		/* A perfect match for the function, so the index condition is not lossy. */
+		req->lossy = false;
+
+		Expr *finalNode = ProcessDistinctExistsForIndex(req, args);
+		if (finalNode != NULL)
+		{
+			return (Pointer) list_make1(finalNode);
+		}
+	}
+	else if (IsA(supportRequest, SupportRequestSelectivity))
+	{
+		SupportRequestSelectivity *req = (SupportRequestSelectivity *) supportRequest;
+		if (req->funcid == BsonDollarDistinctExistsFunctionOid() &&
+			EnablePlannerCostSelectivity(req->root, req->args) &&
+			list_length(req->args) == 2 &&
+			IsA(lsecond(req->args), Const) &&
+			!((Const *) lsecond(req->args))->constisnull)
+		{
+			/*
+			 * A distinct-exists filter estimates as a $exists on the path,
+			 * i.e. a "path >= MinKey" comparison. This mirrors the lowering
+			 * done by the index-condition support (CreateExistsTrueOpExpr).
+			 */
+			const double defaultFuncExprSelectivity = 0.3333333;
+			pgbsonelement pathElement;
+			PgbsonToSinglePgbsonElement(
+				DatumGetPgBson(((Const *) lsecond(req->args))->constvalue),
+				&pathElement);
+
+			pgbson_writer minKeyWriter;
+			PgbsonWriterInit(&minKeyWriter);
+			bson_value_t minKey = { 0 };
+			minKey.value_type = BSON_TYPE_MINKEY;
+			PgbsonWriterAppendValue(&minKeyWriter, pathElement.path,
+									pathElement.pathLength, &minKey);
+			Const *minKeyConst = makeConst(
+				BsonTypeId(), -1, InvalidOid, -1,
+				PointerGetDatum(PgbsonWriterGetPgbson(&minKeyWriter)),
+				false, false);
+
+			const MongoIndexOperatorInfo *gteOperator =
+				GetMongoIndexOperatorInfoByPostgresFuncId(
+					BsonGreaterThanEqualMatchIndexFunctionId());
+			List *selectivityArgs = list_make2(linitial(req->args), minKeyConst);
+			req->selectivity = GetDollarOperatorSelectivity(
+				req->root, GetMongoQueryOperatorOid(gteOperator),
+				selectivityArgs, req->inputcollid, req->varRelid,
+				defaultFuncExprSelectivity);
+			return (Pointer) req;
+		}
+	}
+	else if (IsA(supportRequest, SupportRequestCost))
+	{
+		SupportRequestCost *req = (SupportRequestCost *) supportRequest;
+		if (req->funcid == BsonDollarDistinctExistsFunctionOid())
+		{
+			/* A distinct-exists filter is trimmed once pushed to the index, so
+			 * model it with a negligible cost like the full scan qpqual. */
+			req->per_tuple = 1e-9;
+			req->startup = 0;
+			return (Pointer) req;
+		}
+	}
+
+	return NULL;
+}
+
+
+/*
+ * Converts a distinct-exists filter (bson_dollar_distinct_exists) into a
+ * "path >= MinKey" index condition so an ordered index on the distinct path can
+ * be used to skip documents that do not hold the path. The runtime filter
+ * carries a { "<path>": true } spec; only the path is used here. Returns NULL
+ * when the index column does not serialize opclass options (e.g. a btree id
+ * index) or the distinct path is not covered by this index column, in which
+ * case the filter is left to run at execution time.
+ */
+static Expr *
+ProcessDistinctExistsForIndex(SupportRequestIndexCondition *req, List *args)
+{
+	Node *operand = lsecond(args);
+	if (!IsA(operand, Const))
+	{
+		return NULL;
+	}
+
+	/* Only ordered index access methods that serialize opclass options (the
+	 * indexed path) can satisfy a path >= MinKey condition. A NULL options
+	 * value (e.g. a btree object id index) naturally excludes non-matching
+	 * index types.
+	 */
+	bytea *options = req->index->opclassoptions[req->indexcol];
+	if (options == NULL)
+	{
+		return NULL;
+	}
+
+	pgbsonelement pathElement;
+	PgbsonToSinglePgbsonElement(DatumGetPgBson(((Const *) operand)->constvalue),
+								&pathElement);
+
+	/* Validate this index column covers the distinct path by checking a
+	 * path >= MinKey qualifier against the serialized options. This reuses the
+	 * existing $gte index handling, so no index-side changes are required.
+	 */
+	pgbson_writer minKeyWriter;
+	PgbsonWriterInit(&minKeyWriter);
+	bson_value_t minKey = { 0 };
+	minKey.value_type = BSON_TYPE_MINKEY;
+	PgbsonWriterAppendValue(&minKeyWriter, pathElement.path, pathElement.pathLength,
+							&minKey);
+	Datum minKeyQueryValue = PointerGetDatum(PgbsonWriterGetPgbson(&minKeyWriter));
+
+	if (!ValidateIndexForQualifierValue(options, minKeyQueryValue,
+										BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL))
+	{
+		return NULL;
+	}
+
+	req->lossy = false;
+	return (Expr *) CreateExistsTrueOpExpr(linitial(args), pathElement.path,
+										   pathElement.pathLength);
 }
 
 

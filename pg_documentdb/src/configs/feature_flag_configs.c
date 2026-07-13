@@ -173,6 +173,11 @@ bool EnablePerPathMultiKeySortPushdown =
 bool EnableIndexCorrelationFromStatistics =
 	DEFAULT_ENABLE_INDEX_CORRELATION_FROM_STATISTICS;
 
+/* Added in v116, Pending stabilization, enable in v122 */
+#define DEFAULT_ENABLE_DISTINCT_UNWIND_ROWS_FROM_STATISTICS false
+bool EnableDistinctUnwindRowsFromStatistics =
+	DEFAULT_ENABLE_DISTINCT_UNWIND_ROWS_FROM_STATISTICS;
+
 /* Longer term feature flag to track older cluster data: Move to testing_configs when convenient */
 /* Added in v109, enabled in v109, remove after v999 */
 #define DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS true
@@ -237,10 +242,10 @@ bool EnableDottedValueTextIndexTerms = DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TE
 #define DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN true
 bool EnableDistinctIndexPushdown = DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN;
 
-/* Added in v115, enabled in v115, remove after v119 */
-#define DEFAULT_ENABLE_DISTINCT_MULTIKEY_FILTER_PUSHDOWN true
-bool EnableDistinctMultiKeyFilterPushdown =
-	DEFAULT_ENABLE_DISTINCT_MULTIKEY_FILTER_PUSHDOWN;
+/* Added in v116, Pending stabilization, enable in v122 */
+#define DEFAULT_ENABLE_DISTINCT_EXISTS_FILTER_PUSHDOWN false
+bool EnableDistinctExistsFilterPushdown =
+	DEFAULT_ENABLE_DISTINCT_EXISTS_FILTER_PUSHDOWN;
 
 /*
  * SECTION: Planner feature flags
@@ -887,12 +892,12 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enable_distinct_multikey_filter_pushdown", newGucPrefix),
+		psprintf("%s.enable_distinct_exists_filter_pushdown", newGucPrefix),
 		gettext_noop(
-			"Whether to push an $exists: true filter into a multi-key index when "
-			"a distinct cannot push down its order-by."),
-		NULL, &EnableDistinctMultiKeyFilterPushdown,
-		DEFAULT_ENABLE_DISTINCT_MULTIKEY_FILTER_PUSHDOWN,
+			"Whether to append a distinct-exists filter during distinct planning "
+			"that converts to a path >= MinKey index condition on ordered indexes."),
+		NULL, &EnableDistinctExistsFilterPushdown,
+		DEFAULT_ENABLE_DISTINCT_EXISTS_FILTER_PUSHDOWN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -1079,6 +1084,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to source the physical-order correlation of a composite index's leading path from extended statistics during cost estimation. When off, the correlation defaults to the base access method estimate."),
 		NULL, &EnableIndexCorrelationFromStatistics,
 		DEFAULT_ENABLE_INDEX_CORRELATION_FROM_STATISTICS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_distinct_unwind_rows_from_statistics", newGucPrefix),
+		gettext_noop(
+			"Whether the distinct-unwind planner support function should derive its returned row estimate from column statistics of the unwound path. When off, the estimate defaults to the function's declared prorows."),
+		NULL, &EnableDistinctUnwindRowsFromStatistics,
+		DEFAULT_ENABLE_DISTINCT_UNWIND_ROWS_FROM_STATISTICS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

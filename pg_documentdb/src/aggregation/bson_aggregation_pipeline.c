@@ -96,6 +96,7 @@ extern bool EnableProjectPushUpBeforeUnwindWithGroup;
 extern bool EnableSortPushToAccumulatorWithPrefix;
 extern bool EnableSampleScanFixOnSharded;
 extern bool EnableDistinctIndexPushdown;
+extern bool EnableDistinctExistsFilterPushdown;
 extern bool EnableSubqueryPushdownForMatch;
 extern bool EnableDollarSampleReservoirScan;
 
@@ -5398,6 +5399,36 @@ HandleDistinct(const StringView *distinctKey, Query *query,
 
 		AddFullScanQualsForOrderByPushdown(query, currentProjection, &sortSpecElement,
 										   context);
+	}
+
+	/*
+	 * Append a distinct-exists filter (path >= MinKey once lowered) so that an
+	 * ordered index on the distinct path can restrict the scan to documents
+	 * that actually hold the path. The filter is trimmable when it is pushed to
+	 * the index, and is otherwise evaluated at runtime. Gated on the cluster
+	 * having the function installed (missingOk lookup returns InvalidOid on
+	 * older clusters).
+	 */
+	if (EnableDistinctExistsFilterPushdown &&
+		IsClusterVersionAtleast(DocDB_V0, 116, 0) &&
+		OidIsValid(BsonDollarDistinctExistsFunctionOid()))
+	{
+		pgbson_writer existsWriter;
+		PgbsonWriterInit(&existsWriter);
+		PgbsonWriterAppendBool(&existsWriter, distinctKey->string,
+							   distinctKey->length, true);
+		Const *existsSpecConst =
+			makeConst(BsonTypeId(), -1, InvalidOid, -1,
+					  PointerGetDatum(PgbsonWriterGetPgbson(&existsWriter)),
+					  false, false);
+		List *existsArgs = list_make2(currentProjection, existsSpecConst);
+		Expr *distinctExistsExpr = (Expr *) makeFuncExpr(
+			BsonDollarDistinctExistsFunctionOid(), BOOLOID, existsArgs,
+			InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+		List *existsQuals = make_ands_implicit(
+			(Expr *) query->jointree->quals);
+		existsQuals = lappend(existsQuals, distinctExistsExpr);
+		query->jointree->quals = (Node *) make_ands_explicit(existsQuals);
 	}
 
 	query = MigrateQueryToSubQuery(query, context);

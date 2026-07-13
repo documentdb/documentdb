@@ -591,6 +591,7 @@ PG_FUNCTION_INFO_V1(bson_dollar_not_gte);
 PG_FUNCTION_INFO_V1(bson_dollar_not_lt);
 PG_FUNCTION_INFO_V1(bson_dollar_not_lte);
 PG_FUNCTION_INFO_V1(bson_dollar_fullscan);
+PG_FUNCTION_INFO_V1(bson_dollar_distinct_exists);
 PG_FUNCTION_INFO_V1(bson_dollar_index_hint);
 
 PG_FUNCTION_INFO_V1(bson_value_dollar_eq);
@@ -1761,6 +1762,28 @@ bson_dollar_exists(PG_FUNCTION_ARGS)
 	bool match = CompareBsonAgainstQuery(documentDatum, filter, CompareExistsMatch,
 										 isNullFilterEquality);
 	PG_RETURN_BOOL(existsPositiveMatch ? match : !match);
+}
+
+
+/*
+ * bson_dollar_distinct_exists is a runtime filter added during distinct
+ * planning that keeps only documents where the distinct path is present. It is
+ * semantically an $exists: true on that path (a document without the path
+ * contributes no distinct value). The planner support function converts this
+ * to a "path >= MinKey" index condition when a suitable ordered index exists;
+ * this runtime implementation covers the case where the filter is not pushed
+ * to an index (e.g. a sequential scan).
+ */
+Datum
+bson_dollar_distinct_exists(PG_FUNCTION_ARGS)
+{
+	Datum documentDatum = PG_GETARG_DATUM(0);
+	pgbson *filter = PG_GETARG_PGBSON(1);
+
+	IsQueryFilterNullFunc isNullFilterEquality = NULL;
+	bool match = CompareBsonAgainstQuery(documentDatum, filter, CompareExistsMatch,
+										 isNullFilterEquality);
+	PG_RETURN_BOOL(match);
 }
 
 

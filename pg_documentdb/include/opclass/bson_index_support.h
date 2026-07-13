@@ -149,4 +149,6 @@ void documentdb_btcostestimate(PlannerInfo *root, IndexPath *path, double loop_c
 
 Path * OptimizeAndTrimBitmapQualsForBitmapAnd(BitmapAndPath *andPath, uint64_t
 											  collectionId);
+
+Pointer HandleDistinctExistsSupportRequest(Node *supportRequest);
 #endif
