@@ -606,3 +606,157 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_pro
 RESET citus.enable_local_execution;
 SET documentdb.enableNewMinMaxAccumulators TO off;
 SELECT documentdb_api.drop_collection('db', 'maxmin_project_group_test');
+
+-- =============================================================================
+-- Test 18: $group with enable_min_max_skip_null_values propagated to workers.
+-- A plain session-level SET does not reach the Citus workers (so the worker-side
+-- transition keeps skipping nulls regardless); this test enables
+-- citus.propagate_set_commands = 'local' and issues the flag as a SET LOCAL
+-- inside a transaction. Citus then ships the GUC to the workers, so the
+-- worker-side $min/$max transition honors it. With skipping off, explicit null
+-- is considered again across shards; on the legacy path a missing field
+-- (projected to null) is also considered, while the WithExpr path still excludes
+-- missing regardless of the flag.
+-- =============================================================================
+
+-- Group "mixed": explicit null + missing + numbers. Skip on => min 5, max 100.
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 1,  "grp": "mixed", "val": 50 }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 2,  "grp": "mixed", "val": null }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 3,  "grp": "mixed", "val": 5 }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 4,  "grp": "mixed", "val": null }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 5,  "grp": "mixed", "val": 100 }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 6,  "grp": "mixed" }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 7,  "grp": "mixed", "val": 30 }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 8,  "grp": "mixed", "val": null }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 9,  "grp": "mixed", "val": 65 }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 10, "grp": "mixed", "val": null }');
+
+-- Group "allnull": every value is null or missing. Always min/max null.
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 11, "grp": "allnull", "val": null }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 12, "grp": "allnull" }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 13, "grp": "allnull", "val": null }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 14, "grp": "allnull" }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 15, "grp": "allnull", "val": null }');
+
+-- Group "mk": MinKey (sorts below null) mixed with null.
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 16, "grp": "mk", "val": { "$minKey": 1 } }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 17, "grp": "mk", "val": null }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 18, "grp": "mk", "val": { "$minKey": 1 } }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 19, "grp": "mk", "val": null }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 20, "grp": "mk", "val": null }');
+
+-- Group "missingonly": numbers + missing, no explicit null. Isolates the
+-- legacy-vs-WithExpr divergence with skipping off: legacy projects missing to
+-- null and considers it (min null), WithExpr excludes missing (min 5).
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 21, "grp": "missingonly", "val": 30 }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 22, "grp": "missingonly", "val": 5 }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 23, "grp": "missingonly" }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 24, "grp": "missingonly", "val": 42 }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_dist_test','{ "_id": 25, "grp": "missingonly", "val": 7 }');
+
+SELECT documentdb_api.shard_collection('db', 'maxmin_null_prop_dist_test', '{ "_id": "hashed" }', false);
+
+-- Propagate SET LOCAL commands to workers for the queries below.
+SET citus.propagate_set_commands TO 'local';
+
+-- Legacy accumulator path, skipping ON (propagated): nulls/missing skipped.
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
+BEGIN;
+SET LOCAL citus.enable_local_execution TO off;
+SET LOCAL documentdb.enable_min_max_skip_null_values TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_null_prop_dist_test", "pipeline": [ { "$group": { "_id": "$grp", "minVal": { "$min": "$val" }, "maxVal": { "$max": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
+COMMIT;
+
+-- Legacy accumulator path, skipping OFF (propagated): explicit null and missing
+-- (projected to null) are considered on the workers.
+BEGIN;
+SET LOCAL citus.enable_local_execution TO off;
+SET LOCAL documentdb.enable_min_max_skip_null_values TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_null_prop_dist_test", "pipeline": [ { "$group": { "_id": "$grp", "minVal": { "$min": "$val" }, "maxVal": { "$max": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
+COMMIT;
+
+-- WithExpr accumulator path, skipping ON (propagated).
+SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
+BEGIN;
+SET LOCAL citus.enable_local_execution TO off;
+SET LOCAL documentdb.enable_min_max_skip_null_values TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_null_prop_dist_test", "pipeline": [ { "$group": { "_id": "$grp", "minVal": { "$min": "$val" }, "maxVal": { "$max": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
+COMMIT;
+
+-- WithExpr accumulator path, skipping OFF (propagated): explicit null considered,
+-- missing still excluded.
+BEGIN;
+SET LOCAL citus.enable_local_execution TO off;
+SET LOCAL documentdb.enable_min_max_skip_null_values TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_null_prop_dist_test", "pipeline": [ { "$group": { "_id": "$grp", "minVal": { "$min": "$val" }, "maxVal": { "$max": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
+COMMIT;
+
+RESET citus.propagate_set_commands;
+RESET documentdb.enableNewMinMaxAccumulators;
+RESET documentdb.enableNewWithExprAccumulators;
+SELECT documentdb_api.drop_collection('db', 'maxmin_null_prop_dist_test');
+
+-- =============================================================================
+-- Test 19: $setWindowFields with enable_min_max_skip_null_values propagated to
+-- workers. Sharding on the partition field executes each partition on a worker,
+-- so the SET LOCAL flag must reach the worker for the window transition to honor
+-- it. This exercises the window-function transition path (distinct from $group).
+-- With skipping on, null/missing are excluded on the workers; with skipping off,
+-- explicit null is considered; on the legacy path missing (projected to null) is
+-- considered too, while the WithExpr path excludes it.
+-- =============================================================================
+
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_window_dist_test','{ "_id": 1, "grp": "mixed", "val": 50 }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_window_dist_test','{ "_id": 2, "grp": "mixed", "val": null }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_window_dist_test','{ "_id": 3, "grp": "mixed", "val": 5 }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_window_dist_test','{ "_id": 4, "grp": "mixed" }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_window_dist_test','{ "_id": 5, "grp": "allnull", "val": null }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_window_dist_test','{ "_id": 6, "grp": "allnull" }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_window_dist_test','{ "_id": 7, "grp": "missingonly", "val": 30 }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_window_dist_test','{ "_id": 8, "grp": "missingonly", "val": 5 }');
+SELECT documentdb_api.insert_one('db','maxmin_null_prop_window_dist_test','{ "_id": 9, "grp": "missingonly" }');
+
+SELECT documentdb_api.shard_collection('db', 'maxmin_null_prop_window_dist_test', '{ "grp": "hashed" }', false);
+
+SET citus.propagate_set_commands TO 'local';
+
+-- Legacy accumulator path, skipping ON (propagated): the window transition on
+-- workers excludes null/missing, so partitions with real values ignore them.
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
+BEGIN;
+SET LOCAL citus.enable_local_execution TO off;
+SET LOCAL documentdb.enable_min_max_skip_null_values TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_null_prop_window_dist_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$grp", "sortBy": { "_id": 1 }, "output": { "minVal": { "$min": "$val", "window": { "documents": [ "unbounded", "unbounded" ] } }, "maxVal": { "$max": "$val", "window": { "documents": [ "unbounded", "unbounded" ] } } } } }, { "$project": { "_id": 1, "grp": 1, "minVal": 1, "maxVal": 1 } }, { "$sort": { "_id": 1 } } ] }');
+COMMIT;
+
+-- Legacy accumulator path, skipping OFF (propagated).
+BEGIN;
+SET LOCAL citus.enable_local_execution TO off;
+SET LOCAL documentdb.enable_min_max_skip_null_values TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_null_prop_window_dist_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$grp", "sortBy": { "_id": 1 }, "output": { "minVal": { "$min": "$val", "window": { "documents": [ "unbounded", "unbounded" ] } }, "maxVal": { "$max": "$val", "window": { "documents": [ "unbounded", "unbounded" ] } } } } }, { "$project": { "_id": 1, "grp": 1, "minVal": 1, "maxVal": 1 } }, { "$sort": { "_id": 1 } } ] }');
+COMMIT;
+
+-- WithExpr accumulator path, skipping ON (propagated): matches the legacy ON
+-- results since both exclude null/missing in the window transition.
+SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
+BEGIN;
+SET LOCAL citus.enable_local_execution TO off;
+SET LOCAL documentdb.enable_min_max_skip_null_values TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_null_prop_window_dist_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$grp", "sortBy": { "_id": 1 }, "output": { "minVal": { "$min": "$val", "window": { "documents": [ "unbounded", "unbounded" ] } }, "maxVal": { "$max": "$val", "window": { "documents": [ "unbounded", "unbounded" ] } } } } }, { "$project": { "_id": 1, "grp": 1, "minVal": 1, "maxVal": 1 } }, { "$sort": { "_id": 1 } } ] }');
+COMMIT;
+
+-- WithExpr accumulator path, skipping OFF (propagated).
+BEGIN;
+SET LOCAL citus.enable_local_execution TO off;
+SET LOCAL documentdb.enable_min_max_skip_null_values TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "maxmin_null_prop_window_dist_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$grp", "sortBy": { "_id": 1 }, "output": { "minVal": { "$min": "$val", "window": { "documents": [ "unbounded", "unbounded" ] } }, "maxVal": { "$max": "$val", "window": { "documents": [ "unbounded", "unbounded" ] } } } } }, { "$project": { "_id": 1, "grp": 1, "minVal": 1, "maxVal": 1 } }, { "$sort": { "_id": 1 } } ] }');
+COMMIT;
+
+RESET citus.propagate_set_commands;
+RESET documentdb.enableNewMinMaxAccumulators;
+RESET documentdb.enableNewWithExprAccumulators;
+SELECT documentdb_api.drop_collection('db', 'maxmin_null_prop_window_dist_test');
