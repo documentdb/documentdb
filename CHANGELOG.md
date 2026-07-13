@@ -3,6 +3,7 @@
 * Stream `$group` aggregations under dynamic cursors when the group keys can be provided in order by an index (sorted GroupAggregate over an ordered index scan), instead of falling back to a persistent cursor. Guarded by `documentdb.enable_group_by_dynamic_streaming` feature flag, enabled by default while pending stabilization. *[Perf]*
 
 ### documentdb v0.115-0 (Unreleased) ###
+* Fix `$min` and `$max` accumulators to skip null and missing values when non-null values are present, only returning null when all values are null or missing. Guarded by `enable_min_max_skip_null_values`, enabled by default. *[Bugfix]*
 * Optimize `$sample` over an Index Scan by avoiding heap reads for rows the reservoir discards (visible rows are counted via the visibility map). Applies to Index Scans without runtime filters over btree or regular RUM indexes. *[Perf]*
 * Fix `$exists` argument coercion so falsy non-boolean values (`null`, `undefined`, `0`) are treated as `$exists: false` and truthy non-boolean values as `$exists: true`, matching the documented truthiness semantics. Previously `$exists: null` behaved like `$exists: true`. *[Bugfix]*
 * Fix `$size` returning wrong results when applied to a field path nested inside `$elemMatch`. *[Bugfix]*

@@ -259,6 +259,10 @@ bool EnableNewMinMaxAccumulators = DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS;
 #define DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS true
 bool EnableNewWithExprAccumulators = DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS;
 
+/* Added on v115, enabled on v115, remove after v118 */
+#define DEFAULT_ENABLE_MIN_MAX_SKIP_NULL_VALUES true
+bool EnableMinMaxSkipNullValues = DEFAULT_ENABLE_MIN_MAX_SKIP_NULL_VALUES;
+
 /* Added in v114, enabled on v114, remove after v116 */
 #define DEFAULT_ENABLE_DELETE_ONE_PLAN_CACHE_OPTIMIZATION true
 bool EnableDeleteOnePlanCacheOptimization =
@@ -1225,6 +1229,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable new min and max aggregate optimizations."),
 		NULL, &EnableNewMinMaxAccumulators,
 		DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_min_max_skip_null_values", newGucPrefix),
+		gettext_noop(
+			"Whether $min and $max accumulators skip null values, matching the documented wire-protocol semantics of only considering non-null, non-missing values."),
+		NULL, &EnableMinMaxSkipNullValues,
+		DEFAULT_ENABLE_MIN_MAX_SKIP_NULL_VALUES,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
