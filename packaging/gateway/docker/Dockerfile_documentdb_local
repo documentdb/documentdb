@@ -152,6 +152,10 @@ ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 FROM runtime-base AS final
 ARG POSTGRES_VERSION
 
+# Identity labels so tooling can discover the container by label alone, without
+# relying on its name/port or inspecting logs/env (which hold credentials).
+LABEL org.opencontainers.image.title="DocumentDB Local" \
+      com.documentdb.documentdb.local="true"
 
 ENV LANGUAGE=en_US.UTF-8 \
     TERM=xterm-256color
