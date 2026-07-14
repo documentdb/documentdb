@@ -967,6 +967,16 @@ HandleUpdateDollarPush(const bson_value_t *existingValue,
 			UpdateArrayWriterWriteModifiedValue(arrayWriter, &elementsArr[i].bsonValue);
 		}
 
+		/* When the slice range is empty (say, $slice: 0) no modified value is
+		 * written above, so the array writer would otherwise be left marked as
+		 * unchanged and the emptied array discarded as a no-op. If the source
+		 * array had any elements, emptying it is a real modification, so mark
+		 * the array writer as changed to persist the now empty array. */
+		if (pushState.sliceStart >= pushState.sliceEnd && existingArrayLength > 0)
+		{
+			UpdateArrayWriterSkipValue(arrayWriter);
+		}
+
 		/* All done with temp resources, release*/
 		pfree(elementsArr);
 	}

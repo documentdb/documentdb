@@ -1828,6 +1828,40 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5,
  { "_id" : { "$numberInt" : "1" }, "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" }, { "$numberInt" : "10" } ] }
 (1 row)
 
+-- $push with $slice: 0 must empty a previously non-empty array (not a no-op)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5]}', '{ "": { "$push" : {"a": { "$each" : [], "$slice": 0 }} } }', '{}', NULL, NULL, NULL) as update_bson_document;
+              update_bson_document              
+------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : [  ] }
+(1 row)
+
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5]}', '{ "": { "$push" : {"a": { "$each" : [6,7,8], "$sort": -1, "$slice": 0 }} } }', '{}', NULL, NULL, NULL) as update_bson_document;
+              update_bson_document              
+------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : [  ] }
+(1 row)
+
+-- $push with $slice: 0 on an already-empty array is a no-op (result unchanged)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": []}', '{ "": { "$push" : {"a": { "$each" : [], "$slice": 0 }} } }', '{}', NULL, NULL, NULL) as update_bson_document;
+ update_bson_document 
+----------------------
+ 
+(1 row)
+
+-- $push with $each and $slice: 0 on an empty array stays empty (result equals source, no-op)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": []}', '{ "": { "$push" : {"a": { "$each" : [1,2], "$slice": 0 }} } }', '{}', NULL, NULL, NULL) as update_bson_document;
+ update_bson_document 
+----------------------
+ 
+(1 row)
+
+-- $push with $slice: 0 on a nested/dotted path empties the array
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": {"key2": {"key3": {"key4": [1,2,3,4,5]}}}}', '{ "": { "$push" : {"key.key2.key3.key4": { "$each" : [6,7,8], "$sort": -1, "$slice": 0 }} } }', '{}', NULL, NULL, NULL) as update_bson_document;
+                                  update_bson_document                                   
+-----------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "key" : { "key2" : { "key3" : { "key4" : [  ] } } } }
+(1 row)
+
 -- $push with $each & $position modifier in non-dotted path
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5,6,7,8,9,10]}', '{ "": { "$push" : {"a": { "$each" : [-1, 0], "$position": 20 }} } }', '{}', NULL, NULL, NULL) as update_bson_document;
                                                                                                                                                               update_bson_document                                                                                                                                                              
