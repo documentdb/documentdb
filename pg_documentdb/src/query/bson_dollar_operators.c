@@ -285,6 +285,7 @@ typedef struct
 
 typedef bool (*IsQueryFilterNullFunc)(const TraverseValidateState *state);
 extern bool EnableCollation;
+extern bool EnableExistentialNullArrayMatch;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -393,6 +394,9 @@ static bool IsQueryFilterNullForDollarAll(const TraverseValidateState *filterEle
 static bool CompareVisitTopLevelField(pgbsonelement *element, const
 									  StringView *filterPath,
 									  void *state);
+static bool CompareVisitTopLevelFieldForNulls(pgbsonelement *element, const
+											  StringView *filterPath,
+											  void *state);
 static bool CompareVisitArrayField(pgbsonelement *element, const StringView *filterPath,
 								   int arrayIndex, void *state);
 static void CompareSetTraverseResult(void *state, TraverseBsonResult compareResult);
@@ -451,7 +455,7 @@ static const TraverseBsonExecutionFuncs CompareNullExecutionFuncs = {
 	.ContinueProcessIntermediateArray = CompareContinueProcessIntermediateArray,
 	.SetTraverseResult = CompareSetTraverseResultForNulls,
 	.VisitArrayField = CompareVisitArrayField,
-	.VisitTopLevelField = CompareVisitTopLevelField,
+	.VisitTopLevelField = CompareVisitTopLevelFieldForNulls,
 	.SetIntermediateArrayIndex = NULL,
 	.HandleIntermediateArrayPathNotFound = NULL,
 	.SetIntermediateArrayStartEnd = NULL,
@@ -1670,8 +1674,16 @@ bson_dollar_nin(PG_FUNCTION_ARGS)
 
 	PgbsonInitIterator(document, &documentIterator);
 
+	const TraverseBsonExecutionFuncs *execFuncs = &CompareExecutionFuncs;
+	if (EnableExistentialNullArrayMatch && state.hasNull)
+	{
+		/* $nin with null: existential null semantics, same as $in. */
+		state.traverseState.compareResult = CompareResult_Mismatch;
+		execFuncs = &CompareNullExecutionFuncs;
+	}
+
 	TraverseBson(&documentIterator, filterElement.path, &state.traverseState,
-				 &CompareExecutionFuncs);
+				 execFuncs);
 
 	if (state.hasNull)
 	{
@@ -4008,8 +4020,21 @@ BsonDollarInCore(PG_FUNCTION_ARGS, bool hasObjectIdArg)
 
 	Datum documentDatum = PG_GETARG_DATUM(0);
 	IsQueryFilterNullFunc queryNullFunc = IsQueryFilterNullForDollarIn;
+
+	const TraverseBsonExecutionFuncs *execFuncs = &CompareExecutionFuncs;
+	if (EnableExistentialNullArrayMatch && state.hasNull)
+	{
+		/*
+		 * $in with null: seed Mismatch so a null/missing path (PathNotFound) is
+		 * distinguishable and latches a match, and use the null execution funcs
+		 * so a later array element cannot overwrite it.
+		 */
+		state.traverseState.compareResult = CompareResult_Mismatch;
+		execFuncs = &CompareNullExecutionFuncs;
+	}
+
 	PG_RETURN_BOOL(TraverseBsonAndProcessQueryResult(
-					   documentDatum, &CompareExecutionFuncs, filterElement.path,
+					   documentDatum, execFuncs, filterElement.path,
 					   &state.traverseState, queryNullFunc));
 }
 
@@ -4374,6 +4399,41 @@ CompareVisitTopLevelField(pgbsonelement *element, const StringView *filterPath,
 	/* continue parsing if not matched */
 	validateState->compareResult = CompareResult_Mismatch;
 	return !isMatched;
+}
+
+
+/*
+ * Variant of CompareVisitTopLevelField for the null-equality family ($eq/$gte/
+ * $lte null, $in/$nin containing null, and their negations).
+ *
+ * Null-equality is existential across an implicitly traversed array: once an
+ * earlier position latches a null/missing result (PathNotFound), a later
+ * position resolving the leaf to a concrete value must not downgrade it to
+ * Mismatch. A match still short-circuits; an initial Mismatch is still recorded.
+ */
+static bool
+CompareVisitTopLevelFieldForNulls(pgbsonelement *element, const
+								  StringView *filterPath, void *state)
+{
+	TraverseValidateState *validateState = (TraverseValidateState *) state;
+	element->pathLength = 0;
+
+	bool isFirstArrayTerm = false;
+	bool isMatched = validateState->matchFunc(element, validateState, isFirstArrayTerm);
+	if (isMatched)
+	{
+		validateState->compareResult = CompareResult_Match;
+		return false;
+	}
+
+	/* Preserve a PathNotFound latched from an earlier array position. When the GUC is enabled. */
+	if (!EnableExistentialNullArrayMatch ||
+		validateState->compareResult != CompareResult_PathNotFound)
+	{
+		validateState->compareResult = CompareResult_Mismatch;
+	}
+
+	return true;
 }
 
 

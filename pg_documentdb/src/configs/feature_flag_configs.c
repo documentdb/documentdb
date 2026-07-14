@@ -551,6 +551,10 @@ bool EnableDeadIndexEntryMarkingByTTLTask =
 #define DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES true
 bool TTLSkipCaughtUpIndexes = DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES;
 
+/* Added in v116, enabled in v116, remove after v119 */
+#define DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MATCH true
+bool EnableExistentialNullArrayMatch = DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MATCH;
+
 /* FEATURE FLAGS END */
 
 void
@@ -1477,6 +1481,18 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableDollarSampleHeapSkipReservoirScan,
 		DEFAULT_ENABLE_DOLLAR_SAMPLE_HEAP_SKIP_RESERVOIR_SCAN,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_existential_null_array_match", newGucPrefix),
+		gettext_noop(
+			"Whether equality-to-null on a dotted path uses existential semantics "
+			"across an implicitly traversed array."),
+		NULL,
+		&EnableExistentialNullArrayMatch,
+		DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MATCH,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

@@ -945,7 +945,22 @@ INSERT INTO abcd_q VALUES
  (1, 'a.b : null',           '{ "a.b": null }'),
  (2, 'a.b : $ne null',       '{ "a.b": { "$ne": null } }'),
  (3, 'a.b.c : $exists false','{ "a.b.c": { "$exists": false } }'),
- (4, 'a.b.c : $exists true', '{ "a.b.c": { "$exists": true } }');
+ (4, 'a.b.c : $exists true', '{ "a.b.c": { "$exists": true } }'),
+ -- Deep leaf below a null/missing intermediate inside an array. _id 6
+ -- ([ { b: null }, { b: { c: 5, d: 6 } } ]) is the headline case: a null-first
+ -- element makes a.b.c / a.b.d null even though a later element supplies a value.
+ (5, 'a.b.c : null',         '{ "a.b.c": null }'),
+ (6, 'a.b.c : $in null',     '{ "a.b.c": { "$in": [ null ] } }'),
+ (7, 'a.b.c : $gte null',    '{ "a.b.c": { "$gte": null } }'),
+ (8, 'a.b.c : $lte null',    '{ "a.b.c": { "$lte": null } }'),
+ (9, 'a.b.c : $ne null',     '{ "a.b.c": { "$ne": null } }'),
+ (10,'a.b.c : $nin null',    '{ "a.b.c": { "$nin": [ null ] } }'),
+ (11,'a.b.d : null',         '{ "a.b.d": null }'),
+ (12,'a.b.d : $in null',     '{ "a.b.d": { "$in": [ null ] } }'),
+ (13,'a.b.d : $gte null',    '{ "a.b.d": { "$gte": null } }'),
+ (14,'a.b.d : $lte null',    '{ "a.b.d": { "$lte": null } }'),
+ (15,'a.b.d : $ne null',     '{ "a.b.d": { "$ne": null } }'),
+ (16,'a.b.d : $nin null',    '{ "a.b.d": { "$nin": [ null ] } }');
 
 DO $abcd$
 DECLARE q RECORD; idxr int[]; seqr int[]; fs text; ncons int := 0;
@@ -967,3 +982,43 @@ BEGIN
   RAISE NOTICE 'index/collection-scan consistency mismatches: % (must be 0)', ncons;
   RESET enable_seqscan; RESET enable_indexscan; RESET enable_bitmapscan;
 END $abcd$;
+
+-- Golden index-scan result sets for the deep-leaf null family (a.b.c / a.b.d).
+-- The differential harness above already pinned index-scan == collection-scan for
+-- every predicate; these rows pin the exact sets served from the index, which
+-- match the documented wire-protocol semantics. _id 6 is the headline case: the
+-- null-first array element makes a.b.c / a.b.d null, so it MUST match $eq null
+-- (and be excluded from $ne null), even though a later element supplies a value.
+--   a.b.c null / $in / $gte / $lte -> 1,2,3,4,5,6,7,9
+--   a.b.c $ne / $nin null          -> 8,10
+--   a.b.d null / $in / $gte / $lte -> 1,2,3,4,5,6,7
+--   a.b.d $ne / $nin null          -> 8,9,10
+set enable_seqscan to off;
+set enable_indexscan to on;
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "abcd_null", "filter": { "a.b.c": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ix" }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "abcd_null", "filter": { "a.b.c": { "$in": [ null ] } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ix" }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "abcd_null", "filter": { "a.b.c": { "$ne": null } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ix" }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "abcd_null", "filter": { "a.b.c": { "$nin": [ null ] } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ix" }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "abcd_null", "filter": { "a.b.d": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ix" }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "abcd_null", "filter": { "a.b.d": { "$in": [ null ] } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ix" }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "abcd_null", "filter": { "a.b.d": { "$ne": null } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ix" }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "abcd_null", "filter": { "a.b.d": { "$nin": [ null ] } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ix" }');
+reset enable_seqscan;
+reset enable_indexscan;
+
+-- The enable_existential_null_array_match GUC (on by default) gates the fix.
+-- With it off, the deep leaf reverts to the pre-fix last-position-wins behavior:
+-- _id 6 is dropped from a.b.c : null (a later element supplies a.b.c) and instead
+-- appears under a.b.c : $ne null. Index scan and collection scan still agree.
+set documentdb.enable_existential_null_array_match to off;
+set enable_seqscan to off;
+set enable_indexscan to on;
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "abcd_null", "filter": { "a.b.c": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ix" }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "abcd_null", "filter": { "a.b.c": { "$ne": null } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ix" }');
+set enable_indexscan to off;
+set enable_seqscan to on;
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "abcd_null", "filter": { "a.b.c": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "abcd_null", "filter": { "a.b.c": { "$ne": null } }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+reset enable_seqscan;
+reset enable_indexscan;
+reset documentdb.enable_existential_null_array_match;
