@@ -1899,7 +1899,7 @@ IsFuncExprTrimmable(const FuncExpr *funcExpr)
 		   funcExpr->funcid == BsonFullScanFunctionOid() ||
 		   (IsClusterVersionAtleast(DocDB_V0, 112, 1) &&
 			funcExpr->funcid == ApiCursorTrackerFunctionId()) ||
-		   (IsClusterVersionAtleast(DocDB_V0, 116, 0) &&
+		   (IsClusterVersionAtleast(DocDB_V0, 114, 1) &&
 			funcExpr->funcid == BsonDollarDistinctExistsFunctionOid());
 }
 
@@ -6552,7 +6552,7 @@ ProcessRestrictionInfoAndRewriteFuncExpr(Expr *clause,
 				}
 			}
 
-			if (IsClusterVersionAtleast(DocDB_V0, 116, 0) &&
+			if (IsClusterVersionAtleast(DocDB_V0, 114, 1) &&
 				funcExpr->funcid == BsonDollarDistinctExistsFunctionOid())
 			{
 				/*
@@ -8293,7 +8293,7 @@ ProcessFullScanForOrderBy(SupportRequestIndexCondition *req, List *args)
 Pointer
 HandleDistinctExistsSupportRequest(Node *supportRequest)
 {
-	if (!IsClusterVersionAtleast(DocDB_V0, 116, 0))
+	if (!IsClusterVersionAtleast(DocDB_V0, 114, 1))
 	{
 		return NULL;
 	}

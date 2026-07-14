@@ -5410,7 +5410,7 @@ HandleDistinct(const StringView *distinctKey, Query *query,
 	 * older clusters).
 	 */
 	if (EnableDistinctExistsFilterPushdown &&
-		IsClusterVersionAtleast(DocDB_V0, 116, 0) &&
+		IsClusterVersionAtleast(DocDB_V0, 114, 1) &&
 		OidIsValid(BsonDollarDistinctExistsFunctionOid()))
 	{
 		pgbson_writer existsWriter;
