@@ -2878,8 +2878,15 @@ CompareModOperator(const bson_value_t *srcVal, const bson_value_t *modArrVal)
 	int64_t rem = BsonValueAsInt64(remainderBsonValue);
 
 
+	/* Unquantized on purpose: quantizing a double to 15 significant digits
+	 * pushes the exact boundary value -2^63 out of the int64 range, so the
+	 * runtime path rejected a document that the index term (already
+	 * normalized to int64) matched — the same query returned different
+	 * results depending on the chosen plan. MongoDB truncates the value to
+	 * a 64-bit integer without rounding.
+	 */
 	bool checkFixedInteger = false;
-	if (!IsBsonValue64BitInteger(srcVal, checkFixedInteger))
+	if (!IsBsonValueUnquantized64BitInteger(srcVal, checkFixedInteger))
 	{
 		return false;
 	}
