@@ -245,6 +245,9 @@ typedef char *(*TryGetExtendedVersionRefreshQuery_HookType)(void);
 extern TryGetExtendedVersionRefreshQuery_HookType
 	try_get_extended_version_refresh_query_hook;
 
+extern TryGetExtendedVersionRefreshQuery_HookType
+	try_get_extended_initialized_version_refresh_query_hook;
+
 typedef void (*GetShardIdsAndNamesForCollection_HookType)(Oid relationOid, const
 														  char *tableName,
 														  Datum **shardOidArray,
@@ -286,6 +289,10 @@ extern GetOperationCancellationQuery_HookType get_operation_cancellation_query_h
 
 typedef bool (*DefaultEnableCompositeOpClass_HookType)(void);
 extern DefaultEnableCompositeOpClass_HookType default_enable_composite_op_class_hook;
+
+typedef bool (*DefaultEnableStatsCreationOnNewCollections_HookType)();
+extern DefaultEnableStatsCreationOnNewCollections_HookType
+	default_enable_stats_creation_on_new_collections_hook;
 
 /*
  * Hook for resolving a search operator definition by operator name.

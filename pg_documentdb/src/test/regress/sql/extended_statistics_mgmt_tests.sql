@@ -553,3 +553,44 @@ RESET documentdb.enablePerCollectionPlannerStatistics;
 RESET documentdb.enablePlannerStatisticsNewCollections;
 RESET documentdb.enableCompositeIndexPlanner;
 DROP SCHEMA sparse_exists_helpers CASCADE;
+------------------------------------------------------------------------------
+-- Tests for the "statsEnabled" option on the wire-protocol create command.
+--
+-- Passing "statsEnabled": true on create explicitly enables planner statistics
+-- for the new collection, independent of the enablePlannerStatisticsNewCollections
+-- GUC. The flag is stored in the collections.options column.
+------------------------------------------------------------------------------
+-- Ensure the auto-enable GUC is off so we prove the option (not the GUC) is
+-- what enables stats.
+set documentdb.enablePlannerStatisticsNewCollections to off;
+
+-- statsEnabled: true on a brand-new collection with no other options exercised.
+-- (This is the path where the collection is only materialized by CreateCollection
+-- and must be re-fetched before the option can be stored.)
+SELECT documentdb_api.create_collection_view('stats_db', '{ "create": "create_stats_on", "statsEnabled": true }');
+SELECT options FROM documentdb_api_catalog.collections WHERE collection_id = 6406;
+
+-- Materializing an index on the stats-enabled collection creates a Statistics object.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('stats_db', '{ "createIndexes": "create_stats_on", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1" } ] }', TRUE);
+\d documentdb_data.documents_6406
+
+-- statsEnabled: false is a no-op: the option is absent (behaves like default create).
+SELECT documentdb_api.create_collection_view('stats_db', '{ "create": "create_stats_off", "statsEnabled": false }');
+SELECT options FROM documentdb_api_catalog.collections WHERE collection_id = 6407;
+
+-- Omitting statsEnabled entirely also leaves stats disabled.
+SELECT documentdb_api.create_collection_view('stats_db', '{ "create": "create_stats_absent" }');
+SELECT options FROM documentdb_api_catalog.collections WHERE collection_id = 6408;
+
+-- statsEnabled accepts boolean-like numeric truthiness (1).
+SELECT documentdb_api.create_collection_view('stats_db', '{ "create": "create_stats_numeric", "statsEnabled": 1 }');
+SELECT options FROM documentdb_api_catalog.collections WHERE collection_id = 6409;
+
+-- statsEnabled combined with another create option: both are applied.
+SELECT documentdb_api.create_collection_view('stats_db', '{ "create": "create_stats_combo", "statsEnabled": true, "enableUpdateDescription": true }');
+SELECT options FROM documentdb_api_catalog.collections WHERE collection_id = 6410;
+
+-- A non-boolean-like statsEnabled value is rejected.
+SELECT documentdb_api.create_collection_view('stats_db', '{ "create": "create_stats_bad", "statsEnabled": "yes" }');
+
+RESET documentdb.enablePlannerStatisticsNewCollections;

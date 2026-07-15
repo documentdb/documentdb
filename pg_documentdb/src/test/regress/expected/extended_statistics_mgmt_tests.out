@@ -1326,3 +1326,111 @@ RESET documentdb.enablePlannerStatisticsNewCollections;
 RESET documentdb.enableCompositeIndexPlanner;
 DROP SCHEMA sparse_exists_helpers CASCADE;
 NOTICE:  drop cascades to function sparse_exists_helpers.classify_index_selectivity(text,text)
+------------------------------------------------------------------------------
+-- Tests for the "statsEnabled" option on the wire-protocol create command.
+--
+-- Passing "statsEnabled": true on create explicitly enables planner statistics
+-- for the new collection, independent of the enablePlannerStatisticsNewCollections
+-- GUC. The flag is stored in the collections.options column.
+------------------------------------------------------------------------------
+-- Ensure the auto-enable GUC is off so we prove the option (not the GUC) is
+-- what enables stats.
+set documentdb.enablePlannerStatisticsNewCollections to off;
+-- statsEnabled: true on a brand-new collection with no other options exercised.
+-- (This is the path where the collection is only materialized by CreateCollection
+-- and must be re-fetched before the option can be stored.)
+SELECT documentdb_api.create_collection_view('stats_db', '{ "create": "create_stats_on", "statsEnabled": true }');
+NOTICE:  creating collection
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT options FROM documentdb_api_catalog.collections WHERE collection_id = 6406;
+          options          
+---------------------------
+ { "statsEnabled" : true }
+(1 row)
+
+-- Materializing an index on the stats-enabled collection creates a Statistics object.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('stats_db', '{ "createIndexes": "create_stats_on", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1" } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+\d documentdb_data.documents_6406
+          Table "documentdb_data.documents_6406"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_6406" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_6418" documentdb_rum (document bson_rum_composite_path_ops (pathspec='[ "a", "b" ]', tl='2691'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '6406'::bigint)
+Statistics objects:
+    "documentdb_data.documents_rum_index_6418_stats" ON bson_stats_project(document, 'a'::text), bson_stats_project(document, 'b'::text) FROM documentdb_data.documents_6406
+
+-- statsEnabled: false is a no-op: the option is absent (behaves like default create).
+SELECT documentdb_api.create_collection_view('stats_db', '{ "create": "create_stats_off", "statsEnabled": false }');
+NOTICE:  creating collection
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT options FROM documentdb_api_catalog.collections WHERE collection_id = 6407;
+ options 
+---------
+ 
+(1 row)
+
+-- Omitting statsEnabled entirely also leaves stats disabled.
+SELECT documentdb_api.create_collection_view('stats_db', '{ "create": "create_stats_absent" }');
+NOTICE:  creating collection
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT options FROM documentdb_api_catalog.collections WHERE collection_id = 6408;
+ options 
+---------
+ 
+(1 row)
+
+-- statsEnabled accepts boolean-like numeric truthiness (1).
+SELECT documentdb_api.create_collection_view('stats_db', '{ "create": "create_stats_numeric", "statsEnabled": 1 }');
+NOTICE:  creating collection
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT options FROM documentdb_api_catalog.collections WHERE collection_id = 6409;
+          options          
+---------------------------
+ { "statsEnabled" : true }
+(1 row)
+
+-- statsEnabled combined with another create option: both are applied.
+SELECT documentdb_api.create_collection_view('stats_db', '{ "create": "create_stats_combo", "statsEnabled": true, "enableUpdateDescription": true }');
+NOTICE:  creating collection
+         create_collection_view         
+----------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT options FROM documentdb_api_catalog.collections WHERE collection_id = 6410;
+                           options                           
+-------------------------------------------------------------
+ { "enableUpdateDescription" : true, "statsEnabled" : true }
+(1 row)
+
+-- A non-boolean-like statsEnabled value is rejected.
+SELECT documentdb_api.create_collection_view('stats_db', '{ "create": "create_stats_bad", "statsEnabled": "yes" }');
+ERROR:  The BSON field 'create.statsEnabled' has an incorrect type 'string'; it should be one of the following valid types: [bool, long, int, decimal, double]
+RESET documentdb.enablePlannerStatisticsNewCollections;

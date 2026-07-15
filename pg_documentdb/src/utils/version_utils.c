@@ -9,6 +9,8 @@
  *-------------------------------------------------------------------------
  */
 
+#include <postgres.h>
+#include <miscadmin.h>
 #include "utils/version_utils.h"
 #include "utils/version_utils_private.h"
 #include "utils/query_utils.h"
@@ -22,11 +24,17 @@
 
 extern char *ApiExtensionName;
 
+typedef struct TrackedVersions
+{
+	ExtensionVersion CurrentVersion;
+	ExtensionVersion InitializedVersion;
+} TrackedVersions;
+
 /*
  * Global value tracking the Current Version deployed across
  * the cluster.
  */
-static ExtensionVersion *CurrentVersion = NULL;
+static TrackedVersions *TrackedExtensionVersions = NULL;
 
 int FirstMajorVersionOffset = 0;
 
@@ -35,13 +43,18 @@ int FirstMajorVersionOffset = 0;
 static char *VersionRefreshQuery = NULL;
 static char * GetVersionRefreshQuery(void);
 
+
+static char *InitializedVersionRefreshQuery = NULL;
+static char * GetInitializedVersionRefreshQuery(void);
+
 /* This is not exposed in the header file */
 static ExtensionVersion RefreshCurrentVersion(void);
+static ExtensionVersion RefreshInitializedVersion(void);
 
 Size
 VersionCacheShmemSize(void)
 {
-	return MAXALIGN(sizeof(ExtensionVersion));
+	return MAXALIGN(sizeof(TrackedVersions));
 }
 
 
@@ -54,15 +67,17 @@ InitializeVersionCache(void)
 	bool found;
 
 	size_t version_cache_size = VersionCacheShmemSize();
-	CurrentVersion = (ExtensionVersion *) ShmemInitStruct("DocumentDB Version Cache",
-														  version_cache_size, &found);
+	TrackedExtensionVersions = (TrackedVersions *) ShmemInitStruct(
+		"DocumentDB Version Cache",
+		version_cache_size,
+		&found);
 
 	if (!found)
 	{
 		/*
 		 * We're the first - initialize.
 		 */
-		memset(CurrentVersion, 0, version_cache_size);
+		memset(TrackedExtensionVersions, 0, version_cache_size);
 	}
 }
 
@@ -70,7 +85,25 @@ InitializeVersionCache(void)
 bool
 IsVersionRefreshQueryString(const char *queryString)
 {
-	return queryString != NULL && strcmp(queryString, GetVersionRefreshQuery()) == 0;
+	if (queryString == NULL)
+	{
+		return false;
+	}
+
+	if (GetVersionRefreshQuery() != NULL && strcmp(queryString,
+												   GetVersionRefreshQuery()) == 0)
+	{
+		return true;
+	}
+
+	if (GetInitializedVersionRefreshQuery() != NULL && strcmp(queryString,
+															  GetInitializedVersionRefreshQuery())
+		== 0)
+	{
+		return true;
+	}
+
+	return false;
 }
 
 
@@ -128,6 +161,17 @@ IsClusterVersionAtleast(MajorVersion majorVersion, int minor, int patch)
 }
 
 
+bool
+IsInitializedVersionAtLeast(MajorVersion major, int minor, int patch)
+{
+	Assert(major <= MaxVersionAllowed);
+	Assert(major >= DocDB_V0);
+
+	ExtensionVersion version = RefreshInitializedVersion();
+	return IsExtensionVersionAtleast(version, major, minor, patch);
+}
+
+
 /*
  * Returns true if the given Extension Version is >= given major.minor.patch version
  */
@@ -163,9 +207,21 @@ IsExtensionVersionAtleast(ExtensionVersion extVersion, MajorVersion majorVersion
 void
 InvalidateVersionCache()
 {
-	if (CurrentVersion != NULL)
+	if (TrackedExtensionVersions != NULL)
 	{
-		*CurrentVersion = (ExtensionVersion) {
+		/*
+		 * TrackedExtensionVersions lives in shared memory, so the cache cannot
+		 * be cleared by mutating individual fields through the pointer. We must
+		 * use fetch-mutate-store semantics: build a complete zero-valued
+		 * ExtensionVersion and store it back as a single struct assignment,
+		 * then publish it below with a write barrier so other backends observe
+		 * the reset and re-fetch on their next access.
+		 */
+		TrackedExtensionVersions->CurrentVersion = (ExtensionVersion) {
+			0
+		};
+
+		TrackedExtensionVersions->InitializedVersion = (ExtensionVersion) {
 			0
 		};
 	}
@@ -196,26 +252,20 @@ GetCurrentShortVersionStringForLogging(void)
 }
 
 
-static ExtensionVersion
-RefreshCurrentVersion(void)
+const char *
+GetInitializedShortVersionStringForLogging(void)
 {
-	ExtensionVersion currentVersion = { 0 };
+	ExtensionVersion version = RefreshInitializedVersion();
+	StringInfo s = makeStringInfo();
+	appendStringInfo(s, "%d.%d-%d",
+					 version.Major, version.Minor, version.Patch);
+	return s->data;
+}
 
-	if (unlikely(CurrentVersion == NULL))
-	{
-		/* Shared memory is not initialized */
-		return currentVersion;
-	}
 
-	pg_memory_barrier();
-	currentVersion = *CurrentVersion;
-
-	if (currentVersion.Major > DocDB_V0 ||
-		(currentVersion.Major == DocDB_V0 && currentVersion.Minor > 0))
-	{
-		return currentVersion;
-	}
-
+static bool
+UpdateExtensionVersion(char *versionQuery, ExtensionVersion *newVersion)
+{
 	/*
 	 * Temporarily disable unimportant logs related to version lookup
 	 * so that regression test outputs don't become flaky (e.g.: due to commands
@@ -227,13 +277,12 @@ RefreshCurrentVersion(void)
 	bool readOnly = true;
 	bool isNull = false;
 
-	char *versionString = ExtensionExecuteQueryOnLocalhostViaLibPQ(
-		GetVersionRefreshQuery());
+	char *versionString = ExtensionExecuteQueryOnLocalhostViaLibPQ(versionQuery);
 
 	if (strcmp(versionString, "") == 0)
 	{
 		RollbackGUCChange(savedGUCLevel);
-		return currentVersion;
+		return false;
 	}
 
 	int nargs = 1;
@@ -258,15 +307,101 @@ RefreshCurrentVersion(void)
 					  &elements, NULL, &numElements);
 
 	Assert(numElements == 3);
-	ExtensionVersion newVersion = { 0 };
-	newVersion.Major = DatumGetInt32(elements[0]);
-	newVersion.Minor = DatumGetInt32(elements[1]);
-	newVersion.Patch = DatumGetInt32(elements[2]);
+	newVersion->Major = DatumGetInt32(elements[0]);
+	newVersion->Minor = DatumGetInt32(elements[1]);
+	newVersion->Patch = DatumGetInt32(elements[2]);
+	return true;
+}
 
-	*CurrentVersion = newVersion;
+
+static ExtensionVersion
+RefreshCurrentVersion(void)
+{
+	ExtensionVersion currentVersion = { 0 };
+
+	if (unlikely(TrackedExtensionVersions == NULL))
+	{
+		/* Shared memory is not initialized */
+		return currentVersion;
+	}
+
+	/* Accept invalidations */
+	CHECK_FOR_INTERRUPTS();
+
+	pg_memory_barrier();
+	currentVersion = TrackedExtensionVersions->CurrentVersion;
+
+	if (currentVersion.Major > DocDB_V0 ||
+		(currentVersion.Major == DocDB_V0 && currentVersion.Minor > 0))
+	{
+		return currentVersion;
+	}
+
+	if (!UpdateExtensionVersion(GetVersionRefreshQuery(), &currentVersion))
+	{
+		return currentVersion;
+	}
+
+	/*
+	 * TrackedExtensionVersions lives in shared memory, so the version cannot be
+	 * updated as a regular pointer mutation of individual fields. We use
+	 * fetch-mutate-store semantics: the value was fetched into the local
+	 * `currentVersion` above, mutated in place by UpdateExtensionVersion, and is
+	 * now stored back as a single whole-struct assignment. The write barrier
+	 * publishes the store so other backends observe a fully consistent value.
+	 */
+	TrackedExtensionVersions->CurrentVersion = currentVersion;
 	pg_write_barrier();
 
-	return newVersion;
+	return currentVersion;
+}
+
+
+static ExtensionVersion
+RefreshInitializedVersion(void)
+{
+	ExtensionVersion initializedVersion = { 0 };
+
+	if (unlikely(TrackedExtensionVersions == NULL))
+	{
+		/* Shared memory is not initialized */
+		return initializedVersion;
+	}
+
+	/* Accept invalidations */
+	CHECK_FOR_INTERRUPTS();
+
+	pg_memory_barrier();
+	initializedVersion = TrackedExtensionVersions->InitializedVersion;
+
+	if (initializedVersion.Major > DocDB_V0 ||
+		(initializedVersion.Major == DocDB_V0 && initializedVersion.Minor > 0))
+	{
+		return initializedVersion;
+	}
+
+	if (GetInitializedVersionRefreshQuery() == NULL)
+	{
+		return initializedVersion;
+	}
+
+	if (!UpdateExtensionVersion(GetInitializedVersionRefreshQuery(), &initializedVersion))
+	{
+		return initializedVersion;
+	}
+
+	/*
+	 * TrackedExtensionVersions lives in shared memory, so the version cannot be
+	 * updated as a regular pointer mutation of individual fields. We use
+	 * fetch-mutate-store semantics: the value was fetched into the local
+	 * `initializedVersion` above, mutated in place by UpdateExtensionVersion, and
+	 * is now stored back as a single whole-struct assignment. The write barrier
+	 * publishes the store so other backends observe a fully consistent value.
+	 */
+	TrackedExtensionVersions->InitializedVersion = initializedVersion;
+	pg_write_barrier();
+
+	return initializedVersion;
 }
 
 
@@ -295,4 +430,26 @@ GetVersionRefreshQuery()
 	}
 
 	return VersionRefreshQuery;
+}
+
+
+static char *
+GetInitializedVersionRefreshQuery(void)
+{
+	if (InitializedVersionRefreshQuery != NULL)
+	{
+		return InitializedVersionRefreshQuery;
+	}
+
+	const char *initVersionStr = TryGetExtendedInitializedVersionRefreshQuery();
+	if (initVersionStr == NULL)
+	{
+		return NULL;
+	}
+
+	MemoryContext currContext = MemoryContextSwitchTo(TopMemoryContext);
+	InitializedVersionRefreshQuery = pstrdup(initVersionStr);
+	MemoryContextSwitchTo(currContext);
+
+	return InitializedVersionRefreshQuery;
 }

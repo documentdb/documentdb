@@ -235,6 +235,7 @@ void TryCustomParseAndValidateVectorQuerySpec(const char *key,
 
 
 char * TryGetExtendedVersionRefreshQuery(void);
+char * TryGetExtendedInitializedVersionRefreshQuery(void);
 
 
 void AllowNestedDistributionInCurrentTransaction(void);
@@ -274,6 +275,7 @@ const char * GetOperationCancellationQuery(int64 shardId, StringView *opIdString
 																			argNulls));
 
 bool ShouldUseCompositeOpClassByDefault(void);
+bool ShouldEnablePlannerStatisticsNewCollections(void);
 
 
 /*

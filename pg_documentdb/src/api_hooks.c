@@ -25,6 +25,7 @@
 
 extern bool DefaultUseCompositeOpClass;
 extern bool EnableExtendedIndexes;
+extern bool EnablePlannerStatisticsNewCollections;
 
 IsMetadataCoordinator_HookType is_metadata_coordinator_hook = NULL;
 IsClusterInitialized_HookType is_cluster_initialized_hook = NULL;
@@ -57,6 +58,8 @@ TryCustomParseAndValidateVectorQuerySpec_HookType
 	try_custom_parse_and_validate_vector_query_spec_hook = NULL;
 TryGetExtendedVersionRefreshQuery_HookType try_get_extended_version_refresh_query_hook =
 	NULL;
+TryGetExtendedVersionRefreshQuery_HookType
+	try_get_extended_initialized_version_refresh_query_hook = NULL;
 GetShardIdsAndNamesForCollection_HookType get_shard_ids_and_names_for_collection_hook =
 	NULL;
 CreateUserWithExernalIdentityProvider_HookType
@@ -85,6 +88,9 @@ PasswordValidation_HookType
 
 DefaultEnableCompositeOpClass_HookType
 	default_enable_composite_op_class_hook = NULL;
+
+DefaultEnableStatsCreationOnNewCollections_HookType
+	default_enable_stats_creation_on_new_collections_hook = NULL;
 
 ExtendedSearchOperatorDefByName_HookType
 	extended_search_operator_def_by_name_hook = NULL;
@@ -595,6 +601,18 @@ TryGetExtendedVersionRefreshQuery(void)
 }
 
 
+char *
+TryGetExtendedInitializedVersionRefreshQuery(void)
+{
+	if (try_get_extended_initialized_version_refresh_query_hook != NULL)
+	{
+		return try_get_extended_initialized_version_refresh_query_hook();
+	}
+
+	return NULL;
+}
+
+
 void
 GetShardIdsAndNamesForCollection(Oid relationOid, const char *tableName,
 								 Datum **shardOidArray, Datum **shardNameArray,
@@ -723,6 +741,18 @@ ShouldUseCompositeOpClassByDefault()
 	}
 
 	return DefaultUseCompositeOpClass;
+}
+
+
+bool
+ShouldEnablePlannerStatisticsNewCollections()
+{
+	if (default_enable_stats_creation_on_new_collections_hook != NULL)
+	{
+		return default_enable_stats_creation_on_new_collections_hook();
+	}
+
+	return EnablePlannerStatisticsNewCollections;
 }
 
 
