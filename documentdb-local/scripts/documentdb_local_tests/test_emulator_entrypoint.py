@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import tempfile
 import textwrap
@@ -8,6 +9,14 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ENTRYPOINT = REPO_ROOT / "documentdb-local" / "scripts" / "emulator_entrypoint.sh"
+GATEWAY_RBAC_UTILS = (
+    REPO_ROOT
+    / "pg_documentdb_gw"
+    / "documentdb_tests"
+    / "src"
+    / "utils"
+    / "rbac_utils.rs"
+)
 
 
 class EmulatorEntrypointTests(unittest.TestCase):
@@ -604,6 +613,21 @@ json.dump(data, sys.stdout)
         config["BlockedRolePrefixes"] = prefixes
         config_path.write_text(json.dumps(config), encoding="utf-8")
 
+    def _gateway_reserved_role_names(self):
+        source = GATEWAY_RBAC_UTILS.read_text(encoding="utf-8")
+        match = re.search(
+            r"pub const RESERVED_ROLE_NAMES:.*?= &\[(.*?)\];",
+            source,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(
+            match,
+            "could not find the gateway RESERVED_ROLE_NAMES registry",
+        )
+        role_names = re.findall(r'"([^"]+)"', match.group(1))
+        self.assertTrue(role_names, "gateway reserved-role registry is empty")
+        return role_names
+
     def test_blocked_username_prefix_is_rejected(self):
         # citus is the username in the issue #650 reproduction; documentdb is the
         # prefix the default test config blocks. Either must fail fast at startup
@@ -649,6 +673,21 @@ json.dump(data, sys.stdout)
                     result.stdout + result.stderr,
                 )
 
+    def test_all_gateway_reserved_role_names_are_rejected(self):
+        # Registered internal roles remain reserved even when the independent
+        # BlockedRolePrefixes policy is empty.
+        self._set_blocked_role_prefixes([])
+        for username in self._gateway_reserved_role_names():
+            with self.subTest(username=username):
+                result = self._run_entrypoint(
+                    "--password", "mypassword", extra_env={"USERNAME": username}
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "is reserved for an internal DocumentDB role",
+                    result.stdout + result.stderr,
+                )
+
     def test_empty_blocked_prefix_entry_fails_fast(self):
         # The gateway's starts_with("") matches every username, so an empty
         # BlockedRolePrefixes entry blocks all authentication. The entrypoint
@@ -671,6 +710,18 @@ json.dump(data, sys.stdout)
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("not found", result.stdout + result.stderr)
+
+    def test_unparseable_gateway_config_fails_fast(self):
+        config_path = self.gateway_config_dir / "SetupConfiguration.json"
+        config_path.write_text("{not valid json", encoding="utf-8")
+        result = self._run_entrypoint(
+            "--password", "mypassword", extra_env={"USERNAME": "docdb_admin"}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "failed to parse gateway configuration",
+            result.stdout + result.stderr,
+        )
 
     def test_non_array_blocked_role_prefixes_fails_fast(self):
         # A syntactically valid config whose BlockedRolePrefixes is not an array
@@ -726,9 +777,10 @@ json.dump(data, sys.stdout)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("must contain only strings", result.stdout + result.stderr)
 
-    def test_empty_blocked_role_prefixes_allows_any_username(self):
-        # An empty array is a valid config meaning "no reserved prefixes", so a
-        # username that a non-empty policy would block must pass validation.
+    def test_empty_blocked_role_prefixes_allows_non_reserved_username(self):
+        # An empty array disables prefix blocking, but exact internal role names
+        # remain reserved. A non-reserved username that the default prefix policy
+        # would block must pass validation.
         self._set_blocked_role_prefixes([])
         result = self._run_entrypoint(
             "--password", "mypassword", extra_env={"USERNAME": "documentdb_service"}

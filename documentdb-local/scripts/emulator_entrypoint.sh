@@ -317,6 +317,31 @@ if ! jq -e 'all(.BlockedRolePrefixes[]; type == "string")' "$GATEWAY_SETUP_CONFI
     echo "Error: BlockedRolePrefixes in '$GATEWAY_SETUP_CONFIG' must contain only strings." >&2
     exit 1
 fi
+
+# The createUser backend also reserves the internal PostgreSQL roles registered
+# by DocumentDB. Keep this exact-name check independent of BlockedRolePrefixes:
+# an empty or customized prefix list is valid gateway configuration, but it does
+# not make an internal role name available for a user.
+gateway_reserved_role_names=(
+    "documentdb_admin_role"
+    "documentdb_api_find_role"
+    "documentdb_api_insert_role"
+    "documentdb_api_remove_role"
+    "documentdb_api_update_role"
+    "documentdb_bg_worker_role"
+    "documentdb_cluster_admin_role"
+    "documentdb_readonly_role"
+    "documentdb_readwrite_role"
+    "documentdb_root_role"
+    "documentdb_user_admin_role"
+)
+for reserved_role_name in "${gateway_reserved_role_names[@]}"; do
+    if [ "$USERNAME" = "$reserved_role_name" ]; then
+        echo "Error: username '$USERNAME' is reserved for an internal DocumentDB role." >&2
+        exit 1
+    fi
+done
+
 # Read every entry via process substitution so a stray empty prefix is preserved
 # (command substitution would strip it away with the trailing newline).
 mapfile -t blocked_role_prefixes < <(jq -r '.BlockedRolePrefixes[]?' "$GATEWAY_SETUP_CONFIG")

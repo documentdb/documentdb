@@ -9,7 +9,7 @@
 * Add feature-flagged single-pass RUM posting-tree vacuum that prunes emptied leaf pages inline during the bulk-delete TID cleanup walk instead of a separate pruning pass. Guarded by `enable_single_pass_posting_tree_vacuum`, disabled by default while pending stabilization. *[Perf]*
 * Fix backend crash when serializing a SQL array that contains a NULL element. *[Bugfix]*
 * Fix memory usage in tokio-postgres Framed/BytesMut crate *[Bugfix/Perf]*
-* Reject documentdb-local usernames that begin with a gateway-reserved role prefix (e.g. `citus`, `documentdb`, `pg`, `internal_role`) at startup, instead of reporting the container ready with credentials that can never authenticate. *[Bugfix]* (#650)
+* Reject documentdb-local usernames that begin with a gateway-reserved role prefix (e.g. `citus`, `documentdb`, `pg`, `internal_role`) or collide with a registered internal DocumentDB role, instead of reporting the container ready with credentials that can never authenticate. *[Bugfix]* (#650)
 
 ### documentdb v0.114-0 (Unreleased) ###
 * Extend `enableNewNamespaceValidation` to block create/drop/rename/createIndex on reserved collections in `admin` and `local` databases, and complete the `config` reserved-collection list (added sharding-runtime names: `changelog`, `mongos`, `placementHistory`, `tags`, `transactions`, `locks`, `lockpings`, `migrations`, `migrationCoordinators`, `rangeDeletions`, `reshardingOperations`, `cache.collections`, `cache.databases`). *[Feature]*
