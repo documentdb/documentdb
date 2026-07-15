@@ -455,6 +455,16 @@ PushExprToIndex(SupportRequestIndexCondition *supportRequest)
 		return NULL;
 	}
 
+	/* $expr accepts scalar expressions (constants, field paths); only a
+	 * document can carry operator conditions we know how to push down.
+	 * BsonValueInitIterator throws for anything else, taking the whole
+	 * query down with it.
+	 */
+	if (exprElement.bsonValue.value_type != BSON_TYPE_DOCUMENT)
+	{
+		return NULL;
+	}
+
 	BsonValueInitIterator(&exprElement.bsonValue, &exprIter);
 
 	List *supportedQuals = NIL;
