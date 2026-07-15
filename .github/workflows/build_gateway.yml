@@ -138,21 +138,25 @@ jobs:
         # function the shipped extension does not define surfaces as a PostgreSQL
         # undefined_function error (SQLSTATE 42883) in the container logs -- but
         # clients silently tolerate failed discovery probes, so the CRUD assertion
-        # above cannot catch it (this is exactly how issue #650 shipped). Fail the
-        # build if such an error is present. The 42883 match is anchored to the
-        # gateway/PostgreSQL "code="/"sub_status=" form so it cannot collide with a
-        # timestamp fraction or activity-id digit run; benign "database/relation ...
+        # above cannot catch it (this is exactly how issue #650 shipped).
+        #
+        # The scan is delegated to the shared, unit-tested detector
+        # (documentdb_local_tests/backend_contract.py) so the pre-merge image
+        # test and this release smoke enforce the identical contract. The
+        # detector strips ANSI before matching: the gateway logs via
+        # tracing_subscriber's fmt layer with colour ON by default, so a real
+        # field is emitted as "<esc>sub_status<esc>=<esc>42883" and a raw grep
+        # for "sub_status=42883" would miss it. Benign "database/relation ...
         # does not exist" lines (different SQLSTATEs) do not match "function ...".
-        echo "Checking gateway logs for undefined backend-function errors..."
+        echo "Checking gateway logs for undefined backend-function errors (issue #650)..."
         if ! smoke_logs=$(docker logs "$CONTAINER_NAME" 2>&1); then
           echo "Failed to read container logs for the backend-contract gate." >&2
           exit 1
         fi
-        if printf '%s\n' "$smoke_logs" | grep -E "(code|sub_status)=42883|function .* does not exist"; then
-          echo "Found a PostgreSQL undefined_function error in the gateway logs (see matches above): a gateway command calls a backend function the shipped extension does not define (cf. issue #650)." >&2
+        if ! printf '%s\n' "$smoke_logs" \
+            | python3 documentdb-local/scripts/documentdb_local_tests/backend_contract.py -; then
           exit 1
         fi
-        echo "Backend-contract gate passed: no undefined-function errors in container logs."
 
         dump_logs=false
     - name: Push ${{ matrix.arch }} Image

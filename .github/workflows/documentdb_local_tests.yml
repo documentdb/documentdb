@@ -26,3 +26,9 @@ jobs:
 
       - name: Run documentdb-local Python unit tests
         run: python3 -m unittest discover -s documentdb-local/scripts/documentdb_local_tests -p 'test_emulator_entrypoint.py'
+
+      - name: Run backend-contract detector unit tests
+        run: python3 -m unittest discover -s documentdb-local/scripts/documentdb_local_tests -p 'test_backend_contract.py'
+
+      - name: Run backend-catalog contract unit tests
+        run: python3 -m unittest discover -s documentdb-local/scripts/documentdb_local_tests -p 'test_catalog_contract.py'

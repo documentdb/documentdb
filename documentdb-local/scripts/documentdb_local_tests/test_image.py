@@ -42,14 +42,35 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 import secrets
 import shutil
 import string
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 import uuid
+
+# The shared backend-contract detector lives alongside this file. Make it
+# importable regardless of how the suite is launched: `unittest discover -s
+# <dir>` puts <dir> on sys.path, but a dotted
+# `-m unittest documentdb_local_tests.test_image` run does not.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import backend_contract  # noqa: E402
+import catalog_contract  # noqa: E402
+
+# Gateway QueryCatalog source (same commit the image is built from). Used by the
+# active backend-contract test to enumerate the routines the gateway calls.
+QUERY_CATALOG_RS = (
+    pathlib.Path(__file__).resolve().parents[3]
+    / "pg_documentdb_gw"
+    / "documentdb_gateway_core"
+    / "src"
+    / "postgres"
+    / "query_catalog.rs"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +246,65 @@ def _last_nonempty_line(text: str) -> str:
         if line.strip():
             return line.strip()
     return ""
+
+
+def _container_pg_ports(container: str) -> list[str]:
+    """Discover the in-container PostgreSQL port(s) from the unix socket(s).
+
+    The emulator runs PostgreSQL on a non-default port (default 9712) whose
+    socket lives at `/var/run/postgresql/.s.PGSQL.<port>`. Returning every
+    socket keeps introspection robust if the default changes or a second
+    cluster is present."""
+    res = _docker(
+        "exec", container, "sh", "-c",
+        "ls /var/run/postgresql/.s.PGSQL.* 2>/dev/null",
+        check=False, timeout=15,
+    )
+    ports = sorted(set(re.findall(r"\.s\.PGSQL\.(\d+)", res.stdout)))
+    if not ports:
+        raise RuntimeError(
+            "could not find a PostgreSQL unix socket "
+            "(/var/run/postgresql/.s.PGSQL.*) in the container; "
+            f"stdout={res.stdout!r} stderr={res.stderr!r}"
+        )
+    return ports
+
+
+def _existing_documentdb_functions(container: str) -> set[str]:
+    """Return the `schema.function` names present in the documentdb backend
+    schemas (documentdb_api, documentdb_api_internal, documentdb_api_catalog,
+    documentdb_core) of the container's `postgres` database.
+
+    Connects as the container's OS user (a superuser via peer auth) over the
+    local socket -- the same path the emulator's own setup uses. The SQL is
+    passed as a single argv element (no shell), so its quoting is literal. When
+    several PostgreSQL sockets exist, we union across them so the cluster that
+    actually holds the extension is found regardless of its port."""
+    sql = (
+        "SELECT n.nspname || '.' || p.proname "
+        "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+        "WHERE n.nspname IN ('documentdb_api', 'documentdb_api_internal', "
+        "'documentdb_api_catalog', 'documentdb_core')"
+    )
+    functions: set[str] = set()
+    errors: list[str] = []
+    for port in _container_pg_ports(container):
+        res = _docker(
+            "exec", container, "psql", "-p", port, "-d", "postgres",
+            "-tAqc", sql, check=False, timeout=30,
+        )
+        if res.returncode == 0:
+            functions |= {
+                line.strip() for line in res.stdout.splitlines() if line.strip()
+            }
+        else:
+            errors.append(f"port {port}: rc={res.returncode} stderr={res.stderr.strip()!r}")
+    if not functions:
+        raise RuntimeError(
+            "no documentdb backend functions found on any PostgreSQL socket; "
+            f"psql attempts: {errors or 'all returned empty'}"
+        )
+    return functions
 
 
 # ---------------------------------------------------------------------------
@@ -408,6 +488,70 @@ class DefaultContainerTests(_ContainerTestBase):
             result.returncode, 0,
             "mongosh unexpectedly succeeded with a wrong password\n"
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+        )
+
+    def test_no_undefined_backend_function_errors_in_logs(self):
+        """Backend-contract guard for issue #650.
+
+        A gateway command whose backend SQL calls a function the shipped
+        extension does not define surfaces as a PostgreSQL undefined_function
+        error (SQLSTATE 42883) in the container logs -- but clients silently
+        tolerate failed discovery probes (e.g. mongosh's getParameter on
+        connect), so a green ping/CRUD assertion cannot catch it. That is
+        exactly how #650 shipped. Drive one connection to force the discovery
+        handshake, then scan the logs with the shared, ANSI-aware detector."""
+        ping = self._mongosh("db.runCommand({ping: 1}).ok")
+        self.assertEqual(
+            ping.returncode, 0,
+            "mongosh ping failed while priming the backend-contract check\n"
+            f"stdout:\n{ping.stdout}\nstderr:\n{ping.stderr}",
+        )
+
+        logs = _docker("logs", self.container)
+        offending = backend_contract.find_undefined_function_errors(
+            logs.stdout + logs.stderr
+        )
+        self.assertEqual(
+            offending, [],
+            "gateway logged PostgreSQL undefined_function error(s) (SQLSTATE "
+            "42883): a gateway command calls a backend function the shipped "
+            "extension does not define (cf. issue #650). Offending lines:\n"
+            + "\n".join(offending),
+        )
+
+    def test_all_backend_catalog_functions_exist_in_image(self):
+        """Active backend-contract coverage for issue #650.
+
+        The log scan above only catches undefined-function errors for commands
+        the smoke actually exercises. Assert instead that EVERY backend routine
+        the gateway's QueryCatalog calls exists in the shipped extension -- so a
+        function used only by an unexercised command (compact, collStats,
+        dbStats, ...) cannot go missing silently, the generalised #650 class.
+        The required set is the statically-parsed calls plus the enumerated
+        explain aggregation family (bson_aggregation_{find,pipeline,count,
+        distinct}), which the gateway builds by a runtime-templated name."""
+        if not QUERY_CATALOG_RS.is_file():
+            self.skipTest(f"gateway QueryCatalog source not found: {QUERY_CATALOG_RS}")
+        referenced = catalog_contract.required_backend_functions(
+            QUERY_CATALOG_RS.read_text(encoding="utf-8")
+        )
+        self.assertGreaterEqual(
+            len(referenced), 40,
+            f"parsed only {len(referenced)} catalog routines; the parser or "
+            "query_catalog.rs layout may have changed",
+        )
+        existing = _existing_documentdb_functions(self.container)
+        self.assertTrue(
+            existing,
+            "no functions found in the documentdb backend schemas -- the "
+            "extension may not be installed in the 'postgres' database, or "
+            "introspection reached the wrong cluster",
+        )
+        missing = sorted(referenced - existing)
+        self.assertEqual(
+            missing, [],
+            "backend routines the gateway QueryCatalog calls but which are "
+            f"ABSENT from the shipped image (cf. issue #650): {missing}",
         )
 
     def test_container_still_running_after_workload(self):
