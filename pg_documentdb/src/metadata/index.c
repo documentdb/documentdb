@@ -2759,9 +2759,6 @@ SerializeIndexSpec(const IndexSpec *indexSpec, bool isGetIndexes,
 				}
 				else if (IsOptionsKeyOrderedIndex(keyView.string))
 				{
-					/* TODO: We should just write this if the value is != ShouldUseCompositeOpClassByDefault
-					 * but we're leaving it here during the transition period of this being enabled by default in
-					 * some cases.*/
 					CustomIndexOption option = BsonValueToCustomIndexOption(
 						bson_iter_value(&optionsIter));
 
@@ -2776,9 +2773,13 @@ SerializeIndexSpec(const IndexSpec *indexSpec, bool isGetIndexes,
 												   false);
 						}
 					}
-					else if (option == CustomIndexOption_True ||
-							 option == CustomIndexOption_DefaultTrue)
+					else if (option == CustomIndexOption_True)
 					{
+						/* Only surface the option the user explicitly asked for.
+						 * CustomIndexOption_DefaultTrue means the index is ordered
+						 * merely because of the server default — an index created
+						 * with a plain createIndexes must list exactly like the
+						 * MongoDB response, which has no storageEngine document. */
 						PgbsonWriterAppendBool(&storageEngineOptionsWriter,
 											   "enableOrderedIndex", 18,
 											   true);
