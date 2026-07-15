@@ -623,6 +623,25 @@ PlanForcedPersistentQuery(Query *query, bool isHoldCursor)
 		cursorOptions = cursorOptions | CURSOR_OPT_HOLD;
 	}
 
+	/*
+	 * When this plan is destined for the file-based cursor path (hold cursor
+	 * with file-based cursors enabled), the entire result is drained in one
+	 * executor run and the continuation pages go to a file — no suspended
+	 * portal. That execution shape supports parallel plans, so allow the
+	 * planner to consider one for read-only queries. Blocking stages
+	 * ($group, unindexed $sort) always take this path, and without it the
+	 * expensive per-document work runs in a single process.
+	 *
+	 * If the plan somehow lands on the suspended-portal path instead, the
+	 * executor detects the row-count-bounded fetch and simply runs the
+	 * Gather leader-only — correct, just not parallel.
+	 */
+	if (isHoldCursor && UseFileBasedPersistedCursors &&
+		query->commandType == CMD_SELECT && !query->hasModifyingCTE)
+	{
+		cursorOptions |= CURSOR_OPT_PARALLEL_OK;
+	}
+
 	/* Deparse query text before planning since the planner may modify the query tree */
 	char *sourceText = "";
 	if (EnableDebugQueryText)
@@ -658,6 +677,20 @@ CreateAndDrainSingleBatchQuery(const char *cursorName, Query *query,
 	/* Set up cursor flags */
 	bool closeCursor = true;
 	int cursorOptions = CURSOR_OPT_BINARY | CURSOR_OPT_HOLD;
+
+	/*
+	 * This path drains the whole result in one executor run: no portal to
+	 * scroll backwards, no cursor left open across statements. That is
+	 * exactly the shape a parallel plan requires, so let the planner
+	 * consider one — without CURSOR_OPT_PARALLEL_OK it never will, and the
+	 * query runs single-threaded no matter how many workers are configured.
+	 *
+	 * Read-only queries only: a parallel plan cannot contain writes.
+	 */
+	if (query->commandType == CMD_SELECT && !query->hasModifyingCTE)
+	{
+		cursorOptions |= CURSOR_OPT_PARALLEL_OK;
+	}
 
 	/* Save the context before doing SPI */
 	MemoryContext currentContext = CurrentMemoryContext;
