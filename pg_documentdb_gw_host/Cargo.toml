@@ -31,6 +31,10 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+## Patch section
+[patch.crates-io]
+tokio-postgres = { path = "../pg_documentdb_gw/libs/tokio-postgres" }
+
 [lints.rust]
 ambiguous_negative_literals = "warn"
 missing_debug_implementations = "warn"

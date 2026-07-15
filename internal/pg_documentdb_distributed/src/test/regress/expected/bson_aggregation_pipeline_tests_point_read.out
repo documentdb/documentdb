@@ -292,7 +292,7 @@ EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF)
          Output: document, bson_orderby(document, '{ "$meta" : { "$numberInt" : "1" } }'::bson)
          ->  Bitmap Heap Scan on documentdb_data.documents_4232_423018 collection  (cost=0.00..25000004.02 rows=1 width=32) (actual rows=0 loops=1)
                Output: document
-               Filter: ((collection.document @= '{ "_id" : "2" }'::bson) AND (collection.object_id = '{ "" : "2" }'::bson) AND bson_text_meta_qual(collection.document, '''abc'''::tsquery, '\x0400000000000000ffffffff00000000000000000000000001000000000000002c00000000000000000000000000803f000000000000803f000000000000803f000000000000803f00000000'::bytea, true))
+               Filter: ((collection.document @= '{ "_id" : "2" }'::bson) AND (collection.object_id = '{ "" : "2" }'::bson) AND bson_text_meta_qual(collection.document, '''abc'''::tsquery, '\x0400000000000000ffffffff00000000000000000000000001010000000000002c00000000000000000000000000803f000000000000803f000000000000803f000000000000803f00000000'::bytea, true))
                ->  Bitmap Index Scan on my_txt  (cost=0.00..0.00 rows=1 width=0) (actual rows=0 loops=1)
                      Index Cond: (collection.document @#% '''abc'''::tsquery)
 (11 rows)
@@ -362,11 +362,11 @@ EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF)
 
 -- multiple _id
 EXPLAIN (ANALYZE ON, VERBOSE ON, COSTS ON, BUFFERS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('agg_db', '{ "find": "aggregation_find_point_read", "filter": { "$and": [ { "_id": "2" }, { "_id": { "$regex": "^\\d+" } } ] } }');
-                                                                                      QUERY PLAN                                                                                       
+                                                                             QUERY PLAN                                                                              
 ---------------------------------------------------------------------
  Index Scan using _id_ on documentdb_data.documents_4232_423018 collection  (cost=123123.00..1231230.00 rows=1 width=0) (actual rows=1 loops=1)
    Output: document
    Index Cond: ((collection.shard_key_value = '4232'::bigint) AND (collection.object_id = '{ "" : "2" }'::bson))
-   Filter: documentdb_api_catalog.bson_dollar_regex(collection.document, collection.object_id, '{ "_id" : { "$regularExpression" : { "pattern" : "^\\d+", "options" : "" } } }'::bson)
+   Filter: bson_dollar_regex(collection.document, collection.object_id, '{ "_id" : { "$regularExpression" : { "pattern" : "^\\d+", "options" : "" } } }'::bsonquery)
 (4 rows)
 

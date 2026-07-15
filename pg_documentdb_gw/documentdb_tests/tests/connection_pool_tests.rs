@@ -13,9 +13,11 @@
 
 use std::time::Duration;
 
+use bson::rawdoc;
 use deadpool_postgres::PoolError;
 use documentdb_gateway_core::{
     configuration::{DocumentDBSetupConfiguration, SetupConfiguration},
+    context::RequestContext,
     error::{ErrorCode, ErrorKind},
     postgres::{
         conn_mgmt::{
@@ -25,7 +27,7 @@ use documentdb_gateway_core::{
         },
         create_query_catalog,
     },
-    requests::request_tracker::RequestTracker,
+    requests::{request_tracker::RequestTracker, RequestExecutionMode, RequestType, WireRequest},
 };
 use documentdb_tests::test_setup::config::{
     failing_setup_configuration, setup_configuration, setup_configuration_with_command_timeout,
@@ -49,6 +51,17 @@ async fn build_connection_pool(
         PgPoolSettings::system_pool_settings(max_connections),
     )
     .expect("Failed to create connection pool")
+}
+
+fn ping_request() -> WireRequest<'static> {
+    WireRequest::from_owned_command_document(
+        RequestType::Ping,
+        RequestExecutionMode::Normal,
+        None,
+        rawdoc! { "ping": 1, "$db": "admin" },
+        None,
+    )
+    .expect("ping request should parse")
 }
 
 fn build_pool_manager(setup_config: &DocumentDBSetupConfiguration) -> PoolManager {
@@ -140,22 +153,21 @@ async fn run_request_with_retries_counts_deadpool_timeouts_once() {
     let _held = pool.acquire_connection().await.unwrap();
     let _ = pool.report_status();
     let request_tracker = RequestTracker::new();
+    let ping = ping_request();
+    let ctx = RequestContext::new("", &ping, &request_tracker);
 
     let error = run_request_with_retries(
         ConnectionSource::Pool(&pool),
         QueryOptions::builder().retry_request(false).build(),
         RequestOptions::new(false, Some(30000)),
         Duration::from_secs(30),
-        Some(&request_tracker),
+        &ctx,
         |_| async { Ok::<(), tokio_postgres::Error>(()) },
     )
     .await
     .unwrap_err();
 
-    assert!(matches!(
-        error.kind(),
-        ErrorKind::PoolError(PoolError::Timeout(_), _)
-    ));
+    assert_eq!(error.kind(), &ErrorKind::Pool);
 
     let report = pool.report_status();
     assert_eq!(report.connections_created(), 0);
@@ -178,10 +190,7 @@ async fn pool_manager_system_requests_connection_counts_deadpool_timeouts_once()
     let _ = pool_manager.report_pool_stats();
 
     let error = pool_manager.system_requests_connection().await.unwrap_err();
-    assert!(matches!(
-        error.kind(),
-        ErrorKind::PoolError(PoolError::Timeout(_), _)
-    ));
+    assert_eq!(error.kind(), &ErrorKind::Pool);
 
     let reports = pool_manager.report_pool_stats();
     let system_report = reports
@@ -203,19 +212,24 @@ async fn run_request_with_retries_returns_exceeded_time_limit_when_command_timeo
     let _held = pool.acquire_connection().await.unwrap();
     let _ = pool.report_status();
 
-    let error = run_request_with_retries(
-        ConnectionSource::Pool(&pool),
-        QueryOptions::builder().build(),
-        // command_timeout_ms of 1 means elapsed time will exceed the limit almost instantly.
-        RequestOptions::new(false, Some(1)),
-        Duration::from_secs(1),
-        None,
-        |_| async { Ok::<(), tokio_postgres::Error>(()) },
-    )
-    .await
-    .unwrap_err();
+    let error = {
+        let tracker = RequestTracker::new();
+        let ping = ping_request();
+        let ctx = RequestContext::new("", &ping, &tracker);
+        run_request_with_retries(
+            ConnectionSource::Pool(&pool),
+            QueryOptions::builder().build(),
+            // command_timeout_ms of 1 means elapsed time will exceed the limit almost instantly.
+            RequestOptions::new(false, Some(1)),
+            Duration::from_secs(1),
+            &ctx,
+            |_| async { Ok::<(), tokio_postgres::Error>(()) },
+        )
+        .await
+        .unwrap_err()
+    };
 
-    assert_eq!(error.error_code_enum(), Some(ErrorCode::ExceededTimeLimit));
+    assert_eq!(error.error_code(), ErrorCode::ExceededTimeLimit);
 }
 
 #[tokio::test]
@@ -229,19 +243,21 @@ async fn run_request_with_retries_returns_original_error_when_no_command_timeout
 
     // command_timeout_ms is None (auth-related flow), so ExceededTimeLimit is
     // never returned — the original pool error propagates instead.
-    let error = run_request_with_retries(
-        ConnectionSource::Pool(&pool),
-        QueryOptions::builder().build(),
-        RequestOptions::new(false, None),
-        Duration::from_secs(1),
-        None,
-        |_| async { Ok::<(), tokio_postgres::Error>(()) },
-    )
-    .await
-    .unwrap_err();
+    let error = {
+        let tracker = RequestTracker::new();
+        let ping = ping_request();
+        let ctx = RequestContext::new("", &ping, &tracker);
+        run_request_with_retries(
+            ConnectionSource::Pool(&pool),
+            QueryOptions::builder().build(),
+            RequestOptions::new(false, None),
+            Duration::from_secs(1),
+            &ctx,
+            |_| async { Ok::<(), tokio_postgres::Error>(()) },
+        )
+        .await
+        .unwrap_err()
+    };
 
-    assert!(matches!(
-        error.kind(),
-        ErrorKind::PoolError(PoolError::Timeout(_), _)
-    ));
+    assert_eq!(error.kind(), &ErrorKind::Pool);
 }

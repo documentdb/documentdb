@@ -34,7 +34,11 @@ const POSTGRES_POOL_DISPOSE_INTERVAL_SEC: u64 = 7200;
 
 async fn acquire_pooled_connection(pool: &ConnectionPool) -> Result<Connection> {
     let pool_connection = pool.acquire_connection().await?;
-    Ok(Connection::new(pool_connection, false))
+    Ok(Connection::new(
+        pool_connection,
+        false,
+        pool.sql_commenter_enabled(),
+    ))
 }
 
 #[derive(Debug)]
@@ -421,7 +425,8 @@ mod tests {
     }
 
     fn setup_configuration() -> DocumentDBSetupConfiguration {
-        let system_user = std::env::var("PostgresSystemUser").unwrap_or(whoami::username());
+        let system_user = std::env::var("PostgresSystemUser")
+            .unwrap_or_else(|_| whoami::username().unwrap_or_default());
 
         DocumentDBSetupConfiguration {
             node_host_name: "localhost".to_owned(),
@@ -619,10 +624,8 @@ mod tests {
             .get_data_pool("missing-user", &dynamic_configuration)
             .unwrap_err();
 
-        assert!(matches!(
-            err.kind(),
-            ErrorKind::DocumentDBError(ErrorCode::InternalError, _, _, _, _)
-        ));
+        assert_eq!(err.kind(), &ErrorKind::Gateway);
+        assert_eq!(err.error_code(), ErrorCode::InternalError);
     }
 
     #[tokio::test]
@@ -714,10 +717,8 @@ mod tests {
         let error = startup_validation_query(&query_catalog)
             .expect_err("Expected missing startup validation query to error");
 
-        assert!(matches!(
-            error.kind(),
-            ErrorKind::DocumentDBError(ErrorCode::InternalError, _, _, _, _)
-        ));
+        assert_eq!(error.kind(), &ErrorKind::Gateway);
+        assert_eq!(error.error_code(), ErrorCode::InternalError);
     }
 
     #[tokio::test]

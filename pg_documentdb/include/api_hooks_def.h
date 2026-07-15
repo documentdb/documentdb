@@ -15,6 +15,7 @@
 
 #include "api_hooks_common.h"
 #include <access/amapi.h>
+#include <executor/spi.h>
 #include <nodes/execnodes.h>
 #include <nodes/parsenodes.h>
 #include <nodes/pathnodes.h>
@@ -32,6 +33,15 @@
  */
 typedef bool (*IsMetadataCoordinator_HookType)(void);
 extern IsMetadataCoordinator_HookType is_metadata_coordinator_hook;
+
+/*
+ * Returns true if the cluster has been fully initialized (e.g. tables
+ * distributed, metadata set up). The background worker waits for this
+ * before starting periodic jobs to avoid operating on an incomplete cluster.
+ * When not set (single-node), the cluster is considered ready immediately.
+ */
+typedef bool (*IsClusterInitialized_HookType)(void);
+extern IsClusterInitialized_HookType is_cluster_initialized_hook;
 
 /*
  * Indicates whether the Change Stream feature is currently enabled
@@ -61,6 +71,22 @@ typedef Datum (*RunQueryWithCommutativeWrites_HookType)(const char *query, int n
 														Datum *argValues, char *argNulls,
 														int expectedSPIOK, bool *isNull);
 extern RunQueryWithCommutativeWrites_HookType run_query_with_commutative_writes_hook;
+
+
+/*
+ * Runs a multi-value query with commutative writes enabled.
+ * The GUC is scoped to just this query execution and rolled back afterwards.
+ */
+typedef void (*RunMultiValueQueryWithCommutativeWrites_HookType)(const char *query,
+																 SPIPlanPtr plan,
+																 int nargs,
+																 Oid *argTypes,
+																 Datum *argValues,
+																 char *argNulls,
+																 bool readOnly,
+																 long maxTupleCount);
+extern RunMultiValueQueryWithCommutativeWrites_HookType
+	run_multi_value_query_with_commutative_writes_hook;
 
 
 /*
@@ -253,6 +279,20 @@ typedef bool (*DefaultEnableCompositeOpClass_HookType)(void);
 extern DefaultEnableCompositeOpClass_HookType default_enable_composite_op_class_hook;
 
 /*
+ * Hook for resolving a search operator definition by operator name.
+ * Called when the built-in operator list does not contain a match,
+ * allowing extended index types to provide additional operators.
+ *
+ * Returns a pointer to the matching DocumentDBSearchOperatorDef, or NULL if
+ * no matching operator is found.
+ */
+typedef struct DocumentDBSearchOperatorDef DocumentDBSearchOperatorDef;
+typedef const DocumentDBSearchOperatorDef *(*ExtendedSearchOperatorDefByName_HookType)(
+	const char *key);
+extern ExtendedSearchOperatorDefByName_HookType extended_search_operator_def_by_name_hook;
+
+
+/*
  * Hook for creating a TTL metrics aggregation context before the TTL purge loop.
  * The MemoryContext parameter should be used for allocations that need to survive
  * across batch deletes.
@@ -297,5 +337,28 @@ typedef void (*UpdateExtendedIndexStats_HookType)(uint64 collectionId,
 												  const char *pgIndexName,
 												  IndexInfo *indexInfo);
 extern UpdateExtendedIndexStats_HookType update_extended_index_stats_hook;
+
+
+/*
+ * Optional hook that, given an Aggref, may resolve it to a different aggregate
+ * function oid that better represents the underlying aggregation for
+ * planner-classification purposes (e.g. when the surface Aggref is a wrapper
+ * around another aggregate introduced by a query rewrite).
+ *
+ * Example: With distributed-execution rewrite, a partial aggregate is pushed
+ * down to a shard, the original Aggref's aggfnoid is replaced with a wrapper.
+ *
+ * On entry *aggregateFunctionOid is initialized to aggref->aggfnoid. The hook
+ * may overwrite it with a different oid and return true; returning false (or
+ * leaving the hook unset) means the caller should keep aggref->aggfnoid as-is.
+ *
+ * Lives as a hook because the core extension intentionally has no knowledge of
+ * any aggregate-wrapping rewrites; implementations are provided by extensions
+ * that introduce such rewrites.
+ */
+typedef bool (*GetEffectiveAggregateFunctionOid_HookType)(Aggref *aggref,
+														  Oid *aggregateFunctionOid);
+extern GetEffectiveAggregateFunctionOid_HookType
+	get_effective_aggregate_function_oid_hook;
 
 #endif

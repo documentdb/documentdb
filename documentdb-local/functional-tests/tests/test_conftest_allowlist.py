@@ -27,7 +27,11 @@ def test_dir(tmp_path):
 
 
 def write_allowlist(path, test_ids, schema_version=1, raw=None):
-    """Write an allowlist.yml file."""
+    """Write an allowlist.yml file.
+
+    ``test_ids`` may contain either strings (bare entries) or dicts
+    (``{id, engines}``) for schema_version 2.
+    """
     if raw is not None:
         path.write_text(raw)
     else:
@@ -145,6 +149,192 @@ class TestEngineXfail:
                        ini_content=ini)
         assert r.returncode == 0
         assert "1 passed" in r.stdout
+
+
+class TestEngineScoping:
+    """Schema_version 2: per-entry engine scoping via the ``engines:`` field."""
+
+    def test_v2_bare_string_runs_on_every_engine(self, test_dir):
+        al = write_allowlist(test_dir / "allowlist.yml",
+                             ["test_sample.py::test_a"],
+                             schema_version=2)
+        for engine in ("documentdb", "pgmongo"):
+            r = run_pytest(test_dir,
+                           "def test_a():\n    pass\n",
+                           [f"--allowlist={al}", f"--allowlist-engine-name={engine}"],
+                           ["-v"])
+            assert r.returncode == 0, f"failed for engine={engine}: {r.stderr}"
+            assert "1 passed" in r.stdout
+
+    def test_v2_dict_scoped_in_runs(self, test_dir):
+        al = write_allowlist(
+            test_dir / "allowlist.yml",
+            [{"id": "test_sample.py::test_a", "engines": ["pgmongo"]}],
+            schema_version=2,
+        )
+        r = run_pytest(test_dir,
+                       "def test_a():\n    pass\n",
+                       [f"--allowlist={al}", "--allowlist-engine-name=pgmongo"],
+                       ["-v"])
+        assert r.returncode == 0
+        assert "1 passed" in r.stdout
+
+    def test_v2_dict_scoped_out_is_silently_deselected(self, test_dir):
+        """A pgmongo-only entry on the documentdb gate must NOT trigger UNKNOWN_TEST_ID."""
+        al = write_allowlist(
+            test_dir / "allowlist.yml",
+            [
+                "test_sample.py::test_keep",
+                {"id": "test_sample.py::test_pgmongo_only", "engines": ["pgmongo"]},
+            ],
+            schema_version=2,
+        )
+        r = run_pytest(test_dir,
+                       "def test_keep():\n    pass\ndef test_pgmongo_only():\n    pass\n",
+                       [f"--allowlist={al}", "--allowlist-engine-name=documentdb"],
+                       ["-v"])
+        assert r.returncode == 0, r.stderr
+        assert "UNKNOWN_TEST_ID" not in r.stderr
+        assert "test_keep PASSED" in r.stdout
+
+    def test_v2_dict_no_engines_key_is_all_engines(self, test_dir):
+        al = write_allowlist(
+            test_dir / "allowlist.yml",
+            [{"id": "test_sample.py::test_a"}],
+            schema_version=2,
+        )
+        for engine in ("documentdb", "pgmongo"):
+            r = run_pytest(test_dir,
+                           "def test_a():\n    pass\n",
+                           [f"--allowlist={al}", f"--allowlist-engine-name={engine}"],
+                           ["-v"])
+            assert r.returncode == 0, f"failed for engine={engine}: {r.stderr}"
+
+    def test_v2_empty_engines_list_rejected(self, test_dir):
+        al = write_allowlist(
+            test_dir / "allowlist.yml",
+            [{"id": "test_sample.py::test_a", "engines": []}],
+            schema_version=2,
+        )
+        r = run_pytest(test_dir, "def test_a():\n    pass\n", [f"--allowlist={al}"])
+        assert r.returncode != 0
+        assert "INVALID_SCHEMA" in r.stderr
+        assert "non-empty list" in r.stderr
+
+    def test_v2_non_string_engine_rejected(self, test_dir):
+        al = write_allowlist(
+            test_dir / "allowlist.yml",
+            [{"id": "test_sample.py::test_a", "engines": [123]}],
+            schema_version=2,
+        )
+        r = run_pytest(test_dir, "def test_a():\n    pass\n", [f"--allowlist={al}"])
+        assert r.returncode != 0
+        assert "INVALID_SCHEMA" in r.stderr
+
+    def test_v2_unknown_key_rejected(self, test_dir):
+        """Catches the common typo 'engine:' singular."""
+        al = write_allowlist(
+            test_dir / "allowlist.yml",
+            [{"id": "test_sample.py::test_a", "engine": "pgmongo"}],
+            schema_version=2,
+        )
+        r = run_pytest(test_dir, "def test_a():\n    pass\n", [f"--allowlist={al}"])
+        assert r.returncode != 0
+        assert "INVALID_SCHEMA" in r.stderr
+        assert "Unknown keys" in r.stderr
+
+    def test_v2_engine_xfail_in_scope_still_rejected(self, test_dir):
+        """Existing engine_xfail rejection still fires when the entry is in scope."""
+        al = write_allowlist(
+            test_dir / "allowlist.yml",
+            [{"id": "test_sample.py::test_a", "engines": ["documentdb"]}],
+            schema_version=2,
+        )
+        code = ("import pytest\n\n"
+                '@pytest.mark.engine_xfail(engine="documentdb", reason="x")\n'
+                "def test_a():\n    pass\n")
+        ini = ("[pytest]\nmarkers =\n"
+               "    engine_xfail(engine, reason, raises): expected failure for a specific engine\n")
+        r = run_pytest(test_dir, code,
+                       [f"--allowlist={al}", "--allowlist-engine-name=documentdb"],
+                       ini_content=ini)
+        assert r.returncode != 0
+        assert "ALLOWLISTED_ENGINE_XFAIL" in r.stderr
+
+    def test_v2_engine_xfail_out_of_scope_not_rejected(self, test_dir):
+        """engine_xfail rejection must NOT fire when the entry is out of scope on this engine."""
+        al = write_allowlist(
+            test_dir / "allowlist.yml",
+            [{"id": "test_sample.py::test_a", "engines": ["pgmongo"]}],
+            schema_version=2,
+        )
+        code = ("import pytest\n\n"
+                '@pytest.mark.engine_xfail(engine="documentdb", reason="x")\n'
+                "def test_a():\n    pass\n")
+        ini = ("[pytest]\nmarkers =\n"
+               "    engine_xfail(engine, reason, raises): expected failure for a specific engine\n")
+        r = run_pytest(test_dir, code,
+                       [f"--allowlist={al}", "--allowlist-engine-name=documentdb"],
+                       ini_content=ini)
+        # pytest exits 5 = "no tests collected", which is exactly what we want
+        # when the only allowlisted entry is scoped out on this engine. The
+        # important assertion is the absence of the engine-xfail rejection.
+        assert r.returncode in (0, 5), r.stderr
+        assert "ALLOWLISTED_ENGINE_XFAIL" not in r.stderr
+        assert "1 deselected" in r.stdout
+
+    def test_v2_duplicate_id_rejected_regardless_of_engines(self, test_dir):
+        al = write_allowlist(
+            test_dir / "allowlist.yml",
+            [
+                {"id": "test_sample.py::test_a", "engines": ["documentdb"]},
+                {"id": "test_sample.py::test_a", "engines": ["pgmongo"]},
+            ],
+            schema_version=2,
+        )
+        r = run_pytest(test_dir, "def test_a():\n    pass\n", [f"--allowlist={al}"])
+        assert r.returncode != 0
+        assert "DUPLICATE_TEST_ID" in r.stderr
+
+    def test_v2_mixed_bare_and_dict_entries(self, test_dir):
+        al = write_allowlist(
+            test_dir / "allowlist.yml",
+            [
+                "test_sample.py::test_bare",
+                {"id": "test_sample.py::test_scoped", "engines": ["documentdb"]},
+            ],
+            schema_version=2,
+        )
+        code = ("def test_bare():\n    pass\n"
+                "def test_scoped():\n    pass\n")
+        r = run_pytest(test_dir, code,
+                       [f"--allowlist={al}", "--allowlist-engine-name=documentdb"],
+                       ["-v"])
+        assert r.returncode == 0
+        assert "2 passed" in r.stdout
+
+    def test_v1_back_compat_still_works(self, test_dir):
+        """Schema v1 files must continue to load and behave exactly like before."""
+        al = write_allowlist(test_dir / "allowlist.yml",
+                             ["test_sample.py::test_a"],
+                             schema_version=1)
+        r = run_pytest(test_dir,
+                       "def test_a():\n    pass\n",
+                       [f"--allowlist={al}"], ["-v"])
+        assert r.returncode == 0
+        assert "1 passed" in r.stdout
+
+    def test_v1_rejects_dict_entries(self, test_dir):
+        """Dict entries under v1 must be rejected (forces explicit version bump)."""
+        al = write_allowlist(
+            test_dir / "allowlist.yml",
+            [{"id": "test_sample.py::test_a"}],
+            schema_version=1,
+        )
+        r = run_pytest(test_dir, "def test_a():\n    pass\n", [f"--allowlist={al}"])
+        assert r.returncode != 0
+        assert "INVALID_SCHEMA" in r.stderr
+        assert "schema_version >= 2" in r.stderr
 
 
 class TestInvalidSchema:

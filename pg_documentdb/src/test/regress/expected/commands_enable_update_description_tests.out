@@ -138,7 +138,6 @@ SELECT documentdb_api.drop_collection('updesc_db', 'test_coll_no_updesc');
 
 SELECT documentdb_api.drop_collection('updesc_db', 'test_view');
 NOTICE:  table "documents_1993004" does not exist, skipping
-NOTICE:  table "retry_1993004" does not exist, skipping
  drop_collection 
 -----------------
  t

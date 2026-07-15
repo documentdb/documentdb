@@ -1,17 +1,38 @@
+### documentdb v0.115-0 (Unreleased) ###
+* Optimize `$sample` over an Index Scan by avoiding heap reads for rows the reservoir discards (visible rows are counted via the visibility map). Applies to Index Scans without runtime filters over btree or regular RUM indexes. *[Perf]*
+* Fix `$exists` argument coercion so falsy non-boolean values (`null`, `undefined`, `0`) are treated as `$exists: false` and truthy non-boolean values as `$exists: true`, matching the documented truthiness semantics. Previously `$exists: null` behaved like `$exists: true`. *[Bugfix]*
+* Fix `$size` returning wrong results when applied to a field path nested inside `$elemMatch`. *[Bugfix]*
+* Fix backend crash (heap-buffer-overflow) in `$setUnion`/`$setIntersection` element deduplication when hashing `CodeWScope` values (wrong union member read), and fix `Regex` values failing to deduplicate plus a latent over-read for long patterns, in `BsonValueHashUint32`. *[Bugfix]*
+* Inject a field-pruning `$project` before `$unwind` when the downstream is `$group` (with only `$match` stages in between), keeping only the top-level fields consumed downstream so the unwound rows are smaller. Guarded by `enableProjectPushUpBeforeUnwindWithGroup` feature flag, disabled by default while pending stabilization. *[Perf]*
+* Fix crash in `$fill` with `partitionByFields` when the pipeline includes a stage that migrates the window query into a subquery (e.g. a preceding `$sort` or a `$limit`). The partition expression is now built after the migration so it references the correct range-table level. *[Bugfix]*
+* Fix backend crash (use-after-free) when a `$let` declaring more than one variable has an `in` that produces a document or array and is evaluated more than once (across multiple documents, or nested inside `$map`/`$filter`/`$reduce` iterating over multiple elements). The shared variable table is no longer destroyed on the writer finalization path when it is flagged to be preserved. *[Bugfix]*
+* Add feature-flagged single-pass RUM posting-tree vacuum that prunes emptied leaf pages inline during the bulk-delete TID cleanup walk instead of a separate pruning pass. Guarded by `enable_single_pass_posting_tree_vacuum`, disabled by default while pending stabilization. *[Perf]*
+* Fix backend crash when serializing a SQL array that contains a NULL element. *[Bugfix]*
+* Fix memory usage in tokio-postgres Framed/BytesMut crate *[Bugfix/Perf]*
+
 ### documentdb v0.114-0 (Unreleased) ###
+* Extend `enableNewNamespaceValidation` to block create/drop/rename/createIndex on reserved collections in `admin` and `local` databases, and complete the `config` reserved-collection list (added sharding-runtime names: `changelog`, `mongos`, `placementHistory`, `tags`, `transactions`, `locks`, `lockpings`, `migrations`, `migrationCoordinators`, `rangeDeletions`, `reshardingOperations`, `cache.collections`, `cache.databases`). *[Feature]*
+* Emit a btree `REUSE_PAGE` WAL marker before a RUM page is reused from the FSM, so streaming standbys resolve recovery conflicts before the page contents are overwritten. Mirrors nbtree's `_bt_allocbuf` behavior. Guarded by `documentdb_rum.enable_emit_reuse_page_on_recycle` feature flag, disabled by default while pending stabilization. *[Perf]*
+* Support configuring the gateway via `DOCUMENTDB_*` environment variables for systemd-managed installs, and add a `documentdb-gateway check` connectivity-probe subcommand. *[Feature]*
+* Support non-blocking background unique index build for ordered indexes via `CREATE INDEX CONCURRENTLY` with post-processing to register exclusion constraints and validate existing rows. Guarded by `documentdb.enableNonBlockingUniqueIndexBuild` flag, enabled by default. *[Feature]*
+* Add feature-flagged targeted RUM posting-tree pruning to shorten root cleanup-lock hold time during vacuum. Guarded by `enable_targeted_posting_tree_pruning`, disabled by default while pending stabilization. *[Perf]*
 * Fix crash when `$natural` sort on non-base relations that are already sorted by pipeline. *[Bugfix]* (#532)
 * Fix schema validation propagation and ensure correct caching of the parsed validator across calls. *[Bugfix]*
+* Fix `$sample` TABLESAMPLE optimization not being applied on sharded collections when preceded by an empty filter. Guarded by `enableSampleScanFixOnSharded` feature flag *[Bugfix]*
+* Schema Validation: enabled by default.
+* Reservoir sampling CustomScan for `$sample` after filter stages, replacing `ORDER BY random() LIMIT K` with O(N) single pass sampling. Guarded by `enableDollarSampleReservoirScan` feature flag *[Perf]*
 
-### documentdb v0.113-0 (Unreleased) ###
+### documentdb v0.113-0 (June 22, 2026) ###
 * Add `EnableSortPushToAccumulator` GUC to control pushing sort order into accumulator in `$sortGroup` stage *[Perf]*
 * Support collation with non-unique ordered indexes with $elemMatch. Requires `EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
 * Use in-place tuple overwrite instead of delete-and-reinsert when vacuuming RUM entry page posting lists *[Perf]*
 * Push suffix sort keys into accumulator in `$sortGroup` when group-by keys form a non-dotted prefix of the sort keys. Guarded by `enableSortPushToAccumulatorWithPrefix` feature flag, disabled by default while pending stabilization. *[Perf]*
 * Support collation with non-unique ordered indexes with `$in` and `$nin` but not with ordered scans. Requires `documentdb.EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
 * Support for pruning dead index entry on ordered TTL indexes. Requires `EnableDeadIndexEntryMarkingByTTLTask` to be on. *[Perf]*
+* Support `$elemMatch`, `$slice`, and `$` positional projection operators in `findAndModify` by routing through the find-specific projection path *[Feature]*
 * Enable index-only scan for `$group` accumulators when all referenced fields are covered by the composite index *[Perf]*
 
-### documentdb v0.112-0 (Unreleased) ###
+### documentdb v0.112-0 (May 26, 2026) ###
 * Removed feature flag `documentdb.enableUpdateBsonDocument` and dropped legacy composite-returning `bson_update_document` UDF — all callers now use the scalar `update_bson_document` UDF
 * Eliminate subquery migration in $group for unsharded and sharded with constant _id aggregation queries. Guarded with `EnableGroupSubqueryElimination` *[Perf]*
 * Support collation with non-unique ordered indexes with $lt, $lte. Requires `EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
@@ -45,7 +66,6 @@
 * Add support for ordering by index term order (matching the ordering spec more closely) for both index and runtime. This also makes index and runtime orders match *[Bugfix]*
 * Support collation with non-unique ordered indexes with $eq, $gt, $gte. Requires `EnableCollationWithNonUniqueOrderedIndexes` flag to be `on`.  *[Feature]*
 * Enable collated index pushdown for collation-insensitive operators; avoid pushdown for unsupported operator strategies. *[Feature]*
-
 
 ### documentdb v0.110-0 (April 22, 2026) ###
 * Add support for keyword `description` in `$jsonSchema` *[Feature]*
@@ -81,7 +101,7 @@
 * Support `rolesInfo` command *[Feature]*
 * Fix concurrent upsert behavior, update the documents in case of conflicts during insert *[Bugfix]* (#295).
 * Support collation with `$sortArray` aggregation operator *[Feature]*
-* Add support for keyword `required` in `$jsonSchema`
+* Add support for keyword `required` in `$jsonSchema` *[Feature]*
 * Fix a segmentation fault when using ordered aggregate such as `$last` with `$setWindowFields` aggregation stage. *[Bugfix]*
 * Fix crash when building lookup pipeline queries from nested pipelines and $group aggregates *[Bugfix]*
 * Add basic support for compiling with pg18 *[Feature]*

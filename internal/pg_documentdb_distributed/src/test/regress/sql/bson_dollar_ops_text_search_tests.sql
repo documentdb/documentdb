@@ -205,3 +205,71 @@ SELECT to_tsvector('portuguese', 'Em atualidade, sempre é possível manter-se s
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "bson_dollar_ops_text_search2", "indexes": [ { "key": { "gamma": "text" }, "name": "gamma_text" } ] }', TRUE);
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "bson_dollar_ops_text_search2", "indexes": [ { "key": { "gamma": "text" }, "name": "gamma_text" } ] }', TRUE);
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "bson_dollar_ops_text_search", "indexes": [ { "key": { "desc": "text", "extra": "text" }, "name": "desc_text" } ] }', TRUE);
+
+-- ===================================================================
+-- Tests for dot-delimited text search (dots treated as word boundaries)
+-- ===================================================================
+
+-- Setup: create a collection with dotted values
+SELECT documentdb_api.insert_one('db', 'text_dot_search', '{ "_id": 1, "name": "person.0.age" }');
+SELECT documentdb_api.insert_one('db', 'text_dot_search', '{ "_id": 2, "name": "hello world" }');
+SELECT documentdb_api.insert_one('db', 'text_dot_search', '{ "_id": 3, "name": "person" }');
+SELECT documentdb_api.insert_one('db', 'text_dot_search', '{ "_id": 4, "name": "foo.bar.baz" }');
+SELECT documentdb_api.insert_one('db', 'text_dot_search', '{ "_id": 5, "name": "hello person.0.age world" }');
+SELECT documentdb_api.insert_one('db', 'text_dot_search', '{ "_id": 6, "name": "age" }');
+SELECT documentdb_api.insert_one('db', 'text_dot_search', '{ "_id": 7, "name": ".leading.dot" }');
+SELECT documentdb_api.insert_one('db', 'text_dot_search', '{ "_id": 8, "name": "trailing.dot." }');
+SELECT documentdb_api.insert_one('db', 'text_dot_search', '{ "_id": 9, "name": "is.a" }');
+SELECT documentdb_api.insert_one('db', 'text_dot_search', '{ "_id": 10, "name": "the.an" }');
+SELECT documentdb_api.insert_one('db', 'text_dot_search', '{ "_id": 11, "name": "www.documentdb.com is awesome" }');
+SELECT documentdb_api.insert_one('db', 'text_dot_search', '{ "_id": 12, "name": "www documentdb com is awesome" }');
+
+SET documentdb.enableDottedValueTextIndexTerms to off;
+-- Create text index with dotted value index terms disabled.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "text_dot_search", "indexes": [ { "key": { "name": "text" }, "name": "name_text" } ] }', TRUE);
+
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "person" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "age" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "person.0.age" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "foo" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "bar" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "hello" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "leading" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "trailing" } }';
+-- "is.a" should match doc 9 via the host-type fallback lexeme
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "is.a" } }';
+-- "the.an" should match doc 10
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "the.an" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "www.documentdb.com" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "www documentdb com" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "\"person.0.age\"" } }';
+
+SET documentdb.enableDottedValueTextIndexTerms to on;
+-- Drop and recreate index with dotted value index terms enabled.
+CALL documentdb_api.drop_indexes('db', '{ "dropIndexes": "text_dot_search", "index": "name_text" }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "text_dot_search", "indexes": [ { "key": { "name": "text" }, "name": "name_text" } ] }', TRUE);
+
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "person" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "age" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "person.0.age" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "foo" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "bar" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "hello" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "leading" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "trailing" } }';
+-- "is.a" / "the.an" should not match anymore docs because the dotted lexeme "is.a" / "the.an" are now further decomposed and then results into stop words.
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "is.a" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "the.an" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "www.documentdb.com" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "www documentdb com" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "\"person.0.age\"" } }';
+
+-- Shard the collection and verify dotted text search still works
+SELECT documentdb_api.shard_collection('db', 'text_dot_search', '{ "_id": "hashed" }', false);
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "person" } }' ORDER BY object_id;
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "person.0.age" } }' ORDER BY object_id;
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "foo.bar.baz" } }' ORDER BY object_id;
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM documentdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "\"person.0.age\"" } }' ORDER BY object_id;
+
+-- Reset the GUC to default to avoid interactions with other tests
+RESET documentdb.enableDottedValueTextIndexTerms;

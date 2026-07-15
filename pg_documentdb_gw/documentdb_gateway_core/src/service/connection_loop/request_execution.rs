@@ -8,6 +8,7 @@
 
 use either::Either::Left;
 use tokio::{io::AsyncWrite, time::Instant};
+use tracing::Instrument;
 
 use crate::{
     auth,
@@ -16,7 +17,7 @@ use crate::{
     postgres::PgDataClient,
     processor,
     protocol::header::Header,
-    requests::{Request, RequestIntervalKind},
+    requests::{RequestIntervalKind, RequestObservation, RequestType},
     responses::{self, Response},
     telemetry::{self, client_info},
 };
@@ -30,10 +31,10 @@ enum RequestExecutionPath {
 }
 
 fn determine_request_execution_path(
-    request: &Request<'_>,
+    request_type: RequestType,
     auth_state: &auth::AuthState,
 ) -> RequestExecutionPath {
-    if request.request_type().handle_with_auth() {
+    if request_type.handle_with_auth() {
         return RequestExecutionPath::AuthCommand;
     }
 
@@ -55,8 +56,10 @@ async fn get_response<T>(
 where
     T: PgDataClient,
 {
-    match determine_request_execution_path(request_context.payload, &connection_context.auth_state)
-    {
+    match determine_request_execution_path(
+        request_context.request_type(),
+        &connection_context.auth_state,
+    ) {
         RequestExecutionPath::AuthCommand | RequestExecutionPath::UnauthorizedRequest => {
             let response = auth::process::<T>(connection_context, request_context).await?;
             return Ok(response);
@@ -107,7 +110,9 @@ where
 
     if connection_context.requires_response {
         let write_response_start = Instant::now();
-        responses::writer::write(header, &response, writer).await?;
+        responses::writer::write(header, &response, writer)
+            .instrument(tracing::info_span!("gateway.write_response"))
+            .await?;
         request_context
             .tracker
             .record_duration(RequestIntervalKind::WriteResponse, write_response_start);
@@ -116,21 +121,21 @@ where
     if connection_context.request_metrics_enabled() {
         telemetry::record_gateway_metrics(
             header,
-            Some(request_context.payload),
+            Some(RequestObservation::Strict(request_context.request())),
             Left(&response),
-            request_context.info.collection().unwrap_or(""),
+            request_context.request().collection().unwrap_or(""),
             request_context.tracker,
         );
     }
 
     if let Some(telemetry) = connection_context.telemetry_provider.as_ref() {
-        let collection = request_context.info.collection().unwrap_or("").to_owned();
+        let collection = request_context.request().collection().unwrap_or("");
+
         telemetry.emit_request_event(
             connection_context,
             header,
-            Some(request_context.payload),
+            Some(RequestObservation::Strict(request_context.request())),
             Left(&response),
-            None,
             collection,
             request_context.tracker,
             request_context.activity_id,
@@ -154,7 +159,7 @@ mod tests {
         error::ErrorCode,
         postgres::DocumentDBDataClient,
         protocol::opcode::OpCode,
-        requests::{request_tracker::RequestTracker, RequestType},
+        requests::{request_tracker::RequestTracker, Request, WireRequest},
         testing::{
             assert_header_matches, assert_success_response, build_op_msg_parts, build_raw_document,
             decode_op_msg_response, logout_document, ping_document, test_connection_context,
@@ -210,19 +215,19 @@ mod tests {
         authorized.set_authenticated(true);
 
         assert_eq!(
-            determine_request_execution_path(&logout_request, &native_unauthorized),
+            determine_request_execution_path(logout_request.request_type(), &native_unauthorized),
             RequestExecutionPath::AuthCommand
         );
         assert_eq!(
-            determine_request_execution_path(&ping_request, &native_unauthorized),
+            determine_request_execution_path(ping_request.request_type(), &native_unauthorized),
             RequestExecutionPath::UnauthorizedRequest
         );
         assert_eq!(
-            determine_request_execution_path(&ping_request, &external_identity),
+            determine_request_execution_path(ping_request.request_type(), &external_identity),
             RequestExecutionPath::ReauthenticationRequired
         );
         assert_eq!(
-            determine_request_execution_path(&ping_request, &authorized),
+            determine_request_execution_path(ping_request.request_type(), &authorized),
             RequestExecutionPath::AuthorizedRequest
         );
     }
@@ -237,13 +242,10 @@ mod tests {
         let request_info = request
             .extract_common()
             .expect("logout request should have valid common fields");
+        let wire_request = WireRequest::from_request_and_info(&request, request_info);
         let request_tracker = RequestTracker::new();
-        let request_context = RequestContext {
-            activity_id: "activity-auth-command",
-            payload: &request,
-            info: &request_info,
-            tracker: &request_tracker,
-        };
+        let request_context =
+            RequestContext::new("activity-auth-command", &wire_request, &request_tracker);
 
         let response =
             get_response::<DocumentDBDataClient>(&request_context, &mut connection_context)
@@ -268,22 +270,16 @@ mod tests {
         let request_info = request
             .extract_common()
             .expect("ping request should have valid common fields");
+        let wire_request = WireRequest::from_request_and_info(&request, request_info);
         let request_tracker = RequestTracker::new();
-        let request_context = RequestContext {
-            activity_id: "activity-reauth",
-            payload: &request,
-            info: &request_info,
-            tracker: &request_tracker,
-        };
+        let request_context =
+            RequestContext::new("activity-reauth", &wire_request, &request_tracker);
 
         let error = get_response::<DocumentDBDataClient>(&request_context, &mut connection_context)
             .await
             .expect_err("expired external identity should require reauthentication");
 
-        assert_eq!(
-            error.error_code_enum(),
-            Some(ErrorCode::ReauthenticationRequired)
-        );
+        assert_eq!(error.error_code(), ErrorCode::ReauthenticationRequired);
     }
 
     #[tokio::test]
@@ -301,13 +297,13 @@ mod tests {
         let request_info = request
             .extract_common()
             .expect("logout request should have valid common fields");
+        let wire_request = WireRequest::from_request_and_info(&request, request_info);
         let request_tracker = RequestTracker::new();
-        let request_context = RequestContext {
-            activity_id: "activity-handle-request-success",
-            payload: &request,
-            info: &request_info,
-            tracker: &request_tracker,
-        };
+        let request_context = RequestContext::new(
+            "activity-handle-request-success",
+            &wire_request,
+            &request_tracker,
+        );
         let (header, _) = build_op_msg_parts(&logout_document, 71);
 
         let (result, response_bytes) = execute_handle_request::<DocumentDBDataClient>(
@@ -362,13 +358,13 @@ mod tests {
         let request_info = request
             .extract_common()
             .expect("logout request should have valid common fields");
+        let wire_request = WireRequest::from_request_and_info(&request, request_info);
         let request_tracker = RequestTracker::new();
-        let request_context = RequestContext {
-            activity_id: "activity-handle-request-no-response",
-            payload: &request,
-            info: &request_info,
-            tracker: &request_tracker,
-        };
+        let request_context = RequestContext::new(
+            "activity-handle-request-no-response",
+            &wire_request,
+            &request_tracker,
+        );
         let (header, _) = build_op_msg_parts(&logout_document, 72);
 
         let (result, response_bytes) = execute_handle_request::<DocumentDBDataClient>(

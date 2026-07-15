@@ -41,7 +41,8 @@ use crate::{
         },
         QueryCatalog,
     },
-    time,
+    telemetry::TracingConfig,
+    time::{self, EpochClock},
 };
 
 fn pg_configuration(
@@ -50,6 +51,7 @@ fn pg_configuration(
     user: &str,
     password: Option<&str>,
     application_name: &str,
+    buffer_size: usize,
 ) -> tokio_postgres::Config {
     let mut config = tokio_postgres::Config::new();
 
@@ -69,6 +71,7 @@ fn pg_configuration(
         .dbname(setup_configuration.postgres_database())
         .user(user)
         .application_name(application_name)
+        .buffer_size(buffer_size)
         .options(
             query_catalog.set_search_path_and_timeout(&command_timeout_ms, &transaction_timeout_ms),
         );
@@ -136,6 +139,10 @@ pub struct ConnectionPool {
     metrics: Arc<ConnectionPoolMetrics>,
     identifier: String,
     prune_task: JoinHandle<()>,
+    /// Whether sampled queries from this pool should carry a `SQLCommenter`
+    /// `traceparent` comment for Postgres log correlation. Resolved once from
+    /// telemetry configuration at pool creation.
+    sql_commenter_enabled: bool,
 }
 
 impl ConnectionPool {
@@ -156,6 +163,7 @@ impl ConnectionPool {
             user,
             password,
             application_name,
+            pool_settings.connection_buffer_size(),
         );
 
         let metrics = Arc::new(ConnectionPoolMetrics::default());
@@ -219,13 +227,23 @@ impl ConnectionPool {
             pool_settings.adjusted_max_connections()
         );
 
+        let sql_commenter_enabled = TracingConfig::new(
+            setup_configuration
+                .telemetry_options()
+                .and_then(|t| t.tracing.as_ref()),
+        )
+        .sql_commenter_enabled();
+
         Ok(Self {
             pool,
             timeout_pool,
+            // Use the exact `Instant::now()` at pool creation time to avoid reporting
+            // an earlier cached timestamp for a freshly constructed pool.
             last_used_nanos: AtomicU64::new(time::instant_to_u64(Instant::now())),
             metrics,
             identifier: pool_identifier,
             prune_task,
+            sql_commenter_enabled,
         })
     }
 
@@ -237,11 +255,16 @@ impl ConnectionPool {
     /// # Errors
     /// Returns a [`deadpool_postgres::PoolError`] if the pool is exhausted or
     /// the connection cannot be established.
+    #[tracing::instrument(
+        name = "postgres.acquire_connection",
+        skip_all,
+        fields(otel.kind = "client", db.system.name = "postgresql", pool = "primary")
+    )]
     pub async fn acquire_connection(
         &self,
     ) -> std::result::Result<PoolConnection, deadpool_postgres::PoolError> {
         self.last_used_nanos
-            .store(time::instant_to_u64(Instant::now()), Ordering::Relaxed);
+            .store(EpochClock::almost_now_timestamp(), Ordering::Relaxed);
 
         self.pool.get().await.inspect_err(|error| {
             self.metrics.record_timeout_if_pool_timeout(error);
@@ -260,11 +283,16 @@ impl ConnectionPool {
     /// # Errors
     /// Returns a [`deadpool_postgres::PoolError`] if the pool is exhausted or
     /// the connection cannot be established.
+    #[tracing::instrument(
+        name = "postgres.acquire_connection",
+        skip_all,
+        fields(otel.kind = "client", db.system.name = "postgresql", pool = "timeout")
+    )]
     pub async fn acquire_timeout_connection(
         &self,
     ) -> std::result::Result<PoolConnection, deadpool_postgres::PoolError> {
         self.last_used_nanos
-            .store(time::instant_to_u64(Instant::now()), Ordering::Relaxed);
+            .store(EpochClock::almost_now_timestamp(), Ordering::Relaxed);
 
         self.timeout_pool.get().await.inspect_err(|error| {
             self.metrics.record_timeout_if_pool_timeout(error);
@@ -292,6 +320,13 @@ impl ConnectionPool {
 
     pub fn last_used(&self) -> Instant {
         time::u64_to_instant(self.last_used_nanos.load(Ordering::Relaxed))
+    }
+
+    /// Whether sampled queries from this pool should carry a `SQLCommenter`
+    /// `traceparent` comment for Postgres log correlation.
+    #[must_use]
+    pub const fn sql_commenter_enabled(&self) -> bool {
+        self.sql_commenter_enabled
     }
 
     /// Returns a non-mutating status snapshot for this logical pool.
@@ -480,7 +515,14 @@ mod tests {
         let setup_config = test_setup_configuration();
         let query_catalog = create_query_catalog();
 
-        let config = pg_configuration(&setup_config, &query_catalog, "user", Some("secret"), "app");
+        let config = pg_configuration(
+            &setup_config,
+            &query_catalog,
+            "user",
+            Some("secret"),
+            "app",
+            262_144,
+        );
         let password = config.get_password().expect("password should be set");
         assert_eq!(password, b"secret");
     }
@@ -490,7 +532,7 @@ mod tests {
         let setup_config = test_setup_configuration();
         let query_catalog = create_query_catalog();
 
-        let config = pg_configuration(&setup_config, &query_catalog, "user", None, "app");
+        let config = pg_configuration(&setup_config, &query_catalog, "user", None, "app", 262_144);
         assert!(config.get_password().is_none());
     }
 }

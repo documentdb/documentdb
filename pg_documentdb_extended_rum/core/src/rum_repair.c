@@ -33,9 +33,9 @@
 #include "pg_documentdb_rum.h"
 
 
-PG_FUNCTION_INFO_V1(documentdb_rum_prune_empty_entries_on_index);
-PG_FUNCTION_INFO_V1(documentdb_rum_repair_incomplete_split_on_index);
-PG_FUNCTION_INFO_V1(documentdb_rum_repair_revive_all_pages_and_tuples);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_prune_empty_entries_on_index);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_repair_incomplete_split_on_index);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_repair_revive_all_pages_and_tuples);
 
 
 static void rumRepairLostPathOnIndex(Relation index, bool trackDataPages, bool
@@ -58,8 +58,7 @@ static void RumReviveAllPagesAndTuplesOnIndex(Relation rel, bool dryrunMode);
  * Note that it does not do the bulk deletion of pruning dead rows.
  * That is still delegated to vacuum.
  */
-PGDLLEXPORT Datum
-documentdb_rum_prune_empty_entries_on_index(PG_FUNCTION_ARGS)
+RMGR_PG_FUNCTION_DEF(documentdb_rum_prune_empty_entries_on_index)
 {
 	Relation indrel;
 	Oid indexRelId = PG_GETARG_OID(0);
@@ -83,8 +82,7 @@ documentdb_rum_prune_empty_entries_on_index(PG_FUNCTION_ARGS)
  * Revive any pages based on the LP_DEAD hints being set and revives
  * all the pages and flushes to wal.
  */
-PGDLLEXPORT Datum
-documentdb_rum_repair_revive_all_pages_and_tuples(PG_FUNCTION_ARGS)
+RMGR_PG_FUNCTION_DEF(documentdb_rum_repair_revive_all_pages_and_tuples)
 {
 	Relation indrel;
 	Oid indexRelId = PG_GETARG_OID(0);
@@ -116,8 +114,7 @@ documentdb_rum_repair_revive_all_pages_and_tuples(PG_FUNCTION_ARGS)
  * that subsequent inserts will repair the tree and leave it in a
  * consistent state.
  */
-PGDLLEXPORT Datum
-documentdb_rum_repair_incomplete_split_on_index(PG_FUNCTION_ARGS)
+RMGR_PG_FUNCTION_DEF(documentdb_rum_repair_incomplete_split_on_index)
 {
 	Relation indrel;
 	Oid indexRelId = PG_GETARG_OID(0);

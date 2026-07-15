@@ -51,7 +51,7 @@
 
 #include "aggregation/bson_aggregation_pipeline_private.h"
 #include "api_hooks.h"
-#include "index_am/index_am_extend.h"
+#include "index_am/index_am_extend_create.h"
 
 static Query * GenerateBaseListCollectionsQuery(Datum databaseDatum, bool nameOnly,
 												bool addDistributedMetadata,
@@ -111,6 +111,7 @@ GenerateListCollectionsQuery(text *databaseDatum, pgbson *listCollectionsSpec,
 {
 	AggregationPipelineBuildContext context = { 0 };
 	context.databaseNameDatum = databaseDatum;
+	context.joinStatus = JoinStageStatus_Unknown;
 
 	bson_iter_t listCollectionsIter;
 	PgbsonInitIterator(listCollectionsSpec, &listCollectionsIter);
@@ -214,6 +215,7 @@ GenerateListIndexesQuery(text *databaseDatum, pgbson *listIndexesSpec,
 {
 	AggregationPipelineBuildContext context = { 0 };
 	context.databaseNameDatum = databaseDatum;
+	context.joinStatus = JoinStageStatus_Unknown;
 
 	bson_iter_t listIndexesIter;
 	PgbsonInitIterator(listIndexesSpec, &listIndexesIter);
@@ -445,7 +447,7 @@ GenerateBaseListIndexesQuery(text *databaseDatum, const StringView *collectionNa
 	query->rtable = list_make1(rte);
 
 	/* Register the RTE in the "FROM" clause and add where clause
-	 *  collection_id = <id> AND (index_is_valud OR ApiInternalSchemaName.index_build_is_in_progress)*/
+	 *  collection_id = <id> AND (index_is_valid OR ApiInternalSchemaName.index_build_is_in_progress)*/
 	RangeTblRef *rtr = makeNode(RangeTblRef);
 	rtr->rtindex = 1;
 
@@ -460,7 +462,7 @@ GenerateBaseListIndexesQuery(text *databaseDatum, const StringView *collectionNa
 		InvalidOid, InvalidOid,
 		COERCE_EXPLICIT_CALL);
 
-	/* index_is_valud OR ApiInternalSchemaName.index_build_is_in_progress */
+	/* index_is_valid OR ApiInternalSchemaName.index_build_is_in_progress */
 	Expr *orClause = make_orclause(list_make2(indexIsValidIdVar,
 											  indexBuildIsInProgressExpr));
 
@@ -523,7 +525,7 @@ GenerateBaseListIndexesQuery(text *databaseDatum, const StringView *collectionNa
 																notExtendedExpr),
 															-1);
 
-		/* collection_id = <id> AND (index_is_valud OR ApiInternalSchemaName.index_build_is_in_progress)
+		/* collection_id = <id> AND (index_is_valid OR ApiInternalSchemaName.index_build_is_in_progress)
 		 * AND ((index_spec).index_options is null OR NOT (index_spec.index_options #= '{ "isExtendedIndex": true }'))
 		 */
 		andClause = make_andclause(list_make3(opExpr, orClause, notExtendedOrNullExpr));

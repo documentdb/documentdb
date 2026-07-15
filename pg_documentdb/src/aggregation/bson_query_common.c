@@ -87,6 +87,11 @@ InitializeQueryDollarRange(const bson_value_t *filterValue,
 			rangeParams->isMaxIndexKey = true;
 			rangeParams->minOrMaxIndexKey = *bson_iter_value(&rangeIter);
 		}
+		else if (strcmp(key, "sample") == 0)
+		{
+			rangeParams->isSample = true;
+			rangeParams->sampleSize = BsonValueAsInt64(bson_iter_value(&rangeIter));
+		}
 		else
 		{
 			ereport(ERROR, (errmsg("Range predicate not supported: %s", key),
@@ -133,4 +138,21 @@ TryGetSingleFieldPathFromBsonValue(const bson_value_t *value,
 	}
 
 	return false;
+}
+
+
+/*
+ * IsBsonRangeArgsForReservoirSample returns true if the BsonRangeMatch args encode
+ * a reservoir sampling marker.
+ */
+bool
+IsBsonRangeArgsForReservoirSample(List *args)
+{
+	DollarRangeParams rangeParams = { 0 };
+	if (!TryGetRangeParamsForRangeArgs(args, &rangeParams))
+	{
+		return false;
+	}
+
+	return rangeParams.isSample;
 }

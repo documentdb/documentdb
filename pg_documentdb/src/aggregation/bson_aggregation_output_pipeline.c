@@ -2120,7 +2120,7 @@ ParseOutStage(const bson_value_t *existingValue, const char *currentNameSpace,
 	if (existingValue->value_type == BSON_TYPE_UTF8)
 	{
 		char *dbName = NULL;
-		char *dotPosition = strchr(currentNameSpace, '.');
+		const char *dotPosition = strchr(currentNameSpace, '.');
 		if (dotPosition != NULL)
 		{
 			size_t dbNameLength = dotPosition - currentNameSpace;

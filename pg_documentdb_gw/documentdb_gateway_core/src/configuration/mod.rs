@@ -13,15 +13,18 @@ mod setup;
 mod version;
 
 pub use certs::{CertInputType, CertificateOptions};
-pub use dynamic::DynamicConfiguration;
+pub use dynamic::{ClusterVersion, DynamicConfiguration};
 pub use pg_configuration::PgConfiguration;
-pub use setup::DocumentDBSetupConfiguration;
+pub use setup::{env_keys, DocumentDBSetupConfiguration};
 pub use version::Version;
 
 use dyn_clone::{clone_trait_object, DynClone};
 use std::fmt::Debug;
 
 use crate::telemetry::config::TelemetryOptions;
+
+pub(crate) const SOCKET_CONNECTION_IDLE_TIMEOUT_KEY: &str = "SocketConnectionIdleTimeout";
+pub(crate) const SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS: u64 = 18_000;
 
 /// These are the required configuration fields.
 ///

@@ -1,9 +1,7 @@
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documentdb_api_internal;
 SET documentdb.next_collection_id TO 9200;
 SET documentdb.next_collection_index_id TO 9200;
--- Enable PK cursor scan for dynamic streaming cursors
-SET documentdb.enablePrimaryKeyCursorScan TO on;
-SET documentdb.enableCursorPlanBeforeRestrictionPathUpdate TO off;
+-- Enable PK cursor scan (on by default) for dynamic streaming cursors
 set documentdb.enableDynamicCursors TO on;
 -- Insert 10 documents with _id in reverse insertion order so TID order differs from _id order
 DO $$
@@ -79,9 +77,9 @@ SELECT continuation AS r1_continuation FROM firstPageResponse \gset
 -- getMore: fetch next batch of 3
 SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1, "cursor.id": 1 }'), continuation FROM
     cursor_get_more(database => 'dyncursordb', getMoreSpec => '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 3 }', continuationSpec => :'r1_continuation');
-                                                                                bson_dollar_project                                                                                |                                                                                                                                                                                                                                                                continuation                                                                                                                                                                                                                                                                
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "534" }, "nextBatch" : [ { "_id" : { "$numberInt" : "3" } }, { "_id" : { "$numberInt" : "4" } }, { "_id" : { "$numberInt" : "5" } } ] } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "3" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "4" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "6" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+                                                                                bson_dollar_project                                                                                |                                                                                                                                                                                                                                                                                continuation                                                                                                                                                                                                                                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "534" }, "nextBatch" : [ { "_id" : { "$numberInt" : "3" } }, { "_id" : { "$numberInt" : "4" } }, { "_id" : { "$numberInt" : "5" } } ] } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "3" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "4" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "6" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
 (1 row)
 
 -- ===========================================================================
@@ -95,7 +93,7 @@ $cmd$);
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   scanType: Primary Key Scan
+   cursorScanType: Primary Key Scan
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_9201 collection
          Output: shard_key_value, object_id, document
@@ -107,16 +105,16 @@ $cmd$);
 -- Verify all 10 rows returned in _id order
 -- ===========================================================================
 EXECUTE drain_find_query('{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "batchSize": 2 }', '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 1 }');
-                                                                                                       cursorpage                                                                                                        |                                                                                                                                                                                                                                                                continuation                                                                                                                                                                                                                                                                
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "firstBatch" : [ { "_id" : { "$numberInt" : "0" } }, { "_id" : { "$numberInt" : "1" } } ] }, "ok" : { "$numberDouble" : "1.0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "8" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "2" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
- { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "2" } } ] }, "ok" : { "$numberDouble" : "1.0" } }                                      | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "7" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "3" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
- { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "3" } } ] }, "ok" : { "$numberDouble" : "1.0" } }                                      | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "6" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "4" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
- { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "4" } } ] }, "ok" : { "$numberDouble" : "1.0" } }                                      | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "5" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "5" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
- { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "5" } } ] }, "ok" : { "$numberDouble" : "1.0" } }                                      | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "4" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "6" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
- { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "6" } } ] }, "ok" : { "$numberDouble" : "1.0" } }                                      | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "3" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "7" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
- { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "7" } } ] }, "ok" : { "$numberDouble" : "1.0" } }                                      | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "2" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "8" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
- { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "8" } } ] }, "ok" : { "$numberDouble" : "1.0" } }                                      | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "1" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "9" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+                                                                                                       cursorpage                                                                                                        |                                                                                                                                                                                                                                                                                continuation                                                                                                                                                                                                                                                                                
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "firstBatch" : [ { "_id" : { "$numberInt" : "0" } }, { "_id" : { "$numberInt" : "1" } } ] }, "ok" : { "$numberDouble" : "1.0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "8" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "2" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "2" } } ] }, "ok" : { "$numberDouble" : "1.0" } }                                      | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "7" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "3" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "3" } } ] }, "ok" : { "$numberDouble" : "1.0" } }                                      | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "6" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "4" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "4" } } ] }, "ok" : { "$numberDouble" : "1.0" } }                                      | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "5" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "5" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "5" } } ] }, "ok" : { "$numberDouble" : "1.0" } }                                      | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "4" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "6" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "6" } } ] }, "ok" : { "$numberDouble" : "1.0" } }                                      | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "3" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "7" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "7" } } ] }, "ok" : { "$numberDouble" : "1.0" } }                                      | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "2" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "8" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "8" } } ] }, "ok" : { "$numberDouble" : "1.0" } }                                      | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "1" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "9" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "9" } } ] }, "ok" : { "$numberDouble" : "1.0" } }                                        | 
 (9 rows)
 
@@ -124,12 +122,12 @@ EXECUTE drain_find_query('{ "find": "dyncursor_coll", "projection": { "_id": 1 }
 -- Test 6: Full drain with batchSize=2 - verify batch length per page
 -- ===========================================================================
 EXECUTE drain_find_query_continuation('{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "batchSize": 2 }', '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 2 }');
-                                     bson_dollar_project                                     |                                                                                                                                                                                                                                                                continuation                                                                                                                                                                                                                                                                
----------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "firstBatchLength" : { "$numberInt" : "2" }, "nextBatchLength" : { "$numberInt" : "0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "8" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "2" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
- { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "2" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "6" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "4" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
- { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "2" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "4" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "6" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
- { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "2" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "2" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "8" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+                                     bson_dollar_project                                     |                                                                                                                                                                                                                                                                                continuation                                                                                                                                                                                                                                                                                
+---------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "firstBatchLength" : { "$numberInt" : "2" }, "nextBatchLength" : { "$numberInt" : "0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "8" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "2" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "2" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "6" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "4" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "2" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "4" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "6" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "2" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "2" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "8" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
  { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "2" } } | 
 (5 rows)
 
@@ -137,11 +135,11 @@ EXECUTE drain_find_query_continuation('{ "find": "dyncursor_coll", "projection":
 -- Test 7: Dynamic cursors with _id range filter - drain
 -- ===========================================================================
 EXECUTE drain_find_query('{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "filter": { "_id": { "$gt": 3, "$lt": 8 }}, "batchSize": 1 }', '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 1 }');
-                                                                                     cursorpage                                                                                      |                                                                                                                                                                                                                                                                                                             continuation                                                                                                                                                                                                                                                                                                              
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "firstBatch" : [ { "_id" : { "$numberInt" : "4" } } ] }, "ok" : { "$numberDouble" : "1.0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "filter" : { "_id" : { "$gt" : { "$numberInt" : "3" }, "$lt" : { "$numberInt" : "8" } } }, "batchSize" : { "$numberInt" : "1" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "5" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "5" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
- { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "5" } } ] }, "ok" : { "$numberDouble" : "1.0" } }  | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "filter" : { "_id" : { "$gt" : { "$numberInt" : "3" }, "$lt" : { "$numberInt" : "8" } } }, "batchSize" : { "$numberInt" : "1" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "4" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "6" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
- { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "6" } } ] }, "ok" : { "$numberDouble" : "1.0" } }  | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "filter" : { "_id" : { "$gt" : { "$numberInt" : "3" }, "$lt" : { "$numberInt" : "8" } } }, "batchSize" : { "$numberInt" : "1" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "3" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "7" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+                                                                                     cursorpage                                                                                      |                                                                                                                                                                                                                                                                                                                             continuation                                                                                                                                                                                                                                                                                                                              
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "firstBatch" : [ { "_id" : { "$numberInt" : "4" } } ] }, "ok" : { "$numberDouble" : "1.0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "filter" : { "_id" : { "$gt" : { "$numberInt" : "3" }, "$lt" : { "$numberInt" : "8" } } }, "batchSize" : { "$numberInt" : "1" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "5" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "5" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "5" } } ] }, "ok" : { "$numberDouble" : "1.0" } }  | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "filter" : { "_id" : { "$gt" : { "$numberInt" : "3" }, "$lt" : { "$numberInt" : "8" } } }, "batchSize" : { "$numberInt" : "1" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "4" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "6" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "6" } } ] }, "ok" : { "$numberDouble" : "1.0" } }  | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "filter" : { "_id" : { "$gt" : { "$numberInt" : "3" }, "$lt" : { "$numberInt" : "8" } } }, "batchSize" : { "$numberInt" : "1" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "3" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "7" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "7" } } ] }, "ok" : { "$numberDouble" : "1.0" } }    | 
 (4 rows)
 
@@ -167,7 +165,7 @@ $cmd$);
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "_id" : { "$gt" : { "$numberInt" : "3" }, "$lt" : { "$numberInt" : "8" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   scanType: Primary Key Scan
+   cursorScanType: Primary Key Scan
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_9201 collection
          Output: shard_key_value, object_id, document
@@ -186,10 +184,10 @@ SELECT bson_dollar_project(cursorpage, '{ "cursor.nextBatch._id": 1, "cursor.id"
 -- Test 9: Dynamic cursors with non-_id field filter (sk=1)
 -- ===========================================================================
 EXECUTE drain_find_query('{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "filter": { "sk": 1 }, "batchSize": 1 }', '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 2 }');
-                                                                                                       cursorpage                                                                                                       |                                                                                                                                                                                                                                                                                       continuation                                                                                                                                                                                                                                                                                       
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "firstBatch" : [ { "_id" : { "$numberInt" : "0" } } ] }, "ok" : { "$numberDouble" : "1.0" } }                                    | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "filter" : { "sk" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "1" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "7" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "3" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
- { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "3" } }, { "_id" : { "$numberInt" : "6" } } ] }, "ok" : { "$numberDouble" : "1.0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "filter" : { "sk" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "1" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "1" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "9" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+                                                                                                       cursorpage                                                                                                       |                                                                                                                                                                                                                                                                                                       continuation                                                                                                                                                                                                                                                                                                       
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "firstBatch" : [ { "_id" : { "$numberInt" : "0" } } ] }, "ok" : { "$numberDouble" : "1.0" } }                                    | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "filter" : { "sk" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "1" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "7" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "3" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "3" } }, { "_id" : { "$numberInt" : "6" } } ] }, "ok" : { "$numberDouble" : "1.0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "filter" : { "sk" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "1" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "1" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "9" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "9" } } ] }, "ok" : { "$numberDouble" : "1.0" } }                                       | 
 (3 rows)
 
@@ -211,7 +209,6 @@ $cmd$);
 
 SET enable_indexscan TO on;
 SET enable_bitmapscan TO on;
-SET documentdb.enablePrimaryKeyCursorScan TO on;
 -- ===========================================================================
 -- Test 11: Full drain with batchSize >= total rows - verify single-page drain
 -- ===========================================================================
@@ -233,7 +230,7 @@ $cmd$);
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   scanType: Primary Key Scan
+   cursorScanType: Primary Key Scan
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_9201 collection
          Output: shard_key_value, object_id, document
@@ -296,7 +293,7 @@ $cmd$);
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "sk" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: sk_1
    indexKey: {"sk": 1}
    isMultiKey: false
@@ -343,7 +340,7 @@ $cmd$);
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "sk" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   scanType: Primary Key Scan
+   cursorScanType: Primary Key Scan
    indexName: _id_
    ->  Index Scan using _id_ on documentdb_data.documents_9201 collection
          Output: shard_key_value, object_id, document
@@ -356,10 +353,10 @@ $cmd$);
 -- sk=2 docs: _id 2, 5, 8 (3 docs total)
 -- ===========================================================================
 EXECUTE drain_find_query('{ "find": "dyncursor_coll", "filter": { "sk": 2 }, "projection": { "_id": 1 }, "batchSize": 1 }', '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 1 }');
-                                                                                     cursorpage                                                                                      |                                                                                                                                                                                                                                                                                       continuation                                                                                                                                                                                                                                                                                       
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "firstBatch" : [ { "_id" : { "$numberInt" : "2" } } ] }, "ok" : { "$numberDouble" : "1.0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "filter" : { "sk" : { "$numberInt" : "2" } }, "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "1" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "5" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "5" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
- { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "5" } } ] }, "ok" : { "$numberDouble" : "1.0" } }  | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "filter" : { "sk" : { "$numberInt" : "2" } }, "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "1" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "2" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "8" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+                                                                                     cursorpage                                                                                      |                                                                                                                                                                                                                                                                                                       continuation                                                                                                                                                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "firstBatch" : [ { "_id" : { "$numberInt" : "2" } } ] }, "ok" : { "$numberDouble" : "1.0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "filter" : { "sk" : { "$numberInt" : "2" } }, "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "1" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "5" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "5" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "5" } } ] }, "ok" : { "$numberDouble" : "1.0" } }  | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "filter" : { "sk" : { "$numberInt" : "2" } }, "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "1" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "2" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "8" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "8" } } ] }, "ok" : { "$numberDouble" : "1.0" } }    | 
 (3 rows)
 
@@ -368,9 +365,9 @@ EXECUTE drain_find_query('{ "find": "dyncursor_coll", "filter": { "sk": 2 }, "pr
 -- sk=0 docs: _id 1, 4, 7 (3 docs total)
 -- ===========================================================================
 EXECUTE drain_find_query_continuation('{ "find": "dyncursor_coll", "filter": { "sk": 0 }, "projection": { "_id": 1 }, "batchSize": 2 }', '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 2 }');
-                                     bson_dollar_project                                     |                                                                                                                                                                                                                                                                                       continuation                                                                                                                                                                                                                                                                                       
----------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "firstBatchLength" : { "$numberInt" : "2" }, "nextBatchLength" : { "$numberInt" : "0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "filter" : { "sk" : { "$numberInt" : "0" } }, "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "3" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "7" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+                                     bson_dollar_project                                     |                                                                                                                                                                                                                                                                                                       continuation                                                                                                                                                                                                                                                                                                       
+---------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "firstBatchLength" : { "$numberInt" : "2" }, "nextBatchLength" : { "$numberInt" : "0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "filter" : { "sk" : { "$numberInt" : "0" } }, "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "3" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "7" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
  { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "1" } } | 
 (2 rows)
 
@@ -379,9 +376,9 @@ EXECUTE drain_find_query_continuation('{ "find": "dyncursor_coll", "filter": { "
 -- sk=1 AND _id > 2 AND _id < 8 => _id 3, 6
 -- ===========================================================================
 EXECUTE drain_find_query('{ "find": "dyncursor_coll", "filter": { "sk": 1, "_id": { "$gt": 2, "$lt": 8 } }, "projection": { "_id": 1 }, "batchSize": 1 }', '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 1 }');
-                                                                                     cursorpage                                                                                      |                                                                                                                                                                                                                                                                                                                             continuation                                                                                                                                                                                                                                                                                                                             
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "firstBatch" : [ { "_id" : { "$numberInt" : "3" } } ] }, "ok" : { "$numberDouble" : "1.0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "filter" : { "sk" : { "$numberInt" : "1" }, "_id" : { "$gt" : { "$numberInt" : "2" }, "$lt" : { "$numberInt" : "8" } } }, "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "1" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "4" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "6" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+                                                                                     cursorpage                                                                                      |                                                                                                                                                                                                                                                                                                                                             continuation                                                                                                                                                                                                                                                                                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "534" }, "ns" : "dyncursordb.dyncursor_coll", "firstBatch" : [ { "_id" : { "$numberInt" : "3" } } ] }, "ok" : { "$numberDouble" : "1.0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "filter" : { "sk" : { "$numberInt" : "1" }, "_id" : { "$gt" : { "$numberInt" : "2" }, "$lt" : { "$numberInt" : "8" } } }, "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "1" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "4" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "6" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "dyncursordb.dyncursor_coll", "nextBatch" : [ { "_id" : { "$numberInt" : "6" } } ] }, "ok" : { "$numberDouble" : "1.0" } }    | 
 (2 rows)
 
@@ -390,11 +387,11 @@ EXECUTE drain_find_query('{ "find": "dyncursor_coll", "filter": { "sk": 1, "_id"
 -- All 10 docs have a = "SampleSampleSampleSampleSample", so all 10 returned
 -- ===========================================================================
 EXECUTE drain_find_query_continuation('{ "find": "dyncursor_coll", "filter": { "a": "SampleSampleSampleSampleSample" }, "projection": { "_id": 1 }, "batchSize": 3 }', '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 3 }');
-                                     bson_dollar_project                                     |                                                                                                                                                                                                                                                                                           continuation                                                                                                                                                                                                                                                                                            
----------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "firstBatchLength" : { "$numberInt" : "3" }, "nextBatchLength" : { "$numberInt" : "0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "filter" : { "a" : "SampleSampleSampleSampleSample" }, "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "3" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "7" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "3" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
- { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "filter" : { "a" : "SampleSampleSampleSampleSample" }, "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "3" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "4" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "6" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
- { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "filter" : { "a" : "SampleSampleSampleSampleSample" }, "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "3" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "1" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "9" } } } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+                                     bson_dollar_project                                     |                                                                                                                                                                                                                                                                                                           continuation                                                                                                                                                                                                                                                                                                            
+---------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "firstBatchLength" : { "$numberInt" : "3" }, "nextBatchLength" : { "$numberInt" : "0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "filter" : { "a" : "SampleSampleSampleSampleSample" }, "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "3" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "7" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "3" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "filter" : { "a" : "SampleSampleSampleSampleSample" }, "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "3" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "4" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "6" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "filter" : { "a" : "SampleSampleSampleSampleSample" }, "projection" : { "_id" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "3" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "1" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "9" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
  { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "1" } } | 
 (4 rows)
 
@@ -630,7 +627,7 @@ $cmd$);
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "$or" : [ { "x" : { "$numberInt" : "0" } }, { "y" : { "$numberInt" : "0" } } ] }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   scanType: Secondary Index Bitmap OR Scan
+   cursorScanType: Secondary Index Bitmap OR Scan
    indexName: x_1
    indexKey: {"x": 1}
    isMultiKey: false
@@ -641,7 +638,7 @@ $cmd$);
    indexBounds: ["y": [0, 0]]
    ->  Bitmap Heap Scan on documentdb_data.documents_9202 collection
          Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "$or" : [ { "x" : { "$numberInt" : "0" } }, { "y" : { "$numberInt" : "0" } } ] }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         Recheck Cond: ((collection.document #= '{ "x" : { "$numberInt" : "0" } }'::bsonquery) OR (collection.document #= '{ "y" : { "$numberInt" : "0" } }'::bsonquery))
+         Recheck Cond: ((collection.document @= '{ "x" : { "$numberInt" : "0" } }'::bson) OR (collection.document @= '{ "y" : { "$numberInt" : "0" } }'::bson))
          ->  BitmapOr
                ->  Bitmap Index Scan on x_1
                      Index Cond: (collection.document @= '{ "x" : { "$numberInt" : "0" } }'::bson)
@@ -681,7 +678,7 @@ $cmd$);
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan)
    Output: (bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "x" : { "$numberInt" : "5" }, "y" : { "$numberInt" : "3" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   scanType: Secondary Index Bitmap AND Scan
+   cursorScanType: Secondary Index Bitmap AND Scan
    indexName: y_1
    indexKey: {"y": 1}
    isMultiKey: false
@@ -734,6 +731,515 @@ EXCEPTION WHEN OTHERS THEN
 END $$;
 NOTICE:  EXPLAIN FORMAT JSON is valid JSON: true
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
+-- ===========================================================================
+-- Test: Aggregate cursor - verify aggregate_cursor_first_page uses dynamic cursors
+-- ===========================================================================
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+-- Aggregate with $match only (streamable pipeline)
+CREATE TEMP TABLE agg_cursor_test AS
+SELECT cursorPage, continuation FROM aggregate_cursor_first_page(
+    database => 'dyncursordb',
+    commandSpec => '{ "aggregate": "dyncursor_coll", "pipeline": [ { "$match": { "sk": 1 } } ], "cursor": { "batchSize": 2 } }',
+    cursorId => 540);
+SELECT bson_dollar_project(cursorPage, '{ "cursor.firstBatch._id": 1, "cursor.id": 1 }')
+    FROM agg_cursor_test;
+                                                              bson_dollar_project                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "540" }, "firstBatch" : [ { "_id" : { "$numberInt" : "0" } }, { "_id" : { "$numberInt" : "3" } } ] } }
+(1 row)
+
+-- Check cursor type: qd = dynamic, qc = streaming
+SELECT bson_dollar_project(continuation, '{ "qd": 1, "qc": 1 }') AS agg_cursor_type FROM agg_cursor_test;
+                                                                            agg_cursor_type                                                                            
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "qd" : { "aggregate" : "dyncursor_coll", "pipeline" : [ { "$match" : { "sk" : { "$numberInt" : "1" } } } ], "cursor" : { "batchSize" : { "$numberInt" : "2" } } } }
+(1 row)
+
+-- Compare with equivalent find (should also be dynamic)
+CREATE TEMP TABLE find_cursor_test AS
+SELECT cursorPage, continuation FROM find_cursor_first_page(
+    database => 'dyncursordb',
+    commandSpec => '{ "find": "dyncursor_coll", "filter": { "sk": 1 }, "batchSize": 2 }',
+    cursorId => 541);
+SELECT bson_dollar_project(continuation, '{ "qd": 1, "qc": 1 }') AS find_cursor_type FROM find_cursor_test;
+                                                       find_cursor_type                                                       
+------------------------------------------------------------------------------------------------------------------------------
+ { "qd" : { "find" : "dyncursor_coll", "filter" : { "sk" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "2" } } }
+(1 row)
+
+DROP TABLE agg_cursor_test;
+DROP TABLE find_cursor_test;
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
 -- Restore defaults
 SET documentdb.enablePrimaryKeyCursorScan TO off;
-SET documentdb.enableCursorPlanBeforeRestrictionPathUpdate TO off;
+-- ===========================================================================
+-- Nested BitmapOr(BitmapAnd, BitmapAnd, BitmapIndexScan) tests
+-- Regression test for segv crash when dynamic cursor continuation writing
+-- encounters nested bitmap And/Or nodes (e.g. $or[ $and[...], $and[...], ... ]).
+-- The old code assumed all children of BitmapOr/BitmapAnd were BitmapIndexScanState,
+-- but nested $and/$or produces BitmapOr(BitmapAnd, BitmapAnd, BitmapIndexScan).
+-- ===========================================================================
+SET documentdb.enablePrimaryKeyCursorScan TO on;
+SET documentdb.enableDynamicCursors TO on;
+SET documentdb.enablePlannerStatisticsNewCollections TO on;
+-- Insert 2000 docs with 3 independent fields for separate indexes.
+-- a = mod(i, 10): 10 values, each matches 200 docs
+-- b = mod(i, 7):   7 values, each matches ~286 docs
+-- c = mod(i, 13): 13 values, each matches ~154 docs
+DO $$
+DECLARE i int;
+BEGIN
+FOR i IN 0..1999 LOOP
+PERFORM documentdb_api.insert_one('dyncursordb', 'dyncursor_nested_bm', FORMAT('{ "_id": %s, "a": %s, "b": %s, "c": %s, "pad": "%s" }', i, mod(i, 10), mod(i, 7), mod(i, 13), repeat('N', 200))::documentdb_core.bson);
+END LOOP;
+END;
+$$;
+NOTICE:  creating collection
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'dyncursordb',
+    '{ "createIndexes": "dyncursor_nested_bm", "indexes": [ { "key": { "a": 1 }, "name": "a_1" } ] }',
+    true
+);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'dyncursordb',
+    '{ "createIndexes": "dyncursor_nested_bm", "indexes": [ { "key": { "b": 1 }, "name": "b_1" } ] }',
+    true
+);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'dyncursordb',
+    '{ "createIndexes": "dyncursor_nested_bm", "indexes": [ { "key": { "c": 1 }, "name": "c_1" } ] }',
+    true
+);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE;
+-- Prepare drain helper for nested bitmap collection
+PREPARE drain_nested_bm_query(bson, bson) AS
+    (WITH RECURSIVE cte AS (
+        SELECT cursorPage, continuation FROM find_cursor_first_page(database => 'dyncursordb', commandSpec => $1, cursorId => 536)
+        UNION ALL
+        SELECT gm.cursorPage, gm.continuation FROM cte, cursor_get_more(database => 'dyncursordb', getMoreSpec => $2, continuationSpec => cte.continuation) gm
+            WHERE cte.continuation IS NOT NULL
+    )
+    SELECT bson_dollar_project(cursorPage, '{"firstBatchLength": { "$size": { "$ifNull": ["$cursor.firstBatch", []]}}, "nextBatchLength": { "$size": { "$ifNull": ["$cursor.nextBatch", []]}}}'), continuation IS NOT NULL as has_more, bson_dollar_project(continuation, '{ "dc.type": 1 }') as scan_type FROM cte);
+SET enable_indexscan TO off;
+SET enable_seqscan TO off;
+-- ===========================================================================
+-- Test 30: EXPLAIN nested bitmap - $or[ $and[a, b], $and[a, b], c ]
+-- Should produce BitmapOr(BitmapAnd(a_1, b_1), BitmapAnd(a_1, b_1), BitmapIndexScan(c_1))
+-- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_nested_bm", "filter": { "$or": [{ "$and": [{ "a": 1 }, { "b": 2 }] }, { "$and": [{ "a": 3 }, { "b": 4 }] }, { "c": 5 }] }, "projection": { "_id": 1 }, "batchSize": 3 }');
+$cmd$);
+                                                                                                                                                                                        run_explain_and_trim                                                                                                                                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documentdb_data.documents_9203 collection
+   Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "$or" : [ { "$and" : [ { "a" : { "$numberInt" : "1" } }, { "b" : { "$numberInt" : "2" } } ] }, { "$and" : [ { "a" : { "$numberInt" : "3" } }, { "b" : { "$numberInt" : "4" } } ] }, { "c" : { "$numberInt" : "5" } } ] }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Recheck Cond: (((collection.document @= '{ "b" : { "$numberInt" : "2" } }'::bson) AND (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)) OR ((collection.document @= '{ "b" : { "$numberInt" : "4" } }'::bson) AND (collection.document @= '{ "a" : { "$numberInt" : "3" } }'::bson)) OR (collection.document @= '{ "c" : { "$numberInt" : "5" } }'::bson))
+   ->  BitmapOr
+         ->  BitmapAnd
+               ->  Bitmap Index Scan on b_1
+                     Index Cond: (collection.document @= '{ "b" : { "$numberInt" : "2" } }'::bson)
+               ->  Bitmap Index Scan on a_1
+                     Index Cond: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
+         ->  BitmapAnd
+               ->  Bitmap Index Scan on b_1
+                     Index Cond: (collection.document @= '{ "b" : { "$numberInt" : "4" } }'::bson)
+               ->  Bitmap Index Scan on a_1
+                     Index Cond: (collection.document @= '{ "a" : { "$numberInt" : "3" } }'::bson)
+         ->  Bitmap Index Scan on c_1
+               Index Cond: (collection.document @= '{ "c" : { "$numberInt" : "5" } }'::bson)
+(16 rows)
+
+-- ===========================================================================
+-- Test 31: Full drain nested bitmap OR(AND, AND, IndexScan)
+-- $or[ {a:1, b:2}, {a:3, b:4}, {c:5} ] with dynamic cursors and batchSize=5
+-- This is the exact pattern that triggered the segv before the fix:
+-- the continuation writer must recurse into nested BitmapAnd nodes inside
+-- the BitmapOr, rather than assuming all children are BitmapIndexScanState.
+-- ===========================================================================
+EXECUTE drain_nested_bm_query('{ "find": "dyncursor_nested_bm", "filter": { "$or": [{ "$and": [{ "a": 1 }, { "b": 2 }] }, { "$and": [{ "a": 3 }, { "b": 4 }] }, { "c": 5 }] }, "projection": { "_id": 1 }, "batchSize": 5 }', '{ "getMore": { "$numberLong": "536" }, "collection": "dyncursor_nested_bm", "batchSize": 5 }');
+                                     bson_dollar_project                                     | has_more |                   scan_type                    
+---------------------------------------------------------------------------------------------+----------+------------------------------------------------
+ { "firstBatchLength" : { "$numberInt" : "5" }, "nextBatchLength" : { "$numberInt" : "0" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "1" } } | f        | 
+(42 rows)
+
+-- ===========================================================================
+-- Test 32: Drain nested bitmap with smaller batch to exercise more continuation writes
+-- ===========================================================================
+EXECUTE drain_nested_bm_query('{ "find": "dyncursor_nested_bm", "filter": { "$or": [{ "$and": [{ "a": 1 }, { "b": 2 }] }, { "$and": [{ "a": 3 }, { "b": 4 }] }, { "c": 5 }] }, "projection": { "_id": 1 }, "batchSize": 3 }', '{ "getMore": { "$numberLong": "536" }, "collection": "dyncursor_nested_bm", "batchSize": 3 }');
+                                     bson_dollar_project                                     | has_more |                   scan_type                    
+---------------------------------------------------------------------------------------------+----------+------------------------------------------------
+ { "firstBatchLength" : { "$numberInt" : "3" }, "nextBatchLength" : { "$numberInt" : "0" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "2" } } | f        | 
+(69 rows)
+
+-- ===========================================================================
+-- Test 33: Nested $or of $and with $or - triple nesting
+-- $or[ $and[a:1, b:2], $or[{a:5}, {b:6}], c:9 ]
+-- Produces BitmapOr(BitmapAnd, BitmapOr, BitmapIndexScan) - all 3 node types
+-- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_nested_bm", "filter": { "$or": [{ "$and": [{ "a": 1 }, { "b": 2 }] }, { "$or": [{ "a": 5 }, { "b": 6 }] }, { "c": 9 }] }, "projection": { "_id": 1 }, "batchSize": 3 }');
+$cmd$);
+                                                                                                                                                                                        run_explain_and_trim                                                                                                                                                                                        
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documentdb_data.documents_9203 collection
+   Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "$or" : [ { "$and" : [ { "a" : { "$numberInt" : "1" } }, { "b" : { "$numberInt" : "2" } } ] }, { "$or" : [ { "a" : { "$numberInt" : "5" } }, { "b" : { "$numberInt" : "6" } } ] }, { "c" : { "$numberInt" : "9" } } ] }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Recheck Cond: (((collection.document @= '{ "b" : { "$numberInt" : "2" } }'::bson) AND (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)) OR (collection.document @= '{ "a" : { "$numberInt" : "5" } }'::bson) OR (collection.document @= '{ "b" : { "$numberInt" : "6" } }'::bson) OR (collection.document @= '{ "c" : { "$numberInt" : "9" } }'::bson))
+   ->  BitmapOr
+         ->  BitmapAnd
+               ->  Bitmap Index Scan on b_1
+                     Index Cond: (collection.document @= '{ "b" : { "$numberInt" : "2" } }'::bson)
+               ->  Bitmap Index Scan on a_1
+                     Index Cond: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
+         ->  Bitmap Index Scan on a_1
+               Index Cond: (collection.document @= '{ "a" : { "$numberInt" : "5" } }'::bson)
+         ->  Bitmap Index Scan on b_1
+               Index Cond: (collection.document @= '{ "b" : { "$numberInt" : "6" } }'::bson)
+         ->  Bitmap Index Scan on c_1
+               Index Cond: (collection.document @= '{ "c" : { "$numberInt" : "9" } }'::bson)
+(15 rows)
+
+EXECUTE drain_nested_bm_query('{ "find": "dyncursor_nested_bm", "filter": { "$or": [{ "$and": [{ "a": 1 }, { "b": 2 }] }, { "$or": [{ "a": 5 }, { "b": 6 }] }, { "c": 9 }] }, "projection": { "_id": 1 }, "batchSize": 5 }', '{ "getMore": { "$numberLong": "536" }, "collection": "dyncursor_nested_bm", "batchSize": 5 }');
+                                     bson_dollar_project                                     | has_more |                   scan_type                    
+---------------------------------------------------------------------------------------------+----------+------------------------------------------------
+ { "firstBatchLength" : { "$numberInt" : "5" }, "nextBatchLength" : { "$numberInt" : "0" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "5" } } | t        | { "dc" : { "type" : { "$numberInt" : "6" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "1" } } | f        | 
+(121 rows)
+
+SET enable_indexscan TO on;
+SET enable_seqscan TO on;
+SET documentdb.enablePlannerStatisticsNewCollections TO off;
+SET documentdb.enablePrimaryKeyCursorScan TO off;
+SET documentdb.enableDynamicCursors TO off;
+-- ===========================================================================
+-- Simple index filter with planner statistics, no ANALYZE
+-- Regression test for the scenario where on an unsharded collection, with
+-- planner statistics enabled and no ANALYZE run, a simple filter like
+-- { "a": "b" } with an index on "a" is executed via dynamic cursors.
+-- The shard_key_value BitmapAnd optimization strips the shard_key child,
+-- producing a single Bitmap Index Scan. This validates that the cursor
+-- drain completes correctly even with planner statistics on a new collection.
+-- ===========================================================================
+SET documentdb.enablePrimaryKeyCursorScan TO on;
+SET documentdb.enableDynamicCursors TO on;
+SET documentdb.enablePlannerStatisticsNewCollections TO on;
+-- Insert a few docs - do NOT run ANALYZE
+SELECT documentdb_api.insert_one('dyncursordb', 'dyncursor_shard_bm', '{ "a": "b", "pad": "x" }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('dyncursordb', 'dyncursor_shard_bm', '{ "a": "c", "pad": "y" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('dyncursordb', 'dyncursor_shard_bm', '{ "a": "b", "pad": "z" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Disable autovacuum to prevent auto-analyze from adding planner stats
+SELECT collection_id AS shard_bm_col FROM documentdb_api_catalog.collections
+    WHERE database_name = 'dyncursordb' AND collection_name = 'dyncursor_shard_bm' \gset
+SELECT FORMAT('ALTER TABLE documentdb_data.documents_%s SET (autovacuum_enabled = off)', :shard_bm_col) \gexec
+ALTER TABLE documentdb_data.documents_9204 SET (autovacuum_enabled = off)
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'dyncursordb',
+    '{ "createIndexes": "dyncursor_shard_bm", "indexes": [ { "key": { "a": 1 }, "name": "a_1" } ] }',
+    true
+);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Force bitmap scan path
+SET enable_indexscan TO off;
+SET enable_seqscan TO off;
+SET seq_page_cost TO 9999999;
+-- ===========================================================================
+-- Test 34: Simple filter with bitmap scan, planner stats, no ANALYZE
+-- ===========================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb', '{ "find": "dyncursor_shard_bm", "filter": { "a": "b" }, "batchSize": 2 }');
+$cmd$);
+                        run_explain_and_trim                        
+--------------------------------------------------------------------
+ Bitmap Heap Scan on documentdb_data.documents_9204 collection
+   Output: document
+   Recheck Cond: (collection.document @= '{ "a" : "b" }'::bson)
+   ->  Bitmap Index Scan on a_1
+         Index Cond: (collection.document @= '{ "a" : "b" }'::bson)
+(5 rows)
+
+-- ===========================================================================
+-- Test 35: Drain cursor with simple filter, planner stats, no ANALYZE
+-- ===========================================================================
+PREPARE drain_shard_bm_query(bson, bson) AS
+    (WITH RECURSIVE cte AS (
+        SELECT cursorPage, continuation FROM find_cursor_first_page(database => 'dyncursordb', commandSpec => $1, cursorId => 537)
+        UNION ALL
+        SELECT gm.cursorPage, gm.continuation FROM cte, cursor_get_more(database => 'dyncursordb', getMoreSpec => $2, continuationSpec => cte.continuation) gm
+            WHERE cte.continuation IS NOT NULL
+    )
+    SELECT bson_dollar_project(cursorPage, '{"firstBatchLength": { "$size": { "$ifNull": ["$cursor.firstBatch", []]}}, "nextBatchLength": { "$size": { "$ifNull": ["$cursor.nextBatch", []]}}}'), continuation IS NOT NULL as has_more, bson_dollar_project(continuation, '{ "dc.type": 1 }') as scan_type FROM cte);
+EXECUTE drain_shard_bm_query('{ "find": "dyncursor_shard_bm", "filter": { "a": "b" }, "batchSize": 1 }', '{ "getMore": { "$numberLong": "537" }, "collection": "dyncursor_shard_bm", "batchSize": 1 }');
+                                     bson_dollar_project                                     | has_more |                   scan_type                    
+---------------------------------------------------------------------------------------------+----------+------------------------------------------------
+ { "firstBatchLength" : { "$numberInt" : "1" }, "nextBatchLength" : { "$numberInt" : "0" } } | t        | { "dc" : { "type" : { "$numberInt" : "3" } } }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "1" } } | f        | 
+(2 rows)
+
+SET seq_page_cost TO DEFAULT;
+SET enable_indexscan TO on;
+SET enable_seqscan TO on;
+SET documentdb.enablePlannerStatisticsNewCollections TO off;
+SET documentdb.enablePrimaryKeyCursorScan TO off;
+SET documentdb.enableDynamicCursors TO off;

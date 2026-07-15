@@ -1,0 +1,6 @@
+ALTER OPERATOR __CORE_SCHEMA__.=(__CORE_SCHEMA__.bson, __CORE_SCHEMA__.bson) SET (RESTRICT = __CORE_SCHEMA__.bson_eqsel);
+ALTER OPERATOR __CORE_SCHEMA__.>(__CORE_SCHEMA__.bson, __CORE_SCHEMA__.bson) SET (RESTRICT = __CORE_SCHEMA__.bson_scalargtsel);
+ALTER OPERATOR __CORE_SCHEMA__.>=(__CORE_SCHEMA__.bson, __CORE_SCHEMA__.bson) SET (RESTRICT = __CORE_SCHEMA__.bson_scalargesel);
+ALTER OPERATOR __CORE_SCHEMA__.<(__CORE_SCHEMA__.bson, __CORE_SCHEMA__.bson) SET (RESTRICT = __CORE_SCHEMA__.bson_scalarltsel);
+ALTER OPERATOR __CORE_SCHEMA__.<=(__CORE_SCHEMA__.bson, __CORE_SCHEMA__.bson) SET (RESTRICT = __CORE_SCHEMA__.bson_scalarlesel);
+ALTER OPERATOR __CORE_SCHEMA__.<>(__CORE_SCHEMA__.bson, __CORE_SCHEMA__.bson) SET (RESTRICT = __CORE_SCHEMA__.bson_neqsel);

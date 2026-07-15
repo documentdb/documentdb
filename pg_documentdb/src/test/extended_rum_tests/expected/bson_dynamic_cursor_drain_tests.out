@@ -1,9 +1,7 @@
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documentdb_api_internal;
 SET documentdb.next_collection_id TO 9400;
 SET documentdb.next_collection_index_id TO 9400;
--- Enable dynamic cursors with PK cursor scan
-SET documentdb.enablePrimaryKeyCursorScan TO on;
-SET documentdb.enableCursorPlanBeforeRestrictionPathUpdate TO off;
+-- Enable dynamic cursors with PK cursor scan (default on)
 SET documentdb.enableDynamicCursors TO on;
 SET documentdb.enableIndexOnlyScanForFindProject TO on;
 -- Insert 1000 rows
@@ -39,10 +37,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('dyncursor_drain_db',
         '{ "find": "drain_scans", "filter": { "a": { "$exists": true } }, "projection": { "_id": 1, "a": 1 }, "batchSize": 5 }');
 $cmd$, true);
-                                                                   run_explain_and_trim                                                                   
-----------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                           run_explain_and_trim                                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=1000 loops=1)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: false
@@ -51,7 +49,7 @@ $cmd$, true);
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1000)]
    ->  Index Scan using a_1 on documents_9401 collection (actual rows=1000 loops=1)
-         Index Cond: ((document @>= '{ "a" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+         Index Cond: ((document @>= '{ "a" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
 (11 rows)
 
 CREATE TEMP TABLE drain_explain_resp AS
@@ -68,7 +66,7 @@ $cmd$, true);
                                                                                                                                  run_explain_and_trim                                                                                                                                 
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=995 loops=1)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    Skipped Tuples: 1 docs
    indexName: a_1
    indexKey: {"a": 1}
@@ -91,10 +89,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('dyncursor_drain_db',
         '{ "find": "drain_scans", "filter": { "a": { "$exists": true } }, "projection": { "_id": 1, "a": 1 }, "batchSize": 25 }');
 $cmd$, true);
-                                                                   run_explain_and_trim                                                                   
-----------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                           run_explain_and_trim                                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=1000 loops=1)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: false
@@ -103,7 +101,7 @@ $cmd$, true);
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1000)]
    ->  Index Scan using a_1 on documents_9401 collection (actual rows=1000 loops=1)
-         Index Cond: ((document @>= '{ "a" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+         Index Cond: ((document @>= '{ "a" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
 (11 rows)
 
 CREATE TEMP TABLE drain_explain_resp AS
@@ -120,7 +118,7 @@ $cmd$, true);
                                                                                                                                  run_explain_and_trim                                                                                                                                 
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=975 loops=1)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    Skipped Tuples: 1 docs
    indexName: a_1
    indexKey: {"a": 1}
@@ -143,10 +141,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('dyncursor_drain_db',
         '{ "find": "drain_scans", "filter": { "a": { "$exists": true } }, "projection": { "_id": 1, "a": 1 }, "batchSize": 50 }');
 $cmd$, true);
-                                                                   run_explain_and_trim                                                                   
-----------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                           run_explain_and_trim                                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=1000 loops=1)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: false
@@ -155,7 +153,7 @@ $cmd$, true);
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1000)]
    ->  Index Scan using a_1 on documents_9401 collection (actual rows=1000 loops=1)
-         Index Cond: ((document @>= '{ "a" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+         Index Cond: ((document @>= '{ "a" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
 (11 rows)
 
 CREATE TEMP TABLE drain_explain_resp AS
@@ -172,7 +170,7 @@ $cmd$, true);
                                                                                                                                  run_explain_and_trim                                                                                                                                 
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=950 loops=1)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    Skipped Tuples: 2 docs
    indexName: a_1
    indexKey: {"a": 1}
@@ -208,7 +206,7 @@ $cmd$, true);
                                                                                                                                  run_explain_and_trim                                                                                                                                 
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=995 loops=1)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    Skipped Tuples: 1 docs
    indexName: a_1
    indexKey: {"a": 1}
@@ -236,7 +234,7 @@ $cmd$, true);
                                   run_explain_and_trim                                   
 -----------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=1000 loops=1)
-   scanType: Secondary Index Only Scan
+   cursorScanType: Secondary Index Only Scan
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: false
@@ -263,7 +261,7 @@ $cmd$, true);
                                                                                          run_explain_and_trim                                                                                         
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=995 loops=1)
-   scanType: Secondary Index Only Scan
+   cursorScanType: Secondary Index Only Scan
    Skipped Tuples: 1 docs
    indexName: a_1
    indexKey: {"a": 1}
@@ -290,7 +288,7 @@ $cmd$, true);
                                   run_explain_and_trim                                   
 -----------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=1000 loops=1)
-   scanType: Secondary Index Only Scan
+   cursorScanType: Secondary Index Only Scan
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: false
@@ -317,7 +315,7 @@ $cmd$, true);
                                                                                          run_explain_and_trim                                                                                         
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=975 loops=1)
-   scanType: Secondary Index Only Scan
+   cursorScanType: Secondary Index Only Scan
    Skipped Tuples: 1 docs
    indexName: a_1
    indexKey: {"a": 1}
@@ -344,7 +342,7 @@ $cmd$, true);
                                   run_explain_and_trim                                   
 -----------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=1000 loops=1)
-   scanType: Secondary Index Only Scan
+   cursorScanType: Secondary Index Only Scan
    indexName: a_1
    indexKey: {"a": 1}
    isMultiKey: false
@@ -371,7 +369,7 @@ $cmd$, true);
                                                                                          run_explain_and_trim                                                                                         
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=950 loops=1)
-   scanType: Secondary Index Only Scan
+   cursorScanType: Secondary Index Only Scan
    Skipped Tuples: 2 docs
    indexName: a_1
    indexKey: {"a": 1}
@@ -937,10 +935,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('dyncursor_drain_db',
         '{ "find": "drain_scans", "filter": { "c": { "$exists": true } }, "projection": { "_id": 1, "c": 1 }, "batchSize": 1 }');
 $cmd$, true);
-                                                                   run_explain_and_trim                                                                   
-----------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                           run_explain_and_trim                                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=1000 loops=1)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: c_1
    indexKey: {"c": 1}
    isMultiKey: false
@@ -949,7 +947,7 @@ $cmd$, true);
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1000)]
    ->  Index Scan using c_1 on documents_9401 collection (actual rows=1000 loops=1)
-         Index Cond: ((document @>= '{ "c" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+         Index Cond: ((document @>= '{ "c" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
 (11 rows)
 
 CREATE TEMP TABLE drain_explain_resp_c AS
@@ -966,7 +964,7 @@ $cmd$, true);
                                                                                                                                                                                                                                                                        run_explain_and_trim                                                                                                                                                                                                                                                                       
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=999 loops=1)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    Skipped Tuples: 2 docs
    indexName: c_1
    indexKey: {"c": 1}
@@ -989,10 +987,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('dyncursor_drain_db',
         '{ "find": "drain_scans", "filter": { "c": { "$exists": true } }, "projection": { "_id": 1, "c": 1 }, "batchSize": 5 }');
 $cmd$, true);
-                                                                   run_explain_and_trim                                                                   
-----------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                           run_explain_and_trim                                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=1000 loops=1)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: c_1
    indexKey: {"c": 1}
    isMultiKey: false
@@ -1001,7 +999,7 @@ $cmd$, true);
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1000)]
    ->  Index Scan using c_1 on documents_9401 collection (actual rows=1000 loops=1)
-         Index Cond: ((document @>= '{ "c" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+         Index Cond: ((document @>= '{ "c" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
 (11 rows)
 
 CREATE TEMP TABLE drain_explain_resp_c AS
@@ -1018,7 +1016,7 @@ $cmd$, true);
                                                                                                                                                                                                                                                                        run_explain_and_trim                                                                                                                                                                                                                                                                       
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=995 loops=1)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    Skipped Tuples: 6 docs
    indexName: c_1
    indexKey: {"c": 1}
@@ -1041,10 +1039,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('dyncursor_drain_db',
         '{ "find": "drain_scans", "filter": { "c": { "$exists": true } }, "projection": { "_id": 1, "c": 1 }, "batchSize": 25 }');
 $cmd$, true);
-                                                                   run_explain_and_trim                                                                   
-----------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                           run_explain_and_trim                                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=1000 loops=1)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: c_1
    indexKey: {"c": 1}
    isMultiKey: false
@@ -1053,7 +1051,7 @@ $cmd$, true);
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1000)]
    ->  Index Scan using c_1 on documents_9401 collection (actual rows=1000 loops=1)
-         Index Cond: ((document @>= '{ "c" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+         Index Cond: ((document @>= '{ "c" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
 (11 rows)
 
 CREATE TEMP TABLE drain_explain_resp_c AS
@@ -1070,7 +1068,7 @@ $cmd$, true);
                                                                                                                                                                                                                                                                        run_explain_and_trim                                                                                                                                                                                                                                                                       
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=975 loops=1)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    Skipped Tuples: 14 docs
    indexName: c_1
    indexKey: {"c": 1}
@@ -1093,10 +1091,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('dyncursor_drain_db',
         '{ "find": "drain_scans", "filter": { "c": { "$exists": true } }, "projection": { "_id": 1, "c": 1 }, "batchSize": 100 }');
 $cmd$, true);
-                                                                   run_explain_and_trim                                                                   
-----------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                           run_explain_and_trim                                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=1000 loops=1)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: c_1
    indexKey: {"c": 1}
    isMultiKey: false
@@ -1105,7 +1103,7 @@ $cmd$, true);
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1000)]
    ->  Index Scan using c_1 on documents_9401 collection (actual rows=1000 loops=1)
-         Index Cond: ((document @>= '{ "c" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+         Index Cond: ((document @>= '{ "c" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
 (11 rows)
 
 CREATE TEMP TABLE drain_explain_resp_c AS
@@ -1122,7 +1120,7 @@ $cmd$, true);
                                                                                                                                                                                                                                                                        run_explain_and_trim                                                                                                                                                                                                                                                                       
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=900 loops=1)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    Skipped Tuples: 8 docs
    indexName: c_1
    indexKey: {"c": 1}
@@ -1145,10 +1143,10 @@ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
     SELECT document FROM bson_aggregation_find('dyncursor_drain_db',
         '{ "find": "drain_scans", "filter": { "c": { "$exists": true } }, "projection": { "_id": 1, "c": 1 }, "batchSize": 500 }');
 $cmd$, true);
-                                                                   run_explain_and_trim                                                                   
-----------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                           run_explain_and_trim                                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=1000 loops=1)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    indexName: c_1
    indexKey: {"c": 1}
    isMultiKey: false
@@ -1157,7 +1155,7 @@ $cmd$, true);
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1000)]
    ->  Index Scan using c_1 on documents_9401 collection (actual rows=1000 loops=1)
-         Index Cond: ((document @>= '{ "c" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+         Index Cond: ((document @>= '{ "c" : { "$minKey" : 1 } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
 (11 rows)
 
 CREATE TEMP TABLE drain_explain_resp_c AS
@@ -1174,7 +1172,7 @@ $cmd$, true);
                                                                                                                                                                                                                                                                        run_explain_and_trim                                                                                                                                                                                                                                                                       
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=500 loops=1)
-   scanType: Secondary Index Scan
+   cursorScanType: Secondary Index Scan
    Skipped Tuples: 1 docs
    indexName: c_1
    indexKey: {"c": 1}
@@ -1409,4 +1407,3 @@ NOTICE:  Continuation validation: all batch sizes passed (1, 2, 5, 10, 25, 50, 1
 DROP FUNCTION validate_continuation_and_drain(int);
 -- Restore defaults
 SET documentdb.enablePrimaryKeyCursorScan TO off;
-SET documentdb.enableCursorPlanBeforeRestrictionPathUpdate TO off;

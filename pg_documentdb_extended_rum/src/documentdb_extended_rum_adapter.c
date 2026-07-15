@@ -49,15 +49,14 @@ static Oid DocumentDbExtendedRumUniquePathOperatorFamilyOid(void);
 static const char * GetDocumentDBCatalogSchema(void);
 static void LoadBaseIndexAmRoutine(void);
 
-extern PGDLLIMPORT void try_explain_documentdb_rum_index(IndexScanDesc scan, void *state,
-														 ExplainWriterFuncs *funcs);
+extern PGDLLIMPORT Datum try_explain_documentdb_rum_index(PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum documentdb_rumhandler(PG_FUNCTION_ARGS);
-extern PGDLLIMPORT bool documentdb_rum_get_multi_key_status(Relation indexRelation);
-extern PGDLLIMPORT void documentdb_rum_update_multi_key_status(Relation indexRelation);
-extern PGDLLIMPORT Datum documentdb_rum_get_current_index_key(struct
-															  IndexScanDescData *scan);
-extern PGDLLIMPORT void documentdb_rum_skip_tids_on_current_entry(IndexScanDesc scan,
-																  BlockNumber block);
+extern PGDLLIMPORT Datum documentdb_rum_get_multi_key_status(PG_FUNCTION_ARGS);
+extern PGDLLIMPORT Datum documentdb_rum_get_opclass_metadata(PG_FUNCTION_ARGS);
+extern PGDLLIMPORT Datum documentdb_rum_update_multi_key_status(PG_FUNCTION_ARGS);
+extern PGDLLIMPORT Datum documentdb_rum_get_current_index_key(PG_FUNCTION_ARGS);
+extern PGDLLIMPORT Datum documentdb_rum_skip_tids_on_current_entry(PG_FUNCTION_ARGS);
+extern PGDLLIMPORT Datum DocumentDBRumOrderedCostEstimate(PG_FUNCTION_ARGS);
 
 /* Static Globals */
 static BsonIndexAmEntry DocumentDBIndexAmEntry = {
@@ -79,9 +78,11 @@ static BsonIndexAmEntry DocumentDBIndexAmEntry = {
 	.get_opclass_catalog_schema = GetDocumentDBCatalogSchema,
 	.get_opclass_internal_catalog_schema = GetDocumentDBCatalogSchema,
 	.get_multikey_status = documentdb_rum_get_multi_key_status,
+	.get_opclass_metadata = documentdb_rum_get_opclass_metadata,
 	.get_truncation_status = RumGetTruncationStatus,
 	.supports_ordered_operator_scans = true,
 	.create_indexes_support_funcs = NULL,
+	.query_index_path_support_funcs = NULL,
 	.get_current_index_key = documentdb_rum_get_current_index_key,
 	.skip_tids_on_current_entry = documentdb_rum_skip_tids_on_current_entry,
 	.force_path_key_summarization = true,
@@ -156,11 +157,9 @@ extension_documentdb_extended_rumbuild(Relation heapRelation,
 									   Relation indexRelation,
 									   struct IndexInfo *indexInfo)
 {
-	bool amCanBuildParallel = false;
 	return extension_rumbuild_core(heapRelation, indexRelation,
 								   indexInfo, &core_rum_routine,
-								   documentdb_rum_update_multi_key_status,
-								   amCanBuildParallel);
+								   documentdb_rum_update_multi_key_status);
 }
 
 
@@ -307,13 +306,11 @@ extension_documentdb_extended_rumcostestimate(PlannerInfo *root, IndexPath *path
 																				  indexinfo
 																				  ->rel);
 	bool forceIndexCostToZero = !enableCompositePlannerCosts;
-	OrderedCostEstimateCoreFunc orderedCostEstimateFunc =
-		DocumentDBRumOrderedCostEstimate;
 	extension_rumcostestimate_core(root, path, loop_count, indexStartupCost,
 								   indexTotalCost, indexSelectivity, indexCorrelation,
 								   indexPages, &core_rum_routine,
 								   forceIndexCostToZero, enableCompositePlannerCosts,
-								   orderedCostEstimateFunc);
+								   DocumentDBRumOrderedCostEstimate);
 }
 
 

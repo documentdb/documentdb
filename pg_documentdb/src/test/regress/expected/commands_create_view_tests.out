@@ -227,7 +227,6 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_find('db', '{ "find
 
 SELECT documentdb_api.drop_collection('db', 'create_view_tests_view_3');
 NOTICE:  table "documents_6509" does not exist, skipping
-NOTICE:  table "retry_6509" does not exist, skipping
  drop_collection 
 -----------------
  t

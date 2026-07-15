@@ -148,6 +148,7 @@ typedef struct
 {
 	BsonGinIndexOptionsBase base;
 	bool isWildcard;
+	bool enableDottedTerms;
 	int defaultLanguage;
 	int weights;
 	int languageOverride;
@@ -198,6 +199,9 @@ typedef struct
 	 * indexes.
 	 */
 	bool enableCompositeReducedCorrelatedTerms;
+
+	/* Whether or not to track per path multi-key terms*/
+	bool enableMetadataBasedTracking;
 } BsonGinCompositePathOptions;
 
 bool ValidateIndexForQualifierElement(bytea *indexOptions,
@@ -219,6 +223,7 @@ Size FillDeprecatedStringSpec(const char *value, void *ptr);
 
 struct PathKey;
 struct Expr;
+struct Const;
 typedef struct SortIndexInputDetails
 {
 	Oid funcOid;
@@ -226,6 +231,7 @@ typedef struct SortIndexInputDetails
 	struct Expr *sortVar;
 	struct Expr *sortDatum;
 	struct PathKey *sortPathKey;
+	struct Const *collationConst;
 } SortIndexInputDetails;
 
 

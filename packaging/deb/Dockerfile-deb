@@ -47,6 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     devscripts \
     debhelper \
     dpkg-dev \
+    libipc-run-perl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY scripts /tmp/install_setup

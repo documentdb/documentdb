@@ -48,8 +48,7 @@
 #include "planner/documentdb_planner.h"
 #include "aggregation/bson_query_common.h"
 #include "operators/bson_expression.h"
-
-extern bool EnableExprLookupIndexPushdown;
+#include "opclass/bson_gin_composite_scan.h"
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -94,22 +93,66 @@ dollar_expr_support(PG_FUNCTION_ARGS)
 }
 
 
+bool
+CompositeIndexOptInfoIsMultiKey(IndexOptInfo *indexOptInfo, uint32_t *multiKeyBitMask)
+{
+	bool supportsOrderedOperatorScans = false;
+	PGFunction getMultiKeyStatusFunc = NULL;
+	PGFunction getOpclassMetadata = NULL;
+	if (!GetCompositeOpClassPropsByOid(indexOptInfo->relam,
+									   indexOptInfo->opfamily[0],
+									   &supportsOrderedOperatorScans,
+									   &getMultiKeyStatusFunc, &getOpclassMetadata))
+	{
+		return false;
+	}
+
+	bytea *opClassOptions = indexOptInfo->opclassoptions[0];
+	if (opClassOptions == NULL)
+	{
+		return false;
+	}
+
+	BsonGinCompositePathOptions *compositeOptions =
+		(BsonGinCompositePathOptions *) opClassOptions;
+
+	Relation indexRel = index_open(indexOptInfo->indexoid, NoLock);
+	bool isMultiKeyIndex = false;
+	if (compositeOptions->enableMetadataBasedTracking && getOpclassMetadata != NULL)
+	{
+		bool hasReducedCorrelatedTerms = false;
+		bool hasTruncatedTerms = false;
+		uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(getOpclassMetadata,
+																	  PointerGetDatum(
+																		  indexRel)));
+		DecodeCompositeOpClassQueryMetadata(opClassOptions, opclassMetadata,
+											&isMultiKeyIndex,
+											multiKeyBitMask,
+											&hasReducedCorrelatedTerms,
+											&hasTruncatedTerms);
+	}
+	else
+	{
+		*multiKeyBitMask = 0;
+		isMultiKeyIndex = DatumGetBool(DirectFunctionCall1(getMultiKeyStatusFunc,
+														   PointerGetDatum(indexRel)));
+	}
+	index_close(indexRel, NoLock);
+
+	return isMultiKeyIndex;
+}
+
+
 static bool
 ExprCanBePushedToIndex(SupportRequestIndexCondition *supportRequest)
 {
-	if (!EnableExprLookupIndexPushdown)
-	{
-		return false;
-	}
-
-	/* A $expr can be pushed to the index iff the index is non-multikey */
-	GetMultikeyStatusFunc getMultiKeyStatusFunc = GetMultiKeyStatusByRelAm(
-		supportRequest->index->relam);
-	if (getMultiKeyStatusFunc == NULL)
-	{
-		return false;
-	}
-
+	/*
+	 * A $expr can be pushed only to a composite index, and only when that
+	 * index is non-multikey. CompositeIndexOptInfoIsMultiKey returns false both
+	 * for a non-composite index and for a composite index that is not multikey,
+	 * so an explicit composite-family check is required first to avoid treating
+	 * a non-composite (e.g. single-path) index as pushable.
+	 */
 	if (!IsCompositeOpFamilyOid(
 			supportRequest->index->relam,
 			supportRequest->index->opfamily[supportRequest->indexcol]))
@@ -117,12 +160,9 @@ ExprCanBePushedToIndex(SupportRequestIndexCondition *supportRequest)
 		return false;
 	}
 
-	bool isMultiKeyIndex = false;
-	Relation indexRel = index_open(supportRequest->index->indexoid, NoLock);
-	isMultiKeyIndex = getMultiKeyStatusFunc(indexRel);
-	index_close(indexRel, NoLock);
-
-	return !isMultiKeyIndex;
+	uint32_t multiKeyBitMaskIgnore = 0;
+	return !CompositeIndexOptInfoIsMultiKey(supportRequest->index,
+											&multiKeyBitMaskIgnore);
 }
 
 
@@ -404,9 +444,18 @@ PushExprToIndex(SupportRequestIndexCondition *supportRequest)
 
 	pgbsonelement exprElement = { 0 };
 	bson_iter_t exprIter;
-	PgbsonToSinglePgbsonElement(exprBson, &exprElement);
-	BsonValueInitIterator(&exprElement.bsonValue, &exprIter);
+	const char *collationString = PgbsonToSinglePgbsonElementWithCollation(exprBson,
+																		   &exprElement);
+
 	bytea *indexOptions = supportRequest->index->opclassoptions[supportRequest->indexcol];
+
+	/* TODO_COLLATION: skip pushdown when the query or candidate index is collated. */
+	if (IsCollationPresentOnQueryOrIndex(collationString, indexOptions))
+	{
+		return NULL;
+	}
+
+	BsonValueInitIterator(&exprElement.bsonValue, &exprIter);
 
 	List *supportedQuals = NIL;
 	return WalkExprIterForSupportedQuals(&exprIter, indexOptions, documentExpr,

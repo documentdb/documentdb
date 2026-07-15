@@ -10,6 +10,8 @@ use tokio::time::Duration;
 
 use crate::configuration::DynamicConfiguration;
 
+/// Data connection buffer size (in bytes).
+pub const CONN_BUFFER_SIZE: u64 = 262_144;
 pub const CONN_PRUNE_INTERVAL_SECS: u64 = 10;
 pub const CONN_IDLE_LIFETIME_SECS: u64 = 300;
 pub const CONN_LIFETIME_SECS: u64 = 3600;
@@ -18,6 +20,7 @@ pub const CONN_LIFETIME_SECS: u64 = 3600;
 pub struct PgPoolSettings {
     max_connections: usize,
     system_connection_budget: usize,
+    connection_buffer_size: usize,
     connection_pruning_interval: Duration,
     connection_idle_lifetime: Duration,
     connection_lifetime: Duration,
@@ -25,10 +28,15 @@ pub struct PgPoolSettings {
 
 impl PgPoolSettings {
     #[must_use]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "CONN_BUFFER_SIZE is a compile-time constant well within usize range"
+    )]
     pub const fn system_pool_settings(max_connections: usize) -> Self {
         Self {
             max_connections,
             system_connection_budget: 0,
+            connection_buffer_size: CONN_BUFFER_SIZE as usize,
             connection_pruning_interval: Duration::from_secs(CONN_PRUNE_INTERVAL_SECS),
             connection_idle_lifetime: Duration::from_secs(CONN_IDLE_LIFETIME_SECS),
             connection_lifetime: Duration::from_secs(CONN_LIFETIME_SECS),
@@ -43,10 +51,12 @@ impl PgPoolSettings {
         let connection_idle_lifetime =
             Duration::from_secs(config.gateway_connection_idle_lifetime_sec());
         let connection_lifetime = Duration::from_secs(config.gateway_connection_lifetime_sec());
+        let connection_buffer_size = config.gateway_connection_buffer_size();
 
         Self {
             max_connections,
             system_connection_budget,
+            connection_buffer_size,
             connection_pruning_interval,
             connection_idle_lifetime,
             connection_lifetime,
@@ -77,5 +87,10 @@ impl PgPoolSettings {
     #[must_use]
     pub const fn connection_lifetime(&self) -> Duration {
         self.connection_lifetime
+    }
+
+    #[must_use]
+    pub const fn connection_buffer_size(&self) -> usize {
+        self.connection_buffer_size
     }
 }

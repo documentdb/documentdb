@@ -16,11 +16,13 @@ use documentdb_gateway_core::{
     service::TlsProvider,
     shutdown_controller::SHUTDOWN_CONTROLLER,
     startup::{create_postgres_object, get_service_context},
+    time::STARTUP_INSTANT,
 };
 use pgrx::{
     bgworkers::{BackgroundWorker, BackgroundWorkerBuilder, BgWorkerStartTime, SignalWakeFlags},
     prelude::*,
 };
+use tokio::time::Instant;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::gucs::{PG_DOCUMENTDB_GATEWAY_DATABASE, PG_DOCUMENTDB_SETUP_CONFIGURATION};
@@ -38,6 +40,8 @@ pub fn init() {
 #[pg_guard]
 #[no_mangle]
 pub extern "C-unwind" fn documentdb_gw_worker_main(_arg: pg_sys::Datum) {
+    STARTUP_INSTANT.get_or_init(Instant::now);
+
     BackgroundWorker::attach_signal_handlers(SignalWakeFlags::SIGHUP | SignalWakeFlags::SIGTERM);
 
     let database_name = String::from(
@@ -138,7 +142,6 @@ async fn run_docdb_gateway(setup_configuration_file: &str) {
         dynamic_configuration,
         connection_pool_manager,
         tls_provider,
-        None, // custom_pg_error_mapper
     );
 
     run_gateway::<DocumentDBDataClient>(service_context, None, shutdown_token)

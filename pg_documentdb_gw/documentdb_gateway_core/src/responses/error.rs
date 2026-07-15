@@ -7,56 +7,61 @@
  */
 
 use bson::RawDocumentBuf;
-use deadpool_postgres::PoolError;
 
 use crate::{
-    context::ConnectionContext,
-    error::{DocumentDBError, ErrorCode, ErrorKind},
+    error::{DocumentDBError, ErrorCode},
     protocol::OK_FAILED,
-    responses::{self, constant::generic_internal_error_message},
 };
 
+pub fn enhance_internal_error_message(
+    user_error_message: &str,
+    error_code: ErrorCode,
+    activity_id: &str,
+) -> String {
+    if error_code != ErrorCode::InternalError {
+        return user_error_message.to_owned();
+    }
+
+    format!("[ActivityId={activity_id}] {user_error_message}")
+}
+
+/// Error response fields emitted for a failed command.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct CommandError {
+struct CommandError {
     ok: f64,
-
-    /// The `ErrorCode` associated with this error response.
     code: ErrorCode,
-
-    /// A human-readable description of the error, sent to the client.
     message: String,
 }
 
 impl CommandError {
-    #[must_use = "Constructor for CommandError."]
-    pub const fn new(code: ErrorCode, msg: String) -> Self {
+    /// Creates a command error from a response code and user-facing message.
+    #[must_use]
+    pub const fn new(code: ErrorCode, message: String) -> Self {
         Self {
             ok: OK_FAILED,
             code,
-            message: msg,
+            message,
         }
     }
 
+    /// Creates a command error from a gateway error and request `ActivityId`.
     #[must_use]
-    pub const fn ok(&self) -> f64 {
-        self.ok
-    }
-
-    #[must_use]
-    pub const fn code(&self) -> &ErrorCode {
-        &self.code
-    }
-
-    #[must_use]
-    pub fn message(&self) -> &str {
-        &self.message
+    pub fn from_error(error: &DocumentDBError, activity_id: &str) -> Self {
+        Self::new(
+            error.error_code(),
+            enhance_internal_error_message(
+                error.error_message_user(),
+                error.error_code(),
+                activity_id,
+            ),
+        )
     }
 
     /// Converts the `CommandError` into a `RawDocumentBuf` that can be sent to the client.
-    #[must_use = "This constructs the actual error response to be sent to the client."]
+    /// The key names match the field names expected by the driver SDK on errors.
+    #[must_use]
     pub fn to_raw_document_buf(&self) -> RawDocumentBuf {
-        // The key names used here must match with the field names expected by the driver sdk on errors.
         let mut doc = RawDocumentBuf::new();
         doc.append("ok", self.ok);
         doc.append("code", self.code as i32);
@@ -64,76 +69,70 @@ impl CommandError {
         doc.append("errmsg", self.message.clone());
         doc
     }
+}
 
-    fn internal_error() -> Self {
-        Self::new(
+/// Converts a `DocumentDBError` into a raw error response.
+#[must_use]
+pub fn error_to_raw_document_buf(error: &DocumentDBError, activity_id: &str) -> RawDocumentBuf {
+    CommandError::from_error(error, activity_id).to_raw_document_buf()
+}
+
+#[cfg(test)]
+mod tests {
+    use bson::Document;
+
+    use super::*;
+
+    #[test]
+    fn internal_error_message_includes_activity_id() {
+        let message = enhance_internal_error_message(
+            "An unexpected internal error has occurred",
             ErrorCode::InternalError,
-            generic_internal_error_message().to_owned(),
+            "test-activity-id",
+        );
+
+        assert_eq!(
+            message,
+            "[ActivityId=test-activity-id] An unexpected internal error has occurred"
+        );
+    }
+
+    #[test]
+    fn non_internal_error_message_ignores_activity_id() {
+        let message =
+            enhance_internal_error_message("bad value", ErrorCode::BadValue, "test-activity-id");
+
+        assert_eq!(message, "bad value");
+    }
+
+    #[test]
+    fn command_error_from_error_enhances_internal_error_message() {
+        let error = DocumentDBError::internal_error("loggable internal error".to_owned());
+
+        let response = Document::try_from(
+            CommandError::from_error(&error, "test-activity-id").to_raw_document_buf(),
         )
+        .expect("error response should convert to document");
+
+        assert_eq!(response.get_f64("ok"), Ok(OK_FAILED));
+        assert_eq!(response.get_i32("code"), Ok(1));
+        assert_eq!(response.get_str("codeName"), Ok("InternalError"));
+        assert_eq!(
+            response.get_str("errmsg"),
+            Ok("[ActivityId=test-activity-id] An unexpected internal error has occurred.")
+        );
     }
 
-    pub fn from_error(
-        connection_context: &ConnectionContext,
-        err: &DocumentDBError,
-        activity_id: &str,
-    ) -> Self {
-        match err.kind() {
-            ErrorKind::PostgresError(e, _) | ErrorKind::PoolError(PoolError::Backend(e), _) => {
-                Self::from_pg_error(connection_context, e, activity_id)
-            }
-            ErrorKind::PostgresDocumentDBError(error_code, msg, _) => {
-                if let Ok(state) = responses::i32_to_postgres_sqlstate(*error_code) {
-                    let mapped_response = responses::map_pg_error(
-                        connection_context,
-                        &state,
-                        msg.as_str(),
-                        activity_id,
-                    );
-                    return Self::new(
-                        mapped_response.error_code(),
-                        mapped_response.error_message().to_owned(),
-                    );
-                }
+    #[test]
+    fn raw_document_buf_with_activity_id_enhances_internal_error_message() {
+        let error = DocumentDBError::internal_error("loggable internal error".to_owned());
 
-                tracing::error!(
-                    activity_id = activity_id,
-                    "Unable to parse PostgresDocumentDBError code: {error_code}, message: {msg}"
-                );
-                Self::internal_error()
-            }
-            ErrorKind::DocumentDBError(error_code, msg, _, _, _) => {
-                Self::new(*error_code, msg.clone())
-            }
-            ErrorKind::IoError(_, _)
-            | ErrorKind::RawBsonError(_, _)
-            | ErrorKind::PoolError(_, _)
-            | ErrorKind::CreatePoolError(_, _)
-            | ErrorKind::BuildPoolError(_, _)
-            | ErrorKind::SSLErrorStack(_, _)
-            | ErrorKind::SSLError(_, _) => Self::internal_error(),
-        }
-    }
+        let response = Document::try_from(error_to_raw_document_buf(&error, "test-activity-id"))
+            .expect("error response should convert to document");
 
-    #[must_use]
-    pub fn from_pg_error(
-        context: &ConnectionContext,
-        e: &tokio_postgres::Error,
-        activity_id: &str,
-    ) -> Self {
-        if let Some(state) = e.code() {
-            let mapped_result = responses::map_pg_error(
-                context,
-                state,
-                e.as_db_error().map_or("", |e| e.message()),
-                activity_id,
-            );
-
-            Self::new(
-                mapped_result.error_code(),
-                mapped_result.error_message().to_owned(),
-            )
-        } else {
-            Self::internal_error()
-        }
+        assert_eq!(
+            response.get_str("errmsg"),
+            Ok("[ActivityId=test-activity-id] An unexpected internal error has occurred.")
+        );
     }
 }

@@ -114,18 +114,18 @@ StringViewEndsWithString(const StringView *source, const char *target)
 inline static bool
 StringViewEquals(const StringView *left, const StringView *right)
 {
-	if (left == NULL && right == NULL)
+	if (left == right)
 	{
 		return true;
 	}
 
-	if ((left == NULL) ^ (right == NULL))
+	if (left == NULL || right == NULL)
 	{
 		return false;
 	}
 
 	return left->length == right->length &&
-		   strncmp(left->string, right->string, left->length) == 0;
+		   memcmp(left->string, right->string, left->length) == 0;
 }
 
 

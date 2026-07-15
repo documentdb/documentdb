@@ -24,6 +24,13 @@
 #define BSON_MAX_ALLOWED_SIZE (16 * 1024 * 1024)
 
 /*
+ * Maximum size of a change stream event document. The wire protocol allows
+ * change stream events to exceed the 16 MB user limit by up to 16 KB to account
+ * for the event envelope (resume token, operationType, ns, etc.).
+ */
+#define BSON_MAX_CHANGE_STREAM_EVENT_SIZE (BSON_MAX_ALLOWED_SIZE + (16 * 1024))
+
+/*
  * Maximum size of a document produced by an intermediate stage of an aggregation pipeline.
  * For example, in a pipeline like [$facet, $unwind], $facet is allowed to generate a document
  * larger than 16MB, since $unwind can break it into smaller documents. However, $facet cannot

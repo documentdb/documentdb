@@ -928,10 +928,12 @@ dataPrepareData(RumBtree btree, Page page, OffsetNumber off)
  * Places keys to page and fills WAL record. In case leaf page and
  * build mode puts all ItemPointers to page.
  */
-static void
-dataPlaceToPage(RumBtree btree, Page page, OffsetNumber off)
+static bool
+dataPlaceToPage(RumBtree btree, Page page, OffsetNumber off, bool
+				requireWalFromPlaceToPage)
 {
 	Assert(RumPageIsData(page));
+	Assert(!requireWalFromPlaceToPage);
 
 	dataPrepareData(btree, page, off);
 
@@ -1123,6 +1125,8 @@ dataPlaceToPage(RumBtree btree, Page page, OffsetNumber off)
 	{
 		RumDataPageAddItem(page, &(btree->pitem), off);
 	}
+
+	return false;
 }
 
 

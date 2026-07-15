@@ -9,7 +9,11 @@
 use std::{sync::LazyLock, time::Duration};
 
 use either::Either;
-use opentelemetry::{global, metrics::Counter, KeyValue};
+use opentelemetry::{
+    global,
+    metrics::{Counter, Histogram},
+    KeyValue,
+};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     metrics::{PeriodicReader, SdkMeterProvider, Temporality},
@@ -20,8 +24,10 @@ use serde::Deserialize;
 use crate::{
     error::{DocumentDBError, Result},
     protocol::header::Header,
-    requests::{request_tracker::RequestTracker, Request, RequestIntervalKind, RequestType},
-    responses::{CommandError, Response},
+    requests::{
+        request_tracker::RequestTracker, RequestIntervalKind, RequestObservation, RequestType,
+    },
+    responses::Response,
     telemetry::config::{env_var, DEFAULT_EXPORT_TIMEOUT_MS, DEFAULT_OTLP_ENDPOINT},
 };
 
@@ -244,8 +250,8 @@ static GATEWAY_METRICS: LazyLock<GatewayMetrics> = LazyLock::new(|| {
 /// Aggregation (averages, percentiles) is delegated to the collector.
 pub fn record_gateway_metrics(
     header: &Header,
-    request: Option<&Request<'_>>,
-    response: Either<&Response, (&CommandError, usize)>,
+    request: Option<RequestObservation<'_, '_>>,
+    response: Either<&Response, (&DocumentDBError, usize)>,
     collection: &str,
     request_tracker: &RequestTracker,
 ) {
@@ -253,7 +259,9 @@ pub fn record_gateway_metrics(
 
     let operation = request.map_or_else(|| "unknown".to_owned(), |r| r.request_type().to_string());
 
-    let db_name = request.and_then(|r| r.db().ok()).unwrap_or("unknown");
+    let db_name = request
+        .and_then(RequestObservation::db)
+        .unwrap_or("unknown");
 
     let duration_to_secs = |ns: u64| -> f64 { Duration::from_nanos(ns).as_secs_f64() };
 
@@ -266,7 +274,7 @@ pub fn record_gateway_metrics(
         KeyValue::new("db.namespace", db_name.to_owned()),
     ];
     if let Either::Right((err, _)) = &response {
-        base_attrs.push(KeyValue::new("error.type", err.code().to_string()));
+        base_attrs.push(KeyValue::new("error.type", err.error_code().to_string()));
     }
 
     metrics.operations_count.add(1, &base_attrs);
@@ -293,7 +301,7 @@ pub fn record_gateway_metrics(
     // Record document throughput counters based on operation type
     if let Some(req) = request {
         if let Either::Left(resp) = &response {
-            record_document_counts(metrics, req, resp, &base_attrs);
+            record_document_counts(metrics, req.request_type(), resp, &base_attrs);
         }
     }
 
@@ -328,7 +336,7 @@ pub fn record_gateway_metrics(
 /// Extract document counts from the response based on operation type.
 fn record_document_counts(
     metrics: &GatewayMetrics,
-    request: &Request<'_>,
+    request_type: RequestType,
     response: &Response,
     attrs: &[KeyValue],
 ) {
@@ -336,7 +344,7 @@ fn record_document_counts(
         return;
     };
 
-    match request.request_type() {
+    match request_type {
         RequestType::Find | RequestType::Aggregate | RequestType::GetMore => {
             // Cursor responses: { cursor: { firstBatch/nextBatch: [...] } }
             if let Ok(cursor) = doc.get_document("cursor") {
@@ -376,6 +384,62 @@ fn record_document_counts(
         }
         _ => {}
     }
+}
+
+// ============================================================================
+// Startup Metrics (recorded once per process start)
+// ============================================================================
+
+/// Lazily-initialized `OTel` instruments for gateway startup.
+///
+/// Uses `global::meter()` which returns a no-op meter if no `MeterProvider` is
+/// registered, making these calls zero-cost when telemetry is disabled.
+struct StartupMetrics {
+    startup_duration: Histogram<f64>,
+    starts: Counter<u64>,
+}
+
+static STARTUP_METRICS: LazyLock<StartupMetrics> = LazyLock::new(|| {
+    let meter = global::meter("documentdb_gateway");
+
+    StartupMetrics {
+        // Recorded in milliseconds (unit "ms") and named to mirror the internal
+        // Geneva/MDM `gateway_startup_delay_ms` metric so both sinks report the
+        // same signal under the same name and unit. Milliseconds also align with
+        // OTel's default histogram bucket boundaries (0, 5, ..., 10000), giving
+        // useful resolution across typical multi-second startups.
+        startup_duration: meter
+            .f64_histogram("gateway_startup_delay_ms")
+            .with_description(
+                "Time from process start until the gateway is ready to accept connections",
+            )
+            .with_unit("ms")
+            .build(),
+        starts: meter
+            .u64_counter("gateway.starts")
+            .with_description(
+                "Count of gateway readiness events (process reached the ready-to-accept-connections state; usable as a restart count)",
+            )
+            .with_unit("{start}")
+            .build(),
+    }
+});
+
+/// Records the gateway startup metrics once the gateway is ready to accept
+/// connections.
+///
+/// Records the elapsed startup `duration` to the `gateway_startup_delay_ms`
+/// histogram (in milliseconds) and increments the `gateway.starts` counter by
+/// one.
+///
+/// Called once per process start. When no global `MeterProvider` is registered,
+/// both instruments are no-ops with negligible overhead.
+pub fn record_startup_metrics(duration: Duration) {
+    let metrics = &*STARTUP_METRICS;
+    metrics
+        .startup_duration
+        .record(duration.as_secs_f64() * 1000.0, &[]);
+    metrics.starts.add(1, &[]);
 }
 
 #[cfg(test)]
@@ -458,5 +522,13 @@ mod tests {
         // (We can't easily construct Header/Request/Response here, but we verify
         // the LazyLock initializes without panic.)
         let _metrics = &*super::GATEWAY_METRICS;
+    }
+
+    #[test]
+    fn test_record_startup_metrics_callable_without_provider() {
+        // Without a registered MeterProvider, global::meter() returns a no-op meter,
+        // so the histogram .record() and counter .add() calls are harmless no-ops.
+        // Verifies the LazyLock initializes and the function runs without panic.
+        super::record_startup_metrics(Duration::from_millis(42));
     }
 }

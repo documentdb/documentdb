@@ -43,12 +43,7 @@ fn make_op_insert_message(doc_count: usize) -> RequestMessage {
         request.extend_from_slice(&make_test_document(i32::try_from(i).unwrap_or(i32::MAX)));
     }
 
-    RequestMessage {
-        request,
-        op_code: OpCode::Insert,
-        request_id: 1,
-        response_to: 0,
-    }
+    RequestMessage::new(request.into(), OpCode::Insert, 1, 0)
 }
 
 /// Concatenate `count` BSON documents into raw bytes (for the old-path baseline).

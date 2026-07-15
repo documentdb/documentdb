@@ -382,47 +382,59 @@ Check constraints:
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "b": 1 }}') $cmd$);
-                       run_explain_and_trim                       
-------------------------------------------------------------------
- Bitmap Heap Scan on documents_5401 collection
-   Recheck Cond: (shard_key_value = '5401'::bigint)
-   Filter: (document @= '{ "b" : { "$numberInt" : "1" } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '5401'::bigint)
-(5 rows)
+                          run_explain_and_trim                          
+------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: compdb.compwildcard
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_5401 collection
+         Recheck Cond: (shard_key_value = '5401'::bigint)
+         Filter: (document @= '{ "b" : { "$numberInt" : "1" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '5401'::bigint)
+(8 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "ab": 1 }}') $cmd$);
-                       run_explain_and_trim                        
--------------------------------------------------------------------
- Bitmap Heap Scan on documents_5401 collection
-   Recheck Cond: (shard_key_value = '5401'::bigint)
-   Filter: (document @= '{ "ab" : { "$numberInt" : "1" } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '5401'::bigint)
-(5 rows)
+                          run_explain_and_trim                           
+-------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: compdb.compwildcard
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_5401 collection
+         Recheck Cond: (shard_key_value = '5401'::bigint)
+         Filter: (document @= '{ "ab" : { "$numberInt" : "1" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '5401'::bigint)
+(8 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "a/b": 1 }}') $cmd$);
-                        run_explain_and_trim                        
---------------------------------------------------------------------
- Bitmap Heap Scan on documents_5401 collection
-   Recheck Cond: (shard_key_value = '5401'::bigint)
-   Filter: (document @= '{ "a/b" : { "$numberInt" : "1" } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '5401'::bigint)
-(5 rows)
+                           run_explain_and_trim                           
+--------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: compdb.compwildcard
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_5401 collection
+         Recheck Cond: (shard_key_value = '5401'::bigint)
+         Filter: (document @= '{ "a/b" : { "$numberInt" : "1" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '5401'::bigint)
+(8 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "aa": 1 }}') $cmd$);
-                       run_explain_and_trim                        
--------------------------------------------------------------------
- Bitmap Heap Scan on documents_5401 collection
-   Recheck Cond: (shard_key_value = '5401'::bigint)
-   Filter: (document @= '{ "aa" : { "$numberInt" : "1" } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '5401'::bigint)
-(5 rows)
+                          run_explain_and_trim                           
+-------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: compdb.compwildcard
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_5401 collection
+         Recheck Cond: (shard_key_value = '5401'::bigint)
+         Filter: (document @= '{ "aa" : { "$numberInt" : "1" } }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '5401'::bigint)
+(8 rows)
 
 set documentdb.forceDisableSeqScan to on;
 SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "b": 1 }}');

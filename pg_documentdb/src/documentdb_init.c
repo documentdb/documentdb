@@ -107,6 +107,8 @@ InstallDocumentDBApiPostgresHooks(void)
 	RegisterQueryScanNodes();
 	RegisterExplainScanNodes();
 	RegisterDynamicCursorScanNodes();
+	RegisterDistinctScanNodes();
+	RegisterReservoirSampleScanNodes();
 
 	/* Load the rum routine in the shared_preload_libraries to avoid LoadLibrary calls all the time */
 	LoadRumRoutine();

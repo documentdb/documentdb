@@ -503,3 +503,76 @@ FROM bson_aggregation_pipeline(
   }'
 );  
 
+-- A multi-variable $let whose "in" produces a document/array goes through the
+-- writer finalization path. The variable table is shared across documents, so it
+-- must survive that path; otherwise the second document dereferences a freed table.
+SELECT document
+FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "coll001",
+    "pipeline": [
+      {
+        "$project": {
+          "result": {
+            "$let": {
+              "vars": { "x": "$a", "y": "$_id" },
+              "in": { "p": "$$x", "q": "$$y" }
+            }
+          }
+        }
+      }
+    ]
+  }'
+);
+
+-- Same scenario, but "in" produces an array.
+SELECT document
+FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "coll001",
+    "pipeline": [
+      {
+        "$project": {
+          "result": {
+            "$let": {
+              "vars": { "x": "$a", "y": "$_id" },
+              "in": [ "$$x", "$$y" ]
+            }
+          }
+        }
+      }
+    ]
+  }'
+);
+
+-- The same shared table can also be re-evaluated within a single document when the
+-- $let is nested inside an array operator that iterates more than once.
+SELECT document
+FROM bson_aggregation_pipeline(
+  'db',
+  '{
+    "aggregate": "coll001",
+    "pipeline": [
+      { "$match": { "_id": 1 } },
+      {
+        "$project": {
+          "result": {
+            "$reduce": {
+              "input": [1, 2, 3],
+              "initialValue": {},
+              "in": {
+                "$let": {
+                  "vars": { "cur": "$$this", "acc": "$$value" },
+                  "in": { "prev": "$$acc", "next": "$$cur" }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }'
+);
+

@@ -145,6 +145,11 @@ ExecuteRenameCollection(char *databaseName, char *sourceCollectionName,
 	{
 		StringView collectionView = CreateStringViewFromString(sourceCollectionName);
 		ValidateCollectionNameForValidSystemNamespace(&collectionView, database_datum);
+
+		StringView targetCollectionView = CreateStringViewFromString(
+			targetCollectionName);
+		ValidateCollectionNameForValidSystemNamespace(&targetCollectionView,
+													  database_datum);
 	}
 
 	/*

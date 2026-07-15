@@ -173,7 +173,25 @@ void EvaluateAggregationExpressionData(const AggregationExpressionData *expressi
 									   pgbson *document,
 									   ExpressionResult *expressionResult, bool
 									   isNullOnEmpty);
-ExpressionResult ExpressionResultCreateChild(ExpressionResult *parent);
+
+/*
+ * Creates a child ExpressionResult tied to the parent's lifetime. Inlined in
+ * the header so the compiler inlines it into the caller's stack slot and
+ * fuse the zero-initialization with the call-site allocation since this is
+ * the common case for creating child expression results.
+ */
+inline static ExpressionResult
+ExpressionResultCreateChild(ExpressionResult *parent)
+{
+	ExpressionResult child = { 0 };
+	child.expressionResultPrivate.tracker =
+		parent->expressionResultPrivate.tracker;
+	child.expressionResultPrivate.variableContext.parent =
+		&parent->expressionResultPrivate.variableContext;
+	return child;
+}
+
+
 void ExpressionResultReset(ExpressionResult *expressionResult);
 void ExpressionResultSetConstantVariable(ExpressionResult *expressionResult, const
 										 StringView *variableName, const

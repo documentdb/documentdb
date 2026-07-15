@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation.  All rights reserved.
  *
- * src/commands/role_utils.c
+ * src/utils/role_utils.c
  *
  * Implementation of role utility functions.
  *

@@ -1,14 +1,13 @@
--- Test: enableGroupByCompoundIdIndexPushdown=on, enableGroupSubqueryElimination=on
+-- Test: enableGroupByCompoundIdIndexPushdown=on
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
 SET citus.next_shard_id TO 864000;
 SET documentdb.next_collection_id TO 8640;
 SET documentdb.next_collection_index_id TO 8640;
 SET documentdb.enableGroupByCompoundIdIndexPushdown TO on;
-SET documentdb.enableGroupSubqueryElimination TO on;
 \i sql/bson_group_compound_id_correctness_core.sql
 -- Core correctness tests for composite group-by.
 -- Included by wrapper test files that set GUC combinations for
--- enableGroupByCompoundIdIndexPushdown and enableGroupSubqueryElimination.
+-- enableGroupByCompoundIdIndexPushdown.
 -- if documentdb_extended_rum exists, set alternate index handler
 SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extended_rum', false), extname FROM pg_extension WHERE extname = 'documentdb_extended_rum';
   set_config  |         extname         

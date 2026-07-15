@@ -17,7 +17,10 @@ use tokio::{
 };
 
 use crate::{
-    configuration::{dynamic::POSTGRES_RECOVERY_KEY, DynamicConfiguration, SetupConfiguration},
+    configuration::{
+        dynamic::{parse_cluster_version, ClusterVersion, POSTGRES_RECOVERY_KEY},
+        DynamicConfiguration, SetupConfiguration,
+    },
     error::{DocumentDBError, Result},
     postgres::{conn_mgmt::PoolManager, PgDocument},
 };
@@ -161,6 +164,7 @@ pub struct PgConfiguration {
     values: ArcSwap<HashMap<String, String>>,
     last_update_at: ArcSwap<Instant>,
     topology_bson: ArcSwap<RawBson>,
+    cluster_version: ArcSwap<Option<ClusterVersion>>,
     refresh_task: Option<JoinHandle<()>>,
     watch_task: Option<JoinHandle<()>>,
 }
@@ -234,12 +238,15 @@ impl PgConfiguration {
         let topology_bson = ArcSwap::from_pointee(
             Self::load_topology(&inner.pool_manager, &inner.instance_kind).await,
         );
+        let cluster_version =
+            ArcSwap::from_pointee(parse_cluster_version(&topology_bson.load_full()));
 
         let mut configuration = Arc::new(Self {
             inner,
             values,
             last_update_at,
             topology_bson,
+            cluster_version,
             refresh_task: None,
             watch_task: None,
         });
@@ -278,9 +285,11 @@ impl PgConfiguration {
         };
 
         self.values.store(Arc::new(new_config));
-        self.topology_bson.store(Arc::new(
-            Self::load_topology(&self.inner.pool_manager, &self.inner.instance_kind).await,
-        ));
+        let new_topology =
+            Self::load_topology(&self.inner.pool_manager, &self.inner.instance_kind).await;
+        let parsed_version = parse_cluster_version(&new_topology);
+        self.topology_bson.store(Arc::new(new_topology));
+        self.cluster_version.store(Arc::new(parsed_version));
         self.last_update_at.store(Arc::new(Instant::now()));
 
         Ok(())
@@ -391,6 +400,10 @@ impl DynamicConfiguration for PgConfiguration {
 
     fn topology(&self) -> RawBson {
         self.topology_bson.load_full().as_ref().clone()
+    }
+
+    fn cluster_version(&self) -> Option<ClusterVersion> {
+        *self.cluster_version.load_full().as_ref()
     }
 
     fn enable_developer_explain(&self) -> bool {

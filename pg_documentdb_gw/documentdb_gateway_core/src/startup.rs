@@ -15,8 +15,8 @@ use crate::{
     context::ServiceContext,
     error::Result,
     postgres::conn_mgmt::{self, PoolManager},
-    responses::CustomPostgresErrorMapper,
     service::TlsProvider,
+    shutdown_controller::SHUTDOWN_CONTROLLER,
 };
 
 pub fn get_service_context(
@@ -24,7 +24,6 @@ pub fn get_service_context(
     dynamic_configuration: Arc<dyn DynamicConfiguration>,
     connection_pool_manager: Arc<PoolManager>,
     tls_provider: TlsProvider,
-    custom_pg_error_mapper: Option<Box<dyn CustomPostgresErrorMapper>>,
 ) -> ServiceContext {
     tracing::info!("Initial dynamic configuration: {dynamic_configuration:?}");
 
@@ -33,7 +32,6 @@ pub fn get_service_context(
         dynamic_configuration,
         connection_pool_manager,
         tls_provider,
-        custom_pg_error_mapper,
     );
 
     conn_mgmt::clean_unused_pools(service_context.clone());
@@ -71,6 +69,7 @@ where
 {
     let max_time = Duration::from_secs(setup_configuration.postgres_startup_wait_time_seconds());
     let start = Instant::now();
+    let shutdown_token = SHUTDOWN_CONTROLLER.token();
 
     loop {
         match create_func().await {
@@ -80,7 +79,19 @@ where
                     "Exception when creating postgres object {error:?}. Retrying in \
                      {wait_time:?}."
                 );
-                tokio::time::sleep(wait_time).await;
+                // Race the retry backoff against the shutdown signal so a
+                // Ctrl+C received while we're stuck retrying triggers an
+                // immediate exit instead of waiting for the next attempt.
+                tokio::select! {
+                    () = tokio::time::sleep(wait_time) => {}
+                    () = shutdown_token.cancelled() => {
+                        tracing::info!(
+                            "Shutdown signal received during postgres startup. \
+                             Aborting immediately."
+                        );
+                        std::process::exit(0);
+                    }
+                }
             }
             Err(error) => {
                 panic!("Failed to create postgres object after {max_time:?}: {error}");

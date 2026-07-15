@@ -35,6 +35,8 @@ typedef struct QueryTextIndexData
 	Datum query;
 } QueryTextIndexData;
 
+extern bool EnableDottedValueTextIndexTerms;
+
 Datum BsonTextGenerateTSQuery(const bson_value_t *queryValue, bytea *indexOptions);
 void BsonValidateTextQuery(const bson_value_t *queryValue);
 Expr * GetFuncExprForTextWithIndexOptions(List *args, bytea *indexOptions,

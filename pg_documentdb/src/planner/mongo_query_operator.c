@@ -127,16 +127,6 @@ static const MongoOperatorInfo QueryOperators[] = {
 		true,
 	},
 	{
-		{ "$ne", QUERY_OPERATOR_NE, BsonTypeId, BsonNotEqualMatchFunctionId, NULL,
-		  BsonNotEqualMatchFunctionId,
-		  FEATURE_QUERY_OPERATOR_NE },
-		{ "$ne", QUERY_OPERATOR_NE, BsonTypeId, BsonValueNotEqualMatchFunctionId, NULL,
-		  BsonValueNotEqualMatchFunctionId,
-		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
-		{ "@!=", BSON_INDEX_STRATEGY_DOLLAR_NOT_EQUAL, false },
-		true,
-	},
-	{
 		{ "$in", QUERY_OPERATOR_IN, BsonTypeId, BsonInMatchFunctionId, NULL,
 		  BsonInMatchFunctionId,
 		  FEATURE_QUERY_OPERATOR_IN },
@@ -144,6 +134,26 @@ static const MongoOperatorInfo QueryOperators[] = {
 		  BsonValueInMatchFunctionId,
 		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
 		{ "@*=", BSON_INDEX_STRATEGY_DOLLAR_IN, false },
+		true,
+	},
+	{
+		{ "$regex", QUERY_OPERATOR_REGEX, BsonTypeId, BsonRegexMatchFunctionId, NULL,
+		  BsonRegexMatchFunctionId,
+		  FEATURE_QUERY_OPERATOR_REGEX },
+		{ "$regex", QUERY_OPERATOR_REGEX, BsonTypeId, BsonValueRegexMatchFunctionId, NULL,
+		  BsonValueRegexMatchFunctionId,
+		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ "@~", BSON_INDEX_STRATEGY_DOLLAR_REGEX, false },
+		true,
+	},
+	{
+		{ "$ne", QUERY_OPERATOR_NE, BsonTypeId, BsonNotEqualMatchFunctionId, NULL,
+		  BsonNotEqualMatchFunctionId,
+		  FEATURE_QUERY_OPERATOR_NE },
+		{ "$ne", QUERY_OPERATOR_NE, BsonTypeId, BsonValueNotEqualMatchFunctionId, NULL,
+		  BsonValueNotEqualMatchFunctionId,
+		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ "@!=", BSON_INDEX_STRATEGY_DOLLAR_NOT_EQUAL, false },
 		true,
 	},
 	{
@@ -275,16 +285,6 @@ static const MongoOperatorInfo QueryOperators[] = {
 	},
 
 	/* evaluation */
-	{
-		{ "$regex", QUERY_OPERATOR_REGEX, BsonTypeId, BsonRegexMatchFunctionId, NULL,
-		  BsonRegexMatchFunctionId,
-		  FEATURE_QUERY_OPERATOR_REGEX },
-		{ "$regex", QUERY_OPERATOR_REGEX, BsonTypeId, BsonValueRegexMatchFunctionId, NULL,
-		  BsonValueRegexMatchFunctionId,
-		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
-		{ "@~", BSON_INDEX_STRATEGY_DOLLAR_REGEX, false },
-		true,
-	},
 	{
 		{ "$mod", QUERY_OPERATOR_MOD, BsonTypeId, BsonModMatchFunctionId, NULL,
 		  BsonModMatchFunctionId,
@@ -535,6 +535,92 @@ static const MongoOperatorInfo QueryOperators[] = {
 
 static const int QueryOperatorSize = sizeof(QueryOperators) / sizeof(MongoOperatorInfo);
 
+/*
+ * Operators that are pushed down to the object_id btree index via the
+ * ObjectId-specific runtime function ids. The entries MUST appear in the same
+ * order as the leading MongoQueryOperatorType values
+ * (QUERY_OPERATOR_EQ .. QUERY_OPERATOR_OBJECT_ID_MAX) so the array can be
+ * indexed directly by MongoQueryOperatorType -- see
+ * GetObjectIdMongoQueryOperatorByQueryOperatorType.
+ */
+static const MongoOperatorInfo ObjectIdQueryOperators[] = {
+	{
+		{ "$eq", QUERY_OPERATOR_EQ, GetClusterBsonQueryTypeId,
+		  BsonEqualMatchObjectIdRuntimeFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonEqualMatchIndexFunctionId,
+		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ 0 },
+		{ "@=", BSON_INDEX_STRATEGY_DOLLAR_EQUAL, false },
+		false,
+	},
+	{
+		{ "$gt", QUERY_OPERATOR_GT, GetClusterBsonQueryTypeId,
+		  BsonGreaterThanMatchObjectIdRuntimeFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonGreaterThanMatchIndexFunctionId,
+		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ 0 },
+		{ "@>", BSON_INDEX_STRATEGY_DOLLAR_GREATER, false },
+		false,
+	},
+	{
+		{ "$gte", QUERY_OPERATOR_GTE, GetClusterBsonQueryTypeId,
+		  BsonGreaterThanEqualMatchObjectIdRuntimeFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonGreaterThanEqualMatchIndexFunctionId,
+		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ 0 },
+		{ "@>=", BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL, false },
+		false,
+	},
+	{
+		{ "$lt", QUERY_OPERATOR_LT, GetClusterBsonQueryTypeId,
+		  BsonLessThanMatchObjectIdRuntimeFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonLessThanMatchIndexFunctionId,
+		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ 0 },
+		{ "@<", BSON_INDEX_STRATEGY_DOLLAR_LESS, false },
+		false,
+	},
+	{
+		{ "$lte", QUERY_OPERATOR_LTE, GetClusterBsonQueryTypeId,
+		  BsonLessThanEqualMatchObjectIdRuntimeFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonLessThanEqualMatchIndexFunctionId,
+		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ 0 },
+		{ "@<=", BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL, false },
+		false,
+	},
+	{
+		{ "$in", QUERY_OPERATOR_IN, GetClusterBsonQueryTypeId,
+		  BsonInObjectIdMatchFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonInMatchFunctionId,
+		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ 0 },
+		{ "@*=", BSON_INDEX_STRATEGY_DOLLAR_IN, false },
+		false,
+	},
+	{
+		{ "$regex", QUERY_OPERATOR_REGEX, GetClusterBsonQueryTypeId,
+		  BsonRegexObjectIdMatchFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonRegexMatchFunctionId,
+		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+		{ 0 },
+		{ "@~", BSON_INDEX_STRATEGY_DOLLAR_REGEX, false },
+		false,
+	},
+};
+
+static const int ObjectIdQueryOperatorSize = sizeof(ObjectIdQueryOperators) /
+											 sizeof(MongoOperatorInfo);
+
+/*
+ * The ObjectIdQueryOperators array must be indexable by MongoQueryOperatorType
+ * for the leading ObjectId-supported operators, i.e. entry [i] must correspond
+ * to MongoQueryOperatorType value i for i in [0, QUERY_OPERATOR_OBJECT_ID_MAX].
+ */
+StaticAssertDecl(sizeof(ObjectIdQueryOperators) / sizeof(MongoOperatorInfo) ==
+				 QUERY_OPERATOR_OBJECT_ID_MAX + 1,
+				 "ObjectIdQueryOperators must cover [0, QUERY_OPERATOR_OBJECT_ID_MAX]");
+
 
 /*
  * Inline function that takes a MongoOperatorInfo and returns the appropriate
@@ -673,6 +759,25 @@ GetMongoIndexOperatorInfoByPostgresFuncId(Oid functionId)
 			(functionId ==
 			 operator->bsonQueryOperator.postgresRuntimeFunctionOidLookup() ||
 			 functionId == operator->bsonQueryOperator.postgresIndexFunctionOidLookup()))
+		{
+			return &operator->indexQueryOperator;
+		}
+	}
+
+	return &UnknownIndexOperator;
+}
+
+
+const MongoIndexOperatorInfo *
+GetObjectIdMongoIndexOperatorByPostgresFuncId(Oid functionId)
+{
+	for (int operatorIndex = 0; operatorIndex < ObjectIdQueryOperatorSize;
+		 operatorIndex++)
+	{
+		const MongoOperatorInfo *operator = &(ObjectIdQueryOperators[operatorIndex]);
+		if (operator->indexQueryOperator.postgresOperatorName &&
+			(functionId ==
+			 operator->bsonQueryOperator.postgresRuntimeFunctionOidLookup()))
 		{
 			return &operator->indexQueryOperator;
 		}

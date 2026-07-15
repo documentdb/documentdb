@@ -118,6 +118,18 @@ pub struct ExplainPlan {
     #[serde(rename = "Page Size")]
     pub page_size: Option<i64>,
 
+    #[serde(rename = "Sample Size")]
+    pub sample_size: Option<i64>,
+
+    #[serde(rename = "Sample Reservoir Method")]
+    pub sample_reservoir_method: Option<String>,
+
+    #[serde(rename = "Sample Rows Skipped")]
+    pub sample_rows_skipped: Option<i64>,
+
+    #[serde(rename = "Sample Heap Skips")]
+    pub sample_heap_skips: Option<i64>,
+
     #[serde(rename = "Plan Rows")]
     pub plan_rows: Option<serde_json::value::Number>,
 
@@ -178,6 +190,12 @@ pub struct ExplainPlan {
     #[serde(rename = "Workers Launched")]
     pub workers_launched: Option<i64>,
 
+    #[serde(rename = "Workers Planned")]
+    pub workers_planned: Option<i64>,
+
+    #[serde(rename = "Strategy")]
+    pub strategy: Option<String>,
+
     #[serde(rename = "IndexDetails")]
     pub index_details: Option<Vec<IndexDetails>>,
 
@@ -186,6 +204,16 @@ pub struct ExplainPlan {
 
     #[serde(rename = "namespaceName")]
     pub namespace_name: Option<String>,
+
+    /// The cursor scan strategy (e.g. "streaming", "Secondary Index Scan").
+    /// Emitted in the queryPlanner stage of the wire-protocol explain output.
+    #[serde(rename = "cursorScanType")]
+    pub cursor_scan_type: Option<String>,
+
+    /// Number of tuples skipped during cursor continuation resume.
+    /// Emitted in the executionStats stage when > 0.
+    #[serde(rename = "Skipped Tuples")]
+    pub skipped_tuples: Option<f64>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -217,12 +245,15 @@ pub struct IndexDetails {
     pub index_name: Option<String>,
     pub index_key: Option<String>,
     pub is_multi_key: Option<bool>,
+    pub multi_key_paths: Option<Vec<String>>,
     pub has_truncation: Option<bool>,
+    pub truncated_paths: Option<Vec<String>>,
     pub index_bounds: Option<Vec<String>>,
     pub raw_bounds: Option<Vec<String>>,
     pub start_bounds: Option<Vec<String>>,
     pub inner_scan_loops: Option<i64>,
     pub dead_entries_or_pages_skipped: Option<i64>,
+    pub eligible_dead_items: Option<i64>,
     pub parallel_scan_capable: Option<bool>,
     pub scan_key_details: Option<Vec<String>>,
     pub scan_type: Option<String>,

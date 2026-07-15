@@ -6,11 +6,16 @@
  *-------------------------------------------------------------------------
  */
 
+use std::sync::OnceLock;
+
 use tokio::time::{Duration, Instant};
 
 mod epoch_clock;
 
 pub use epoch_clock::EpochClock;
+
+/// Process-wide startup instant, captured once as early as possible in `main()`.
+pub static STARTUP_INSTANT: OnceLock<Instant> = OnceLock::new();
 
 #[must_use]
 pub fn instant_to_u64(instant: Instant) -> u64 {

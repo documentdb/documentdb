@@ -23,7 +23,7 @@ ANALYZE documentdb_data.documents_1101;
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page('documentdb_data.documents_rum_index_1102', 0));
                             documentdb_rum_get_meta_page_info                             
 ------------------------------------------------------------------------------------------
- {"entries": 0, "dataPages": 0, "entryPages": 1, "totalPages": 2, "pendingHeapTuples": 0}
+ {"entries": 0, "dataPages": 0, "entryPages": 1, "totalPages": 2, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
 (1 row)
 
 -- read the root page: it should be a page that's a leaf with 0 entries.

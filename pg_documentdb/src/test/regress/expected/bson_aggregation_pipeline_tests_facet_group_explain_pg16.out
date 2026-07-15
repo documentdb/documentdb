@@ -290,19 +290,3 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          Function Call: bson_lookup_unwind('{ "$documents" : [ { "a" : { "$numberInt" : "1" } }, { "a" : { "$numberInt" : "2" } } ] }'::bson, '$documents'::text)
 (5 rows)
 
--- Legacy path with enableGroupSubqueryElimination = off (should show Subquery Scan)
-SET documentdb.enableGroupSubqueryElimination TO off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ { "a": 1 }, { "a": 2 } ] }, { "$group": { "_id": "$a", "c": { "$count": {} } } } ], "cursor": {}}');
-                                                                                                                      QUERY PLAN                                                                                                                      
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_1
-   Output: bson_repath_and_build(agg_stage_1.c1, agg_stage_1.c2, agg_stage_1.c3, agg_stage_1.c4)
-   ->  HashAggregate
-         Output: '_id'::text, (documentdb_api_internal.bson_expression_get(documents.documents, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'c'::text, documentdb_api_internal.bsoncount(1)
-         Group Key: documentdb_api_internal.bson_expression_get(documents.documents, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         ->  Function Scan on documentdb_api_catalog.bson_lookup_unwind documents
-               Output: documentdb_api_internal.bson_expression_get(documents.documents, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-               Function Call: bson_lookup_unwind('{ "$documents" : [ { "a" : { "$numberInt" : "1" } }, { "a" : { "$numberInt" : "2" } } ] }'::bson, '$documents'::text)
-(8 rows)
-
-SET documentdb.enableGroupSubqueryElimination TO on;

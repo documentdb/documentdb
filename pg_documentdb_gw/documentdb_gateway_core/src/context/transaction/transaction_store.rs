@@ -15,7 +15,10 @@ use crate::{
     collections::cache::{AsyncCache, CacheConfiguration, TtlCache},
     context::{
         session::SessionKey,
-        transaction::{GatewayTransaction, RequestTransactionInfo},
+        transaction::{
+            transaction_error::map_transaction_error, GatewayTransaction, RequestTransactionInfo,
+            TransactionError,
+        },
         TransactionNumber,
     },
     security::principal::Principal,
@@ -133,6 +136,7 @@ impl TransactionStore {
         lsid: LogicalSessionId,
         pg_data_client: &impl PgDataClient,
         caller: &Principal,
+        activity_id: &str,
     ) -> Result<()> {
         let key = SessionKey::new(lsid.clone(), caller.clone());
 
@@ -141,7 +145,6 @@ impl TransactionStore {
                 return Err(DocumentDBError::documentdb_error(
                     ErrorCode::TransactionTooOld,
                     "Transaction number is lower than last seen transaction".to_owned(),
-                    0,
                 ));
             }
         }
@@ -168,7 +171,6 @@ impl TransactionStore {
                     return Err(DocumentDBError::documentdb_error(
                         ErrorCode::ConflictingOperationInProgress,
                         error_message,
-                        0,
                     ));
                 }
             }
@@ -178,12 +180,23 @@ impl TransactionStore {
                     return Err(DocumentDBError::documentdb_error(
                         ErrorCode::ConflictingOperationInProgress,
                         "This transaction is already started.".to_owned(),
-                        0,
                     ));
                 }
 
-                old_transaction.1.abort().await?;
+                old_transaction.1.abort().await.map_err(|e| {
+                    map_transaction_error(
+                        e,
+                        connection_context
+                            .dynamic_configuration()
+                            .is_replica_cluster(),
+                        activity_id,
+                    )
+                })?;
             }
+
+            let is_replica_cluster = connection_context
+                .dynamic_configuration()
+                .is_replica_cluster();
 
             let transaction = GatewayTransaction::start(
                 transaction_info,
@@ -198,7 +211,8 @@ impl TransactionStore {
                 lsid.clone(),
                 caller.clone(),
             )
-            .await?;
+            .await
+            .map_err(|e| map_transaction_error(e, is_replica_cluster, activity_id))?;
 
             let _ = self
                 .last_seen_transactions
@@ -226,7 +240,6 @@ impl TransactionStore {
                         "Cannot continue transaction {}",
                         transaction_info.transaction_number
                     ),
-                    0,
                 ))
             };
         }
@@ -241,7 +254,6 @@ impl TransactionStore {
                         "Transaction {} already committed",
                         transaction_info.transaction_number
                     ),
-                    0,
                 ));
             }
         }
@@ -253,7 +265,6 @@ impl TransactionStore {
                 "Cannot continue transaction {}",
                 transaction_info.transaction_number
             ),
-            0,
         ))
     }
 
@@ -270,7 +281,7 @@ impl TransactionStore {
         &self,
         lsid: &LogicalSessionId,
         caller: &Principal,
-    ) -> Result<Option<(LogicalSessionId, TransactionEntry)>> {
+    ) -> std::result::Result<Option<(LogicalSessionId, TransactionEntry)>, TransactionError> {
         let key = SessionKey::new(lsid.clone(), caller.clone());
 
         let Some((deleted_lsid, mut transaction_entry)) = self.transactions.remove(&key) else {
@@ -296,15 +307,18 @@ impl TransactionStore {
     ///
     /// Returns `ErrorCode::NoSuchTransaction` when there is no active
     /// transaction for the session or when the removal fails.
-    pub async fn abort(&self, lsid: &LogicalSessionId, caller: &Principal) -> Result<()> {
+    pub async fn abort(
+        &self,
+        lsid: &LogicalSessionId,
+        caller: &Principal,
+    ) -> std::result::Result<(), TransactionError> {
         self.remove_transaction_by_session(lsid, caller)
             .await?
             .map(|_| ())
             .ok_or_else(|| {
-                DocumentDBError::documentdb_error(
+                TransactionError::SimpleError(
                     ErrorCode::NoSuchTransaction,
                     "No such transaction to abort".to_owned(),
-                    0,
                 )
             })
     }
@@ -314,7 +328,11 @@ impl TransactionStore {
     /// # Errors
     ///
     /// Returns an error if the operation fails.
-    pub async fn commit(&self, lsid: &LogicalSessionId, caller: &Principal) -> Result<()> {
+    pub async fn commit(
+        &self,
+        lsid: &LogicalSessionId,
+        caller: &Principal,
+    ) -> std::result::Result<(), TransactionError> {
         let key = SessionKey::new(lsid.clone(), caller.clone());
 
         if let Some((_, (_, mut transaction))) = self.transactions.remove(&key) {
@@ -330,10 +348,9 @@ impl TransactionStore {
 
             Ok(())
         } else {
-            Err(DocumentDBError::documentdb_error(
+            Err(TransactionError::SimpleError(
                 ErrorCode::NoSuchTransaction,
                 "No such transaction to commit".to_owned(),
-                0,
             ))
         }
     }

@@ -1211,4 +1211,8 @@ typedef int DocumentdbErrorEreportCode;
 
 #define ERRCODE_DOCUMENTDB_QUERYPLANKILLED MAKE_SQLSTATE('M', '0', '0', 'F', 'E')
 
+#define ERRCODE_DOCUMENTDB_LOCATION15974 MAKE_SQLSTATE('M', '0', '0', 'F', 'F')
+
+#define ERRCODE_DOCUMENTDB_LOCATION15975 MAKE_SQLSTATE('M', '0', '0', 'F', 'G')
+
 #endif

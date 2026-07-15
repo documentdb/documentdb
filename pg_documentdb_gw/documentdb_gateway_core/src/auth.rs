@@ -16,14 +16,14 @@ use std::{
 
 use base64::{engine::general_purpose, Engine as _};
 use bson::{rawdoc, spec::BinarySubtype};
-use rand::Rng;
+use rand::RngExt;
 use serde_json::Value;
 use tokio::time::{sleep, Duration};
 use tokio_postgres::{error::SqlState, types::Type};
 
 use crate::{
     context::{ConnectionContext, RequestContext},
-    error::{DocumentDBError, ErrorCode, ErrorKind, Result},
+    error::{DocumentDBError, ErrorCode, Result},
     postgres::{
         conn_mgmt::{
             run_request_with_retries, Connection, ConnectionSource, QueryOptions, RequestOptions,
@@ -32,7 +32,7 @@ use crate::{
     },
     processor,
     protocol::OK_SUCCEEDED,
-    requests::{Request, RequestType},
+    requests::{RequestType, WireRequest},
     responses::{self, constant::generic_internal_error_message, RawResponse, Response},
     security::principal::Principal,
 };
@@ -234,6 +234,7 @@ impl AuthState {
 /// Should be only called by auth code paths.
 async fn call_run_request_with_retries<T, F, Fut>(
     connection_context: &ConnectionContext,
+    request_context: &RequestContext<'_>,
     run_func: F,
 ) -> Result<T>
 where
@@ -262,7 +263,7 @@ where
                 .setup_configuration()
                 .postgres_command_timeout_secs(),
         ),
-        None,
+        request_context,
         run_func,
     )
     .await
@@ -273,6 +274,11 @@ where
 /// # Errors
 ///
 /// Returns an error if the operation fails.
+#[tracing::instrument(
+    name = "gateway.auth",
+    skip_all,
+    fields(otel.kind = "internal", auth.kind = tracing::field::Empty)
+)]
 pub async fn process<T>(
     connection_context: &mut ConnectionContext,
     request_context: &RequestContext<'_>,
@@ -280,12 +286,17 @@ pub async fn process<T>(
 where
     T: PgDataClient,
 {
-    let request = request_context.payload;
-    if let Some(response) = handle_auth_request(connection_context, request).await? {
+    let request = request_context.request();
+    let request_type = request_context.request_type();
+    let auth_response = handle_auth_request(connection_context, request, request_context).await?;
+    if let Some(kind) = connection_context.auth_state.auth_kind() {
+        tracing::Span::current().record("auth.kind", tracing::field::debug(kind));
+    }
+    if let Some(response) = auth_response {
         return Ok(response);
     }
 
-    if request.request_type().allowed_unauthorized() {
+    if request_type.allowed_unauthorized() {
         let service_context = Arc::clone(&connection_context.service_context);
         let data_client = T::new_unauthorized(&service_context)?;
 
@@ -294,22 +305,25 @@ where
 
     Err(DocumentDBError::unauthorized(format!(
         "Command {} is not allowed as the connection is not authenticated yet.",
-        request.request_type().to_string().to_lowercase()
+        request_type.to_string().to_lowercase()
     )))
 }
 
 async fn handle_auth_request(
     connection_context: &mut ConnectionContext,
-    request: &Request<'_>,
+    request: &WireRequest<'_>,
+    request_context: &RequestContext<'_>,
 ) -> Result<Option<Response>> {
     match request.request_type() {
-        RequestType::SaslStart => Ok(Some(handle_sasl_start(connection_context, request).await?)),
+        RequestType::SaslStart => Ok(Some(
+            handle_sasl_start(connection_context, request, request_context).await?,
+        )),
         RequestType::SaslContinue => Ok(Some(
-            handle_sasl_continue(connection_context, request).await?,
+            handle_sasl_continue(connection_context, request, request_context).await?,
         )),
         RequestType::Logout => {
             connection_context.auth_state = AuthState::new();
-            Ok(Some(Response::Raw(RawResponse(rawdoc! {
+            Ok(Some(Response::Raw(RawResponse::new(rawdoc! {
                 "ok": OK_SUCCEEDED,
             }))))
         }
@@ -319,11 +333,11 @@ async fn handle_auth_request(
 
 fn generate_server_nonce(client_nonce: &str) -> String {
     const CHARSET: &[u8] = b"!\"#$%&'()*+-./0123456789:;<>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     let mut result = String::with_capacity(NONCE_LENGTH);
     for _ in 0..NONCE_LENGTH {
-        let idx = rng.gen_range(0..CHARSET.len());
+        let idx = rng.random_range(0..CHARSET.len());
         result.push(CHARSET[idx] as char);
     }
 
@@ -332,7 +346,8 @@ fn generate_server_nonce(client_nonce: &str) -> String {
 
 async fn handle_sasl_start(
     connection_context: &mut ConnectionContext,
-    request: &Request<'_>,
+    request: &WireRequest<'_>,
+    request_context: &RequestContext<'_>,
 ) -> Result<Response> {
     let mechanism = request
         .document()
@@ -346,15 +361,16 @@ async fn handle_sasl_start(
     }
 
     if mechanism == "MONGODB-OIDC" {
-        return handle_oidc(connection_context, request).await;
+        return handle_oidc(connection_context, request, request_context).await;
     }
 
-    return handle_scram(connection_context, request).await;
+    return handle_scram(connection_context, request, request_context).await;
 }
 
 async fn handle_scram(
     connection_context: &mut ConnectionContext,
-    request: &Request<'_>,
+    request: &WireRequest<'_>,
+    request_context: &RequestContext<'_>,
 ) -> Result<Response> {
     let payload = parse_sasl_payload(request, true)?;
 
@@ -370,7 +386,8 @@ async fn handle_scram(
 
     let server_nonce = generate_server_nonce(client_nonce);
 
-    let (salt, iterations) = get_salt_and_iteration(connection_context, username).await?;
+    let (salt, iterations) =
+        get_salt_and_iteration(connection_context, username, request_context).await?;
     let response = format!("r={server_nonce},s={salt},i={iterations}");
 
     connection_context.auth_state.first_state = Some(ScramFirstState {
@@ -390,7 +407,7 @@ async fn handle_scram(
         bytes: response.as_bytes().to_vec(),
     };
 
-    Ok(Response::Raw(RawResponse(rawdoc! {
+    Ok(Response::Raw(RawResponse::new(rawdoc! {
         "payload": binary_response,
         "ok": OK_SUCCEEDED,
         "conversationId": 1,
@@ -400,7 +417,8 @@ async fn handle_scram(
 
 async fn handle_oidc(
     connection_context: &mut ConnectionContext,
-    request: &Request<'_>,
+    request: &WireRequest<'_>,
+    request_context: &RequestContext<'_>,
 ) -> Result<Response> {
     let payload = request
         .document()
@@ -416,18 +434,11 @@ async fn handle_oidc(
         DocumentDBError::authentication_failed("JWT token missing from OIDC payload".to_owned())
     })?;
 
-    handle_oidc_token_authentication(connection_context, jwt_token).await
+    handle_oidc_token_authentication(connection_context, jwt_token, request_context).await
 }
 
 fn remap_oidc_auth_error(error: &DocumentDBError, connection_id: &str) -> DocumentDBError {
-    let ErrorKind::PostgresError(pg_error, _) = error.kind() else {
-        return DocumentDBError::authentication_failed_internal_error(
-            generic_internal_error_message().to_owned(),
-            &format!("Non Postgres error during authentication. error = {error}"),
-        );
-    };
-
-    if let Some(db_error) = pg_error.as_db_error() {
+    if let Some(db_error) = error.as_db_error() {
         tracing::error!(
             activity_id = connection_id, // use connection id instead of activity id here.
             error = %db_error,
@@ -468,15 +479,9 @@ fn remap_oidc_auth_error(error: &DocumentDBError, connection_id: &str) -> Docume
         };
     }
 
-    tracing::error!(
-        activity_id = connection_id,
-        error = %pg_error,
-        "Non DbError from backend during authentication. error = {{error}}"
-    );
-
     DocumentDBError::authentication_failed_internal_error(
         generic_internal_error_message().to_owned(),
-        &format!("Non DbError from backend during authentication. error = {pg_error}"),
+        error.to_string().as_str(),
     )
 }
 
@@ -484,6 +489,7 @@ async fn perform_oidc_authentication(
     connection_context: &ConnectionContext,
     oid: &str,
     token_string: &str,
+    request_context: &RequestContext<'_>,
 ) -> Result<()> {
     let query = connection_context
         .service_context
@@ -497,7 +503,7 @@ async fn perform_oidc_authentication(
         rows.first().map(|row| row.try_get(0)).transpose()
     };
 
-    let result = call_run_request_with_retries(connection_context, run_func).await;
+    let result = call_run_request_with_retries(connection_context, request_context, run_func).await;
     let connection_id = connection_context.connection_id.to_string();
 
     match result {
@@ -520,10 +526,11 @@ async fn perform_oidc_authentication(
 async fn handle_oidc_token_authentication(
     connection_context: &mut ConnectionContext,
     token_string: &str,
+    request_context: &RequestContext<'_>,
 ) -> Result<Response> {
     let (oid, seconds_until_expiry) = parse_and_validate_jwt_token(token_string)?;
 
-    perform_oidc_authentication(connection_context, &oid, token_string).await?;
+    perform_oidc_authentication(connection_context, &oid, token_string, request_context).await?;
 
     let server_signature = "";
     let payload = bson::Binary {
@@ -532,7 +539,8 @@ async fn handle_oidc_token_authentication(
     };
 
     connection_context.auth_state.set_username(&oid);
-    connection_context.auth_state.user_oid = Some(get_user_oid(connection_context, &oid).await?);
+    connection_context.auth_state.user_oid =
+        Some(get_user_oid(connection_context, &oid, request_context).await?);
     connection_context.auth_state.update_principal();
 
     connection_context.auth_state.set_authenticated(true);
@@ -548,6 +556,7 @@ async fn handle_oidc_token_authentication(
     connection_context.allocate_data_pool(token_string)?;
 
     /* We are setting a timer for the time until token expiry, which will set authorized to false at the end */
+    // For timer related logs, use the connection ID as the activity ID as it affects the overall connection.
     let connection_activity_id = connection_context.connection_id.to_string();
     let connection_activity_id_as_str = connection_activity_id.as_str();
     tracing::info!(activity_id = connection_activity_id_as_str,
@@ -557,7 +566,7 @@ async fn handle_oidc_token_authentication(
         .auth_state
         .initialize_expiry_timer(seconds_until_expiry, connection_activity_id_as_str)?;
 
-    Ok(Response::Raw(RawResponse(rawdoc! {
+    Ok(Response::Raw(RawResponse::new(rawdoc! {
         "payload": payload,
         "ok": OK_SUCCEEDED,
         "conversationId": 1,
@@ -636,7 +645,8 @@ fn parse_and_validate_jwt_token(token_string: &str) -> Result<(String, u64)> {
 
 async fn handle_sasl_continue(
     connection_context: &mut ConnectionContext,
-    request: &Request<'_>,
+    request: &WireRequest<'_>,
+    request_context: &RequestContext<'_>,
 ) -> Result<Response> {
     let payload = parse_sasl_payload(request, false)?;
 
@@ -709,9 +719,10 @@ async fn handle_sasl_continue(
             Ok(Some(doc.0.to_raw_document_buf()))
         };
 
-        let scram_sha256_doc = call_run_request_with_retries(connection_context, run_func)
-            .await?
-            .ok_or(DocumentDBError::pg_response_empty())?;
+        let scram_sha256_doc =
+            call_run_request_with_retries(connection_context, request_context, run_func)
+                .await?
+                .ok_or(DocumentDBError::pg_response_empty())?;
 
         if scram_sha256_doc
             .get_i32("ok")
@@ -733,7 +744,7 @@ async fn handle_sasl_continue(
         };
 
         connection_context.auth_state.user_oid =
-            Some(get_user_oid(connection_context, username).await?);
+            Some(get_user_oid(connection_context, username, request_context).await?);
 
         connection_context.auth_state.set_authenticated(true);
         connection_context.allocate_data_pool("")?;
@@ -745,7 +756,7 @@ async fn handle_sasl_continue(
         // This will create a Principal from the username and user_oid and store it in auth_state
         connection_context.auth_state.update_principal();
 
-        Ok(Response::Raw(RawResponse(rawdoc! {
+        Ok(Response::Raw(RawResponse::new(rawdoc! {
             "payload": payload,
             "ok": OK_SUCCEEDED,
             "conversationId": 1,
@@ -765,7 +776,10 @@ struct ScramPayload<'a> {
     channel_binding: Option<&'a str>,
 }
 
-fn parse_sasl_payload<'a>(request: &'a Request<'a>, with_header: bool) -> Result<ScramPayload<'a>> {
+fn parse_sasl_payload<'a>(
+    request: &'a WireRequest<'a>,
+    with_header: bool,
+) -> Result<ScramPayload<'a>> {
     let payload = request
         .document()
         .get_binary("payload")
@@ -821,6 +835,7 @@ fn parse_sasl_payload<'a>(request: &'a Request<'a>, with_header: bool) -> Result
 async fn get_salt_and_iteration(
     connection_context: &ConnectionContext,
     username: &str,
+    request_context: &RequestContext<'_>,
 ) -> Result<(String, i32)> {
     for blocked_prefix in connection_context
         .service_context
@@ -851,7 +866,7 @@ async fn get_salt_and_iteration(
         Ok(Some(doc.0.to_raw_document_buf()))
     };
 
-    let doc = call_run_request_with_retries(connection_context, run_func)
+    let doc = call_run_request_with_retries(connection_context, request_context, run_func)
         .await?
         .ok_or(DocumentDBError::pg_response_empty())?;
 
@@ -863,7 +878,6 @@ async fn get_salt_and_iteration(
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::AuthenticationFailed,
             "Invalid account: User details not found in the database".to_owned(),
-            0,
         ));
     }
 
@@ -882,7 +896,11 @@ async fn get_salt_and_iteration(
 /// # Errors
 ///
 /// Returns an error if the operation fails.
-pub async fn get_user_oid(connection_context: &ConnectionContext, username: &str) -> Result<u32> {
+pub async fn get_user_oid(
+    connection_context: &ConnectionContext,
+    username: &str,
+    request_context: &RequestContext<'_>,
+) -> Result<u32> {
     let run_func = |connection: Arc<Connection>| async move {
         let rows = connection
             .query(
@@ -896,7 +914,8 @@ pub async fn get_user_oid(connection_context: &ConnectionContext, username: &str
             .transpose()
     };
 
-    let user_oid_result = call_run_request_with_retries(connection_context, run_func).await?;
+    let user_oid_result =
+        call_run_request_with_retries(connection_context, request_context, run_func).await?;
 
     user_oid_result.ok_or(DocumentDBError::pg_response_empty())
 }

@@ -24,17 +24,10 @@ typedef struct ExplainWriterFuncs
 						 void *writer);
 } ExplainWriterFuncs;
 
-typedef void (*TryExplainIndexFunc)(struct IndexScanDescData *scan,
-									void *writerState,
-									ExplainWriterFuncs *es);
-
-typedef bool (*GetMultikeyStatusFunc)(Relation indexRelation);
 typedef bool (*GetTruncationStatusFunc)(Relation indexRelation);
-typedef Datum (*GetCurrentIndexKeyFunc)(struct IndexScanDescData *scan);
-typedef void (*SkipTidsOnCurrentEntryFunc)(struct IndexScanDescData *scan, BlockNumber
-										   blockNo);
 
 typedef struct CreateIndexesSupportFuncs CreateIndexesSupportFuncs;
+typedef struct QueryIndexPathSupportFuncs QueryIndexPathSupportFuncs;
 
 /*
  * Data structure for an alternative index acess method for indexing bosn.
@@ -57,7 +50,7 @@ typedef struct
 	Oid (*get_unique_path_op_family_oid)(void);
 
 	/* optional func to add explain output */
-	TryExplainIndexFunc add_explain_output;
+	PGFunction add_explain_output;
 
 	/* The am name for create indexes */
 	const char *am_name;
@@ -69,7 +62,10 @@ typedef struct
 	const char *(*get_opclass_internal_catalog_schema)(void);
 
 	/* Optional function that handles getting multi-key status for an index */
-	GetMultikeyStatusFunc get_multikey_status;
+	PGFunction get_multikey_status;
+
+	/* Optional function that handles getting per-path multi-key status for an index */
+	PGFunction get_opclass_metadata;
 
 	/* Optional function to that returns the truncation status of an index */
 	GetTruncationStatusFunc get_truncation_status;
@@ -80,11 +76,14 @@ typedef struct
 	/* Optional struct including create index support functions */
 	CreateIndexesSupportFuncs *create_indexes_support_funcs;
 
+	/* Optional struct including force index path support functions */
+	QueryIndexPathSupportFuncs *query_index_path_support_funcs;
+
 	/* Optional function to get the current index key */
-	GetCurrentIndexKeyFunc get_current_index_key;
+	PGFunction get_current_index_key;
 
 	/* Optional function to skip TIDs on the current entry */
-	SkipTidsOnCurrentEntryFunc skip_tids_on_current_entry;
+	PGFunction skip_tids_on_current_entry;
 
 	/* Whether or not the indexam has forced pathkey summarization */
 	bool force_path_key_summarization;

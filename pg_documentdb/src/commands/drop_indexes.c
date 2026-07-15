@@ -714,20 +714,59 @@ DropIndexesArgExpandIndexNameList(uint64 collectionId, DropIndexesArg *dropIndex
 
 
 /*
- * DropPostgresIndex drops GIN index with indexId.
+ * DropPostgresIndex drops the index with indexId.
+ *
+ * If `unique` is true, we check whether the physical index is actually backed
+ * by a constraint (exclusion or primary key). If it is, we use ALTER TABLE
+ * DROP CONSTRAINT via SPI. If not (e.g., a background unique index build that
+ * failed before registering the constraint), we use DROP INDEX via the same
+ * path as non-unique indexes.
+ *
+ * This mirrors the logic in DropPostgresIndexWithSuffix.
  */
 void
 DropPostgresIndex(uint64 collectionId, int indexId, bool unique, bool concurrently,
 				  bool forceReadWrite, bool missingOk)
 {
-	char *cmd = CreateDropIndexCommand(collectionId, indexId, unique, concurrently,
-									   missingOk);
-	ExecuteDropIndexCommand(cmd, unique, concurrently, forceReadWrite);
+	bool isConstraint = false;
 
-	if (concurrently)
+	if (unique)
 	{
-		DropIndexStatisticsForPlannerStatistics(collectionId, list_make1_int(indexId));
+		char indexName[NAMEDATALEN] = { 0 };
+		pg_sprintf(indexName, DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT, indexId);
+		Oid indexOid = get_relname_relid(indexName, ApiDataNamespaceOid());
+
+		if (OidIsValid(indexOid))
+		{
+			isConstraint = OidIsValid(get_index_constraint(indexOid));
+		}
+		else
+		{
+			if (missingOk)
+			{
+				/* Index doesn't exist — nothing to drop */
+				return;
+			}
+
+			ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
+							errmsg("index with id %d does not exist for "
+								   "collection " UINT64_FORMAT, indexId, collectionId)));
+		}
 	}
+
+	char *cmd = CreateDropIndexCommand(collectionId, indexId, isConstraint,
+									   concurrently, missingOk);
+
+	/*
+	 * Drop statistics before the index so that the stats object still exists on
+	 * the coordinator when the DROP STATISTICS command runs. This lets Citus
+	 * propagate the drop to shard tables. If we dropped after the index,
+	 * DEPENDENCY_AUTO would silently remove the coordinator stats first, making
+	 * the explicit DROP STATISTICS a no-op that Citus cannot map to shards.
+	 */
+	DropIndexStatisticsForPlannerStatistics(collectionId, list_make1_int(indexId));
+
+	ExecuteDropIndexCommand(cmd, isConstraint, concurrently, forceReadWrite);
 }
 
 
@@ -941,17 +980,61 @@ HandleDropIndexConcurrently(uint64 collectionId, int indexId, bool unique, bool
 
 	/* declared volatile because of the longjmp in PG_CATCH */
 	volatile bool indexDropped = false;
+
+	/*
+	 * Drop statistics before the index so that the stats object still
+	 * exists on the coordinator when the DROP STATISTICS command runs.
+	 * This lets Citus propagate the drop to shard tables.
+	 *
+	 * We must commit after dropping stats so that the locks acquired by
+	 * the DROP STATISTICS (and its Citus propagation to shards) are
+	 * released before the DROP INDEX CONCURRENTLY runs via a separate
+	 * libpq connection. Otherwise the libpq connection blocks waiting
+	 * for the locks held by this transaction, causing a hang.
+	 *
+	 * If the stats drop fails we must NOT proceed with the index drop,
+	 * otherwise the index would be removed while its statistics remain,
+	 * leaving stale stats behind.
+	 */
+	volatile bool statsDropped = false;
+	PG_TRY();
+	{
+		DropIndexStatisticsForPlannerStatistics(collectionId, list_make1_int(indexId));
+		PopAllActiveSnapshots();
+		CommitTransactionCommand();
+		StartTransactionCommand();
+		statsDropped = true;
+	}
+	PG_CATCH();
+	{
+		MemoryContextSwitchTo(oldMemContext);
+		ErrorData *edata = CopyErrorDataAndFlush();
+		result->errcode = edata->sqlerrcode;
+		result->errmsg = edata->message;
+		result->ok = false;
+
+		ereport(DEBUG1, (errmsg(
+							 "Failed to drop statistics for index %d on collection "
+							 UINT64_FORMAT, indexId, collectionId)));
+
+		PopAllActiveSnapshots();
+		AbortCurrentTransaction();
+		StartTransactionCommand();
+	}
+	PG_END_TRY();
+
+	if (!statsDropped)
+	{
+		return;
+	}
+
 	PG_TRY();
 	{
 		char *cmd = CreateDropIndexCommand(collectionId, indexId, unique, concurrently,
 										   missingOk);
+
 		bool forceReadWrite = false;
 		ExecuteDropIndexCommand(cmd, unique, concurrently, forceReadWrite);
-		if (concurrently)
-		{
-			DropIndexStatisticsForPlannerStatistics(collectionId, list_make1_int(
-														indexId));
-		}
 
 		indexDropped = true;
 	}

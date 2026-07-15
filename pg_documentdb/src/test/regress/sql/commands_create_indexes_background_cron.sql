@@ -16,6 +16,7 @@ SELECT documentdb_api.drop_collection('db', 'LargeKeySize') IS NOT NULL;
 SELECT documentdb_api.drop_collection('db', 'UnsupportedLanguage') IS NOT NULL;
 SELECT documentdb_api.drop_collection('db', 'backgroundcoll1') IS NOT NULL;
 SELECT documentdb_api.drop_collection('db', 'backgroundcoll2') IS NOT NULL;
+SELECT documentdb_api.drop_collection('db', 'skip_wait_coll') IS NOT NULL;
 
 \o
 \set ECHO :prevEcho
@@ -46,5 +47,4 @@ ROLLBACK;
 SELECT schedule, jobname FROM cron.job WHERE jobname LIKE 'documentdb_index_build_task_%' ORDER BY jobId;
 
 -- Reset -- so that other tests do not get impacted
-SELECT change_index_jobs_schema.change_index_jobs_status(false);
-DROP SCHEMA change_index_jobs_schema CASCADE;
+SELECT documentdb_test_helpers.change_index_jobs_status(false);

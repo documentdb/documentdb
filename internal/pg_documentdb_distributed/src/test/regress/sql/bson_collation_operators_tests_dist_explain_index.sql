@@ -6,6 +6,9 @@ SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documen
 SET documentdb_api.forceUseIndexIfAvailable TO on;
 SET documentdb.defaultUseCompositeOpClass TO on;
 
+-- if documentdb_extended_rum exists, set alternate index handler
+SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extended_rum', false), extname FROM pg_extension WHERE extname = 'documentdb_extended_rum';
+
 -- ======================================================================
 -- SECTION 1: Setup — sharded single-field collection
 -- ======================================================================
@@ -329,6 +332,211 @@ SET LOCAL enable_seqscan TO OFF;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "elemmatch_d", "filter": { "items": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
+$cmd$);
+END;
+
+-- ======================================================================
+-- SECTION 11: Sharded collated index — predicate pushdown + ORDER BY shapes
+-- ======================================================================
+
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_pure_d', '{"_id": 1, "a": "item20"}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_pure_d', '{"_id": 2, "a": "item3"}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_pure_d', '{"_id": 3, "a": "item11"}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_pure_d', '{"_id": 4, "a": "item1"}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_pure_d', '{"_id": 5, "a": "item100"}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_pure_d', '{"_id": 6, "a": "item2"}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_pure_d', '{"_id": 7, "a": "item40"}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_pure_d', '{"_id": 8, "a": "item12"}', NULL);
+SELECT documentdb_api.shard_collection('coll_ops_idx_dist_explain_db', 'ord_pure_d', '{ "_id": "hashed" }', false);
+
+BEGIN;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_ops_idx_dist_explain_db',
+  '{ "createIndexes": "ord_pure_d",
+     "indexes": [{ "key": {"a": 1}, "name": "idx_a_en_num_ord_pure",
+                   "collation": {"locale": "en", "numericOrdering": true} }] }', TRUE);
+END;
+
+SELECT collection_id AS ord_pure_d_id FROM documentdb_api_catalog.collections WHERE collection_name = 'ord_pure_d' AND database_name = 'coll_ops_idx_dist_explain_db' \gset
+ANALYZE documentdb_data.documents_:ord_pure_d_id;
+
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_compound_d', '{"_id": 1, "a": "item1", "b": "sub20"}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_compound_d', '{"_id": 2, "a": "item2", "b": "sub3"}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_compound_d', '{"_id": 3, "a": "item2", "b": "sub11"}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_compound_d', '{"_id": 4, "a": "item10", "b": "sub10"}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_compound_d', '{"_id": 5, "a": "item10", "b": "sub2"}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_compound_d', '{"_id": 6, "a": "item3", "b": "sub2"}', NULL);
+SELECT documentdb_api.shard_collection('coll_ops_idx_dist_explain_db', 'ord_compound_d', '{ "_id": "hashed" }', false);
+
+BEGIN;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_ops_idx_dist_explain_db',
+  '{ "createIndexes": "ord_compound_d",
+     "indexes": [{ "key": {"a": 1, "b": 1}, "name": "idx_ab_en_num_ord_compound",
+                   "collation": {"locale": "en", "numericOrdering": true} }] }', TRUE);
+END;
+
+SELECT collection_id AS ord_compound_d_id FROM documentdb_api_catalog.collections WHERE collection_name = 'ord_compound_d' AND database_name = 'coll_ops_idx_dist_explain_db' \gset
+ANALYZE documentdb_data.documents_:ord_compound_d_id;
+
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_id_d', '{"_id": "item1", "a": 1}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_id_d', '{"_id": "item10", "a": 2}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_id_d', '{"_id": "item2", "a": 3}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_id_d', '{"_id": "item20", "a": 4}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_id_d', '{"_id": "item3", "a": 5}', NULL);
+SELECT documentdb_api.insert_one('coll_ops_idx_dist_explain_db','ord_id_d', '{"_id": "item30", "a": 6}', NULL);
+SELECT documentdb_api.shard_collection('coll_ops_idx_dist_explain_db', 'ord_id_d', '{ "_id": "hashed" }', false);
+
+-- 11a: ASC sort, no LIMIT — coordinator does a plain Sort (per-shard index
+--      ordering is not preserved across shards in a hash-distributed table)
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_pure_d", "filter": { "a": { "$exists": true } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+END;
+
+-- 11b: ASC sort + LIMIT — per-shard Index Scan with Order By: |<> pushdown
+--      (sort is index-driven on each shard); coordinator Sort over per-shard top-N
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_pure_d", "filter": { "a": { "$exists": true } }, "sort": { "a": 1 }, "limit": 4, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+END;
+
+-- 11c: DESC sort + LIMIT — per-shard Index Scan with Order By: |<> pushdown (DESC);
+--      coordinator Sort DESC over per-shard top-N
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_pure_d", "filter": { "a": { "$exists": true } }, "sort": { "a": -1 }, "limit": 4, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+END;
+
+-- 11d: bounded filter + ASC sort + LIMIT — per-shard Index Scan with bounded Index Cond
+--      AND Order By: |<> pushdown; coordinator Sort over per-shard top-N
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_pure_d", "filter": { "a": { "$gte": "item10" } }, "sort": { "a": 1 }, "limit": 4, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+END;
+
+-- 11e: compound — equality on leading key + sort on second key + LIMIT — per-shard
+--      compound Index Scan with eq Index Cond AND Order By: |<> pushdown on secondary
+--      key; coordinator Sort over per-shard top-N
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_compound_d", "filter": { "a": "item10" }, "sort": { "b": 1 }, "limit": 4, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+END;
+
+-- 11f: locale mismatch (query fr vs index en) — existence scan still uses the index;
+--      MinKey Index Cond carries the query's fr numericOrdering collation; coordinator Sort (re-sort)
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_pure_d", "filter": { "a": { "$exists": true } }, "sort": { "a": 1 }, "collation": { "locale": "fr", "numericOrdering": true } }')
+$cmd$);
+END;
+
+-- 11g: numericOrdering mismatch (query default vs index numericOrdering true) — existence scan still uses the index;
+--      MinKey Index Cond carries the query's non-numeric collation; coordinator Sort (re-sort)
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_pure_d", "filter": { "a": { "$exists": true } }, "sort": { "a": 1 }, "collation": { "locale": "en" } }')
+$cmd$);
+END;
+
+-- 11h: _id ASC sort with collation — _id_ PK rejected under collation; falls back to per-shard Seq Scan
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_id_d", "filter": {}, "sort": { "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+END;
+
+-- 11i: _id DESC sort with collation — _id_ PK rejected under collation; falls back to per-shard Seq Scan
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_id_d", "filter": {}, "sort": { "_id": -1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+END;
+
+-- 11j: _id eq filter + _id collated sort — PK rejected for both filter and sort under collation;
+--      per-shard Seq Scan + Filter (point seek not available); coordinator Sort (re-sort)
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_id_d", "filter": { "_id": "item2" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+END;
+
+-- 11k: uncollated query against the collated index — existence scan still uses the index
+--      with no collation in the MinKey Index Cond; coordinator Sort (re-sort)
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_pure_d", "filter": { "a": { "$exists": true } }, "sort": { "a": 1 } }')
 $cmd$);
 END;
 

@@ -67,7 +67,7 @@
 #include "vector/vector_common.h"
 #include "vector/vector_utilities.h"
 #include "index_am/index_am_utils.h"
-#include "index_am/index_am_extend.h"
+#include "index_am/index_am_extend_create.h"
 
 /* Return value of TryCreateCollectionIndexes */
 typedef struct
@@ -166,15 +166,17 @@ extern bool DefaultEnableLargeUniqueIndexKeys;
 extern bool ForceWildcardReducedTerm;
 extern bool EnableCompositeUniqueHash;
 extern bool CreateTTLIndexAsCompositeByDefault;
-extern bool EnableCompositeReducedCorrelatedTerms;
-extern bool EnableUniqueCompositeReducedCorrelatedTerms;
 extern bool EnableCompositeShardDocumentTerms;
 extern bool EnablePerCollectionPlannerStatistics;
 extern bool EnablePlannerStatisticsNewCollections;
 extern bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath;
+extern bool EnableIndexMetadataGlobalTracking;
+extern bool EnableDottedValueTextIndexTerms;
+extern bool EnableNewNamespaceValidation;
 
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool SkipFailOnCollation;
+extern bool EnableNonBlockingUniqueIndexBuild;
 
 extern char *AlternateIndexHandler;
 
@@ -212,10 +214,6 @@ static ReIndexResult reindex_concurrently(Datum dbNameDatum,
 static IndexDef * ParseIndexDefDocument(const bson_iter_t *indexesArrayIter,
 										bool ignoreUnknownIndexOptions,
 										bool buildAsUniqueForPrepareUnique);
-static IndexDef * ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
-												const char *indexSpecRepr,
-												bool ignoreUnknownIndexOptions,
-												bool buildAsUniqueForPrepareUnique);
 static void EnsureIndexDefDocFieldType(const bson_iter_t *indexDefDocIter,
 									   bson_type_t expectedType);
 static void EnsureIndexDefDocFieldConvertibleToBool(bson_iter_t *indexDefDocIter);
@@ -316,7 +314,8 @@ static char * GenerateIndexExprStr(const char *indexAmSuffix,
 								   bool useReducedWildcardTerms,
 								   const char *indexAmOpClassCatalogSchema,
 								   const char *indexAmOpClassInternalCatalogSchema,
-								   const char *collationString);
+								   const char *collationString,
+								   bool supportsMetadataBasedTracking);
 static char * Generate2dsphereIndexExprStr(const IndexDefKey *indexDefKey);
 static char * Generate2dsphereSparseExprStr(const IndexDefKey *indexDefKey);
 static char * GenerateIndexFilterStr(uint64 collectionId, Expr *indexDefPartFilterExpr);
@@ -1402,6 +1401,15 @@ ParseCreateIndexesArg(Datum *dbNameDatum, pgbson *arg, bool buildAsUniqueForPrep
 					bson_iter_value(&argIter));
 			}
 		}
+		else if (strcmp(argKey, "skipWaitForIndex") == 0)
+		{
+			if (EnsureTopLevelFieldIsBooleanLikeNullOk(
+					"skipWaitForIndex", &argIter))
+			{
+				createIndexesArg.skipWaitForIndex = BsonValueAsBool(
+					bson_iter_value(&argIter));
+			}
+		}
 		else if (strcmp(argKey, "$db") == 0)
 		{
 			ValidateOrExtractDatabaseNameFromSpec(&argIter, dbNameDatum);
@@ -1445,6 +1453,31 @@ ParseCreateIndexesArg(Datum *dbNameDatum, pgbson *arg, bool buildAsUniqueForPrep
 							   TextDatumGetCString(*dbNameDatum))));
 	}
 
+	if (EnableNewNamespaceValidation)
+	{
+		StringView collectionView = CreateStringViewFromString(
+			createIndexesArg.collectionName);
+		ValidateCollectionNameForValidSystemNamespace(&collectionView,
+													  *dbNameDatum);
+	}
+	else
+	{
+		/*
+		 * Fallback when the new namespace validation GUC is off: preserve the
+		 * legacy gateway behavior of blocking createIndexes on the 'admin'
+		 * and 'config' databases entirely. This restores the pre-feature-flag
+		 * safety net so that turning the GUC off becomes a clean revert.
+		 */
+		char *databaseName = TextDatumGetCString(*dbNameDatum);
+		if (strcmp(databaseName, "admin") == 0 ||
+			strcmp(databaseName, "config") == 0)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_ILLEGALOPERATION),
+							errmsg(
+								"Cannot create indexes in config or admin databases")));
+		}
+	}
+
 	if (list_length(createIndexesArg.indexDefList) == 0)
 	{
 		/* "indexes" field is specified, but to be an empty array */
@@ -1477,7 +1510,9 @@ ParseIndexDefDocument(const bson_iter_t *indexesArrayIter, bool ignoreUnknownInd
 	IndexDef *indexDef = NULL;
 	PG_TRY();
 	{
-		indexDef = ParseIndexDefDocumentInternal(indexesArrayIter,
+		bson_iter_t indexDefDocIter;
+		bson_iter_recurse(indexesArrayIter, &indexDefDocIter);
+		indexDef = ParseIndexDefDocumentInternal(&indexDefDocIter,
 												 indexSpecRepr,
 												 ignoreUnknownIndexOptions,
 												 buildAsUniqueForPrepareUnique);
@@ -1625,8 +1660,8 @@ ParseCustomIndexDefOption(const char *indexDefDocKey, bson_iter_t *indexDefDocIt
  * of pgbson iterator that points to the "indexes" field of "arg" document
  * passed to dbCommand/createIndexes.
  */
-static IndexDef *
-ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
+IndexDef *
+ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 							  const char *indexSpecRepr,
 							  bool ignoreUnknownIndexOptions,
 							  bool buildAsUniqueForPrepareUnique)
@@ -1649,8 +1684,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 	/* Set to 0 to denote sphere index not present */
 	indexDef->sphereIndexVersion = 0;
 
-	bson_iter_t indexDefDocIter;
-	bson_iter_recurse(indexesArrayIter, &indexDefDocIter);
+	bson_iter_t indexDefDocIter = *indexesDocIter;
 	while (bson_iter_next(&indexDefDocIter))
 	{
 		const char *indexDefDocKey = bson_iter_key(&indexDefDocIter);
@@ -2069,9 +2103,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 									errmsg(
 										"The 'storageEngine.%s' field is invalid for use in an index specification. "
 										"Full specification provided: %s",
-										key,
-										PgbsonIterDocumentToJsonForLogging(
-											indexesArrayIter))));
+										key, indexSpecRepr)));
 				}
 			}
 		}
@@ -2085,9 +2117,7 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesArrayIter,
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDINDEXSPECIFICATIONOPTION),
 							errmsg(
 								"The field '%s' cannot be used in an index specification. Provided specification: %s",
-								indexDefDocKey,
-								PgbsonIterDocumentToJsonForLogging(
-									indexesArrayIter))));
+								indexDefDocKey, indexSpecRepr)));
 		}
 	}
 
@@ -3881,7 +3911,13 @@ CheckPartFilterExprOperatorsWalker(Node *node, void *context)
 		}
 		else if (boolExpr->boolop == OR_EXPR)
 		{
-			ThrowUnsupportedPartFilterExprError(node);
+			bool isTopLevel = (bool) context;
+			if (!isTopLevel)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
+								errmsg("$or only supported in partialFilterExpression "
+									   "at top level")));
+			}
 		}
 		else if (boolExpr->boolop == NOT_EXPR)
 		{
@@ -5145,8 +5181,10 @@ static void
 CreatePostgresIndex(uint64 collectionId, IndexDef *indexDef, int indexId,
 					bool concurrently, bool isTempCollection, bool isUnsharded)
 {
+	bool isBackgroundBuild = false;
 	char *cmd = CreatePostgresIndexCreationCmd(collectionId, indexDef, indexId,
-											   concurrently, isTempCollection);
+											   concurrently, isTempCollection,
+											   isBackgroundBuild);
 	const Oid userOid = InvalidOid;
 	bool useSerialExecution = isUnsharded;
 	ExecuteCreatePostgresIndexCmd(cmd, concurrently, userOid, useSerialExecution);
@@ -5158,20 +5196,32 @@ CreatePostgresIndex(uint64 collectionId, IndexDef *indexDef, int indexId,
  */
 char *
 CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int indexId,
-							   bool concurrently, bool isTempCollection)
+							   bool concurrently, bool isTempCollection,
+							   bool isBackgroundBuild)
 {
-	/*
-	 * TODO: "For a compound multikey index, each indexed document can have at
-	 *       most one indexed field whose value is an array".
-	 *       Need to ensure this is the case when building the index.
-	 *
-	 * TODO: Currently we don't know how to build unique RUM indexes concurrently.
-	 */
-
 	StringInfo cmdStr = makeStringInfo();
 	bool unique = indexDef->unique == BoolIndexOption_True;
 	bool sparse = indexDef->sparse == BoolIndexOption_True;
 	const BsonIndexAmEntry *indexAm = GetIndexAmHandlerByName(indexDef);
+
+	/*
+	 * For unique indexes, compute enableLargeIndexKeys upfront since
+	 * both the EXCLUDE constraint path and the background CREATE INDEX
+	 * path need the same value.
+	 */
+	bool uniqueEnableLargeIndexKeys = DefaultEnableLargeUniqueIndexKeys;
+	bool isBackgroundNonBlockingUnique = false;
+	if (unique)
+	{
+		/* We ignore enable large index keys being false deliberately. */
+		uniqueEnableLargeIndexKeys = uniqueEnableLargeIndexKeys ||
+									 indexDef->enableLargeIndexKeys ==
+									 BoolIndexOption_True;
+
+		isBackgroundNonBlockingUnique = EnableNonBlockingUniqueIndexBuild &&
+										isBackgroundBuild &&
+										IsCompositePathIndex(indexDef);
+	}
 
 	if (EnableExtendedIndexes &&
 		indexDef->amIndexOptions != NULL &&
@@ -5243,7 +5293,7 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 								   indexDef->indexDelegateAM->am_name)));
 		}
 	}
-	else if (unique)
+	else if (unique && !isBackgroundNonBlockingUnique)
 	{
 		if (isTempCollection)
 		{
@@ -5255,12 +5305,6 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 			appendStringInfo(cmdStr,
 							 "ALTER TABLE %s." DOCUMENT_DATA_TABLE_NAME_FORMAT,
 							 ApiDataSchemaName, collectionId);
-		}
-
-		bool enableLargeIndexKeys = DefaultEnableLargeUniqueIndexKeys;
-		if (indexDef->enableLargeIndexKeys == BoolIndexOption_True)
-		{
-			enableLargeIndexKeys = true;
 		}
 
 		bool enableNewIndexOpClass = IsCompositePathIndex(indexDef);
@@ -5279,11 +5323,12 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 											  indexDef->name,
 											  indexDef->defaultLanguage,
 											  indexDef->languageOverride,
-											  enableLargeIndexKeys,
+											  uniqueEnableLargeIndexKeys,
 											  useReducedWildcardTermGeneration,
 											  indexAm->get_opclass_catalog_schema(),
 											  indexAm->get_opclass_internal_catalog_schema(),
-											  indexDef->collationString),
+											  indexDef->collationString,
+											  indexAm->get_opclass_metadata != NULL),
 						 indexDef->partialFilterExpr ? "WHERE (" : "",
 						 indexDef->partialFilterExpr ?
 						 GenerateIndexFilterStr(collectionId,
@@ -5396,8 +5441,17 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 							 ApiDataSchemaName, collectionId);
 		}
 
+		/*
+		 * When building a unique index in the background,
+		 * use the same large key and opclass settings as the blocking unique path.
+		 */
 		bool enableLargeIndexKeys = false;
-		if (IndexSupportsTruncation(indexDef) && indexDef->unique != BoolIndexOption_True)
+		if (isBackgroundNonBlockingUnique)
+		{
+			enableLargeIndexKeys = uniqueEnableLargeIndexKeys;
+		}
+		else if (IndexSupportsTruncation(indexDef) &&
+				 indexDef->unique != BoolIndexOption_True)
 		{
 			enableLargeIndexKeys = indexDef->enableLargeIndexKeys !=
 								   BoolIndexOption_False;
@@ -5408,7 +5462,8 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 		bool useReducedWildcardTermGeneration = ForceWildcardReducedTerm ||
 												(indexDef->enableReducedWildcardTerms ==
 												 BoolIndexOption_True);
-		bool buildAsUnique = indexDef->buildAsUnique == BoolIndexOption_True;
+		bool buildAsUnique = indexDef->buildAsUnique == BoolIndexOption_True ||
+							 isBackgroundNonBlockingUnique;
 		appendStringInfo(cmdStr,
 						 " USING %s_%s (%s) %s%s%s",
 						 ExtensionObjectPrefix,
@@ -5425,7 +5480,8 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 											  useReducedWildcardTermGeneration,
 											  indexAm->get_opclass_catalog_schema(),
 											  indexAm->get_opclass_internal_catalog_schema(),
-											  indexDef->collationString),
+											  indexDef->collationString,
+											  indexAm->get_opclass_metadata != NULL),
 						 indexDef->partialFilterExpr ? "WHERE (" : "",
 						 indexDef->partialFilterExpr ?
 						 GenerateIndexFilterStr(collectionId,
@@ -5753,7 +5809,7 @@ AppendUniqueColumnExpr(StringInfo indexExprStr, IndexDefKey *indexDefKey,
 					   bool generateCompositeHash)
 {
 	const char *generateCompositeTermString = "";
-	if (generateCompositeHash && IsClusterVersionAtleast(DocDB_V0, 109, 0) &&
+	if (generateCompositeHash &&
 		EnableCompositeShardDocumentTerms)
 	{
 		generateCompositeTermString = ", true";
@@ -5798,7 +5854,8 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 					 bool useReducedWildcardTerms,
 					 const char *indexAmOpClassCatalogSchema,
 					 const char *indexAmOpClassInternalCatalogSchema,
-					 const char *collationString)
+					 const char *collationString,
+					 bool supportsMetadataBasedTracking)
 {
 	StringInfo indexExprStr = makeStringInfo();
 
@@ -5816,6 +5873,12 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 	{
 		languageOverrideKey = ",languageOverride=";
 		languageOverrideValue = quote_literal_cstr(languageOverride);
+	}
+
+	char *enableDottedTermsOption = "";
+	if (EnableDottedValueTextIndexTerms && IsClusterVersionAtleast(DocDB_V0, 112, 2))
+	{
+		enableDottedTermsOption = ",enabledottedterms=true";
 	}
 
 	bool firstColumnWritten = false;
@@ -6002,14 +6065,6 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 
 		bool useReducedCorrelatedTerms = false;
 
-		bool isUniqueStyleIndex = unique || buildAsUnique;
-		if (list_length(indexDefKey->keyPathList) > 1 &&
-			((EnableCompositeReducedCorrelatedTerms && !isUniqueStyleIndex) ||
-			 (EnableUniqueCompositeReducedCorrelatedTerms && isUniqueStyleIndex)))
-		{
-			useReducedCorrelatedTerms = true;
-		}
-
 		int32_t wildcardTermIndex = -1;
 		int32_t numPathsWithCommonPrefix = 0;
 		if (list_length(indexDefKey->keyPathList) == 0)
@@ -6123,10 +6178,16 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 		char *wildCardIndexPathLimit = "";
 		char *wildcardIndexString = "";
 		char *reducedCorrelatedTermString = "";
+		char *metadataPerPathTrackingString = "";
 
 		if (useReducedCorrelatedTerms)
 		{
 			reducedCorrelatedTermString = ",rct=true";
+		}
+
+		if (EnableIndexMetadataGlobalTracking && supportsMetadataBasedTracking)
+		{
+			metadataPerPathTrackingString = ",mkp=true";
 		}
 
 		if (wildcardTermIndex >= 0)
@@ -6140,7 +6201,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 		}
 
 		appendStringInfo(indexExprStr,
-						 "%s document %s.bson_%s_composite_path_ops(pathspec=%s%s%s%s%s%s)",
+						 "%s document %s.bson_%s_composite_path_ops(pathspec=%s%s%s%s%s%s%s)",
 						 firstColumnWritten ? "," : "",
 						 indexAmOpClassInternalCatalogSchema,
 						 indexAmSuffix,
@@ -6149,6 +6210,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 						 wildcardIndexString,
 						 wildCardIndexPathLimit,
 						 reducedCorrelatedTermString,
+						 metadataPerPathTrackingString,
 						 collationArg);
 
 		if (indexExprStr->len >= MAX_INDEX_OPTIONS_LENGTH)
@@ -6163,7 +6225,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 								lengthDelta)));
 		}
 
-		if (unique)
+		if (unique && !buildAsUnique)
 		{
 			appendStringInfo(indexExprStr, " WITH OPERATOR(%s.=?=)",
 							 ApiCatalogSchemaName);
@@ -6259,6 +6321,9 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 
 					if (unique)
 					{
+						/* buildAsUnique only applies to composite indexes which take a different path */
+						Assert(!buildAsUnique);
+
 						appendStringInfo(indexExprStr, " WITH OPERATOR(%s.=?=)",
 										 ApiCatalogSchemaName);
 
@@ -6308,7 +6373,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 					}
 
 					appendStringInfo(indexExprStr,
-									 "%s document %s.bson_%s_text_path_ops(weights=%s%s%s%s%s%s)",
+									 "%s document %s.bson_%s_text_path_ops(weights=%s%s%s%s%s%s%s)",
 									 firstColumnWritten ? "," : "",
 									 indexAmOpClassCatalogSchema,
 									 indexAmSuffix,
@@ -6316,7 +6381,8 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 															indexDefKey->textPathList)),
 									 indexKeyPath->isWildcard ? ", iswildcard=true" : "",
 									 languageOptionKey, languageOptionValue,
-									 languageOverrideKey, languageOverrideValue);
+									 languageOverrideKey, languageOverrideValue,
+									 enableDottedTermsOption);
 					textOptionsIndexWritten = true;
 					break;
 				}
@@ -6365,7 +6431,7 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 		if (indexDefKey->hasTextIndexes && !textOptionsIndexWritten)
 		{
 			appendStringInfo(indexExprStr,
-							 "%s document %s.bson_%s_text_path_ops(weights=%s%s%s%s%s%s)",
+							 "%s document %s.bson_%s_text_path_ops(weights=%s%s%s%s%s%s%s)",
 							 firstColumnWritten ? "," : "",
 							 indexAmOpClassCatalogSchema,
 							 indexAmSuffix,
@@ -6373,14 +6439,14 @@ GenerateIndexExprStr(const char *indexAmSuffix,
 													indexDefKey->textPathList)),
 							 indexDefKey->isWildcard ? ", iswildcard=true" : "",
 							 languageOptionKey, languageOptionValue,
-							 languageOverrideKey, languageOverrideValue);
+							 languageOverrideKey, languageOverrideValue,
+							 enableDottedTermsOption);
 		}
 	}
 
 	if (usingNewUniqueIndexOpClass && isUsingCompositeOpClass)
 	{
-		bool generateCompositeHash = EnableCompositeUniqueHash && IsClusterVersionAtleast(
-			DocDB_V0, 109, 0);
+		bool generateCompositeHash = EnableCompositeUniqueHash;
 		AppendUniqueColumnExpr(indexExprStr, indexDefKey, sparse, indexAmSuffix,
 							   indexAmOpClassInternalCatalogSchema, firstColumnWritten,
 							   buildAsUnique, generateCompositeHash);

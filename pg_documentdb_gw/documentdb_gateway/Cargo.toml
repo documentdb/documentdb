@@ -17,10 +17,16 @@ assets = [
  ["target/release-with-symbols/documentdb_gateway", "usr/bin/", "755"],
 ]
 
+[features]
+mimalloc = ["dep:mimalloc"]
+
 [dependencies]
 documentdb_gateway_core.workspace = true
+mimalloc = { workspace = true, optional = true }
+opentelemetry.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+tracing-opentelemetry.workspace = true
 tracing-subscriber.workspace = true
 
 [lints]

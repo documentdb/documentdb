@@ -54,11 +54,10 @@ static void entryGetItemOrdered(RumState *rumstate, RumScanEntry entry,
 								RumScanOpaque so);
 static void entryFindItem(RumState *rumstate, RumScanEntry entry, RumItem *item, Snapshot
 						  snapshot);
+static void CopyPageContents(Page sourcePage, Page targetPage);
 
-extern PGDLLEXPORT Datum documentdb_rum_get_current_index_key(struct
-															  IndexScanDescData *scan);
-extern PGDLLEXPORT void documentdb_rum_skip_tids_on_current_entry(IndexScanDesc scan,
-																  BlockNumber block);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_get_current_index_key);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_skip_tids_on_current_entry);
 
 /*
  * Extract key value for ordering.
@@ -1754,13 +1753,17 @@ startScanEntryOrderedCore(RumScanOpaque so, RumScanEntry minScanEntry, Snapshot 
 	/* Otherwise found something valid */
 	itemid = PageGetItemId(page, stackEntry->off);
 
+	/* TODO: should this be an assert? */
 	if (!ItemIdHasStorage(itemid))
 	{
 		goto endOrderedScanEntry;
 	}
 
-	/* Let MoveScanForward deal with the reving and setting of stuff */
+	/* Copy the page before we unlock it and set it to valid to avoid TOCTOU issues with page splits and vacuum. */
+	CopyPageContents(page, so->orderByScanData->orderByEntryPageCopy);
 	so->orderByScanData->orderStack = stackEntry;
+	so->orderByScanData->isPageValid = true;
+	so->orderByScanData->needsParallelSeize = true;
 	entry->isFinished = true;
 
 endOrderedScanEntry:
@@ -1926,7 +1929,7 @@ startOrderedScanEntries(IndexScanDesc scan, RumState *rumstate, RumScanOpaque so
 }
 
 
-static void
+void
 startScan(IndexScanDesc scan)
 {
 	RumScanOpaque so = (RumScanOpaque) scan->opaque;
@@ -3851,16 +3854,8 @@ MoveBuffersForOrderedScan(RumScanOpaque so, RumBtree btree)
 	BlockNumber nextBlockNo = InvalidBlockNumber;
 	IndexTuple boundTuple = NULL;
 	OffsetNumber boundTupleOffset = InvalidOffsetNumber;
-	if (!scanData->isPageValid)
-	{
-		/* First time after startOrderedScan is called - need to init from current buffer page */
-		LockBuffer(scanData->orderStack->buffer, RUM_SHARE);
-		page = BufferGetPage(scanData->orderStack->buffer);
-		CopyPageContents(page, scanData->orderByEntryPageCopy);
-		scanData->isPageValid = true;
-		LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
-		return true;
-	}
+
+	Assert(scanData->isPageValid);
 
 	/* We have a page already, check if it's reusable */
 	if (ScanDirectionIsForward(so->orderScanDirection))
@@ -3910,9 +3905,25 @@ MoveBuffersForOrderedScan(RumScanOpaque so, RumBtree btree)
 	}
 
 	/* Now do the step to the direction requested */
-	scanData->orderStack->buffer = rumStep(
-		scanData->orderStack->buffer, btree->index, RUM_SHARE,
-		so->orderScanDirection);
+	if (RumEnableEntryPageStep)
+	{
+		scanData->orderStack->buffer = rumStepEntryForScans(
+			scanData->orderStack->buffer, btree->index,
+			so->orderScanDirection);
+	}
+	else
+	{
+		scanData->orderStack->buffer = rumStep(
+			scanData->orderStack->buffer, btree->index, RUM_SHARE,
+			so->orderScanDirection);
+	}
+
+	if (scanData->orderStack->buffer == InvalidBuffer)
+	{
+		/* Through a chain of HALF_DEAD pages we reached the end. */
+		return false;
+	}
+
 	scanData->orderStack->blkno = BufferGetBlockNumber(scanData->orderStack->buffer);
 
 	if (scanData->orderStack->blkno != nextBlockNo)
@@ -3963,10 +3974,11 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 	if (ScanDirectionIsForward(so->orderScanDirection))
 	{
 		if (scanData->isPageValid &&
+			!scanData->needsParallelSeize &&
 			scanData->orderStack->off <= PageGetMaxOffsetNumber(
 				scanData->orderByEntryPageCopy))
 		{
-			/* Current page is still valid */
+			/* Current page is still valid and already registered */
 			return true;
 		}
 
@@ -3974,7 +3986,9 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 		if (scanData->isPageValid && RumEnableSupportDeadIndexItems &&
 			so->numKilled > 0)
 		{
+			LockBuffer(scanData->orderStack->buffer, RUM_SHARE);
 			RumKillEntryItems(so, scanData);
+			LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
 		}
 
 		while (true)
@@ -3986,20 +4000,30 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 				return false;
 			}
 
+			scanData->needsParallelSeize = false;
+
 			if (startingBlock == InvalidBlockNumber)
 			{
 				/* We won the race and have registered the starting block
 				 * start by copying this and moving forward on this buffer while
 				 * notifying the parallel state that we've currently processed this block.
 				 */
-				LockBuffer(scanData->orderStack->buffer, RUM_SHARE);
-				page = BufferGetPage(scanData->orderStack->buffer);
-				CopyPageContents(page, scanData->orderByEntryPageCopy);
-				scanData->isPageValid = true;
-
-				/* In the forward scan we store the right link as read right now in the parallel data */
-				rum_parallel_release(parallelScan, RumPageRightLink(page));
-				LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
+				if (!scanData->isPageValid)
+				{
+					LockBuffer(scanData->orderStack->buffer, RUM_SHARE);
+					page = BufferGetPage(scanData->orderStack->buffer);
+					CopyPageContents(page, scanData->orderByEntryPageCopy);
+					scanData->isPageValid = true;
+					rum_parallel_release(parallelScan, RumPageRightLink(page));
+					LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
+				}
+				else
+				{
+					/* Page already copied in startScanEntryOrderedCore — just register rightlink */
+					rum_parallel_release(parallelScan,
+										 RumPageGetOpaque(
+											 scanData->orderByEntryPageCopy)->rightlink);
+				}
 				return true;
 			}
 
@@ -4010,6 +4034,10 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 			 */
 			ReleaseBuffer(scanData->orderStack->buffer);
 			scanData->orderStack->blkno = startingBlock;
+
+			/* Check for interrupts where we don't hold any buffers */
+			CHECK_FOR_INTERRUPTS();
+
 			scanData->orderStack->buffer = ReadBuffer(btree->index, startingBlock);
 			LockBuffer(scanData->orderStack->buffer, RUM_SHARE);
 			page = BufferGetPage(scanData->orderStack->buffer);
@@ -4019,7 +4047,7 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 			rum_parallel_release(parallelScan, RumPageRightLink(page));
 			if (RumPageIsDeleted(page) || RumPageIsHalfDead(page))
 			{
-				/* TODO: Should we release here? */
+				LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
 				continue;
 			}
 			else
@@ -4027,6 +4055,7 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 				/* The page is valid - use it */
 				CopyPageContents(page, scanData->orderByEntryPageCopy);
 				scanData->isPageValid = true;
+				scanData->orderStack->off = FirstOffsetNumber;
 
 				LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
 				return true;
@@ -4065,7 +4094,7 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 		/*
 		 * stack->off points to the interested entry, buffer is already locked
 		 */
-		bool moveResult = parallelScan != NULL ?
+		bool moveResult = (parallelScan && so->isParallelEnabled) ?
 						  MoveBuffersForOrderedScanParallel(so, orderedBtree,
 															parallelScan) :
 						  MoveBuffersForOrderedScan(so, orderedBtree);
@@ -4103,6 +4132,10 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 			so->orderByScanData->orderStack->off += so->orderScanDirection;
 			so->killedItemsSkipped++;
 			continue;
+		}
+		else if (RumIndexEntryIsDead(itemId))
+		{
+			so->eligibleDeadItems++;
 		}
 
 		/* Check if the current tuple matches */
@@ -4143,6 +4176,7 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 					if (cmp > 0)
 					{
 						/* start the orderedScan again with the new entry now */
+						rumFlushKilledEntries(so);
 						startScanEntryOrderedCore(so, newMinEntry, snapshot);
 						newMinEntry->isFinished = false;
 						entry = so->orderByScanData->orderByEntry;
@@ -4213,6 +4247,7 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 					orderedBtree->entryKey = entry->queryKeyOverride;
 					if (entryIsMoveRight(orderedBtree, page))
 					{
+						rumFlushKilledEntries(so);
 						startScanEntryOrderedCore(so, entry, snapshot);
 						entry->isFinished = false;
 						if (!so->orderByScanData->orderStack)
@@ -4671,20 +4706,27 @@ RumGetTupleDoSimpleScan(IndexScanDesc scan, RumScanOpaque so)
 {
 	bool recheck = false;
 	bool recheckOrderby = false;
-	if (scan->kill_prior_tuple && RumEnableSupportDeadIndexItems)
+	if (scan->kill_prior_tuple)
 	{
-		/* Remember it for later. (We'll deal with all such
-		 * tuples at once right before leaving the index page.)
-		 */
-		if (so->killedItems == NULL)
+		if (RumEnableSupportDeadIndexItems)
 		{
-			so->killedItems = (ItemPointerData *) palloc(MaxTIDsPerRumPage *
-														 sizeof(ItemPointerData));
-		}
+			/* Remember it for later. (We'll deal with all such
+			 * tuples at once right before leaving the index page.)
+			 */
+			if (so->killedItems == NULL)
+			{
+				so->killedItems = (ItemPointerData *) palloc(MaxTIDsPerRumPage *
+															 sizeof(ItemPointerData));
+			}
 
-		if (so->numKilled < MaxTIDsPerRumPage)
+			if (so->numKilled < MaxTIDsPerRumPage)
+			{
+				so->killedItems[so->numKilled++] = so->item.iptr;
+			}
+		}
+		else
 		{
-			so->killedItems[so->numKilled++] = so->item.iptr;
+			so->eligibleDeadItems++;
 		}
 	}
 
@@ -4756,6 +4798,13 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 			{
 				/* Run startScan as well on the workers - the rest is done below
 				 * with parallel cooperation.
+				 *
+				 * NOTE: This performs a redundant B-tree descent (rumFindLeafPage)
+				 * whose buffer will be discarded once this worker seizes its
+				 * assigned page from the parallel state. This is wasteful I/O
+				 * but required to initialize the orderByScanData structures.
+				 * A future optimization could skip the descent and only allocate
+				 * the scan data structures.
 				 */
 				so->isParallelEnabled = true;
 				startScan(scan);
@@ -4891,9 +4940,9 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 }
 
 
-PGDLLEXPORT Datum
-documentdb_rum_get_current_index_key(IndexScanDesc scan)
+RMGR_PG_FUNCTION_DEF(documentdb_rum_get_current_index_key)
 {
+	IndexScanDesc scan = (IndexScanDesc) PG_GETARG_POINTER(0);
 	RumScanOpaque so = (RumScanOpaque) scan->opaque;
 	if (so->scanType != RumOrderedScan)
 	{
@@ -4910,7 +4959,7 @@ documentdb_rum_get_current_index_key(IndexScanDesc scan)
 
 	if (off < FirstOffsetNumber || off > PageGetMaxOffsetNumber(page))
 	{
-		return (Datum) 0;
+		PG_RETURN_DATUM((Datum) 0);
 	}
 
 	ItemId itemId = PageGetItemId(page, off);
@@ -4919,13 +4968,15 @@ documentdb_rum_get_current_index_key(IndexScanDesc scan)
 	RumNullCategory icategory;
 	Datum idatum = rumtuple_get_key(&so->rumstate, itup, &icategory);
 
-	return idatum;
+	PG_RETURN_DATUM(idatum);
 }
 
 
-PGDLLEXPORT void
-documentdb_rum_skip_tids_on_current_entry(IndexScanDesc scan, BlockNumber block)
+RMGR_PG_FUNCTION_DEF(documentdb_rum_skip_tids_on_current_entry)
 {
+	IndexScanDesc scan = (IndexScanDesc) PG_GETARG_POINTER(0);
+	BlockNumber block = PG_GETARG_UINT32(1);
+
 	RumScanOpaque so = (RumScanOpaque) scan->opaque;
 	if (so->scanType != RumOrderedScan)
 	{
@@ -4937,7 +4988,14 @@ documentdb_rum_skip_tids_on_current_entry(IndexScanDesc scan, BlockNumber block)
 	if (entry->isFinished)
 	{
 		/* Current entry is finished - no need to move forward */
-		return;
+		PG_RETURN_VOID();
+	}
+
+	if (block == InvalidBlockNumber)
+	{
+		/* We wanna just skip the rest of the rows for this entry */
+		entry->isFinished = true;
+		PG_RETURN_VOID();
 	}
 
 	RumItem targetItem = { 0 };
@@ -4948,7 +5006,7 @@ documentdb_rum_skip_tids_on_current_entry(IndexScanDesc scan, BlockNumber block)
 	if (rumCompareItemPointers(&entry->curItem.iptr, &targetItem.iptr) >= 0)
 	{
 		/* Current item is after the target block - no need to move forward */
-		return;
+		PG_RETURN_VOID();
 	}
 
 	while (!entry->isFinished &&
@@ -4959,10 +5017,16 @@ documentdb_rum_skip_tids_on_current_entry(IndexScanDesc scan, BlockNumber block)
 							scan->xs_snapshot, &targetItem, so);
 	}
 
+	if (entry->isFinished)
+	{
+		/* We finished the entry - we're done */
+		PG_RETURN_VOID();
+	}
+
 	/* If we got here, we reached the target block (or could have exceeded it by 1 entry)
 	 * To handle the corner case where the current item is exactly where we need to be,
 	 * we rev offset back by one entry.
 	 */
 	entry->offset -= entry->scanDirection;
-	entry->isFinished = false;
+	PG_RETURN_VOID();
 }

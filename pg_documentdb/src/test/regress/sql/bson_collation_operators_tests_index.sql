@@ -326,6 +326,19 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   '{ "createIndexes": "elemmatch_nested",
      "indexes": [{ "key": {"matrix.vals": 1}, "name": "idx_matrix_vals_en_s1",
                    "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'coll_op_db',
+  '{
+    "createIndexes": "ord_strategies",
+    "indexes": [{
+      "key": {"a": 1},
+      "name": "idx_a_en_num",
+      "collation": {"locale": "en", "numericOrdering": true}
+    }]
+  }',
+  TRUE
+);
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page('coll_op_db', '{"listIndexes": "ord_strategies"}');
 
 -- ======================================================================
 -- Run operator-strategy queries with indexes in place.

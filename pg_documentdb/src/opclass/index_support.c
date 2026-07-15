@@ -52,10 +52,12 @@
 #include "utils/version_utils.h"
 #include "query/bson_compare.h"
 #include "index_am/index_am_utils.h"
+#include "utils/docdb_make_funcs.h"
 #include "query/bson_dollar_selectivity.h"
 #include "planner/documentdb_planner.h"
 #include "aggregation/bson_query_common.h"
 #include "index_am/documentdb_rum.h"
+#include "index_am/index_am_extend_query.h"
 
 typedef struct
 {
@@ -106,62 +108,6 @@ typedef struct
 	 */
 	List *runtimeDollarInRestrictionData;
 } PrimaryKeyLookupContext;
-
-typedef List *(*UpdateIndexList)(List *indexes,
-								 ReplaceExtensionFunctionContext *context);
-typedef bool (*MatchIndexPath)(IndexPath *path, void *state);
-typedef bool (*ModifyTreeToUseAlternatePath)(PlannerInfo *root, RelOptInfo *rel,
-											 ReplaceExtensionFunctionContext *context,
-											 MatchIndexPath matchIndexPath);
-typedef void (*NoIndexFoundHandler)(void);
-typedef bool (*EnableForceIndexPushdown)(PlannerInfo *root,
-										 ReplaceExtensionFunctionContext *context);
-
-/*
- * Force index pushdown operator support functions
- */
-typedef struct
-{
-	/*
-	 * Mongo query operator type
-	 */
-	ForceIndexOpType operator;
-
-	/*
-	 * Update the index list to filter out non-applicable
-	 * indexes and then try creating index paths agains to
-	 * push down to the now available index.
-	 */
-	UpdateIndexList updateIndexes;
-
-	/*
-	 * After a new set of paths are generated this function would
-	 * be called to match if the path is what the operator expects it
-	 * to be, usually the path is checked to be an index path and the operator
-	 * specific quals are pushed to the index
-	 */
-	MatchIndexPath matchIndexPath;
-
-	/*
-	 * If updating index list doesn't help in creating any interesting index
-	 * paths, then just ask the operator to do any necessary updates to the
-	 * query tree and try any alternate path, this can be any path based on
-	 * the query operator and should return true to notify that a valid
-	 * path exist.
-	 */
-	ModifyTreeToUseAlternatePath alternatePath;
-
-	/*
-	 * Control switch to enable/disbale the force index pushdown
-	 */
-	EnableForceIndexPushdown enableForceIndexPushdown;
-
-	/*
-	 * Handler when no applicable index was found
-	 */
-	NoIndexFoundHandler noIndexHandler;
-} ForceIndexSupportFuncs;
-
 
 /*
  * A single query predicate for an elemMatch call.
@@ -227,6 +173,12 @@ extern bool EnableIndexOnlyScanForCoveredAggregateTargets;
 extern bool EnableIndexOnlyScanForRangeMatch;
 extern bool EnableIndexOnlyScanForFindProject;
 extern bool EnableObjectIdFuncExprConversion;
+extern bool EnableExtendedIndexes;
+extern bool EnableDynamicCursors;
+extern bool EnableDistinctIndexPushdown;
+extern bool EnableDistinctMultiKeyFilterPushdown;
+extern bool EnableCollationWithNonUniqueOrderedIndexes;
+extern bool EnablePerPathMultiKeySortPushdown;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -247,6 +199,7 @@ static Path * OptimizeBitmapQualsForBitmapAnd(BitmapAndPath *path,
 static IndexPath * OptimizeIndexPathForFilters(IndexPath *indexPath,
 											   ReplaceExtensionFunctionContext *context);
 static Expr * OpExprForAggregationStageSupportFunction(Node *supportRequest);
+static const char * GetJoinFilterArgCollation(Node *matchArg);
 static Path * FindIndexPathForQueryOperator(RelOptInfo *rel, List *pathList,
 											ReplaceExtensionFunctionContext *context,
 											MatchIndexPath matchIndexPath,
@@ -261,7 +214,9 @@ static Expr * CreateKnownFullScanExpr(Datum queryValue, Expr *documentExpr, int
 static OpExpr * CreateExistsTrueOpExpr(Expr *documentExpr, const char *sourcePath,
 									   uint32_t sourcePathLength);
 static List * GetSortDetails(PlannerInfo *root, Index rti,
-							 bool *hasOrderBy, bool *hasGroupby, bool *isOrderById);
+							 bool *hasGroupby, bool *isOrderById, bool *hasDistinct);
+static bool IsQueryCollationCompatibleWithIndex(const char *queryCollation,
+												bytea *indexOptions);
 static bool IsValidIndexPathForIdOrderBy(IndexPath *indexPath, List *sortDetails);
 
 static Expr * HandleSupportRequestForBtreeObjectIdCondition(
@@ -319,6 +274,16 @@ static void PrimaryKeyLookupUnableToFindIndex(void);
 static bool IndexClauseIsValidForIndexOnlyScan(const IndexClause *clause,
 											   bytea *indexOptions);
 
+static List * UpdateIndexListForExtendedIndex(List *existingIndex,
+											  ReplaceExtensionFunctionContext *context);
+static bool MatchIndexPathForExtendedIndex(IndexPath *path, void *matchContext);
+static bool TryUseAlternateIndexForExtendedIndex(PlannerInfo *root, RelOptInfo *rel,
+												 ReplaceExtensionFunctionContext *context,
+												 MatchIndexPath matchIndexPath);
+static void ThrowNoExtendedIndexFound(void);
+static bool EnableExtendedIndexForceIndexPushdown(PlannerInfo *root,
+												  ReplaceExtensionFunctionContext *context);
+
 static const ForceIndexSupportFuncs ForceIndexOperatorSupport[] =
 {
 	[ForceIndexOpType_None] = {
@@ -367,18 +332,24 @@ static const ForceIndexSupportFuncs ForceIndexOperatorSupport[] =
 		.alternatePath = &TryUseAlternateIndexForPrimaryKeyLookup,
 		.noIndexHandler = &PrimaryKeyLookupUnableToFindIndex,
 		.enableForceIndexPushdown = &DefaultTrueForceIndexPushdown
+	},
+	[ForceIndexOpType_ExtendedIndex] = {
+		.operator = ForceIndexOpType_ExtendedIndex,
+		.updateIndexes = &UpdateIndexListForExtendedIndex,
+		.matchIndexPath = &MatchIndexPathForExtendedIndex,
+		.alternatePath = &TryUseAlternateIndexForExtendedIndex,
+		.noIndexHandler = &ThrowNoExtendedIndexFound,
+		.enableForceIndexPushdown = &EnableExtendedIndexForceIndexPushdown
 	}
 };
 
 extern bool EnableVectorForceIndexPushdown;
 extern bool EnableGeonearForceIndexPushdown;
-extern bool EnableExprLookupIndexPushdown;
 extern bool ForceIndexOnlyScanIfAvailable;
 extern bool EnableIndexOnlyScan;
 extern bool EnableIndexOnlyScanOnCostFunction;
 extern bool EnableOrderByIdOnCostFunction;
 extern bool EnablePrimaryKeyCursorScan;
-extern bool EnableCursorPlanBeforeRestrictionPathUpdate;
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -538,7 +509,7 @@ dollar_support_object_id(PG_FUNCTION_ARGS)
 			Oid operatorOid = InvalidOid;
 
 			/* TODO(object_id_funcs): Make this more generalizable. Also move to bson_dollar_selectivity.c */
-			if (IsClusterVersionAtleast(DocDB_V0, 114, 0) &&
+			if (IsClusterVersionAtleast(DocDB_V0, 112, 1) &&
 				req->funcid == BsonRegexObjectIdMatchFunctionId())
 			{
 				const MongoIndexOperatorInfo *operator =
@@ -726,6 +697,20 @@ OpExprForAggregationStageSupportFunction(Node *supportRequest)
 		return NULL;
 	}
 
+	/*
+	 * TODO_COLLATION: never push a collated join filter to an index, nor any join
+	 * filter to a collated index. $lookup embeds collation in its filter spec; $merge
+	 * carries none today (HandleMerge rejects it) but its extract filter is inspected
+	 * defensively in case that changes.
+	 */
+	const char *joinFilterCollation =
+		GetJoinFilterArgCollation(lsecond(funcExpr->args));
+	if (IsCollationPresentOnQueryOrIndex(joinFilterCollation,
+										 req->index->opclassoptions[req->indexcol]))
+	{
+		return NULL;
+	}
+
 	Node *thirdNode = lthird(funcExpr->args);
 	if (!IsA(thirdNode, Const))
 	{
@@ -759,6 +744,55 @@ OpExprForAggregationStageSupportFunction(Node *supportRequest)
 															   lsecond(funcExpr->args),
 															   options);
 	return (Expr *) finalExpression;
+}
+
+
+/*
+ * Returns the query collation embedded in a join-filter match argument -- the
+ * inlined $lookup (bson_dollar_lookup_extract_filter_expression) or $merge
+ * (bson_dollar_extract_merge_filter) extract-filter spec -- or NULL when the
+ * argument is not a recognized filter expression or carries no collation. ($merge
+ * carries no collation today since HandleMerge rejects it; recognized defensively.)
+ */
+static const char *
+GetJoinFilterArgCollation(Node *matchArg)
+{
+	if (matchArg == NULL || !IsA(matchArg, FuncExpr))
+	{
+		return NULL;
+	}
+
+	FuncExpr *matchFunc = (FuncExpr *) matchArg;
+	if (matchFunc->funcid !=
+		DocumentDBApiInternalBsonLookupExtractFilterExpressionFunctionOid() &&
+		matchFunc->funcid != BsonLookupExtractFilterArrayFunctionOid() &&
+		matchFunc->funcid != BsonDollarMergeExtractFilterFunctionOid())
+	{
+		return NULL;
+	}
+
+	if (list_length(matchFunc->args) < 2)
+	{
+		return NULL;
+	}
+
+	Node *specNode = lsecond(matchFunc->args);
+	if (!IsA(specNode, Const))
+	{
+		return NULL;
+	}
+
+	Const *specConst = (Const *) specNode;
+	if (specConst->constisnull ||
+		(specConst->consttype != BsonTypeId() &&
+		 specConst->consttype != DocumentDBCoreBsonTypeId()))
+	{
+		return NULL;
+	}
+
+	pgbsonelement element = { 0 };
+	return PgbsonToSinglePgbsonElementWithCollation(
+		DatumGetPgBson(specConst->constvalue), &element);
 }
 
 
@@ -815,28 +849,77 @@ IsOpExprShardKeyForUnshardedCollections(Expr *expr, uint64 collectionId)
 }
 
 
+/*
+ * This is used to ensure that incompatible force index operations are not used together in the same query.
+ */
 inline static void
-ThrowIfIncompatibleOpForIndexHint(ForceIndexOpType hintOpType, ForceIndexOpType opType)
+ThrowIfIncompatibleForceIndexOp(ForceIndexOpType currentType, ForceIndexOpType newType)
 {
-	if (hintOpType != ForceIndexOpType_IndexHint)
+	/* No conflict if no force-index op is active yet */
+	if (currentType == ForceIndexOpType_None)
 	{
 		return;
 	}
 
-	if (opType == ForceIndexOpType_Text)
+	/*
+	 * Identify the incompatible operator for index hint
+	 */
+	if (currentType == ForceIndexOpType_IndexHint ||
+		newType == ForceIndexOpType_IndexHint)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-						errmsg("$text queries cannot specify hint")));
+		ForceIndexOpType opType =
+			(currentType == ForceIndexOpType_IndexHint) ? newType : currentType;
+
+		if (opType == ForceIndexOpType_Text)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg("$text queries cannot specify hint")));
+		}
+		else if (opType == ForceIndexOpType_VectorSearch)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg("Vector search queries cannot specify hint")));
+		}
+		else if (opType == ForceIndexOpType_GeoNear)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg("GeoNear queries cannot specify hint")));
+		}
+		else if (EnableExtendedIndexes && opType == ForceIndexOpType_ExtendedIndex)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg("Extended index queries cannot specify hint")));
+		}
 	}
-	else if (opType == ForceIndexOpType_VectorSearch)
+
+	/*
+	 * Identify the incompatible operator for extended index
+	 */
+	if (EnableExtendedIndexes &&
+		(currentType == ForceIndexOpType_ExtendedIndex ||
+		 newType == ForceIndexOpType_ExtendedIndex))
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-						errmsg("Vector search queries cannot specify hint")));
-	}
-	else if (opType == ForceIndexOpType_GeoNear)
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-						errmsg("GeoNear queries cannot specify hint")));
+		ForceIndexOpType opType =
+			(currentType == ForceIndexOpType_ExtendedIndex) ? newType : currentType;
+
+		if (opType == ForceIndexOpType_Text)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"$text is not allowed in combination with extended index queries")));
+		}
+		else if (opType == ForceIndexOpType_VectorSearch)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"Vector search is not allowed in combination with extended index queries")));
+		}
+		else if (opType == ForceIndexOpType_GeoNear)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"$geoNear is not allowed in combination with extended index queries")));
+		}
 	}
 }
 
@@ -861,7 +944,7 @@ CheckNullTestForGeoSpatialForcePushdown(ReplaceExtensionFunctionContext *context
 			 * e.g. Sharded collections cases where ORDER BY is not pushed to the shards so we only
 			 * get the PFE of geospatial operators.
 			 */
-			ThrowIfIncompatibleOpForIndexHint(
+			ThrowIfIncompatibleForceIndexOp(
 				context->forceIndexQueryOpData.type, ForceIndexOpType_GeoNear);
 			context->forceIndexQueryOpData.type = ForceIndexOpType_GeoNear;
 		}
@@ -909,8 +992,8 @@ CheckRestrictionPathNodeForIndexOperation(Expr *currentExpr,
 								errmsg("Index sparse must be a constant value")));
 			}
 
-			ThrowIfIncompatibleOpForIndexHint(
-				ForceIndexOpType_IndexHint, context->forceIndexQueryOpData.type);
+			ThrowIfIncompatibleForceIndexOp(
+				context->forceIndexQueryOpData.type, ForceIndexOpType_IndexHint);
 			Const *secondConst = (Const *) secondNode;
 			IndexHintMatchContext *hintContext = palloc0(
 				sizeof(IndexHintMatchContext));
@@ -929,17 +1012,22 @@ CheckRestrictionPathNodeForIndexOperation(Expr *currentExpr,
 			 * the forceIndexQueryOpData.type to vector search yet to keep compatibility.
 			 */
 			context->hasVectorSearchQuery = true;
-			ThrowIfIncompatibleOpForIndexHint(
+			ThrowIfIncompatibleForceIndexOp(
 				context->forceIndexQueryOpData.type, ForceIndexOpType_VectorSearch);
 		}
 		else if (funcExpr->funcid == ApiCursorStateFunctionId())
 		{
 			context->hasStreamingContinuationScan = true;
 		}
-		else if (IsClusterVersionAtleast(DocDB_V0, 113, 0) && funcExpr->funcid ==
-				 ApiCursorTrackerFunctionId())
+		else if (IsClusterVersionAtleast(DocDB_V0, 112, 1) &&
+				 funcExpr->funcid == ApiCursorTrackerFunctionId())
 		{
 			context->hasDynamicStreamingContinuationScan = true;
+		}
+		else if (funcExpr->funcid == BsonRangeMatchFunctionId() &&
+				 IsBsonRangeArgsForReservoirSample(funcExpr->args))
+		{
+			context->reservoirSampleExpr = funcExpr;
 		}
 		else
 		{
@@ -948,7 +1036,7 @@ CheckRestrictionPathNodeForIndexOperation(Expr *currentExpr,
 														 MongoQueryOperatorInputType_Bson);
 			if (operator->postgresRuntimeFunctionOidLookup() == funcExpr->funcid)
 			{
-				ThrowIfIncompatibleOpForIndexHint(
+				ThrowIfIncompatibleForceIndexOp(
 					context->forceIndexQueryOpData.type, ForceIndexOpType_Text);
 				context->forceIndexQueryOpData.type = ForceIndexOpType_Text;
 			}
@@ -981,6 +1069,39 @@ CheckRestrictionPathNodeForIndexOperation(Expr *currentExpr,
 										runtimeDollarIn);
 						}
 					}
+				}
+			}
+			else if (EnableExtendedIndexes)
+			{
+				/* otherwise check if this function matches an extended index AM */
+				QueryExtendedIndexContext *indexAmContext =
+					MatchRestrictionPathExprByExtendedIndex((Expr *) funcExpr, context);
+				if (indexAmContext != NULL)
+				{
+					ThrowIfIncompatibleForceIndexOp(
+						context->forceIndexQueryOpData.type,
+						ForceIndexOpType_ExtendedIndex);
+
+					/* Check if a different extended AM already claimed this context */
+					if (context->forceIndexQueryOpData.type ==
+						ForceIndexOpType_ExtendedIndex &&
+						context->forceIndexQueryOpData.opExtraState != NULL)
+					{
+						QueryExtendedIndexContext *existingContext =
+							(QueryExtendedIndexContext *) context->forceIndexQueryOpData.
+							opExtraState;
+						if (existingContext->indexAmEntry != indexAmContext->indexAmEntry)
+						{
+							ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+											errmsg(
+												"Conflicting extended index: '%s' and '%s'",
+												existingContext->indexAmEntry->am_name,
+												indexAmContext->indexAmEntry->am_name)));
+						}
+					}
+
+					context->forceIndexQueryOpData.type = ForceIndexOpType_ExtendedIndex;
+					context->forceIndexQueryOpData.opExtraState = indexAmContext;
 				}
 			}
 		}
@@ -1059,6 +1180,40 @@ CheckRestrictionPathNodeForIndexOperation(Expr *currentExpr,
 									equalityRestrictionData);
 					}
 				}
+			}
+		}
+		else if (EnableExtendedIndexes)
+		{
+			/* otherwise check if this operator matches an extended index AM */
+			QueryExtendedIndexContext *indexAmContext =
+				MatchRestrictionPathExprByExtendedIndex((Expr *) opExpr, context);
+			if (indexAmContext != NULL)
+			{
+				/* Check if the current force index type is already set and is not compatible */
+				ThrowIfIncompatibleForceIndexOp(
+					context->forceIndexQueryOpData.type,
+					ForceIndexOpType_ExtendedIndex);
+
+				/* Check if a different extended AM already claimed this context */
+				if (context->forceIndexQueryOpData.type ==
+					ForceIndexOpType_ExtendedIndex &&
+					context->forceIndexQueryOpData.opExtraState != NULL)
+				{
+					QueryExtendedIndexContext *existingContext =
+						(QueryExtendedIndexContext *) context->forceIndexQueryOpData.
+						opExtraState;
+					if (existingContext->indexAmEntry != indexAmContext->indexAmEntry)
+					{
+						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+										errmsg(
+											"Conflicting extended index: '%s' and '%s'",
+											existingContext->indexAmEntry->am_name,
+											indexAmContext->indexAmEntry->am_name)));
+					}
+				}
+
+				context->forceIndexQueryOpData.type = ForceIndexOpType_ExtendedIndex;
+				context->forceIndexQueryOpData.opExtraState = indexAmContext;
 			}
 		}
 	}
@@ -1374,13 +1529,6 @@ ReplaceExtensionFunctionOperatorsInRestrictionPaths(List *restrictInfo,
 			IsOpExprShardKeyForUnshardedCollections(rinfo->clause,
 													context->inputData.collectionId))
 		{
-			if (EnablePrimaryKeyCursorScan && context->hasStreamingContinuationScan &&
-				!EnableCursorPlanBeforeRestrictionPathUpdate)
-			{
-				/* Don't trim the shard key qual here - wait until the continuation is formed */
-				continue;
-			}
-
 			/* Simplify expression:
 			 * On unsharded collections, we need the shard_key_value
 			 * filter to route to the appropriate shard. However
@@ -1665,7 +1813,7 @@ IsFuncExprTrimmable(const FuncExpr *funcExpr)
 {
 	return funcExpr->funcid == BsonIndexHintFunctionOid() ||
 		   funcExpr->funcid == BsonFullScanFunctionOid() ||
-		   (IsClusterVersionAtleast(DocDB_V0, 113, 0) &&
+		   (IsClusterVersionAtleast(DocDB_V0, 112, 1) &&
 			funcExpr->funcid == ApiCursorTrackerFunctionId());
 }
 
@@ -2162,6 +2310,7 @@ IsSortPathFunctionOid(Oid oid)
 	{
 		return true;
 	}
+
 	if (IsClusterVersionAtleast(DocDB_V0, 110, 0) &&
 		oid == BsonOrderByIndexWithCollationFunctionOid())
 	{
@@ -2332,6 +2481,20 @@ CheckFieldCoverage(Node *node, void *context)
 						secondArg, state->indexPath);
 					state->hasUncoveredField = !isProjectionCoveredByIndex;
 					return state->hasUncoveredField;
+				}
+				else if (EnableDistinctIndexPushdown &&
+						 funcExpr->funcid == BsonDistinctUnwindFunctionOid() &&
+						 IsA(secondArg, Const))
+				{
+					Const *constArg = (Const *) secondArg;
+					if (constArg->constisnull)
+					{
+						/* If the constant is null, we can't do index-only scan. */
+						state->hasUncoveredField = true;
+						return true;
+					}
+
+					fieldPath = TextDatumGetCString(constArg->constvalue);
 				}
 				else
 				{
@@ -2656,14 +2819,14 @@ GetPrimaryKeyIndexOptInfo(RelOptInfo *rel)
 }
 
 
-static void
+void
 ConsiderBtreeOrderByPushdown(PlannerInfo *root, IndexPath *indexPath)
 {
-	bool hasOrderBy = false;
-	bool hasGroupby = false;
 	bool isOrderById = false;
-	List *sortDetails = GetSortDetails(root, indexPath->path.parent->relid, &hasOrderBy,
-									   &hasGroupby, &isOrderById);
+	bool hasGroupby = false;
+	bool hasDistinct = false;
+	List *sortDetails = GetSortDetails(root, indexPath->path.parent->relid, &hasGroupby,
+									   &isOrderById, &hasDistinct);
 
 	if (sortDetails == NIL || !isOrderById)
 	{
@@ -2775,11 +2938,13 @@ BuildPointReadIndexClause(RestrictInfo *restrictInfo, int indexCol)
 
 
 static List *
-GetSortDetails(PlannerInfo *root, Index rti,
-			   bool *hasOrderBy, bool *hasGroupby, bool *isOrderById)
+GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby,
+			   bool *isOrderById, bool *hasDistinctScan)
 {
 	List *sortDetails = NIL;
 	ListCell *sortCell;
+	bool hasOrderBy = false;
+	bool hasDistinct = false;
 	foreach(sortCell, root->query_pathkeys)
 	{
 		PathKey *pathkey = (PathKey *) lfirst(sortCell);
@@ -2797,24 +2962,68 @@ GetSortDetails(PlannerInfo *root, Index rti,
 		}
 
 		FuncExpr *func = (FuncExpr *) member->em_expr;
+		Const *collationConst = NULL;
 		bool isGroupByEntry = false;
 		if (func->funcid == BsonOrderByFunctionOid())
 		{
-			*hasOrderBy = true;
+			if (hasDistinct)
+			{
+				return NIL;
+			}
+
+			hasOrderBy = true;
 		}
 		else if (EnableOrderByIndexTerm &&
 				 (func->funcid == BsonOrderByIndexFunctionOid() ||
 				  func->funcid == BsonOrderByIndexReverseFunctionOid()))
 		{
-			/* TODO: Collation index pushdown support. */
-			*hasOrderBy = true;
+			if (hasDistinct)
+			{
+				return NIL;
+			}
+
+			hasOrderBy = true;
+		}
+		else if (EnableOrderByIndexTerm &&
+				 (func->funcid == BsonOrderByIndexWithCollationFunctionOid() ||
+				  func->funcid == BsonOrderByIndexWithCollationReverseFunctionOid()))
+		{
+			if (list_length(func->args) < 3)
+			{
+				return NIL;
+			}
+
+			Expr *thirdArg = lthird(func->args);
+			if (IsA(thirdArg, RelabelType))
+			{
+				thirdArg = ((RelabelType *) thirdArg)->arg;
+			}
+
+			if (!IsA(thirdArg, Const))
+			{
+				return NIL;
+			}
+
+			Const *thirdConst = (Const *) thirdArg;
+			if (thirdConst->constisnull || thirdConst->consttype != TEXTOID)
+			{
+				return NIL;
+			}
+
+			collationConst = thirdConst;
+			if (hasDistinct)
+			{
+				return NIL;
+			}
+
+			hasOrderBy = true;
 		}
 		else if (func->funcid == BsonExpressionGetFunctionOid() ||
 				 func->funcid == BsonExpressionGetWithLetFunctionOid())
 		{
 			/* Reject GROUP BY pathkey appearing after ORDER BY pathkeys;
 			 * GROUP BY entries must form a leading prefix of the pathkey list. */
-			if (*hasOrderBy)
+			if (hasOrderBy)
 			{
 				return NIL;
 			}
@@ -2847,13 +3056,26 @@ GetSortDetails(PlannerInfo *root, Index rti,
 			 * Reject GROUP BY pathkey appearing after ORDER BY pathkeys;
 			 * GROUP BY entries must form a leading prefix of the pathkey list.
 			 */
-			if (*hasOrderBy)
+			if (hasOrderBy)
 			{
 				return NIL;
 			}
 
 			*hasGroupby = true;
 			isGroupByEntry = true;
+		}
+		else if (func->funcid == BsonDistinctUnwindFunctionOid() &&
+				 EnableDistinctIndexPushdown)
+		{
+			/* Similar to $group case, reject if ORDER BY has already been seen */
+			if (hasOrderBy)
+			{
+				return NIL;
+			}
+
+			hasDistinct = true;
+			*hasDistinctScan = true;
+			*hasGroupby = true;
 		}
 		else
 		{
@@ -2885,17 +3107,39 @@ GetSortDetails(PlannerInfo *root, Index rti,
 		if (firstVar->varno != (int) rti ||
 			firstVar->varattno != DOCUMENT_DATA_TABLE_DOCUMENT_VAR_ATTR_NUMBER ||
 			(firstVar->vartype != BsonTypeId() && firstVar->vartype !=
-			 DocumentDBCoreBsonTypeId()) ||
-			(secondConst->consttype != BsonTypeId() && secondConst->consttype !=
-			 DocumentDBCoreBsonTypeId()) ||
-			secondConst->constisnull)
+			 DocumentDBCoreBsonTypeId()))
 		{
 			return NIL;
 		}
 
 		pgbsonelement sortElement;
-		PgbsonToSinglePgbsonElement(
-			DatumGetPgBson(secondConst->constvalue), &sortElement);
+
+		if (EnableDistinctIndexPushdown && hasDistinct)
+		{
+			if (secondConst->consttype != TEXTOID || secondConst->constisnull)
+			{
+				return NIL;
+			}
+
+			sortElement.path = TextDatumGetCString(secondConst->constvalue);
+			sortElement.pathLength = strlen(sortElement.path);
+			sortElement.bsonValue.value_type = BSON_TYPE_INT32;
+			sortElement.bsonValue.value.v_int32 = 1;
+
+			secondConst = MakeBsonConst(PgbsonElementToPgbson(&sortElement));
+		}
+		else if ((secondConst->consttype != BsonTypeId() && secondConst->consttype !=
+				  DocumentDBCoreBsonTypeId()) ||
+				 secondConst->constisnull)
+		{
+			return NIL;
+		}
+		else
+		{
+			PgbsonToSinglePgbsonElement(
+				DatumGetPgBson(secondConst->constvalue), &sortElement);
+		}
+
 		if (isGroupByEntry)
 		{
 			/* In the case of group by the expression would be { "": expr }
@@ -2950,6 +3194,7 @@ GetSortDetails(PlannerInfo *root, Index rti,
 		sortDetailsInput->sortVar = (Expr *) firstVar;
 		sortDetailsInput->sortDatum = (Expr *) secondConst;
 		sortDetailsInput->funcOid = func->funcid;
+		sortDetailsInput->collationConst = collationConst;
 		sortDetails = lappend(sortDetails, sortDetailsInput);
 
 		*isOrderById = *isOrderById ||
@@ -2958,6 +3203,67 @@ GetSortDetails(PlannerInfo *root, Index rti,
 	}
 
 	return sortDetails;
+}
+
+
+static bool
+IsQueryCollationCompatibleWithIndex(const char *queryCollation, bytea *indexOptions)
+{
+	const char *indexCollation = NULL;
+	uint32_t indexCollationLength = 0;
+	if (indexOptions != NULL)
+	{
+		Get_Index_Collation_Option((BsonGinIndexOptionsBase *) indexOptions, collation,
+								   indexCollation, indexCollationLength);
+	}
+
+	bool queryHasCollation = IsCollationValid(queryCollation);
+	bool indexHasCollation = IsCollationValid(indexCollation);
+	if (!EnableCollationWithNonUniqueOrderedIndexes)
+	{
+		return !queryHasCollation && !indexHasCollation;
+	}
+
+	if (queryHasCollation != indexHasCollation)
+	{
+		return false;
+	}
+
+	if (!queryHasCollation)
+	{
+		return true;
+	}
+
+	return strcmp(queryCollation, indexCollation) == 0;
+}
+
+
+/*
+ * Returns true when either the query (queryCollation) or the candidate index
+ * (indexOptions) carries a collation. Callers use it to skip $expr/$lookup index
+ * pushdown, which is not yet collation-aware.
+ */
+bool
+IsCollationPresentOnQueryOrIndex(const char *queryCollation, bytea *indexOptions)
+{
+	if (IsCollationApplicable(queryCollation))
+	{
+		return true;
+	}
+
+	if (indexOptions != NULL)
+	{
+		const char *indexCollation = NULL;
+		uint32_t indexCollationLength = 0;
+		Get_Index_Collation_Option((BsonGinIndexOptionsBase *) indexOptions, collation,
+								   indexCollation, indexCollationLength);
+		if (IsCollationValid(indexCollation))
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 
@@ -2980,6 +3286,14 @@ IsValidIndexPathForIdOrderBy(IndexPath *indexPath, List *sortDetails)
 	 */
 	SortIndexInputDetails *sortDetailsInput = linitial(sortDetails);
 	if (strcmp(sortDetailsInput->sortPath, "_id") != 0)
+	{
+		return false;
+	}
+
+	/* The primary key index has no collation, so we cannot honor a collation-
+	 * aware sort by streaming results from this index when _id values would
+	 * be compared as strings under that collation. */
+	if (sortDetailsInput->collationConst != NULL)
 	{
 		return false;
 	}
@@ -3031,10 +3345,11 @@ ConsiderIndexOrderByPushdownForId(PlannerInfo *root, RelOptInfo *rel, RangeTblEn
 		return;
 	}
 
-	bool hasOrderBy = false;
-	bool hasGroupby = false;
 	bool isOrderById = false;
-	List *sortDetails = GetSortDetails(root, rti, &hasOrderBy, &hasGroupby, &isOrderById);
+	bool hasGroupby = false;
+	bool hasDistinct = false;
+	List *sortDetails = GetSortDetails(root, rti, &hasGroupby, &isOrderById,
+									   &hasDistinct);
 
 	if (sortDetails == NIL || !isOrderById)
 	{
@@ -3057,6 +3372,15 @@ ConsiderIndexOrderByPushdownForId(PlannerInfo *root, RelOptInfo *rel, RangeTblEn
 			{
 				path = (Path *) bitmapPath->bitmapqual;
 			}
+		}
+
+		if (IsA(path, CustomPath) &&
+			context->hasDynamicStreamingContinuationScan)
+		{
+			/* In case of a custom path with streaming continuation,
+			 * don't try to overwrite with order by paths.
+			 */
+			return;
 		}
 
 		if (!IsA(path, IndexPath))
@@ -3097,6 +3421,16 @@ ConsiderIndexOrderByPushdownForId(PlannerInfo *root, RelOptInfo *rel, RangeTblEn
 		!hasIndexPaths && context->plannerOrderByData.shardKeyEqualityExpr != NULL)
 	{
 		SortIndexInputDetails *sortDetailsInput = linitial(sortDetails);
+
+		/* The primary key index has no collation; skip the synthetic _id index
+		 * path when the orderby is collation-aware so we don't return rows in
+		 * the wrong order. */
+		if (sortDetailsInput->collationConst != NULL)
+		{
+			list_free_deep(sortDetails);
+			return;
+		}
+
 		IndexOptInfo *primaryKeyIndex = GetPrimaryKeyIndexOptInfo(rel);
 
 		if (primaryKeyIndex != NULL)
@@ -3129,10 +3463,11 @@ ConsiderIndexOrderByPushdownForId(PlannerInfo *root, RelOptInfo *rel, RangeTblEn
 }
 
 
-static void
+static bool
 ProcessOrderByStatements(PlannerInfo *root,
 						 IndexPath *path, int32_t minOrderByColumn,
 						 int32_t maxOrderByColumn, bool isMultiKeyIndex,
+						 uint32_t multiKeyBitMask,
 						 const char *queryOrderPaths[INDEX_MAX_KEYS],
 						 bool equalityPrefixes[INDEX_MAX_KEYS],
 						 bool nonEqualityPrefixes[INDEX_MAX_KEYS],
@@ -3140,22 +3475,92 @@ ProcessOrderByStatements(PlannerInfo *root,
 {
 	int i = 0, sortDetailsIndex = 0;
 
-	bool hasOrderBy = false;
 	bool hasGroupby = false;
 	bool isOrderById = false;
-	List *sortDetails = GetSortDetails(root, path->path.parent->relid, &hasOrderBy,
-									   &hasGroupby, &isOrderById);
+	bool hasDistinct = false;
+	List *sortDetails = GetSortDetails(root, path->path.parent->relid, &hasGroupby,
+									   &isOrderById, &hasDistinct);
 
 	if (list_length(sortDetails) == 0)
 	{
-		return;
+		return false;
+	}
+
+	if (isMultiKeyIndex && hasDistinct)
+	{
+		/* if it's multi-key and there's a distinct, we can't push down an order by.
+		 * However, we can push an $exists: true filter down to the index so that we
+		 * can reduce the overall data set to the index.
+		 */
+		bool pushedDistinctExistsFilter = false;
+		if (EnableDistinctMultiKeyFilterPushdown && list_length(sortDetails) >= 1)
+		{
+			SortIndexInputDetails *sortDetailsInput = linitial(sortDetails);
+			if (sortDetailsInput->funcOid == BsonDistinctUnwindFunctionOid())
+			{
+				int sortColumn = -1;
+				for (int col = minOrderByColumn; col <= maxOrderByColumn; col++)
+				{
+					if (queryOrderPaths[col] != NULL &&
+						strcmp(sortDetailsInput->sortPath, queryOrderPaths[col]) == 0)
+					{
+						sortColumn = col;
+						break;
+					}
+				}
+
+				/*
+				 * Only push the $exists: true filter when the distinct path
+				 * maps to a column of this index (sortColumn >= 0) that does
+				 * not already carry an equality or non-equality bound. If the
+				 * column already has a bound, the exists clause is redundant;
+				 * if the distinct path is not part of the index at all, there
+				 * is no column to constrain.
+				 *
+				 * NOTE: sortColumn and the prefix arrays are both keyed off the
+				 * distinct path (the first sort detail). Today a distinct always
+				 * drives the leading order-by, so this is safe. If a future
+				 * shape allows the distinct key (e.g. "a") to differ from the
+				 * column that carries the order-by/filter (e.g. an order and
+				 * filter on "b" over an index on "b"), this single-column check
+				 * would look at the wrong column's prefixes and must be revised
+				 * to resolve the exists target independently of the order-by.
+				 */
+				if (sortColumn >= 0 && !(equalityPrefixes[sortColumn] ||
+										 nonEqualityPrefixes[sortColumn]))
+				{
+					/* push down an $exists: true filter to the index for this path */
+					Expr *existsTrueOpExpr = (Expr *) CreateExistsTrueOpExpr(
+						(Expr *) sortDetailsInput->sortVar,
+						sortDetailsInput->sortPath, strlen(sortDetailsInput->sortPath));
+					RestrictInfo *existsTrueRestrictInfo = make_simple_restrictinfo(
+						root, (Expr *) existsTrueOpExpr);
+					IndexClause *indexClause = BuildPointReadIndexClause(
+						existsTrueRestrictInfo, 0);
+					path->indexclauses = lappend(path->indexclauses, indexClause);
+
+					/*
+					 * The exists clause is attached to the first index column
+					 * (indexcol 0), so it satisfies the first-column filter
+					 * requirement that the caller uses to keep this index path.
+					 * Since a multi-key distinct never pushes an actual order-by,
+					 * without this signal the caller would discard the path and
+					 * the index would only be usable via an explicit hint.
+					 */
+					pushedDistinctExistsFilter = true;
+				}
+			}
+		}
+
+		list_free(sortDetails);
+		return pushedDistinctExistsFilter;
 	}
 
 	if (isMultiKeyIndex && hasGroupby)
 	{
 		/* We can't push down orderby on a multikey index if there is a group by */
 		list_free_deep(sortDetails);
-		return;
+		return false;
 	}
 
 	List *indexOrderBys = NIL;
@@ -3168,7 +3573,7 @@ ProcessOrderByStatements(PlannerInfo *root,
 		{
 			/* No orderby on the column */
 			list_free_deep(sortDetails);
-			return;
+			return false;
 		}
 	}
 
@@ -3176,8 +3581,18 @@ ProcessOrderByStatements(PlannerInfo *root,
 	{
 		if (isMultiKeyIndex)
 		{
+			/*
+			 * Respect the per-path multi-key bitmask when the feature flag is on:
+			 * only treat this order-by column as multi-key if its own path bit is
+			 * set (or the bitmask is unavailable). When the flag is off, fall back
+			 * to treating every order-by column of a multi-key index as multi-key.
+			 */
+			bool isMultiKeyPath = !EnablePerPathMultiKeySortPushdown ||
+								  multiKeyBitMask == 0 ||
+								  ((multiKeyBitMask & (UINT32_C(1) << i)) != 0);
+
 			/* For a multi-key index, all order by related paths must have no filter specifications */
-			if (nonEqualityPrefixes[i] || equalityPrefixes[i])
+			if (isMultiKeyPath && (nonEqualityPrefixes[i] || equalityPrefixes[i]))
 			{
 				break;
 			}
@@ -3214,7 +3629,10 @@ ProcessOrderByStatements(PlannerInfo *root,
 			/* Now we've reached the first orderby */
 			OpExpr *orderElement;
 			if (sortDetailsInput->funcOid == BsonOrderByIndexFunctionOid() ||
-				sortDetailsInput->funcOid == BsonOrderByIndexReverseFunctionOid())
+				sortDetailsInput->funcOid == BsonOrderByIndexReverseFunctionOid() ||
+				sortDetailsInput->funcOid == BsonOrderByIndexWithCollationFunctionOid() ||
+				sortDetailsInput->funcOid ==
+				BsonOrderByIndexWithCollationReverseFunctionOid())
 			{
 				Oid indexOperator = BsonOrderByBsonIndexTypeOperatorId();
 
@@ -3271,6 +3689,7 @@ ProcessOrderByStatements(PlannerInfo *root,
 	path->path.pathkeys = indexPathKeys;
 
 	list_free_deep(sortDetails);
+	return false;
 }
 
 
@@ -3291,7 +3710,7 @@ PopulateQueryPathAndValueFromOpExpr(OpExpr *opExpr, const char **queryPathString
 		*queryValue = queryElement.bsonValue;
 		return true;
 	}
-	else if (IsA(queryVal, FuncExpr) && EnableExprLookupIndexPushdown)
+	else if (IsA(queryVal, FuncExpr))
 	{
 		FuncExpr *funcExpr = (FuncExpr *) queryVal;
 		if (funcExpr->funcid ==
@@ -3600,22 +4019,11 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 	ListCell *cell;
 	bool firstFilterColumnFound = false;
 	bool indexCanOrder = false;
-	bool isMultiKeyIndex = false;
-	GetMultikeyStatusFunc getMultiKeyStatusFunc = GetMultiKeyStatusByRelAm(
-		indexPath->indexinfo->relam);
-
-	if (getMultiKeyStatusFunc != NULL &&
-		indexPath->indexinfo->amcanorderbyop &&
-		list_length(root->query_pathkeys) > 0)
-	{
-		Relation indexRel = index_open(indexPath->indexinfo->indexoid, NoLock);
-		isMultiKeyIndex = getMultiKeyStatusFunc(indexRel);
-		index_close(indexRel, NoLock);
-	}
-
+	uint32_t multiKeyBitMask = 0;
+	bool isMultiKeyIndex = CompositeIndexOptInfoIsMultiKey(indexPath->indexinfo,
+														   &multiKeyBitMask);
 	bool indexSupportsOrderByDesc = GetIndexSupportsBackwardsScan(
 		indexPath->indexinfo->relam, &indexCanOrder);
-
 
 	bool indexOnlyScanPossible = EnableIndexOnlyScan &&
 								 enable_indexonlyscan &&
@@ -3624,8 +4032,8 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 								 IsQueryEligibleForIndexOnlyScan(root,
 																 indexPath->path.parent->
 																 relid, NULL) &&
-								 CompositeIndexSupportsIndexOnlyScan(indexPath) &&
-								 AreAllTargetsCoveredByIndex(root, indexPath);
+								 AreAllTargetsCoveredByIndex(root, indexPath) &&
+								 CompositeIndexSupportsIndexOnlyScan(indexPath);
 
 	bytea *indexOptions = indexPath->indexinfo->opclassoptions != NULL ?
 						  indexPath->indexinfo->opclassoptions[0] : NULL;
@@ -3720,16 +4128,31 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 	}
 
 	/* One final pass to add the appropriate order by clauses to the index path */
+	bool distinctFilterSatisfiesFirstColumn = false;
 	if (indexCanOrder && maxOrderByColumn >= 0)
 	{
-		ProcessOrderByStatements(root, indexPath, minOrderByColumn,
-								 maxOrderByColumn, isMultiKeyIndex,
-								 queryOrderPaths, equalityPrefixes,
-								 nonEqualityPrefixes, pathSortOrders);
+		distinctFilterSatisfiesFirstColumn = ProcessOrderByStatements(
+			root, indexPath, minOrderByColumn,
+			maxOrderByColumn, isMultiKeyIndex,
+			multiKeyBitMask,
+			queryOrderPaths, equalityPrefixes,
+			nonEqualityPrefixes, pathSortOrders);
 
-		/* Trim the order by clauses from the index if there's filters */
-		if (firstFilterColumnFound)
+		/* Trim the order by clauses from the index if there's filters. The
+		 * multi-key distinct branch does not push an order-by; it instead pushes
+		 * an $exists: true filter on the first column (distinctFilterSatisfiesFirstColumn),
+		 * so its stale order-by clauses must be trimmed here as well. */
+		if ((firstFilterColumnFound || distinctFilterSatisfiesFirstColumn) &&
+			list_length(orderbyIndexClauses) > 0)
 		{
+			/* If the index supports parallel scan, we need to duplicate this list
+			 * so that parallel scans can also see the trimmed clauses.
+			 */
+			if (indexPath->indexinfo->amcanparallel)
+			{
+				indexPath->indexclauses = list_copy(indexPath->indexclauses);
+			}
+
 			foreach(cell, orderbyIndexClauses)
 			{
 				IndexClause *clause = lfirst(cell);
@@ -3790,8 +4213,13 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 		*canSupportIndexOnlyScan = indexOnlyScanPossible;
 	}
 
-	/* Valid if we pushed some order by or a filter path was found on at least the first column */
-	return firstFilterColumnFound || indexPath->indexorderbys != NIL;
+	/*
+	 * Valid if we pushed some order by, a filter path was found on at least the
+	 * first column, or a multi-key distinct pushed an $exists: true filter on
+	 * the first column (which stands in for an order-by that cannot be pushed).
+	 */
+	return firstFilterColumnFound || distinctFilterSatisfiesFirstColumn ||
+		   indexPath->indexorderbys != NIL;
 }
 
 
@@ -4295,6 +4723,20 @@ TrimIndexRestrictInfoForBtreePath(PlannerInfo *root, IndexPath *indexPath,
 			continue;
 		}
 
+		/* Trim the reservoir sample marker qual if present. */
+		if (IsA(rinfo->clause, FuncExpr))
+		{
+			FuncExpr *funcExpr = (FuncExpr *) rinfo->clause;
+			if (funcExpr->funcid == BsonRangeMatchFunctionId())
+			{
+				if (IsBsonRangeArgsForReservoirSample(funcExpr->args))
+				{
+					restrictInfosToRemove = lappend(restrictInfosToRemove, rinfo);
+					continue;
+				}
+			}
+		}
+
 		if (!IsA(rinfo->clause, OpExpr))
 		{
 			hasOtherClauses = true;
@@ -4341,56 +4783,11 @@ TrimIndexRestrictInfoForBtreePath(PlannerInfo *root, IndexPath *indexPath,
 
 		Expr *primaryKeyExpr = NULL;
 		Expr *secondaryKeyExpr = NULL;
-		switch (indexOp->indexStrategy)
+		if (!GetBtreeIndexBoundQuals(indexOp->indexStrategy, &qualElement.bsonValue,
+									 firstVar->varno, &primaryKeyExpr, &secondaryKeyExpr))
 		{
-			case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
-			{
-				primaryKeyExpr = MakeSimpleIdExpr(&qualElement.bsonValue, firstVar->varno,
-												  BsonGreaterThanOperatorId());
-				secondaryKeyExpr = MakeUpperBoundIdExpr(&qualElement.bsonValue,
-														firstVar->varno);
-				break;
-			}
-
-			case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
-			{
-				primaryKeyExpr = MakeSimpleIdExpr(&qualElement.bsonValue, firstVar->varno,
-												  BsonGreaterThanEqualOperatorId());
-				secondaryKeyExpr = MakeUpperBoundIdExpr(&qualElement.bsonValue,
-														firstVar->varno);
-				break;
-			}
-
-			case BSON_INDEX_STRATEGY_DOLLAR_LESS:
-			{
-				primaryKeyExpr = MakeSimpleIdExpr(&qualElement.bsonValue, firstVar->varno,
-												  BsonLessThanOperatorId());
-				secondaryKeyExpr = MakeLowerBoundIdExpr(&qualElement.bsonValue,
-														firstVar->varno);
-				break;
-			}
-
-			case BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL:
-			{
-				primaryKeyExpr = MakeSimpleIdExpr(&qualElement.bsonValue, firstVar->varno,
-												  BsonLessThanEqualOperatorId());
-				secondaryKeyExpr = MakeLowerBoundIdExpr(&qualElement.bsonValue,
-														firstVar->varno);
-				break;
-			}
-
-			case BSON_INDEX_STRATEGY_DOLLAR_EQUAL:
-			{
-				primaryKeyExpr = MakeSimpleIdExpr(&qualElement.bsonValue, firstVar->varno,
-												  BsonEqualOperatorId());
-				break;
-			}
-
-			default:
-			{
-				hasOtherClauses = true;
-				continue;
-			}
+			hasOtherClauses = true;
+			continue;
 		}
 
 		additionalIndexClauses = lappend(additionalIndexClauses, primaryKeyExpr);
@@ -4489,8 +4886,9 @@ ReplaceFunctionOperatorsInPlanPath(PlannerInfo *root, RelOptInfo *rel, Path *pat
 																  PARENTTYPE_BITMAPHEAP,
 																  context);
 	}
-	else if (IsA(path, CustomPath) && EnablePrimaryKeyCursorScan &&
-			 EnableCursorPlanBeforeRestrictionPathUpdate)
+	else if (IsA(path, CustomPath) &&
+			 (EnablePrimaryKeyCursorScan ||
+			  EnableDynamicCursors))
 	{
 		CustomPath *customPath = (CustomPath *) path;
 		ReplaceExtensionFunctionOperatorsInPaths(root, rel,
@@ -4673,6 +5071,15 @@ ProcessRestrictionInfoAndRewriteFuncExpr(Expr *clause,
 				return NULL;
 			}
 
+			if (trimClauses && funcExpr->funcid == BsonRangeMatchFunctionId())
+			{
+				/* Trim the reservoir sample marker qual if present. */
+				if (IsBsonRangeArgsForReservoirSample(funcExpr->args))
+				{
+					return NULL;
+				}
+			}
+
 			if (funcExpr->funcid == BsonFullScanFunctionOid())
 			{
 				Expr *firstArg = linitial(funcExpr->args);
@@ -4695,7 +5102,7 @@ ProcessRestrictionInfoAndRewriteFuncExpr(Expr *clause,
 			 * Also TODO: Int he indexrestrictinfo of the btree index, leave the funcExpr as is
 			 * so that it can evaluate on object_id to support things like IX only SCAN
 			 */
-			if (IsClusterVersionAtleast(DocDB_V0, 114, 0) &&
+			if (IsClusterVersionAtleast(DocDB_V0, 112, 1) &&
 				EnableObjectIdFuncExprConversion &&
 				funcExpr->funcid == BsonRegexObjectIdMatchFunctionId())
 			{
@@ -4705,6 +5112,30 @@ ProcessRestrictionInfoAndRewriteFuncExpr(Expr *clause,
 					   GetOpExprClauseFromIndexOperator(operator, linitial(args), lthird(
 															args),
 														NULL);
+			}
+
+			/* Delegate to extended index AM rewrite hook if available */
+			if (EnableExtendedIndexes &&
+				context->forceIndexQueryOpData.type == ForceIndexOpType_ExtendedIndex &&
+				context->forceIndexQueryOpData.opExtraState != NULL)
+			{
+				QueryExtendedIndexContext *amContext =
+					(QueryExtendedIndexContext *)
+					context->forceIndexQueryOpData.opExtraState;
+				if (amContext->indexAmEntry != NULL &&
+					amContext->indexAmEntry->query_index_path_support_funcs != NULL)
+				{
+					QueryIndexPathSupportFuncs *support_funcs =
+						amContext->indexAmEntry->query_index_path_support_funcs;
+					Expr *rewritten =
+						support_funcs->rewriteFuncExprFunc(funcExpr, context,
+														   trimClauses);
+
+					if (rewritten != (Expr *) funcExpr)
+					{
+						return rewritten;
+					}
+				}
 			}
 		}
 	}
@@ -4846,22 +5277,9 @@ GetOpExprClauseFromIndexOperator(const MongoIndexOperatorInfo *operator,
 }
 
 
-/*
- * In the scenario where we have a BitmapAnd of [ A AND B ]
- * if any of the nested IndexPaths are for shard_key_value = 'collid'
- * if this is true, then it's for an unsharded collection so we should remove
- * this qual.
- */
-static Path *
-OptimizeBitmapQualsForBitmapAnd(BitmapAndPath *andPath,
-								ReplaceExtensionFunctionContext *context)
+Path *
+OptimizeAndTrimBitmapQualsForBitmapAnd(BitmapAndPath *andPath, uint64_t collectionId)
 {
-	if (!context->inputData.isShardQuery ||
-		context->inputData.collectionId == 0)
-	{
-		return (Path *) andPath;
-	}
-
 	ListCell *cell;
 	foreach(cell, andPath->bitmapquals)
 	{
@@ -4882,12 +5300,13 @@ OptimizeBitmapQualsForBitmapAnd(BitmapAndPath *andPath,
 			IndexClause *clause = linitial(indexPath->indexclauses);
 			if (clause->indexcol == 0 &&
 				IsOpExprShardKeyForUnshardedCollections(clause->rinfo->clause,
-														context->inputData.collectionId))
+														collectionId))
 			{
 				/* The index path is a single restrict info on the shard_key_value = 'collectionid'
 				 * This index path can be removed.
 				 */
 				andPath->bitmapquals = foreach_delete_current(andPath->bitmapquals, cell);
+				continue;
 			}
 		}
 	}
@@ -4898,6 +5317,27 @@ OptimizeBitmapQualsForBitmapAnd(BitmapAndPath *andPath,
 	}
 
 	return (Path *) andPath;
+}
+
+
+/*
+ * In the scenario where we have a BitmapAnd of [ A AND B ]
+ * if any of the nested IndexPaths are for shard_key_value = 'collid'
+ * if this is true, then it's for an unsharded collection so we should remove
+ * this qual.
+ */
+static Path *
+OptimizeBitmapQualsForBitmapAnd(BitmapAndPath *andPath,
+								ReplaceExtensionFunctionContext *context)
+{
+	if (!context->inputData.isShardQuery ||
+		context->inputData.collectionId == 0)
+	{
+		return (Path *) andPath;
+	}
+
+	return OptimizeAndTrimBitmapQualsForBitmapAnd(andPath,
+												  context->inputData.collectionId);
 }
 
 
@@ -5742,6 +6182,132 @@ PrimaryKeyLookupUnableToFindIndex(void)
 }
 
 
+static List *
+UpdateIndexListForExtendedIndex(List *existingIndex,
+								ReplaceExtensionFunctionContext *context)
+{
+	if (!EnableExtendedIndexes)
+	{
+		return existingIndex;
+	}
+
+	if (context->forceIndexQueryOpData.type == ForceIndexOpType_ExtendedIndex &&
+		context->forceIndexQueryOpData.opExtraState != NULL)
+	{
+		QueryExtendedIndexContext *amContext =
+			(QueryExtendedIndexContext *) context->forceIndexQueryOpData.opExtraState;
+		if (amContext->indexAmEntry != NULL &&
+			amContext->indexAmEntry->query_index_path_support_funcs != NULL)
+		{
+			ForceIndexSupportFuncs *supportFuncs =
+				amContext->indexAmEntry->query_index_path_support_funcs->
+				forceIndexSupportFuncs;
+
+			return supportFuncs->updateIndexes(existingIndex, context);
+		}
+	}
+	return existingIndex;
+}
+
+
+static bool
+MatchIndexPathForExtendedIndex(IndexPath *path, void *matchContext)
+{
+	if (!EnableExtendedIndexes)
+	{
+		return false;
+	}
+
+	if (matchContext != NULL)
+	{
+		QueryExtendedIndexContext *amContext =
+			(QueryExtendedIndexContext *) matchContext;
+		if (amContext->indexAmEntry != NULL &&
+			amContext->indexAmEntry->query_index_path_support_funcs != NULL)
+		{
+			ForceIndexSupportFuncs *supportFuncs =
+				amContext->indexAmEntry->query_index_path_support_funcs->
+				forceIndexSupportFuncs;
+
+			return supportFuncs->matchIndexPath(path, matchContext);
+		}
+	}
+	return false;
+}
+
+
+static bool
+TryUseAlternateIndexForExtendedIndex(PlannerInfo *root, RelOptInfo *rel,
+									 ReplaceExtensionFunctionContext *context,
+									 MatchIndexPath matchIndexPath)
+{
+	if (!EnableExtendedIndexes)
+	{
+		return false;
+	}
+
+	if (context->forceIndexQueryOpData.type == ForceIndexOpType_ExtendedIndex &&
+		context->forceIndexQueryOpData.opExtraState != NULL)
+	{
+		QueryExtendedIndexContext *amContext =
+			(QueryExtendedIndexContext *) context->forceIndexQueryOpData.opExtraState;
+		if (amContext->indexAmEntry != NULL &&
+			amContext->indexAmEntry->query_index_path_support_funcs != NULL)
+		{
+			ForceIndexSupportFuncs *supportFuncs =
+				amContext->indexAmEntry->query_index_path_support_funcs->
+				forceIndexSupportFuncs;
+
+			return supportFuncs->alternatePath(root, rel, context, matchIndexPath);
+		}
+	}
+	return false;
+}
+
+
+static void
+ThrowNoExtendedIndexFound(void)
+{
+	if (!EnableExtendedIndexes)
+	{
+		return;
+	}
+
+	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INDEXNOTFOUND),
+					errmsg(
+						"Extended index required for this query but no index found.")));
+}
+
+
+static bool
+EnableExtendedIndexForceIndexPushdown(PlannerInfo *root,
+									  ReplaceExtensionFunctionContext *context)
+{
+	if (!EnableExtendedIndexes)
+	{
+		return false;
+	}
+
+	if (context->forceIndexQueryOpData.type == ForceIndexOpType_ExtendedIndex &&
+		context->forceIndexQueryOpData.opExtraState != NULL)
+	{
+		QueryExtendedIndexContext *amContext =
+			(QueryExtendedIndexContext *) context->forceIndexQueryOpData.opExtraState;
+		if (amContext->indexAmEntry != NULL &&
+			amContext->indexAmEntry->query_index_path_support_funcs != NULL)
+		{
+			ForceIndexSupportFuncs *supportFuncs =
+				amContext->indexAmEntry->query_index_path_support_funcs->
+				forceIndexSupportFuncs;
+
+			return supportFuncs->enableForceIndexPushdown(root, context);
+		}
+	}
+
+	return false;
+}
+
+
 static bool
 IsSupportedElemMatchExpr(Node *elemMatchExpr, bytea *options,
 						 const MongoIndexOperatorInfo **targetOperator,
@@ -6045,6 +6611,109 @@ CreateFullScanOpExpr(Expr *documentExpr, const char *sourcePath, uint32_t
 }
 
 
+bool
+GetBtreeIndexBoundQuals(BsonIndexStrategy strategy, const bson_value_t *queryValue, Index
+						varno, Expr **firstBound, Expr **secondBound)
+{
+	switch (strategy)
+	{
+		case BSON_INDEX_STRATEGY_DOLLAR_EQUAL:
+		{
+			*firstBound = MakeSimpleIdExpr(queryValue, varno, BsonEqualOperatorId());
+			*secondBound = NULL;
+			return true;
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
+		{
+			*firstBound = MakeSimpleIdExpr(queryValue, varno,
+										   BsonGreaterThanOperatorId());
+			*secondBound = MakeUpperBoundIdExpr(queryValue, varno);
+			return true;
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
+		{
+			*firstBound = MakeSimpleIdExpr(queryValue, varno,
+										   BsonGreaterThanEqualOperatorId());
+			*secondBound = MakeUpperBoundIdExpr(queryValue, varno);
+			return true;
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_LESS:
+		{
+			*firstBound = MakeSimpleIdExpr(queryValue, varno, BsonLessThanOperatorId());
+			*secondBound = MakeLowerBoundIdExpr(queryValue, varno);
+			return true;
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL:
+		{
+			*firstBound = MakeSimpleIdExpr(queryValue, varno,
+										   BsonLessThanEqualOperatorId());
+			*secondBound = MakeLowerBoundIdExpr(queryValue, varno);
+			return true;
+		}
+
+		case BSON_INDEX_STRATEGY_DOLLAR_IN:
+		{
+			if (queryValue->value_type != BSON_TYPE_ARRAY)
+			{
+				return false;
+			}
+
+			List *inArgs = NIL;
+			bson_iter_t inQualsIter;
+			BsonValueInitIterator(queryValue, &inQualsIter);
+
+
+			/* Get the $in values */
+			while (bson_iter_next(&inQualsIter))
+			{
+				inArgs = lappend(inArgs, MakeBsonConst(BsonValueToDocumentPgbson(
+														   bson_iter_value(
+															   &inQualsIter))));
+			}
+
+			if (inArgs != NIL)
+			{
+				/* Create an IN clause, in SQL this is
+				 * a "ANY ( bson[] )" expression.
+				 */
+				ScalarArrayOpExpr *inOperator = makeNode(ScalarArrayOpExpr);
+				inOperator->useOr = true;
+				inOperator->opno = BsonEqualOperatorId();
+				inOperator->opfuncid = BsonEqualFunctionOid();
+
+				/* First arg is the object_id var */
+				AttrNumber documentIdAttnum = 2;
+				Var *documentIdVar = makeVar(varno,
+											 documentIdAttnum,
+											 BsonTypeId(), -1,
+											 InvalidOid, 0);
+
+				/* Second arg is an ArrayExpr containing the documents */
+				ArrayExpr *arrayExpr = makeNode(ArrayExpr);
+				arrayExpr->array_typeid = GetBsonArrayTypeOid();
+				arrayExpr->element_typeid = BsonTypeId();
+				arrayExpr->multidims = false;
+				arrayExpr->elements = inArgs;
+				inOperator->args = list_make2(documentIdVar, arrayExpr);
+
+				*firstBound = (Expr *) inOperator;
+				*secondBound = NULL;
+				return true;
+			}
+		}
+
+		default:
+			return false;
+	}
+
+	return false;
+}
+
+
 /*
  * When querying a table with no filters and an orderby, there is a full scan
  * filter applied that allows for index pushdowns. If this is the first key
@@ -6076,14 +6745,19 @@ ProcessFullScanForOrderBy(SupportRequestIndexCondition *req, List *args)
 		return NULL;
 	}
 
+	pgbsonelement sortElement;
+	const char *queryCollation = PgbsonToSinglePgbsonElementWithCollation(
+		DatumGetPgBson(queryValue), &sortElement);
+	if (!IsQueryCollationCompatibleWithIndex(queryCollation, options))
+	{
+		return NULL;
+	}
+
 	if (!ValidateIndexForQualifierValue(options, queryValue,
 										BSON_INDEX_STRATEGY_DOLLAR_ORDERBY))
 	{
 		return NULL;
 	}
-
-	pgbsonelement sortElement;
-	PgbsonToSinglePgbsonElement(DatumGetPgBson(queryValue), &sortElement);
 
 	int8_t sortDirection;
 	GetCompositeOpClassColumnNumber(sortElement.path, options,
@@ -6114,7 +6788,8 @@ CreateKnownFullScanExpr(Datum queryValue, Expr *documentExpr, int sortDirection)
 	 * $range full scan.
 	 */
 	pgbsonelement sourceElement;
-	PgbsonToSinglePgbsonElement(DatumGetPgBson(queryValue), &sourceElement);
+	PgbsonToSinglePgbsonElementWithCollation(DatumGetPgBson(queryValue),
+											 &sourceElement);
 
 	if (sortDirection == 0)
 	{
@@ -6139,6 +6814,21 @@ ExtractExprsForObjectIdFunction(FuncExpr *expr, pgbsonelement *queryElement,
 	Expr *documentExpr = linitial(expr->args);
 	Expr *objectIdExpr = lsecond(expr->args);
 	Expr *filterExpr = lthird(expr->args);
+	if (IsA(documentExpr, RelabelType))
+	{
+		documentExpr = ((RelabelType *) documentExpr)->arg;
+	}
+
+	if (IsA(objectIdExpr, RelabelType))
+	{
+		objectIdExpr = ((RelabelType *) objectIdExpr)->arg;
+	}
+
+	if (IsA(filterExpr, RelabelType))
+	{
+		filterExpr = ((RelabelType *) filterExpr)->arg;
+	}
+
 	if (!IsA(filterExpr, Const) || !IsA(objectIdExpr, Var) || !IsA(documentExpr, Var))
 	{
 		return false;
@@ -6171,29 +6861,18 @@ ExtractExprsForObjectIdFunction(FuncExpr *expr, pgbsonelement *queryElement,
 
 
 static Expr *
-HandleRegexBtreeIdPushdown(SupportRequestIndexCondition *req)
+HandleRegexBtreeIdPushdown(const bson_value_t *filter, int varno)
 {
 	/* A regex match on _id: regex bounds as needed */
-	FuncExpr *regexFuncExpr = (FuncExpr *) req->node;
-
-	pgbsonelement queryElement;
-	Var *objectIdVar, *documentVar;
-	Datum queryValue;
-	if (!ExtractExprsForObjectIdFunction(regexFuncExpr, &queryElement, &objectIdVar,
-										 &documentVar, &queryValue))
-	{
-		return NULL;
-	}
-
 	const char *regex, *options;
-	if (queryElement.bsonValue.value_type == BSON_TYPE_REGEX)
+	if (filter->value_type == BSON_TYPE_REGEX)
 	{
-		regex = queryElement.bsonValue.value.v_regex.regex;
-		options = queryElement.bsonValue.value.v_regex.options;
+		regex = filter->value.v_regex.regex;
+		options = filter->value.v_regex.options;
 	}
-	else if (queryElement.bsonValue.value_type == BSON_TYPE_UTF8)
+	else if (filter->value_type == BSON_TYPE_UTF8)
 	{
-		regex = queryElement.bsonValue.value.v_utf8.str;
+		regex = filter->value.v_utf8.str;
 		options = "";
 	}
 	else
@@ -6210,17 +6889,16 @@ HandleRegexBtreeIdPushdown(SupportRequestIndexCondition *req)
 	GetBoundsForRegex(regex, options, &lowerBound, &lowerBoundInclusive, &upperBound,
 					  &upperBoundInclusive);
 
-	Expr *lowerBoundExpr = MakeSimpleIdExpr(&lowerBound, objectIdVar->varno,
+	Expr *lowerBoundExpr = MakeSimpleIdExpr(&lowerBound, varno,
 											lowerBoundInclusive ?
 											BsonGreaterThanEqualOperatorId() :
 											BsonGreaterThanOperatorId());
-	Expr *upperBoundExpr = MakeSimpleIdExpr(&upperBound, objectIdVar->varno,
+	Expr *upperBoundExpr = MakeSimpleIdExpr(&upperBound, varno,
 											upperBoundInclusive ?
 											BsonLessThanEqualOperatorId() :
 											BsonLessThanOperatorId());
 
 	/* Now inject clauses for the regex operator based on the bounds formed */
-	req->lossy = true;
 	return (Expr *) list_make2(lowerBoundExpr, upperBoundExpr);
 }
 
@@ -6228,14 +6906,43 @@ HandleRegexBtreeIdPushdown(SupportRequestIndexCondition *req)
 static Expr *
 HandleSupportRequestForBtreeObjectIdCondition(SupportRequestIndexCondition *req)
 {
-	/* TODO(object_id_funcs): Make this more general purpose */
-	if (IsClusterVersionAtleast(DocDB_V0, 114, 0) &&
-		req->funcid == BsonRegexObjectIdMatchFunctionId())
+	if (!IsClusterVersionAtleast(DocDB_V0, 112, 1))
 	{
-		return HandleRegexBtreeIdPushdown(req);
+		return NULL;
 	}
 
-	ereport(NOTICE, errmsg("bson_dollar_support_object_id for BTREE_AM_OID."));
+	FuncExpr *regexFuncExpr = (FuncExpr *) req->node;
+
+	pgbsonelement queryElement;
+	Var *objectIdVar, *documentVar;
+	Datum queryValue;
+	if (!ExtractExprsForObjectIdFunction(regexFuncExpr, &queryElement, &objectIdVar,
+										 &documentVar, &queryValue))
+	{
+		return NULL;
+	}
+
+	/* Assume not lossy, operators can override this.*/
+	req->lossy = false;
+
+	const MongoIndexOperatorInfo *operator =
+		GetObjectIdMongoIndexOperatorByPostgresFuncId(req->funcid);
+	Expr *lowerBound = NULL;
+	Expr *upperBound = NULL;
+
+	if (GetBtreeIndexBoundQuals(operator->indexStrategy, &queryElement.bsonValue,
+								objectIdVar->varno, &lowerBound, &upperBound))
+	{
+		return upperBound != NULL ? (Expr *) list_make2(lowerBound, upperBound) :
+			   lowerBound;
+	}
+
+	if (operator->indexStrategy == BSON_INDEX_STRATEGY_DOLLAR_REGEX)
+	{
+		req->lossy = true;
+		return HandleRegexBtreeIdPushdown(&queryElement.bsonValue, objectIdVar->varno);
+	}
+
 	return NULL;
 }
 
@@ -6243,7 +6950,11 @@ HandleSupportRequestForBtreeObjectIdCondition(SupportRequestIndexCondition *req)
 static Expr *
 HandleSupportRequestForRegularObjectIdCondition(SupportRequestIndexCondition *req)
 {
-	/* TODO(object_id_funcs): Make this more general purpose */
+	if (!IsClusterVersionAtleast(DocDB_V0, 112, 1))
+	{
+		return NULL;
+	}
+
 	bytea *options = req->index->opclassoptions[req->indexcol];
 	if (options == NULL)
 	{
@@ -6266,25 +6977,24 @@ HandleSupportRequestForRegularObjectIdCondition(SupportRequestIndexCondition *re
 		return NULL;
 	}
 
-	if (IsClusterVersionAtleast(DocDB_V0, 114, 0) &&
-		req->funcid == BsonRegexObjectIdMatchFunctionId())
-	{
-		/* Check if the index is valid for the function */
-		const MongoIndexOperatorInfo *operator =
-			GetMongoIndexOperatorInfoByPostgresFuncId(BsonRegexMatchFunctionId());
-		if (!ValidateIndexForQualifierValue(options, queryValue,
-											operator->indexStrategy))
-		{
-			return NULL;
-		}
+	/* Check if the index is valid for the function */
+	const MongoIndexOperatorInfo *operator =
+		GetObjectIdMongoIndexOperatorByPostgresFuncId(req->funcid);
 
-		Expr *filterConst = lthird(funcExpr->args);
-		Expr *finalExpression =
-			(Expr *) GetOpExprClauseFromIndexOperator(operator, (Expr *) documentVar,
-													  (Expr *) filterConst, options);
-		return finalExpression;
+	if (operator->indexStrategy == BSON_INDEX_STRATEGY_INVALID)
+	{
+		return NULL;
 	}
 
-	ereport(NOTICE, errmsg("bson_dollar_support_object_id for RUM."));
-	return NULL;
+	if (!ValidateIndexForQualifierValue(options, queryValue,
+										operator->indexStrategy))
+	{
+		return NULL;
+	}
+
+	Expr *filterConst = lthird(funcExpr->args);
+	Expr *finalExpression =
+		(Expr *) GetOpExprClauseFromIndexOperator(operator, (Expr *) documentVar,
+												  (Expr *) filterConst, options);
+	return finalExpression;
 }

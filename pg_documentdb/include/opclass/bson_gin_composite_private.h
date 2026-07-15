@@ -232,7 +232,8 @@ bool TryUpdateBoundsForTruncation(CompositeQueryRunData *runData,
 
 List * MergeSingleVariableBounds(List *variableBounds, const char **wildcardPath,
 								 CompositeIndexBounds *mergedBounds,
-								 const char *indexCollation);
+								 const char *indexCollation,
+								 bool hasArrayPaths, uint32_t multiKeyBitMask);
 List * MergeWildCardSingleVariableBounds(List *variableBounds);
 
 void TrimSecondaryVariableBounds(VariableIndexBounds *variableBounds,

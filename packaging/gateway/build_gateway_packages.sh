@@ -128,8 +128,18 @@ if [[ "$PACKAGE_TYPE" == "deb" ]]; then
             ;;
     esac
 elif [[ "$PACKAGE_TYPE" == "rpm" ]]; then
-    # TODO: Implement RPM package building
-    echo "Building RPM packages is not yet implemented."
+    case $OS in
+        rhel8)
+            DOCKER_IMAGE="rockylinux:8"
+            TEST_DOCKER_IMAGE="rockylinux:8"
+            DOCKERFILE="${script_dir}/packaging/rpm/rhel-8/Dockerfile_gateway_rhel8"
+            ;;
+        rhel9)
+            DOCKER_IMAGE="rockylinux:9"
+            TEST_DOCKER_IMAGE="rockylinux:9"
+            DOCKERFILE="${script_dir}/packaging/rpm/rhel-9/Dockerfile_gateway_rhel9"
+            ;;
+    esac
 fi
 
 TAG=documentdb-build-packages-$OS-pg$PG:latest
@@ -151,8 +161,14 @@ if [[ "$PACKAGE_TYPE" == "deb" ]]; then
     # Run the Docker container to build the packages
     docker run --rm --env OS="$OS" --env DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" -v "$abs_output_dir:/output" "$TAG"
 elif [[ "$PACKAGE_TYPE" == "rpm" ]]; then
-    echo "Building RPM packages is not yet implemented."
-    # TODO: Implement RPM package building
+    # Build the gateway RPM via the rhel-8 / rhel-9 Dockerfile (builds the
+    # Rust daemon, stages sources, runs rpmbuild, and copies the .rpm to
+    # /output).
+    docker build -t "$TAG" -f "$DOCKERFILE" \
+        --build-arg BASE_IMAGE="$DOCKER_IMAGE" \
+        --build-arg DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" "$script_dir"
+    # Run the Docker container to build the packages
+    docker run --rm --env DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" -v "$abs_output_dir:/output" "$TAG"
 fi
 
 echo "Packages built successfully!!"
@@ -164,7 +180,7 @@ if [[ $TEST_CLEAN_INSTALL == true ]]; then
         ls "$abs_output_dir"
         deb_package_name=$(ls "$abs_output_dir" | grep -E "${OS}-postgresql-$PG-documentdb_${DOCUMENTDB_VERSION}.*\.deb" | grep -v "dbg" | head -n 1)
         deb_package_rel_path="$OUTPUT_DIR/$deb_package_name"
-        gateway_package_name=$(ls "$abs_output_dir" | grep -E "^documentdb_gateway_.*\.deb" | grep -v "dbg" | head -n 1)
+        gateway_package_name=$(ls "$abs_output_dir" | grep -E "${OS}-documentdb-gateway_.*\.deb" | grep -v "dbg" | head -n 1)
         gateway_package_rel_path="$OUTPUT_DIR/$gateway_package_name"
 
         echo "Debian package path passed into Docker build: $deb_package_rel_path"
@@ -179,7 +195,21 @@ if [[ $TEST_CLEAN_INSTALL == true ]]; then
         docker run --rm documentdb-test-gateway-packages:latest
 
     elif [[ "$PACKAGE_TYPE" == "rpm" ]]; then
-        echo "RPM package installation test is not yet implemented."
+        ls "$abs_output_dir"
+        gateway_rpm_name=$(ls "$abs_output_dir" | grep -E "documentdb-gateway-.*\.rpm" | grep -v "debuginfo" | head -n 1)
+        gateway_rpm_rel_path="$OUTPUT_DIR/$gateway_rpm_name"
+
+        echo "Gateway RPM path passed into Docker build: $gateway_rpm_rel_path"
+
+        # Clean-install the gateway RPM in a fresh container and run the
+        # install smoke. This exercises the EL8 useradd fallback and the
+        # wrapper's root-shell privilege drop (where the EL8 runuser
+        # incompatibility surfaced), so the RPM path now has a real gate.
+        docker build -t documentdb-test-gateway-rpm:latest -f "${script_dir}/packaging/gateway/test/Dockerfile_rpm_gateway_test" \
+            --build-arg BASE_IMAGE="$TEST_DOCKER_IMAGE" \
+            --build-arg GATEWAY_RPM_REL_PATH="$gateway_rpm_rel_path" "$script_dir"
+        # Run the Docker container to test the package
+        docker run --rm documentdb-test-gateway-rpm:latest
     fi
 
     echo "Clean installation test successful!!"

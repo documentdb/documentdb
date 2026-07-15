@@ -56,7 +56,6 @@
 const int MaximumLookupPipelineDepth = 20;
 extern bool EnableLookupIdJoinOptimizationOnCollation;
 extern bool EnableOperatorVariablesInLookup;
-extern bool EnableUseForeignKeyLookupInline;
 
 /*
  * Struct having parsed view of the
@@ -462,8 +461,7 @@ CanInlineLookupWithUnwind(const bson_value_t *lookUpStageValue,
 						  const bson_value_t *unwindStageValue,
 						  bool *isPreserveEmptyAndNullArrays)
 {
-	LookupArgs lookupArgs;
-	memset(&lookupArgs, 0, sizeof(LookupArgs));
+	LookupArgs lookupArgs = { 0 };
 	ParseLookupStage(lookUpStageValue, &lookupArgs);
 
 	if (lookupArgs.lookupAs.length == 0)
@@ -482,62 +480,32 @@ CanInlineLookupWithUnwind(const bson_value_t *lookUpStageValue,
 		return false;
 	}
 
-	StringView unwindPath = { 0 };
-
-	/* If the unwind has options don't inline */
-	if (unwindStageValue->value_type == BSON_TYPE_DOCUMENT ||
-		unwindStageValue->value_type == BSON_TYPE_UTF8)
+	UnwindArgs unwindArgs = { 0 };
+	UnwindParseErrorHandler onErrorIgnored = NULL;
+	if (!TryParseUnwindStage(unwindStageValue, &unwindArgs, onErrorIgnored))
 	{
-		if (unwindStageValue->value_type == BSON_TYPE_DOCUMENT)
-		{
-			bson_iter_t iter;
-			BsonValueInitIterator(unwindStageValue, &iter);
-			while (bson_iter_next(&iter))
-			{
-				const char *key = bson_iter_key(&iter);
-				if (strcmp(key, "includeArrayIndex") == 0)
-				{
-					/* We can't inline the documents need to be rewritten with the array index */
-					return false;
-				}
-				else if (strcmp("preserveNullAndEmptyArrays", key) == 0)
-				{
-					if (BSON_ITER_HOLDS_BOOL(&iter))
-					{
-						*isPreserveEmptyAndNullArrays = bson_iter_as_bool(&iter);
-					}
-					else
-					{
-						/* Don't inline so that invalid specs are caught and error is thrown */
-						return false;
-					}
-				}
-				else if (strcmp(key, "path") == 0 && BSON_ITER_HOLDS_UTF8(&iter))
-				{
-					unwindPath.string = bson_iter_utf8(&iter, &unwindPath.length);
-				}
-			}
-		}
-		else
-		{
-			unwindPath.string = unwindStageValue->value.v_utf8.str;
-			unwindPath.length = unwindStageValue->value.v_utf8.len;
-			*isPreserveEmptyAndNullArrays = false;
-		}
-	}
-	else
-	{
-		/* Any other unwind value is invalid */
 		return false;
 	}
 
-	if (unwindPath.length > 1 && StringViewStartsWith(&unwindPath, '$') &&
-		strcmp(unwindPath.string + 1, lookupArgs.lookupAs.string) == 0)
+	/* includeArrayIndex requires synthesizing an extra field per row;
+	 * the fused op has no place to put it. */
+	if (unwindArgs.includeArrayIndex.length > 0)
 	{
-		return true;
+		return false;
 	}
 
-	return false;
+	*isPreserveEmptyAndNullArrays = unwindArgs.preserveNullAndEmptyArrays;
+
+	/* TryParseUnwindStage guarantees the path is "$<field>", but validate
+	 * defensively before skipping the leading '$' for the comparison. */
+	const char *unwindPath = unwindArgs.pathValue.value.v_utf8.str;
+	if (unwindPath == NULL || unwindPath[0] != '$')
+	{
+		return false;
+	}
+
+	/* Compare the trailing field name to the lookup's "as" target. */
+	return strcmp(unwindPath + 1, lookupArgs.lookupAs.string) == 0;
 }
 
 
@@ -793,6 +761,7 @@ CreateInverseMatchFromCollectionQuery(InverseMatchArgs *inverseMatchArgs,
 	subPipelineContext.nestedPipelineLevel = context->nestedPipelineLevel + 1;
 	subPipelineContext.databaseNameDatum = context->databaseNameDatum;
 	subPipelineContext.variableSpec = context->variableSpec;
+	subPipelineContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 	subPipelineContext.parentStageName = ParentStageName_INVERSEMATCH;
 	strncpy((char *) subPipelineContext.collationString, context->collationString,
 			MAX_ICU_COLLATION_LENGTH);
@@ -1077,6 +1046,7 @@ HandleUnionWith(const bson_value_t *existingValue, Query *query,
 		subPipelineContext.nestedPipelineLevel = context->nestedPipelineLevel + 1;
 		subPipelineContext.databaseNameDatum = context->databaseNameDatum;
 		subPipelineContext.variableSpec = context->variableSpec;
+		subPipelineContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 		subPipelineContext.parentStageName = ParentStageName_UNIONWITH;
 		strncpy((char *) subPipelineContext.collationString, context->collationString,
 				MAX_ICU_COLLATION_LENGTH);
@@ -1096,6 +1066,7 @@ HandleUnionWith(const bson_value_t *existingValue, Query *query,
 		subPipelineContext.nestedPipelineLevel = context->nestedPipelineLevel + 1;
 		subPipelineContext.databaseNameDatum = context->databaseNameDatum;
 		subPipelineContext.variableSpec = context->variableSpec;
+		subPipelineContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 		subPipelineContext.parentStageName = ParentStageName_UNIONWITH;
 		strncpy((char *) subPipelineContext.collationString, context->collationString,
 				MAX_ICU_COLLATION_LENGTH);
@@ -1275,6 +1246,7 @@ BuildFacetUnionAllQuery(int numStages, const bson_value_t *facetValue,
 		AggregationPipelineBuildContext nestedContext = { 0 };
 		nestedContext.nestedPipelineLevel = parentContext->nestedPipelineLevel + 1;
 		nestedContext.databaseNameDatum = parentContext->databaseNameDatum;
+		nestedContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 		nestedContext.sortSpec = *sortSpec;
 		nestedContext.variableSpec = parentContext->variableSpec;
 		nestedContext.parentStageName = ParentStageName_FACET;
@@ -1335,6 +1307,7 @@ BuildFacetUnionAllQuery(int numStages, const bson_value_t *facetValue,
 			nestedContext.databaseNameDatum = parentContext->databaseNameDatum;
 			nestedContext.sortSpec = *sortSpec;
 			nestedContext.variableSpec = parentContext->variableSpec;
+			nestedContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 			nestedContext.parentStageName = ParentStageName_FACET;
 			strncpy((char *) nestedContext.collationString,
 					parentContext->collationString, MAX_ICU_COLLATION_LENGTH);
@@ -2004,6 +1977,7 @@ OptimizeLookup(LookupArgs *lookupArgs,
 	optimizationArgs->rightQueryContext.parentStageName = ParentStageName_LOOKUP;
 	optimizationArgs->rightQueryContext.optimizePipelineStages =
 		leftQueryContext->optimizePipelineStages;
+	optimizationArgs->rightQueryContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 
 	optimizationArgs->isLookupAgnostic = lookupArgs->from.length == 0;
 	optimizationArgs->isLookupUncorrelated = !lookupArgs->hasLookupMatch;
@@ -2204,13 +2178,7 @@ OptimizeLookup(LookupArgs *lookupArgs,
 	}
 	else
 	{
-		StringView lookupJoinPipelineField = lookupArgs->localField;
-
-		/* This fix is controlled by a GUC so we can safely falback to existing path by disabling it */
-		if (EnableUseForeignKeyLookupInline)
-		{
-			lookupJoinPipelineField = lookupArgs->foreignField;
-		}
+		StringView lookupJoinPipelineField = lookupArgs->foreignField;
 
 		StringView prefix = StringViewFindPrefix(&lookupJoinPipelineField, '.');
 		if (prefix.length != 0)
@@ -2762,6 +2730,7 @@ ProcessLookupCoreWithLet(Query *query, AggregationPipelineBuildContext *context,
 		projectorQueryContext.mongoCollection =
 			optimizationArgs.rightQueryContext.mongoCollection;
 		projectorQueryContext.variableSpec = letExpr;
+		projectorQueryContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 		projectorQueryContext.parentStageName = ParentStageName_LOOKUP;
 		strncpy((char *) projectorQueryContext.collationString, context->collationString,
 				MAX_ICU_COLLATION_LENGTH);
@@ -3567,6 +3536,7 @@ GenerateBaseCaseQuery(AggregationPipelineBuildContext *parentContext,
 	subPipelineContext.nestedPipelineLevel = parentContext->nestedPipelineLevel + 2;
 	subPipelineContext.databaseNameDatum = parentContext->databaseNameDatum;
 	subPipelineContext.variableSpec = parentContext->variableSpec;
+	subPipelineContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 	strncpy((char *) subPipelineContext.collationString, parentContext->collationString,
 			MAX_ICU_COLLATION_LENGTH);
 	pg_uuid_t *collectionUuid = NULL;
@@ -3667,6 +3637,7 @@ GenerateRecursiveCaseQuery(AggregationPipelineBuildContext *parentContext,
 	subPipelineContext.nestedPipelineLevel = parentContext->nestedPipelineLevel + 2;
 	subPipelineContext.databaseNameDatum = parentContext->databaseNameDatum;
 	subPipelineContext.variableSpec = parentContext->variableSpec;
+	subPipelineContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 	strncpy((char *) subPipelineContext.collationString, parentContext->collationString,
 			MAX_ICU_COLLATION_LENGTH);
 	pg_uuid_t *collectionUuid = NULL;
@@ -3842,6 +3813,7 @@ BuildRecursiveGraphLookupQuery(QuerySource parentSource, GraphLookupArgs *args,
 	subPipelineContext.nestedPipelineLevel = parentContext->nestedPipelineLevel + 1;
 	subPipelineContext.databaseNameDatum = parentContext->databaseNameDatum;
 	subPipelineContext.variableSpec = parentContext->variableSpec;
+	subPipelineContext.joinStatus = JoinStageStatus_HasJoinsOrUnions;
 	strncpy((char *) subPipelineContext.collationString, parentContext->collationString,
 			MAX_ICU_COLLATION_LENGTH);
 

@@ -11,7 +11,6 @@ categories.workspace = true
 
 [dependencies]
 arc-swap.workspace = true
-async-recursion.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 bitflags.workspace = true
@@ -41,11 +40,16 @@ tokio-openssl.workspace = true
 tokio-postgres.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+tracing-opentelemetry.workspace = true
 uuid.workspace = true
 whoami.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+
+[[bench]]
+name = "hot_path_bench"
+harness = false
 
 [[bench]]
 name = "request_insert_bench"

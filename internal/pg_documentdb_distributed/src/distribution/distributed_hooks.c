@@ -12,6 +12,7 @@
 #include <utils/timestamp.h>
 #include <nodes/makefuncs.h>
 #include <catalog/namespace.h>
+#include <catalog/pg_type.h>
 #include <utils/lsyscache.h>
 #include <utils/memutils.h>
 #include <metadata/index.h>
@@ -25,6 +26,7 @@
 #include "utils/documentdb_errors.h"
 
 #include "metadata/collection.h"
+#include "metadata/distributed_oid_cache.h"
 #include "api_hooks_def.h"
 
 #include "shard_colocation.h"
@@ -59,6 +61,30 @@ IsMetadataCoordinatorCore(void)
 		"SELECT citus_is_coordinator()", readOnly, SPI_OK_SELECT, &isNull);
 
 	return !isNull && DatumGetBool(resultBoolDatum);
+}
+
+
+/*
+ * Returns true if the cluster has been initialized (initialize_cluster has been called).
+ * Checks for the presence of initialized_version in the cluster_data metadata table.
+ */
+static bool
+IsClusterInitializedCore(void)
+{
+	StringInfoData cmdStr = { 0 };
+	initStringInfo(&cmdStr);
+	appendStringInfo(&cmdStr,
+					 "SELECT %s.bson_get_value_text(metadata, 'initialized_version') FROM "
+					 "%s.%s_cluster_data;", CoreSchemaName, ApiDistributedSchemaName,
+					 ExtensionObjectPrefix);
+
+	bool isNull = false;
+	bool readOnly = true;
+	ExtensionExecuteQueryViaSPI(cmdStr.data, readOnly, SPI_OK_SELECT, &isNull);
+
+	pfree(cmdStr.data);
+
+	return !isNull;
 }
 
 
@@ -141,6 +167,29 @@ RunQueryWithCommutativeWritesCore(const char *query, int nargs, Oid *argTypes,
 
 	RollbackGUCChange(savedGUCLevel);
 	return result;
+}
+
+
+static void
+RunMultiValueQueryWithCommutativeWritesCore(const char *query, SPIPlanPtr plan,
+											int nargs, Oid *argTypes,
+											Datum *argValues, char *argNulls,
+											bool readOnly, long maxTupleCount)
+{
+	int savedGUCLevel = NewGUCNestLevel();
+	SetGUCLocally("citus.all_modifications_commutative", "true");
+
+	if (plan != NULL)
+	{
+		SPI_execute_plan(plan, argValues, argNulls, readOnly, maxTupleCount);
+	}
+	else
+	{
+		SPI_execute_with_args(query, nargs, argTypes, argValues, argNulls,
+							  readOnly, maxTupleCount);
+	}
+
+	RollbackGUCChange(savedGUCLevel);
 }
 
 
@@ -744,14 +793,65 @@ GetDistributedOperationCancellationQuery(int64 shardId, StringView *opIdView,
 
 
 /*
+ * Citus distributed-execution rewrite: when a partial aggregate is pushed
+ * down to a shard, the original Aggref's aggfnoid is replaced with Citus's
+ * worker_partial_agg / worker_binary_partial_agg wrapper, whose first
+ * argument is a Const carrying the underlying aggregate's regprocedure oid.
+ *
+ * This hook unwraps that wrapper so callers in the core extension (which is
+ * intentionally Citus-agnostic) can classify the Aggref by its underlying
+ * aggregate without knowing anything about Citus's worker-side functions.
+ *
+ * If the Aggref is not a recognized wrapper, returns false and leaves
+ * *aggregateFunctionOid untouched.
+ */
+static bool
+GetEffectiveAggregateFunctionOidCore(Aggref *aggref, Oid *aggregateFunctionOid)
+{
+	if ((aggref->aggfnoid != CitusWorkerPartialAggregateFunctionOid() &&
+		 aggref->aggfnoid != CitusWorkerBinaryPartialAggregateFunctionOid()) ||
+		aggref->args == NIL)
+	{
+		return false;
+	}
+
+	TargetEntry *firstArg = linitial(aggref->args);
+	Expr *firstArgExpr = firstArg->expr;
+	if (IsA(firstArgExpr, RelabelType))
+	{
+		firstArgExpr = ((RelabelType *) firstArgExpr)->arg;
+	}
+
+	if (!IsA(firstArgExpr, Const))
+	{
+		return false;
+	}
+
+	Const *functionConst = (Const *) firstArgExpr;
+	if (functionConst->constisnull ||
+		(functionConst->consttype != REGPROCEDUREOID &&
+		 functionConst->consttype != OIDOID))
+	{
+		return false;
+	}
+
+	*aggregateFunctionOid = DatumGetObjectId(functionConst->constvalue);
+	return true;
+}
+
+
+/*
  * Register hook overrides for DocumentDB.
  */
 void
 InitializeDocumentDBDistributedHooks(void)
 {
 	is_metadata_coordinator_hook = IsMetadataCoordinatorCore;
+	is_cluster_initialized_hook = IsClusterInitializedCore;
 	run_command_on_metadata_coordinator_hook = RunCommandOnMetadataCoordinatorCore;
 	run_query_with_commutative_writes_hook = RunQueryWithCommutativeWritesCore;
+	run_multi_value_query_with_commutative_writes_hook =
+		RunMultiValueQueryWithCommutativeWritesCore;
 	run_query_with_sequential_modification_mode_hook =
 		RunQueryWithSequentialModificationCore;
 	distribute_postgres_table_hook = DistributePostgresTableCore;
@@ -783,6 +883,8 @@ InitializeDocumentDBDistributedHooks(void)
 
 	update_postgres_index_hook = UpdateDistributedPostgresIndex;
 	get_operation_cancellation_query_hook = GetDistributedOperationCancellationQuery;
+
+	get_effective_aggregate_function_oid_hook = GetEffectiveAggregateFunctionOidCore;
 
 	RegisterDistributedExplainStageHook();
 

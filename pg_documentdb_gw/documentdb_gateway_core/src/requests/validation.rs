@@ -9,7 +9,7 @@
 use crate::{
     context::ConnectionContext,
     error::{DocumentDBError, ErrorCode, Result},
-    requests::{read_concern::ReadConcern, Request, RequestInfo, RequestType},
+    requests::{read_concern::ReadConcern, RequestType, WireRequest},
 };
 
 /// Validates that the given request is consistent with the current connection and
@@ -17,25 +17,19 @@ use crate::{
 ///
 /// # Errors
 /// Returns an error if the request violates transaction or session constraints.
-#[expect(
-    clippy::too_many_lines,
-    reason = "linear sequence of independent transaction-validity checks; splitting would obscure control flow"
-)]
 pub fn validate_request(
     connection_context: &ConnectionContext,
-    request_info: &RequestInfo,
-    request: &Request<'_>,
+    request: &WireRequest<'_>,
 ) -> Result<()> {
-    let Some(request_transaction_info) = request_info.transaction_info.as_ref() else {
+    let Some(request_transaction_info) = request.transaction_info() else {
         return Ok(());
     };
 
     if request_transaction_info.auto_commit {
-        if request_info.lsid.is_none() {
+        if request.lsid().is_none() {
             return Err(DocumentDBError::documentdb_error(
                     ErrorCode::NotARetryableWriteCommand,
                     "txnNumber may only be provided for multi-document transactions and retryable write commands. autocommit:false was not provided, and command is not a retryable write command.".to_owned(),
-                    0,
                 ));
         }
 
@@ -48,7 +42,6 @@ pub fn validate_request(
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::OperationNotSupportedInTransaction,
             format!("Cannot run '{request_type}' in a multi-document transaction."),
-            0,
         ));
     }
 
@@ -59,7 +52,6 @@ pub fn validate_request(
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::OperationNotSupportedInTransaction,
             "Cannot run command KillCursors at the start of a transaction".to_owned(),
-            0,
         ));
     }
 
@@ -74,18 +66,17 @@ pub fn validate_request(
             | RequestType::Find
             | RequestType::GetMore
     ) {
-        if matches!(request.db()?, "config" | "admin" | "local") {
+        if matches!(request.db(), "config" | "admin" | "local") {
             return Err(DocumentDBError::documentdb_error(
                 ErrorCode::OperationNotSupportedInTransaction,
                 format!(
                     "Cannot perform data operation against database {} inside a transaction",
-                    request.db()?
+                    request.db()
                 ),
-                0,
             ));
         }
 
-        let collection: &str = match request_info.collection() {
+        let collection: &str = match request.collection() {
             Ok(c) if !c.is_empty() => c,
             _ => "",
         };
@@ -94,7 +85,6 @@ pub fn validate_request(
             return Err(DocumentDBError::documentdb_error(
                 ErrorCode::OperationNotSupportedInTransaction,
                 "Cannot run command against system collections in transaction.".to_owned(),
-                0,
             ));
         }
 
@@ -102,25 +92,23 @@ pub fn validate_request(
             return Err(DocumentDBError::documentdb_error(
                 ErrorCode::Location51071,
                 "Cannot run command against system views in transaction.".to_owned(),
-                0,
             ));
         }
     }
 
     if !request_transaction_info.start_transaction
-        && *request_info.read_concern() != ReadConcern::Unspecified
+        && request.read_concern() != &ReadConcern::Unspecified
     {
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::InvalidOptions,
             "Read concern cannot be defined after transaction has started".to_owned(),
-            0,
         ));
     }
 
     // you need a dynamic_configuration, so would split the parsing logic in 2 stages,
     // one is parsing the request and extract the transaction information,
     // the other is validating the transaction information and create the transaction if necessary. This is because some of the validation requires dynamic configuration, which is only accessible in the processing stage.
-    if request_info.read_concern() == &ReadConcern::Snapshot
+    if request.read_concern() == &ReadConcern::Snapshot
         && !(connection_context
             .service_context
             .dynamic_configuration()
@@ -132,21 +120,19 @@ pub fn validate_request(
                 "'{:?}' read concern is not supported",
                 &ReadConcern::Snapshot
             ),
-            0,
         ));
     }
 
     if matches!(
-        request_info.read_concern(),
+        request.read_concern(),
         ReadConcern::Available | ReadConcern::Linearizable
     ) {
         return Err(DocumentDBError::documentdb_error(
             ErrorCode::CommandNotSupported,
             format!(
                 "'{:?}' read concern is not supported",
-                request_info.read_concern()
+                request.read_concern()
             ),
-            0,
         ));
     }
     Ok(())

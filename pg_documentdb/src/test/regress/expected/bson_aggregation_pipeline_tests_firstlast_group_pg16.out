@@ -506,11 +506,12 @@ psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:177: ERROR:  collat
 SET documentdb.enableNewWithExprAccumulators TO on;
 SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 -- =============================================================================
--- 18. GUC gating: enableCollation off → collation ignored, binary comparison
+-- 18. GUC gating: enableCollation off + skipFailOnCollation on → collation ignored, binary comparison
 -- =============================================================================
+-- With enableCollation off and skipFailOnCollation on, the collation string is
+-- not applicable so it is ignored (no error) and binary comparison applies.
 SET documentdb_core.enableCollation TO off;
--- With enableCollation off, the collation string is not applicable so
--- it should not error out (collation is simply ignored) and binary comparison applies.
+SET documentdb.skipFailOnCollation TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "firstMatch": { "$first": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
                   document                  
 --------------------------------------------
@@ -519,6 +520,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collati
 (2 rows)
 
 -- Reset GUCs and cleanup
+RESET documentdb.skipFailOnCollation;
 SET documentdb_core.enableCollation TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
@@ -534,7 +536,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_collation_test');
 --     nested field, even though a later document has the field defined.
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_first_missing', '{ "_id": 1, "category": "electronics" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:202: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:204: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -565,7 +567,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_first_missing');
 --     (Flipped version of test 19.)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_last_missing', '{ "_id": 1, "category": "electronics", "profile": { "email": "bob@test.com" } }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:215: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:217: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -882,7 +884,7 @@ RESET documentdb.enableSortGroupStage;
 -- =============================================================================
 -- Insert test data: 10 rows across 4 groups
 SELECT documentdb_api.insert_one('db','fl_sortgroup_test','{ "_id": 1, "g": "X", "seq": 30, "val": "third" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:307: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:309: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1581,7 +1583,7 @@ RESET documentdb.enableOrderByIndexTerm;
 --     decomposition bails out (dotted paths) and Sort node remains.
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','fl_nested_sort','{ "_id": 1, "g": "A", "info": { "priority": 3 }, "val": "low-pri" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:479: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:481: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1648,7 +1650,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_nested_sort');
 --     while case-insensitive collation (strength=1) sorts alphabetically ("apple" < "Banana").
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','fl_collation_sortpush','{ "_id": 1, "g": "A", "name": "cherry", "seq": 2 }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:497: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:499: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

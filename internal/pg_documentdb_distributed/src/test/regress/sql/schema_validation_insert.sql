@@ -2,7 +2,6 @@ SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documen
 SET citus.next_shard_id TO 17771000;
 SET documentdb.next_collection_id TO 177710;
 SET documentdb.next_collection_index_id TO 177710;
-set documentdb.enableSchemaValidation = true;
 
 --------------------------------------Need $jsonSchema--------------------------------------
 SELECT documentdb_api.create_collection_view('schema_validation_insertion', '{ "create": "col", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"a": {"bsonType": "int"}}}}, "validationLevel": "strict", "validationAction": "error"}');
@@ -34,7 +33,9 @@ SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col2", "
 SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col2", "documents":[{"_id":"2", "a":1}]}');
 -- expect to throw error as 6 > 5 (maximum)
 SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col2", "documents":[{"_id":"3", "a":6}]}');
-set documentdb.enableBypassDocumentValidation = true;
+set documentdb.enableBypassDocumentValidation to off;
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col2", "documents":[{"_id":"2", "a":1}], "bypassDocumentValidation": true}');
+set documentdb.enableBypassDocumentValidation to on;
 SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col2", "documents":[{"_id":"2", "a":1}], "bypassDocumentValidation": true}');
 
 ---------------------------------------------simple case-----------------------------------------------------
@@ -220,5 +221,3 @@ SELECT * FROM aggregate_cursor_first_page('schema_validation_insertion', '{ "agg
 SELECT shard_key_value, object_id, document from documentdb_api.collection('schema_validation_insertion','col_out_tar') ORDER BY shard_key_value, object_id;
 SELECT * FROM aggregate_cursor_first_page('schema_validation_insertion', '{ "aggregate": "col_source", "pipeline": [ { "$match": { "_id": "1" }}, {"$out" : "col_out_tar" } ], "cursor": { "batchSize": 1 } }', 4294967294);
 SELECT shard_key_value, object_id, document from documentdb_api.collection('schema_validation_insertion','col_out_tar') ORDER BY shard_key_value, object_id;
-set documentdb.enableBypassDocumentValidation = false;
-set documentdb.enableSchemaValidation = false;

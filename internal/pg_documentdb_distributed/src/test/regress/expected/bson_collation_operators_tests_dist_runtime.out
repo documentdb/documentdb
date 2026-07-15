@@ -1,6 +1,6 @@
-SET citus.next_shard_id TO 95200000;
-SET documentdb.next_collection_id TO 95200;
-SET documentdb.next_collection_index_id TO 95200;
+SET citus.next_shard_id TO 95400000;
+SET documentdb.next_collection_id TO 95400;
+SET documentdb.next_collection_index_id TO 95400;
 \i sql/bson_collation_operators_tests_dist_core.sql
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
 -- ======================================================================
@@ -598,6 +598,261 @@ SELECT documentdb_api.drop_collection('coll_op_dist_db', 'elemmatch_d');
 (1 row)
 
 SELECT documentdb_api.drop_collection('coll_op_dist_db', 'single_field_d');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- ======================================================================
+-- SECTION 11: ORDER BY correctness with numericOrdering collation
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_op_dist_db','ord_pure_d', '{"_id": 1, "a": "item20"}', NULL);
+psql:sql/bson_collation_operators_tests_dist_core.sql:303: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_op_dist_db','ord_pure_d', '{"_id": 2, "a": "item3"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_op_dist_db','ord_pure_d', '{"_id": 3, "a": "item11"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_op_dist_db','ord_pure_d', '{"_id": 4, "a": "item1"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_op_dist_db','ord_pure_d', '{"_id": 5, "a": "item100"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_op_dist_db','ord_pure_d', '{"_id": 6, "a": "item2"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_op_dist_db','ord_pure_d', '{"_id": 7, "a": "item40"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_op_dist_db','ord_pure_d', '{"_id": 8, "a": "item12"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('coll_op_dist_db', 'ord_pure_d', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- 11a: ASC sort across shards with matching collation, no LIMIT
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT document FROM bson_aggregation_find('coll_op_dist_db', '{ "find": "ord_pure_d", "filter": {}, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+                      document                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : "item1" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item2" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11" }
+ { "_id" : { "$numberInt" : "8" }, "a" : "item12" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20" }
+ { "_id" : { "$numberInt" : "7" }, "a" : "item40" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "item100" }
+(8 rows)
+
+END;
+-- 11b: DESC sort across shards with matching collation, no LIMIT
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT document FROM bson_aggregation_find('coll_op_dist_db', '{ "find": "ord_pure_d", "filter": {}, "sort": { "a": -1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+                      document                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "item100" }
+ { "_id" : { "$numberInt" : "7" }, "a" : "item40" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20" }
+ { "_id" : { "$numberInt" : "8" }, "a" : "item12" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item2" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "item1" }
+(8 rows)
+
+END;
+-- 11c: ASC sort across shards with matching collation + LIMIT
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT document FROM bson_aggregation_find('coll_op_dist_db', '{ "find": "ord_pure_d", "filter": {}, "sort": { "a": 1 }, "limit": 4, "collation": { "locale": "en", "numericOrdering": true } }');
+                      document                      
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : "item1" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item2" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11" }
+(4 rows)
+
+END;
+-- 11d: DESC sort across shards with matching collation + LIMIT
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT document FROM bson_aggregation_find('coll_op_dist_db', '{ "find": "ord_pure_d", "filter": {}, "sort": { "a": -1 }, "limit": 4, "collation": { "locale": "en", "numericOrdering": true } }');
+                      document                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "item100" }
+ { "_id" : { "$numberInt" : "7" }, "a" : "item40" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20" }
+ { "_id" : { "$numberInt" : "8" }, "a" : "item12" }
+(4 rows)
+
+END;
+-- 11e: bounded filter + ASC sort + LIMIT
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT document FROM bson_aggregation_find('coll_op_dist_db', '{ "find": "ord_pure_d", "filter": { "a": { "$gte": "item10" } }, "sort": { "a": 1 }, "limit": 4, "collation": { "locale": "en", "numericOrdering": true } }');
+                      document                      
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11" }
+ { "_id" : { "$numberInt" : "8" }, "a" : "item12" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20" }
+ { "_id" : { "$numberInt" : "7" }, "a" : "item40" }
+(4 rows)
+
+END;
+SELECT documentdb_api.insert_one('coll_op_dist_db','ord_compound_d', '{"_id": 1, "a": "item1", "b": "sub20"}', NULL);
+psql:sql/bson_collation_operators_tests_dist_core.sql:363: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_op_dist_db','ord_compound_d', '{"_id": 2, "a": "item2", "b": "sub3"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_op_dist_db','ord_compound_d', '{"_id": 3, "a": "item2", "b": "sub11"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_op_dist_db','ord_compound_d', '{"_id": 4, "a": "item10", "b": "sub10"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_op_dist_db','ord_compound_d', '{"_id": 5, "a": "item10", "b": "sub2"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_op_dist_db','ord_compound_d', '{"_id": 6, "a": "item3", "b": "sub2"}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('coll_op_dist_db', 'ord_compound_d', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- 11f: compound sort on leading key (with _id tiebreaker) + LIMIT
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT document FROM bson_aggregation_find('coll_op_dist_db', '{ "find": "ord_compound_d", "filter": {}, "sort": { "a": 1, "_id": 1 }, "limit": 4, "collation": { "locale": "en", "numericOrdering": true } }');
+                             document                             
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "item1", "b" : "sub20" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item2", "b" : "sub3" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item2", "b" : "sub11" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item3", "b" : "sub2" }
+(4 rows)
+
+END;
+-- 11g: compound equality on leading key + sort on second key (with _id tiebreaker) + LIMIT
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT document FROM bson_aggregation_find('coll_op_dist_db', '{ "find": "ord_compound_d", "filter": { "a": "item10" }, "sort": { "b": 1, "_id": 1 }, "limit": 4, "collation": { "locale": "en", "numericOrdering": true } }');
+                             document                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "item10", "b" : "sub2" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "item10", "b" : "sub10" }
+(2 rows)
+
+END;
+-- 11h: aggregation pipeline — $match + $sort + $limit + $project across shards
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb.enableOrderByIndexTerm TO on;
+SELECT document FROM bson_aggregation_pipeline('coll_op_dist_db', '{ "aggregate": "ord_compound_d", "pipeline": [ { "$match": { "a": { "$gte": "item2" } } }, { "$sort": { "a": 1, "_id": 1 } }, { "$limit": 4 }, { "$project": { "_id": 1, "a": 1 } } ], "cursor": {}, "collation": { "locale": "en", "numericOrdering": true } }');
+                      document                      
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "a" : "item2" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item2" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item3" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "item10" }
+(4 rows)
+
+END;
+SELECT documentdb_api.drop_collection('coll_op_dist_db', 'ord_compound_d');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_op_dist_db', 'ord_pure_d');
  drop_collection 
 ---------------------------------------------------------------------
  t

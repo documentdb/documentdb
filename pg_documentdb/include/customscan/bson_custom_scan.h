@@ -32,5 +32,6 @@ PathTarget * BuildBaseRelPathTarget(Relation tableRel, Index relIdIndex);
 
 /* Dynamic scan methods */
 bool IsDynamicCustomScanPath(Plan *plan);
+CustomScanState * GetDynamicStreamingCustomScanState(PlanState *planState);
 pgbson * GetContinuationFromCustomScan(CustomScanState *scan);
 #endif

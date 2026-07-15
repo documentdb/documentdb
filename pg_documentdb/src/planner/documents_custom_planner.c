@@ -297,7 +297,7 @@ TraverseQualsAndExtract(List *quals, List **queryRuntimeClauses,
 					/* Strip full scan */
 					continue;
 				}
-				else if (IsClusterVersionAtleast(DocDB_V0, 113, 0) &&
+				else if (IsClusterVersionAtleast(DocDB_V0, 112, 1) &&
 						 funcExpr->funcid == ApiCursorTrackerFunctionId())
 				{
 					/* Strip the continuation function */

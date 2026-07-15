@@ -1,0 +1,1803 @@
+NOTICE:  identifier "pg_regress/bson_aggregation_group_first_distinct_scan_tests_pg18" will be truncated to "pg_regress/bson_aggregation_group_first_distinct_scan_tests_pg1"
+\i sql/bson_aggregation_group_first_distinct_scan_tests.sql
+SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, documentdb_api_internal, public;
+-- Composite op class required for RUM index to expose skip-tids primitive.
+SET documentdb.defaultUseCompositeOpClass TO on;
+-- Ensure database 'db' exists so the system sentinel does not consume a test
+-- collection id when running in standalone mode.
+SELECT documentdb_api.insert_one('db', 'setup_sentinel_first', '{ "_id": 0 }');
+psql:sql/bson_aggregation_group_first_distinct_scan_tests.sql:8: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'setup_sentinel_first');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- Use a fresh id range so this file does not collide with the sibling
+-- bson_aggregation_group_distinct_scan_tests.sql (which uses 20000-range).
+SET documentdb.next_collection_id TO 21000;
+SET documentdb.next_collection_index_id TO 21000;
+-- Primary collection: 8 documents with three distinct values of x in
+-- insertion order. The first y-value seen per x (and thus what $first
+-- should return when ordered by x) is:
+--   a -> 10
+--   b -> 20
+--   c -> 40
+-- The maximum y per x is:
+--   a -> 60
+--   b -> 80
+--   c -> 70
+-- This asymmetry makes the C3/C4 sort-aware $first tests "loud":
+-- if the wrapper incorrectly fires, the result will be the insertion-
+-- order first (10/20/40) instead of the sort-required first (60/80/70).
+SELECT documentdb_api.insert_one('db', 'grp_first', '{ "_id": 1, "x": "a", "y": 10 }', NULL);
+psql:sql/bson_aggregation_group_first_distinct_scan_tests.sql:29: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'grp_first', '{ "_id": 2, "x": "b", "y": 20 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'grp_first', '{ "_id": 3, "x": "a", "y": 30 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'grp_first', '{ "_id": 4, "x": "c", "y": 40 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'grp_first', '{ "_id": 5, "x": "b", "y": 50 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'grp_first', '{ "_id": 6, "x": "a", "y": 60 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'grp_first', '{ "_id": 7, "x": "c", "y": 70 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'grp_first', '{ "_id": 8, "x": "b", "y": 80 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
+  '{ "createIndexes": "grp_first", "indexes": [{ "key": { "x": 1 }, "name": "idx_x" }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Composite index used by B8 / B10 (compound _id positive case + $match-before-
+-- compound-$group correctness pin).
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
+  '{ "createIndexes": "grp_first", "indexes": [{ "key": { "x": 1, "y": 1 }, "name": "idx_xy" }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Wrong-index target for C10.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
+  '{ "createIndexes": "grp_first", "indexes": [{ "key": { "y": 1 }, "name": "idx_y" }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Multikey collection for C6 (array-valued indexed field).
+SELECT documentdb_api.insert_one('db', 'grp_first_mk', '{ "_id": 1, "tags": ["t1", "t2"], "v": 10 }', NULL);
+psql:sql/bson_aggregation_group_first_distinct_scan_tests.sql:51: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'grp_first_mk', '{ "_id": 2, "tags": ["t1"],       "v": 20 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'grp_first_mk', '{ "_id": 3, "tags": ["t3", "t2"], "v": 30 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
+  '{ "createIndexes": "grp_first_mk", "indexes": [{ "key": { "tags": 1 }, "name": "idx_tags" }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Companion collection used by C9 ($unwind).
+SELECT documentdb_api.insert_one('db', 'grp_first_unwind', '{ "_id": 1, "x": "a", "vals": [1, 2] }', NULL);
+psql:sql/bson_aggregation_group_first_distinct_scan_tests.sql:59: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'grp_first_unwind', '{ "_id": 2, "x": "b", "vals": [3] }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'grp_first_unwind', '{ "_id": 3, "x": "a", "vals": [4] }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
+  '{ "createIndexes": "grp_first_unwind", "indexes": [{ "key": { "x": 1 }, "name": "idx_x" }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Companion collection used by B11 (partial-filter index used safely).
+-- Distinct x = {a,b,c,d}; partial-visible subset under y>50 = {a,b,d}.
+-- Only the safe shape ($match subsumes the partial filter) is tested;
+-- the divergent shape (no $match) is a known hazard if the planner ever
+-- lets the partial index serve a non-subsuming predicate.
+SELECT documentdb_api.insert_one('db', 'grp_first_part', '{ "_id": 1, "x": "a", "y": 60 }', NULL);
+psql:sql/bson_aggregation_group_first_distinct_scan_tests.sql:70: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'grp_first_part', '{ "_id": 2, "x": "b", "y": 10 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'grp_first_part', '{ "_id": 3, "x": "b", "y": 80 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'grp_first_part', '{ "_id": 4, "x": "c", "y": 5 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db', 'grp_first_part', '{ "_id": 5, "x": "d", "y": 70 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
+  '{ "createIndexes": "grp_first_part", "indexes": [{
+     "key": { "x": 1 }, "name": "idx_x_partial",
+     "partialFilterExpression": { "y": { "$gt": 50 } }
+  }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE;
+-- ============================================================
+-- Group A — Feature flag interaction: confirm the new GUC
+-- (enableDistinctScanForGroupFirst) and the pre-existing
+-- enableGroupByDistinctScan GUC gate independent code paths.
+-- ============================================================
+-- ============================================================
+-- A1: GUC off (default) + $first => plain IndexScan, rows=8.
+-- Baseline: confirms nothing changes when the new GUC is off.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO off;
+SET LOCAL documentdb.enableGroupByDistinctScan TO off;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+                    document                    
+------------------------------------------------
+ { "_id" : "a", "f" : { "$numberInt" : "10" } }
+ { "_id" : "b", "f" : { "$numberInt" : "20" } }
+ { "_id" : "c", "f" : { "$numberInt" : "40" } }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                     Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
+
+ROLLBACK;
+-- ============================================================
+-- A2: enableGroupByDistinctScan ON, enableDistinctScanForGroupFirst OFF
+-- => no-accumulator distinct scan fires for the bare $group; the
+-- $first variant does NOT.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableGroupByDistinctScan TO on;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO off;
+-- No-accumulator: wrapper must fire (rows=3 below the GroupAggregate).
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x" } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                   run_explain_and_trim                                                                                                                                                                   
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     ->  Index Only Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
+                           Output: collection.document
+                           Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
+                           Heap Fetches: xxx
+(16 rows)
+
+-- $first: wrapper must NOT fire (rows=8 below the GroupAggregate).
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                     Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
+
+ROLLBACK;
+-- ============================================================
+-- A3: enableDistinctScanForGroupFirst ON, enableGroupByDistinctScan OFF
+-- Independence check: the new GUC fires for $first; the no-accumulator
+-- variant remains plain (because its GUC is OFF).
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableGroupByDistinctScan TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+-- No-accumulator $group: wrapper must NOT fire (rows=8 below).
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x" } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                   run_explain_and_trim                                                                                                                                                                   
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Index Only Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                     Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
+                     Heap Fetches: xxx
+(14 rows)
+
+-- $first: wrapper must fire (rows=3 below).
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
+                           Output: collection.document
+                           Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
+(15 rows)
+
+ROLLBACK;
+-- ============================================================
+-- Group B — Positive cases: with the GUC ON, the distinct-scan
+-- wrapper must fire for safe $first shapes and produce correct
+-- per-group results.
+-- ============================================================
+-- ============================================================
+-- B1: Core positive case. Wrapper fires, picks insertion-order first
+-- per group: a -> 10, b -> 20, c -> 40.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+-- Correctness: must return a->10, b->20, c->40.
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+                    document                    
+------------------------------------------------
+ { "_id" : "a", "f" : { "$numberInt" : "10" } }
+ { "_id" : "b", "f" : { "$numberInt" : "20" } }
+ { "_id" : "c", "f" : { "$numberInt" : "40" } }
+(3 rows)
+
+-- EXPLAIN: Custom Scan rows=3, IndexScan rows=3 (skip-tids).
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
+                           Output: collection.document
+                           Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
+(15 rows)
+
+ROLLBACK;
+-- ============================================================
+-- B2: Two $first on different fields. Both must come from the SAME
+-- first row per group: a -> (y=10, _id=1), b -> (y=20, _id=2),
+-- c -> (y=40, _id=4).
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": "$y" }, "g": { "$first": "$_id" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : "a", "f" : { "$numberInt" : "10" }, "g" : { "$numberInt" : "1" } }
+ { "_id" : "b", "f" : { "$numberInt" : "20" }, "g" : { "$numberInt" : "2" } }
+ { "_id" : "c", "f" : { "$numberInt" : "40" }, "g" : { "$numberInt" : "4" } }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": "$y" }, "g": { "$first": "$_id" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'g'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
+                           Output: collection.document
+                           Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
+(15 rows)
+
+ROLLBACK;
+-- ============================================================
+-- B3: $first of an expression argument. Wrapper must still fire
+-- because the OID gate looks at the aggregate function id, not at
+-- the argument shape.
+-- Expected: a -> "a-", b -> "b-", c -> "c-".
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": { "$concat": ["$x", "-"] } } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+          document           
+-----------------------------
+ { "_id" : "a", "f" : "a-" }
+ { "_id" : "b", "f" : "b-" }
+ { "_id" : "c", "f" : "c-" }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": { "$concat": ["$x", "-"] } } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                                     run_explain_and_trim                                                                                                                                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : { "$concat" : [ "$x", "-" ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
+                           Output: collection.document
+                           Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
+(15 rows)
+
+ROLLBACK;
+-- ============================================================
+-- B4: $match on a non-indexed field then $group/$first. The y>=20
+-- filter runs per heap tuple (Rows Removed by Filter > 0: the y=10
+-- row in group "a" is filtered, leaving y in {30,60} so $first
+-- becomes 30). The wrapper still fires on top of the IndexScan.
+-- Expected: a->30, b->20, c->40.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$match": { "y": { "$gte": 20 } } },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+                    document                    
+------------------------------------------------
+ { "_id" : "a", "f" : { "$numberInt" : "30" } }
+ { "_id" : "b", "f" : { "$numberInt" : "20" } }
+ { "_id" : "c", "f" : { "$numberInt" : "40" } }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$match": { "y": { "$gte": 20 } } },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_2.document, (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
+         Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
+                           Output: collection.document
+                           Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
+                           Filter: (collection.document @>= '{ "y" : { "$numberInt" : "20" } }'::bson)
+                           Rows Removed by Filter: 1
+(17 rows)
+
+ROLLBACK;
+-- ============================================================
+-- B5: $skip / $sort / $limit AFTER $group/$first. Wrapper still
+-- fires on the inner scan; downstream stages operate on grouped output.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } },
+    { "$skip": 1 },
+    { "$limit": 1 }
+  ] }');
+                    document                    
+------------------------------------------------
+ { "_id" : "b", "f" : { "$numberInt" : "20" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } },
+    { "$skip": 1 },
+    { "$limit": 1 }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual rows=1 loops=1)
+   Output: agg_stage_3.document
+   ->  Subquery Scan on agg_stage_3 (actual rows=1 loops=1)
+         Output: agg_stage_3.document
+         ->  Limit (actual rows=1 loops=1)
+               Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+               ->  Sort (actual rows=2 loops=1)
+                     Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+                     Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+                     Sort Method: quicksort  Memory: xxxkB
+                     ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
+                           Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+                           ->  GroupAggregate (actual rows=3 loops=1)
+                                 Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                                 Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+                                 ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
+                                       Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                                       ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
+                                             Output: collection.document
+                                             Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                                             Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
+(21 rows)
+
+ROLLBACK;
+-- ============================================================
+-- B6: enable_hashagg ON, $first scenario. The planner must still pick
+-- sorted GroupAggregate WITH the wrapper underneath (rather than
+-- HashAgg), because HashAgg cannot benefit from per-key TID skipping
+-- (its input order is irrelevant to it).
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO on;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
+                           Output: collection.document
+                           Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
+(15 rows)
+
+ROLLBACK;
+-- ============================================================
+-- B7: Same shape as C11 ($sort on the GROUP KEY alone, then $group
+-- with $first), but with enableSortPushToAccumulatorWithPrefix ON.
+-- The rewrite sees groupKeysFormSortPrefix=true and hasSuffixSort=false,
+-- so the Sort node is dropped and NOTHING is pushed into the
+-- accumulator. $first stays as the plain (non-sort-aware) variant,
+-- the walker accepts, and the wrapper MUST fire.
+-- Correctness: a -> 10, b -> 20, c -> 40.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$sort": { "x": 1 } },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+                    document                    
+------------------------------------------------
+ { "_id" : "a", "f" : { "$numberInt" : "10" } }
+ { "_id" : "b", "f" : { "$numberInt" : "20" } }
+ { "_id" : "c", "f" : { "$numberInt" : "40" } }
+(3 rows)
+
+-- EXPLAIN: Custom Scan rows=3, IndexScan rows=3 (skip-tids).
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$sort": { "x": 1 } },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
+                           Output: collection.document
+                           Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
+(15 rows)
+
+ROLLBACK;
+-- ============================================================
+-- B8: Compound _id constructor ({ x: "$x", y: "$y" }) over the
+-- composite index idx_xy, with enableGroupByCompoundIdIndexPushdown
+-- ON. The aggregation rewriter decomposes the compound _id into
+-- per-field GROUP BY expressions, the planner lines them up with the
+-- per-column index orderbys, and the wrapper MUST fire. Each compound
+-- group has exactly one document, so $first picks that document.
+-- Correctness: 8 distinct (x, y) groups -> _ids 1, 3, 6, 2, 5, 8, 4, 7.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
+SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_xy", "pipeline": [
+    { "$group": { "_id": { "x": "$x", "y": "$y" }, "f": { "$first": "$_id" } } },
+    { "$sort": { "_id.x": 1, "_id.y": 1 } }
+  ] }');
+                                        document                                        
+----------------------------------------------------------------------------------------
+ { "_id" : { "x" : "a", "y" : { "$numberInt" : "10" } }, "f" : { "$numberInt" : "1" } }
+ { "_id" : { "x" : "a", "y" : { "$numberInt" : "30" } }, "f" : { "$numberInt" : "3" } }
+ { "_id" : { "x" : "a", "y" : { "$numberInt" : "60" } }, "f" : { "$numberInt" : "6" } }
+ { "_id" : { "x" : "b", "y" : { "$numberInt" : "20" } }, "f" : { "$numberInt" : "2" } }
+ { "_id" : { "x" : "b", "y" : { "$numberInt" : "50" } }, "f" : { "$numberInt" : "5" } }
+ { "_id" : { "x" : "b", "y" : { "$numberInt" : "80" } }, "f" : { "$numberInt" : "8" } }
+ { "_id" : { "x" : "c", "y" : { "$numberInt" : "40" } }, "f" : { "$numberInt" : "4" } }
+ { "_id" : { "x" : "c", "y" : { "$numberInt" : "70" } }, "f" : { "$numberInt" : "7" } }
+(8 rows)
+
+-- EXPLAIN: Custom Scan rows=8, IndexScan rows=8 (skip-tids), and the
+-- Group Key shows two flattened bson_expression_get columns (one per
+-- compound _id field) rather than a single opaque compound expression.
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_xy", "pipeline": [
+    { "$group": { "_id": { "x": "$x", "y": "$y" }, "f": { "$first": "$_id" } } },
+    { "$sort": { "_id.x": 1, "_id.y": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=8 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id.x" : { "$numberInt" : "1" } }'::bson)), (bson_orderby(agg_stage_1.document, '{ "_id.y" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id.x" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(agg_stage_1.document, '{ "_id.y" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=8 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id.x" : { "$numberInt" : "1" } }'::bson), bson_orderby(agg_stage_1.document, '{ "_id.y" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=8 loops=1)
+               Output: bson_repath_and_build('_id'::text, bson_repath_and_build('x'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'y'::text, (bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=8 loops=1)
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     ->  Index Scan using idx_xy on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
+                           Output: collection.document
+                           Index Cond: ((collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "y" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+                           Order By: ((collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson) AND (collection.document |-<> '{ "y" : { "$numberInt" : "1" } }'::bson))
+(15 rows)
+
+ROLLBACK;
+-- ============================================================
+-- B9: $lookup AFTER $group/$first -- wrapper fires on the inner
+-- scan; lookup runs on the 3 grouped rows.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$lookup": { "from": "grp_first", "as": "m", "localField": "_id", "foreignField": "x" } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+                                                                                                                                              document                                                                                                                                              
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : "a", "f" : { "$numberInt" : "10" }, "m" : [ { "_id" : { "$numberInt" : "1" }, "x" : "a", "y" : { "$numberInt" : "10" } }, { "_id" : { "$numberInt" : "3" }, "x" : "a", "y" : { "$numberInt" : "30" } }, { "_id" : { "$numberInt" : "6" }, "x" : "a", "y" : { "$numberInt" : "60" } } ] }
+ { "_id" : "b", "f" : { "$numberInt" : "20" }, "m" : [ { "_id" : { "$numberInt" : "2" }, "x" : "b", "y" : { "$numberInt" : "20" } }, { "_id" : { "$numberInt" : "5" }, "x" : "b", "y" : { "$numberInt" : "50" } }, { "_id" : { "$numberInt" : "8" }, "x" : "b", "y" : { "$numberInt" : "80" } } ] }
+ { "_id" : "c", "f" : { "$numberInt" : "40" }, "m" : [ { "_id" : { "$numberInt" : "4" }, "x" : "c", "y" : { "$numberInt" : "40" } }, { "_id" : { "$numberInt" : "7" }, "x" : "c", "y" : { "$numberInt" : "70" } } ] }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$lookup": { "from": "grp_first", "as": "m", "localField": "_id", "foreignField": "x" } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                             run_explain_and_trim                                                                                                                                                                                                                                                              
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_2.document, (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
+         Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  Nested Loop (actual rows=3 loops=1)
+               Output: bson_dollar_merge_documents((bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)))), (COALESCE(bson_array_agg(collection_0_1.document, 'm'::text), '{ "m" : [  ] }'::bson)), true)
+               ->  GroupAggregate (actual rows=3 loops=1)
+                     Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+                     ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
+                           Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                           ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
+                                 Output: collection.document
+                                 Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                                 Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
+               ->  Aggregate (actual rows=1 loops=3)
+                     Output: COALESCE(bson_array_agg(collection_0_1.document, 'm'::text), '{ "m" : [  ] }'::bson)
+                     ->  Index Scan using idx_x on documentdb_data.documents_21000 collection_0_1 (actual rows=2.67 loops=3)
+                           Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+                           Index Cond: (collection_0_1.document @*= bson_dollar_lookup_extract_filter_expression((bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)))), '{ "x" : "_id" }'::bson))
+                           Filter: bson_dollar_lookup_join_filter(collection_0_1.document, bson_dollar_lookup_extract_filter_expression((bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)))), '{ "x" : "_id" }'::bson), 'x'::text)
+(23 rows)
+
+ROLLBACK;
+-- ============================================================
+-- B10: $match + COMPOUND $group/$first on idx_xy. Predicate on
+-- _id (not an idx_xy key) survives as residual Filter above the
+-- IndexScan; pins Rows Removed by Filter > 0 so the wrapper's
+-- key-skip can't precede the filter on the compound-key path.
+-- Compound-key analog of B4. Expect 5 distinct (x,y) for _ids 4..8.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
+SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_xy", "pipeline": [
+    { "$match": { "_id": { "$gt": 3 } } },
+    { "$group": { "_id": { "x": "$x", "y": "$y" }, "f": { "$first": "$_id" } } },
+    { "$sort": { "_id.x": 1, "_id.y": 1 } }
+  ] }');
+                                        document                                        
+----------------------------------------------------------------------------------------
+ { "_id" : { "x" : "a", "y" : { "$numberInt" : "60" } }, "f" : { "$numberInt" : "6" } }
+ { "_id" : { "x" : "b", "y" : { "$numberInt" : "50" } }, "f" : { "$numberInt" : "5" } }
+ { "_id" : { "x" : "b", "y" : { "$numberInt" : "80" } }, "f" : { "$numberInt" : "8" } }
+ { "_id" : { "x" : "c", "y" : { "$numberInt" : "40" } }, "f" : { "$numberInt" : "4" } }
+ { "_id" : { "x" : "c", "y" : { "$numberInt" : "70" } }, "f" : { "$numberInt" : "7" } }
+(5 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_xy", "pipeline": [
+    { "$match": { "_id": { "$gt": 3 } } },
+    { "$group": { "_id": { "x": "$x", "y": "$y" }, "f": { "$first": "$_id" } } },
+    { "$sort": { "_id.x": 1, "_id.y": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=5 loops=1)
+   Output: agg_stage_2.document, (bson_orderby(agg_stage_2.document, '{ "_id.x" : { "$numberInt" : "1" } }'::bson)), (bson_orderby(agg_stage_2.document, '{ "_id.y" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_2.document, '{ "_id.x" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(agg_stage_2.document, '{ "_id.y" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_2 (actual rows=5 loops=1)
+         Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id.x" : { "$numberInt" : "1" } }'::bson), bson_orderby(agg_stage_2.document, '{ "_id.y" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=5 loops=1)
+               Output: bson_repath_and_build('_id'::text, bson_repath_and_build('x'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'y'::text, (bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=5 loops=1)
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     ->  Index Scan using idx_xy on documentdb_data.documents_21000 collection (actual rows=5 loops=1)
+                           Output: collection.document
+                           Index Cond: ((collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "y" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+                           Order By: ((collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson) AND (collection.document |-<> '{ "y" : { "$numberInt" : "1" } }'::bson))
+                           Filter: ((collection.document @> '{ "_id" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+                           Rows Removed by Filter: 3
+(17 rows)
+
+ROLLBACK;
+-- ============================================================
+-- B11: Partial-filter index used SAFELY -- $match {y>50}
+-- subsumes the partial predicate, so distinct over x is sound.
+-- Without the match the planner declines this index (which would
+-- silently drop {c}).
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first_part", "hint": "idx_x_partial", "pipeline": [
+    { "$match": { "y": { "$gt": 50 } } },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+                    document                    
+------------------------------------------------
+ { "_id" : "a", "f" : { "$numberInt" : "60" } }
+ { "_id" : "b", "f" : { "$numberInt" : "80" } }
+ { "_id" : "d", "f" : { "$numberInt" : "70" } }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first_part", "hint": "idx_x_partial", "pipeline": [
+    { "$match": { "y": { "$gt": 50 } } },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_2.document, (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
+         Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     ->  Index Scan using idx_x_partial on documentdb_data.documents_21003 collection (actual rows=3 loops=1)
+                           Output: collection.document
+                           Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
+(15 rows)
+
+ROLLBACK;
+-- ============================================================
+-- Group C — Negative cases: shapes where the wrapper MUST NOT
+-- fire (walker guards, path-shape guards, current limitations).
+-- Each case asserts the expected fallback plan shape and, where
+-- applicable, that the correctness output is still right.
+-- ============================================================
+-- ============================================================
+-- C1: $first MIXED with $sum. Walker rejects because $sum's Aggref
+-- is not a $first-variant OID. Wrapper must NOT fire (inner rows=8).
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": "$y" }, "s": { "$sum": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                                                                                                                          
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 's'::text, bsonsum(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                     Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
+
+ROLLBACK;
+-- ============================================================
+-- C2: Only non-$first accumulators. Walker rejects (no $first
+-- present). Wrapper must NOT fire.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "s": { "$sum": "$y" }, "m": { "$max": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                                                                                                     run_explain_and_trim                                                                                                                                                                                                                                                                                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 's'::text, bsonsum(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'm'::text, bsonmax(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                     Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
+
+ROLLBACK;
+-- ============================================================
+-- C3: $sort on a NON-group field followed by $group/$first. This
+-- routes $first to the sort-aware BsonFirstAggregateFunctionOid,
+-- which the walker EXPLICITLY rejects. Wrapper must NOT fire.
+--
+-- Loudness: the sort-aware result for $sort: { y: -1 } is
+-- a -> 60, b -> 80, c -> 70 (max y per group). If the wrapper
+-- incorrectly fired and picked insertion-order first, the result
+-- would be a -> 10, b -> 20, c -> 40 — a visible diff in both
+-- the correctness output and the EXPLAIN actual rows.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$sort": { "y": -1 } },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+                    document                    
+------------------------------------------------
+ { "_id" : "a", "f" : { "$numberInt" : "60" } }
+ { "_id" : "b", "f" : { "$numberInt" : "80" } }
+ { "_id" : "c", "f" : { "$numberInt" : "70" } }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$sort": { "y": -1 } },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"y\" : { \"$numberInt\" : \"-1\" } }"}'::bson[]), '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Sort (actual rows=8 loops=1)
+                     Output: (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
+                     Sort Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Sort Method: quicksort  Memory: xxxkB
+                     ->  Subquery Scan on agg_stage_0 (actual rows=8 loops=1)
+                           Output: bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+                           ->  Sort (actual rows=8 loops=1)
+                                 Output: collection.document, (bson_orderby(collection.document, '{ "y" : { "$numberInt" : "-1" } }'::bson))
+                                 Sort Key: (bson_orderby(collection.document, '{ "y" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+                                 Sort Method: quicksort  Memory: xxxkB
+                                 ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
+                                       Output: collection.document, bson_orderby(collection.document, '{ "y" : { "$numberInt" : "-1" } }'::bson)
+                                       Index Cond: (collection.document @<> '{ "x" : { "fullScan" : true } }'::bson)
+(22 rows)
+
+ROLLBACK;
+-- ============================================================
+-- C4: $sort prefix matches the group key, suffix on another field.
+-- With enableSortPushToAccumulatorWithPrefix ON, the rewrite drops the
+-- prefix (group key already covered by idx_x) and pushes the suffix into
+-- the accumulator as bsonfirstonsorted(... ORDER BY bson_orderby(...)).
+-- The OID is in our allowlist, so the OID check passes; aggref->aggorder
+-- is non-NIL, so the walker rejects on the aggorder guard. This case
+-- exercises the second guard rather than the OID check.
+--
+-- Loudness: the sort-aware result for $sort: { x: 1, y: -1 } is
+-- a -> 60, b -> 80, c -> 70. A regression where the walker missed
+-- the aggorder guard would return a -> 10, b -> 20, c -> 40.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$sort": { "x": 1, "y": -1 } },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+                    document                    
+------------------------------------------------
+ { "_id" : "a", "f" : { "$numberInt" : "60" } }
+ { "_id" : "b", "f" : { "$numberInt" : "80" } }
+ { "_id" : "c", "f" : { "$numberInt" : "70" } }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$sort": { "x": 1, "y": -1 } },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                                                                                                                                
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson) ORDER BY (bson_orderby(collection.document, '{ "y" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST)), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Incremental Sort (actual rows=8 loops=1)
+                     Output: (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document, (bson_orderby(collection.document, '{ "y" : { "$numberInt" : "-1" } }'::bson))
+                     Sort Key: (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "y" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+                     Presorted Key: (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Full-sort Groups: 1  Sort Method: quicksort  Average Memory: xxxkB  Peak Memory: xxxkB
+                     ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
+                           Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document, bson_orderby(collection.document, '{ "y" : { "$numberInt" : "-1" } }'::bson)
+                           Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
+(18 rows)
+
+ROLLBACK;
+-- ============================================================
+-- C5: Constant group key ($group: { _id: null, ... }). The planner
+-- emits an empty group_pathkeys list, which the hook guards against.
+-- Wrapper must NOT fire.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": null, "f": { "$first": "$y" } } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                    run_explain_and_trim                                                                                                                     
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual rows=1 loops=1)
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'f'::text, bsonfirstonsorted(bson_expression_get(document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), '{ "" : null }'::bson
+   ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
+         Output: shard_key_value, object_id, document
+         Index Cond: (collection.document @<> '{ "x" : { "fullScan" : true } }'::bson)
+(5 rows)
+
+ROLLBACK;
+-- ============================================================
+-- C6: Array-valued group key. Grouping by the full array expression is not
+-- presorted by the index's element-wise ordering, so the aggregate input gets
+-- an explicit Sort and the wrapper must NOT fire.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first_mk", "hint": "idx_tags", "pipeline": [
+    { "$group": { "_id": "$tags", "f": { "$first": "$v" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                                                                            
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$tags" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$tags" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(collection.document, '{ "" : "$tags" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Sort (actual rows=3 loops=1)
+                     Output: (bson_expression_get(collection.document, '{ "" : "$tags" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
+                     Sort Key: (bson_expression_get(collection.document, '{ "" : "$tags" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Sort Method: quicksort  Memory: xxxkB
+                     ->  Index Scan using idx_tags on documentdb_data.documents_21001 collection (actual rows=3 loops=1)
+                           Output: bson_expression_get(collection.document, '{ "" : "$tags" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                           Index Cond: (collection.document @<> '{ "tags" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+(16 rows)
+
+ROLLBACK;
+-- ============================================================
+-- C7: $skip BEFORE $group/$first changes input cardinality before
+-- the group, so the wrapper would observe skipped TIDs incorrectly.
+-- It must NOT fire here.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$skip": 2 },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+                    document                    
+------------------------------------------------
+ { "_id" : "a", "f" : { "$numberInt" : "60" } }
+ { "_id" : "b", "f" : { "$numberInt" : "20" } }
+ { "_id" : "c", "f" : { "$numberInt" : "40" } }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$skip": 2 },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                                           
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_2.document, (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
+         Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(agg_stage_1.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Sort (actual rows=6 loops=1)
+                     Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
+                     Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Sort Method: quicksort  Memory: xxxkB
+                     ->  Subquery Scan on agg_stage_1 (actual rows=6 loops=1)
+                           Output: bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+                           ->  Limit (actual rows=6 loops=1)
+                                 Output: collection.document
+                                 ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
+                                       Output: collection.document
+                                       Index Cond: (collection.document @<> '{ "x" : { "fullScan" : true } }'::bson)
+(20 rows)
+
+ROLLBACK;
+-- ============================================================
+-- C8: $limit BEFORE $group/$first. Same reasoning as C7.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$limit": 4 },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+                    document                    
+------------------------------------------------
+ { "_id" : "a", "f" : { "$numberInt" : "10" } }
+ { "_id" : "b", "f" : { "$numberInt" : "20" } }
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$limit": 4 },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                                           
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Output: agg_stage_2.document, (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_2 (actual rows=2 loops=1)
+         Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=2 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(agg_stage_1.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Sort (actual rows=4 loops=1)
+                     Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
+                     Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Sort Method: quicksort  Memory: xxxkB
+                     ->  Subquery Scan on agg_stage_1 (actual rows=4 loops=1)
+                           Output: bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+                           ->  Limit (actual rows=4 loops=1)
+                                 Output: collection.document
+                                 ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=4 loops=1)
+                                       Output: collection.document
+                                       Index Cond: (collection.document @<> '{ "x" : { "fullScan" : true } }'::bson)
+(20 rows)
+
+ROLLBACK;
+-- ============================================================
+-- C9: $unwind BEFORE $group/$first. Unwind expands array values
+-- into separate rows; per-TID skip would miss array elements.
+-- Wrapper must NOT fire.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first_unwind", "hint": "idx_x", "pipeline": [
+    { "$unwind": "$vals" },
+    { "$group": { "_id": "$x", "f": { "$first": "$vals" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+                   document                    
+-----------------------------------------------
+ { "_id" : "a", "f" : { "$numberInt" : "1" } }
+ { "_id" : "b", "f" : { "$numberInt" : "3" } }
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first_unwind", "hint": "idx_x", "pipeline": [
+    { "$unwind": "$vals" },
+    { "$group": { "_id": "$x", "f": { "$first": "$vals" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                                                                            
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Output: agg_stage_2.document, (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_2 (actual rows=2 loops=1)
+         Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=2 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(agg_stage_1.document, '{ "" : "$vals" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Sort (actual rows=4 loops=1)
+                     Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
+                     Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Sort Method: quicksort  Memory: xxxkB
+                     ->  Subquery Scan on agg_stage_1 (actual rows=4 loops=1)
+                           Output: bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+                           ->  ProjectSet (actual rows=4 loops=1)
+                                 Output: bson_dollar_unwind(collection.document, '$vals'::text)
+                                 ->  Index Scan using idx_x on documentdb_data.documents_21002 collection (actual rows=3 loops=1)
+                                       Output: collection.shard_key_value, collection.object_id, collection.document
+                                       Index Cond: (collection.document @<> '{ "x" : { "fullScan" : true } }'::bson)
+(20 rows)
+
+ROLLBACK;
+-- ============================================================
+-- C10: Hint targets a non-group-key index (idx_y) while grouping
+-- on $x with $first. The scan is not ordered by the group key, so
+-- the wrapper must NOT fire.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_y", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Sort (actual rows=8 loops=1)
+                     Output: (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
+                     Sort Key: (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Sort Method: quicksort  Memory: xxxkB
+                     ->  Index Scan using idx_y on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
+                           Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                           Index Cond: (collection.document @<> '{ "y" : { "fullScan" : true } }'::bson)
+(16 rows)
+
+ROLLBACK;
+-- ============================================================
+-- C11: Leading $sort on the GROUP KEY before $group with $first.
+-- AnalyzeSortGroupAccumulators does NOT drop this sort; it pushes the
+-- sort spec into the accumulator, converting $first to the sort-aware
+-- bsonfirst(...) variant. The walker rejects sort-aware bsonfirst.
+-- Wrapper must NOT fire. Output is still correct (a->10, b->20, c->40)
+-- but only because insertion order matches $sort:{x:1} order.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$sort": { "x": 1 } },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+                    document                    
+------------------------------------------------
+ { "_id" : "a", "f" : { "$numberInt" : "10" } }
+ { "_id" : "b", "f" : { "$numberInt" : "20" } }
+ { "_id" : "c", "f" : { "$numberInt" : "40" } }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$sort": { "x": 1 } },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                                                                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
+         Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"x\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Sort (actual rows=8 loops=1)
+                     Output: (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
+                     Sort Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Sort Method: quicksort  Memory: xxxkB
+                     ->  Subquery Scan on agg_stage_0 (actual rows=8 loops=1)
+                           Output: bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+                           ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
+                                 Output: collection.document, bson_orderby(collection.document, '{ "x" : { "$numberInt" : "1" } }'::bson)
+                                 Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                                 Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
+(19 rows)
+
+ROLLBACK;
+-- ============================================================
+-- C12: $project select-only still interposes bson_dollar_project();
+-- group key is no longer a direct Var on the indexed column.
+-- Wrapper must NOT fire.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$project": { "x": 1, "_id": 0 } },
+    { "$group": { "_id": "$x", "f": { "$first": "$x" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+          document          
+----------------------------
+ { "_id" : "a", "f" : "a" }
+ { "_id" : "b", "f" : "b" }
+ { "_id" : "c", "f" : "c" }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$project": { "x": 1, "_id": 0 } },
+    { "$group": { "_id": "$x", "f": { "$first": "$x" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_2.document, (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
+         Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted((bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)))), (bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Sort (actual rows=8 loops=1)
+                     Output: (bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
+                     Sort Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Sort Method: quicksort  Memory: xxxkB
+                     ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
+                           Output: bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                           Index Cond: (collection.document @<> '{ "x" : { "fullScan" : true } }'::bson)
+(16 rows)
+
+ROLLBACK;
+-- ============================================================
+-- C13: $project RENAMES the indexed field; group key isn't the
+-- indexed Var. Wrapper must NOT fire.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$project": { "newx": "$x", "_id": 0 } },
+    { "$group": { "_id": "$newx", "f": { "$first": "$newx" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+          document          
+----------------------------
+ { "_id" : "a", "f" : "a" }
+ { "_id" : "b", "f" : "b" }
+ { "_id" : "c", "f" : "c" }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$project": { "newx": "$x", "_id": 0 } },
+    { "$group": { "_id": "$newx", "f": { "$first": "$newx" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_2.document, (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
+         Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted((bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)))), (bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Sort (actual rows=8 loops=1)
+                     Output: (bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
+                     Sort Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Sort Method: quicksort  Memory: xxxkB
+                     ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
+                           Output: bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                           Index Cond: (collection.document @<> '{ "x" : { "fullScan" : true } }'::bson)
+(16 rows)
+
+ROLLBACK;
+-- ============================================================
+-- C14: $project with a COMPUTED group key ($concat); not a direct
+-- Var on the indexed column. Wrapper must NOT fire.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$project": { "xc": { "$concat": ["$x", "-suffix"] }, "_id": 0 } },
+    { "$group": { "_id": "$xc", "f": { "$first": "$xc" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+                 document                 
+------------------------------------------
+ { "_id" : "a-suffix", "f" : "a-suffix" }
+ { "_id" : "b-suffix", "f" : "b-suffix" }
+ { "_id" : "c-suffix", "f" : "c-suffix" }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$project": { "xc": { "$concat": ["$x", "-suffix"] }, "_id": 0 } },
+    { "$group": { "_id": "$xc", "f": { "$first": "$xc" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_2.document, (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
+         Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted((bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)))), (bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Sort (actual rows=8 loops=1)
+                     Output: (bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
+                     Sort Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Sort Method: quicksort  Memory: xxxkB
+                     ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
+                           Output: bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                           Index Cond: (collection.document @<> '{ "x" : { "fullScan" : true } }'::bson)
+(16 rows)
+
+ROLLBACK;
+-- ============================================================
+-- C15: $lookup BEFORE $group/$first -- join can fan out base
+-- rows, so TID skipping would silently drop joined rows. Wrapper
+-- must NOT fire.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$lookup": { "from": "grp_first", "as": "m", "localField": "x", "foreignField": "x" } },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+                    document                    
+------------------------------------------------
+ { "_id" : "a", "f" : { "$numberInt" : "10" } }
+ { "_id" : "b", "f" : { "$numberInt" : "20" } }
+ { "_id" : "c", "f" : { "$numberInt" : "40" } }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($Q$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$lookup": { "from": "grp_first", "as": "m", "localField": "x", "foreignField": "x" } },
+    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
+    { "$sort": { "_id": 1 } }
+  ] }')
+$Q$, p_ignore_heap_fetches := true);
+                                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                                           
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Output: agg_stage_2.document, (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
+         Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         ->  GroupAggregate (actual rows=3 loops=1)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(agg_stage_1.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               ->  Sort (actual rows=8 loops=1)
+                     Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
+                     Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Sort Method: quicksort  Memory: xxxkB
+                     ->  Subquery Scan on agg_stage_1 (actual rows=8 loops=1)
+                           Output: bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+                           ->  Nested Loop (actual rows=8 loops=1)
+                                 Output: bson_dollar_merge_documents(collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'm'::text), '{ "m" : [  ] }'::bson)), true)
+                                 ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
+                                       Output: collection.shard_key_value, collection.object_id, collection.document
+                                       Index Cond: (collection.document @<> '{ "x" : { "fullScan" : true } }'::bson)
+                                 ->  Aggregate (actual rows=1 loops=8)
+                                       Output: COALESCE(bson_array_agg(collection_0_1.document, 'm'::text), '{ "m" : [  ] }'::bson)
+                                       ->  Index Scan using idx_x on documentdb_data.documents_21000 collection_0_1 (actual rows=2.75 loops=8)
+                                             Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+                                             Index Cond: (collection_0_1.document @*= bson_dollar_lookup_extract_filter_expression(collection.document, '{ "x" : "x" }'::bson))
+                                             Filter: bson_dollar_lookup_join_filter(collection_0_1.document, bson_dollar_lookup_extract_filter_expression(collection.document, '{ "x" : "x" }'::bson), 'x'::text)
+(26 rows)
+
+ROLLBACK;
+-- ============================================================
+-- Group D — Result equivalence: same pipeline with the GUC OFF
+-- vs ON must produce byte-identical output.
+-- ============================================================
+-- ============================================================
+-- D1: Result-equivalence pin. Same pipeline executed with the new
+-- GUC OFF and ON in adjacent transactions must return byte-identical
+-- documents. This guards against any regression that would otherwise
+-- silently change the picked document while still parsing-correctly.
+-- ============================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO off;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": "$y" }, "g": { "$first": "$_id" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : "a", "f" : { "$numberInt" : "10" }, "g" : { "$numberInt" : "1" } }
+ { "_id" : "b", "f" : { "$numberInt" : "20" }, "g" : { "$numberInt" : "2" } }
+ { "_id" : "c", "f" : { "$numberInt" : "40" }, "g" : { "$numberInt" : "4" } }
+(3 rows)
+
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+  '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
+    { "$group": { "_id": "$x", "f": { "$first": "$y" }, "g": { "$first": "$_id" } } },
+    { "$sort": { "_id": 1 } }
+  ] }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : "a", "f" : { "$numberInt" : "10" }, "g" : { "$numberInt" : "1" } }
+ { "_id" : "b", "f" : { "$numberInt" : "20" }, "g" : { "$numberInt" : "2" } }
+ { "_id" : "c", "f" : { "$numberInt" : "40" }, "g" : { "$numberInt" : "4" } }
+(3 rows)
+
+ROLLBACK;

@@ -17,8 +17,6 @@ SELECT documentdb_api.drop_collection('ios_idx_db', 'ios_cross_coll');
 
 SET documentdb.next_collection_id TO 9600;
 SET documentdb.next_collection_index_id TO 9600;
-SET documentdb.enablePrimaryKeyCursorScan TO on;
-SET documentdb.enableCursorPlanBeforeRestrictionPathUpdate TO off;
 SET documentdb.enableDynamicCursors TO on;
 SET documentdb.enableIndexOnlyScan TO on;
 SET documentdb.enableIndexOnlyScanForFindProject TO on;
@@ -162,7 +160,7 @@ $cmd$, true);
                                     run_explain_and_trim                                     
 ---------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=18 loops=1)
-   scanType: Secondary Index Only Scan
+   cursorScanType: Secondary Index Only Scan
    indexName: idx_ab_ad
    indexKey: {"a": 1,"b": -1}
    isMultiKey: false
@@ -189,7 +187,7 @@ $cmd$, true);
                                                                                           run_explain_and_trim                                                                                          
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=13 loops=1)
-   scanType: Secondary Index Only Scan
+   cursorScanType: Secondary Index Only Scan
    Skipped Tuples: 6 docs
    indexName: idx_ab_ad
    indexKey: {"a": 1,"b": -1}
@@ -216,7 +214,7 @@ $cmd$, true);
                                      run_explain_and_trim                                      
 -----------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=18 loops=1)
-   scanType: Secondary Index Only Scan
+   cursorScanType: Secondary Index Only Scan
    indexName: idx_abc_ada
    indexKey: {"a": 1,"b": -1,"c": 1}
    isMultiKey: false
@@ -243,7 +241,7 @@ $cmd$, true);
                                                                                                 run_explain_and_trim                                                                                                
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=13 loops=1)
-   scanType: Secondary Index Only Scan
+   cursorScanType: Secondary Index Only Scan
    Skipped Tuples: 1 docs
    indexName: idx_abc_ada
    indexKey: {"a": 1,"b": -1,"c": 1}
@@ -926,7 +924,7 @@ $cmd$, true);
                                       run_explain_and_trim                                      
 ------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=36 loops=1)
-   scanType: Secondary Index Only Scan
+   cursorScanType: Secondary Index Only Scan
    indexName: xidx_abc_dad
    indexKey: {"a": -1,"b": 1,"c": -1}
    isMultiKey: false
@@ -953,7 +951,7 @@ $cmd$, true);
                                                                                                 run_explain_and_trim                                                                                                 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiCursorScan) (actual rows=31 loops=1)
-   scanType: Secondary Index Only Scan
+   cursorScanType: Secondary Index Only Scan
    Skipped Tuples: 1 docs
    indexName: xidx_abc_dad
    indexKey: {"a": -1,"b": 1,"c": -1}

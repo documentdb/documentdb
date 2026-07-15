@@ -29,7 +29,7 @@ pub fn process(
     connection_context: &mut ConnectionContext,
     dynamic_configuration: &Arc<dyn DynamicConfiguration>,
 ) -> Result<Response> {
-    let request = request_context.payload;
+    let request = request_context.request();
     let local_time = i64::try_from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -49,7 +49,6 @@ pub fn process(
             return Err(DocumentDBError::documentdb_error(
                 ErrorCode::ClientMetadataCannotBeMutated,
                 "Client metadata cannot be mutated".to_owned(),
-                0,
             ));
         }
         connection_context.client_information = Some(client.to_raw_document_buf());
@@ -83,5 +82,5 @@ pub fn process(
         );
     }
 
-    Ok(Response::Raw(RawResponse(response_doc)))
+    Ok(Response::Raw(RawResponse::new(response_doc)))
 }

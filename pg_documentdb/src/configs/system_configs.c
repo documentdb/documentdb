@@ -58,6 +58,14 @@ int BatchWriteSubTransactionCount = DEFAULT_BATCH_WRITE_SUB_TRANSACTION_COUNT;
 int BatchUpdateLockTimeoutMs = DEFAULT_BATCH_UPDATE_LOCK_TIMEOUT_MS;
 
 /*
+ * Default maxAwaitTimeMS for tailable cursors on getMore when the client
+ * does not specify a value. The wire-protocol default is 1000 ms.
+ * Exposed as a GUC so that it can be tuned if needed.
+ */
+#define DEFAULT_TAILABLE_CURSOR_MAX_AWAIT_TIME_MS 1000
+int DefaultTailableCursorMaxAwaitTimeMs = DEFAULT_TAILABLE_CURSOR_MAX_AWAIT_TIME_MS;
+
+/*
  * GUC for "Count Policy" change Threshold for collStats DB command
  * If the document count from stats is more than this threshold, the count policy remains "get count from stats".
  * If the document count from stats is less than this threshold, the count policy becomes "get count at runtime".
@@ -175,6 +183,15 @@ RumLibraryLoadOptions DocumentDBRumLibraryLoadOption = DEFAULT_RUM_LIBRARY_LOAD_
 #define DEFAULT_ENABLE_STATEMENT_TIMEOUT true
 bool EnableBackendStatementTimeout = DEFAULT_ENABLE_STATEMENT_TIMEOUT;
 
+#define DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE false
+bool EnableCursorsOnAggregationQueryRewrite =
+	DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE;
+
+/* CodeSync with bson_dollar_selectivity.c */
+#define ARRAY_STATISTICS_MAX_SAMPLE_COUNT 128
+#define DEFAULT_ARRAY_STATISTICS_MAX_SAMPLE_COUNT 10
+int ArrayStatisticsMaxSampleCount = DEFAULT_ARRAY_STATISTICS_MAX_SAMPLE_COUNT;
+
 static struct config_enum_entry rum_load_options[4] = {
 	{ "none", RumLibraryLoadOption_None, false },
 	{ "prefer_documentdb_extended_rum", RumLibraryLoadOption_PreferDocumentDBRum, false },
@@ -259,6 +276,14 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 			"The lock timeout in milliseconds for each batch of updates within bulk procedural write path."),
 		NULL, &BatchUpdateLockTimeoutMs,
 		DEFAULT_BATCH_UPDATE_LOCK_TIMEOUT_MS, 0, INT_MAX,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.defaultTailableCursorMaxAwaitTimeMs", newGucPrefix),
+		gettext_noop(
+			"Default maxAwaitTimeMS hint (in milliseconds) returned for tailable cursor getMore responses when the client did not supply a value. Matches the documented wire-protocol default of 1000 ms."),
+		NULL, &DefaultTailableCursorMaxAwaitTimeMs,
+		DEFAULT_TAILABLE_CURSOR_MAX_AWAIT_TIME_MS, 0, INT_MAX,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -494,4 +519,23 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 		NULL, &MaxNonOrderedTermScanThreshold,
 		DEFAULT_MAX_NON_ORDERED_TERM_SCAN_THRESHOLD,
 		-1, INT_MAX, PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.arrayStatisticsMaxSampleCount", newGucPrefix),
+		gettext_noop(
+			"The maximum number of samples to collect for array statistics."),
+		NULL, &ArrayStatisticsMaxSampleCount,
+		DEFAULT_ARRAY_STATISTICS_MAX_SAMPLE_COUNT,
+		1, ARRAY_STATISTICS_MAX_SAMPLE_COUNT, PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableCursorsOnAggregationQueryRewrite", newGucPrefix),
+		gettext_noop(
+			"Whether or not to add the cursors on aggregation style queries."),
+		NULL,
+		&EnableCursorsOnAggregationQueryRewrite,
+		DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
 }

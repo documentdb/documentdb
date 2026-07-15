@@ -32,10 +32,6 @@ bool EnableGenerateNonExistsTerm = DEFAULT_ENABLE_GENERATE_NON_EXISTS_TERM;
 #define DEFAULT_INDEX_TRUNCATION_LIMIT_OVERRIDE INT_MAX
 int IndexTruncationLimitOverride = DEFAULT_INDEX_TRUNCATION_LIMIT_OVERRIDE;
 
-#define DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE false
-bool EnableCursorsOnAggregationQueryRewrite =
-	DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE;
-
 #define DEFAULT_UNIQUE_INDEX_KEYHASH_OVERIDE 0
 int DefaultUniqueIndexKeyhashOverride = DEFAULT_UNIQUE_INDEX_KEYHASH_OVERIDE;
 
@@ -133,6 +129,12 @@ bool EnableExplainScanIndexCosts = DEFAULT_ENABLE_EXPLAIN_SCAN_INDEX_COSTS;
 #define DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME true
 bool EnableExplainScanNamespaceName = DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME;
 
+/*
+ * See create_indexes_background.c for the full description of each failure point value.
+ */
+#define DEFAULT_INDEX_BUILD_FAILURE_POINT 0
+int IndexBuildFailurePoint = DEFAULT_INDEX_BUILD_FAILURE_POINT;
+
 void
 InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 {
@@ -184,17 +186,6 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		DEFAULT_MAX_WORKER_CURSOR_SIZE, 1, BSON_MAX_ALLOWED_SIZE,
 		PGC_USERSET,
 		GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE,
-		NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableCursorsOnAggregationQueryRewrite", newGucPrefix),
-		gettext_noop(
-			"Whether or not to add the cursors on aggregation style queries."),
-		NULL,
-		&EnableCursorsOnAggregationQueryRewrite,
-		DEFAULT_ENABLE_CURSORS_ON_AGGREGATION_QUERY_REWRITE,
-		PGC_USERSET,
-		0,
 		NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -460,4 +451,16 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		NULL, &EnableExplainScanNamespaceName,
 		DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME,
 		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.indexBuildFailurePoint", newGucPrefix),
+		gettext_noop("Inject a failure at a specific point during index "
+					 "background build or reindex post-processing. "
+					 "0 = disabled, 1-9 = specific failure points."),
+		NULL,
+		&IndexBuildFailurePoint,
+		DEFAULT_INDEX_BUILD_FAILURE_POINT, 0, 9,
+		PGC_USERSET,
+		GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE,
+		NULL, NULL, NULL);
 }

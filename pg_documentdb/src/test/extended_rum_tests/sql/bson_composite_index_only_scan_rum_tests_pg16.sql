@@ -566,3 +566,28 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 RESET documentdb.enableIndexOnlyScanForCoveredAggregateTargets;
 RESET documentdb.enableNewWithExprAccumulators;
 SELECT documentdb_api.drop_collection('iosdb_rum', 'sum_const_test');
+
+-- Test: Partial composite index with 0 scan keys should not crash
+-- This reproduces a SIGSEGV that occurred when a partial composite RUM index
+-- is chosen for an index-only scan with no index conditions (0 scan keys).
+-- The partial index predicate satisfies the query filter, so PG chooses it,
+-- but no index scan keys are generated.
+SELECT documentdb_api.insert_one('iosdb_rum', 'partial_zero_keys', '{"_id": 1, "a": 1, "b": 10}');
+SELECT COUNT(documentdb_api.insert_one('iosdb_rum', 'partial_zero_keys', FORMAT('{"_id": %s, "a": %s, "b": %s}', i, i, i * 10)::documentdb_core.bson)) FROM generate_series(2, 50) i;
+
+-- Create a partial composite index with a filter on "a > 0"
+SELECT documentdb_api_internal.create_indexes_non_concurrently('iosdb_rum', '{ "createIndexes": "partial_zero_keys", "indexes": [{ "key": { "a": 1, "b": -1 }, "name": "partial_a_1_b_-1", "partialFilterExpression": { "a": { "$gt": 0 } } }] }', true);
+
+-- Force the partial index to be chosen (disable seq and bitmap scans)
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+
+-- This query matches the partial index predicate (a > 0) and should use
+-- the partial index for an index-only scan with 0 scan keys.
+-- Before the fix, this would SIGSEGV.
+SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate": "partial_zero_keys", "pipeline": [{ "$match": { "a": { "$gt": 0 } } }, { "$count": "n" }], "cursor": {} }');
+
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+
+SELECT documentdb_api.drop_collection('iosdb_rum', 'partial_zero_keys');

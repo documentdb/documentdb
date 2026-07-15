@@ -45,13 +45,16 @@ set enable_bitmapscan to off;
 SELECT documentdb_test_helpers.run_explain_and_trim(
     $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
         '{ "find": "parallel_scan", "filter": { "a": { "$gt": 10 } } }') $cmd$);
-                            run_explain_and_trim                             
------------------------------------------------------------------------------
- Index Scan using _id_ on documents_901 collection (actual rows=990 loops=1)
-   Index Cond: (shard_key_value = '901'::bigint)
-   Filter: (document @> '{ "a" : { "$numberInt" : "10" } }'::bson)
-   Rows Removed by Filter: 10
-(4 rows)
+                               run_explain_and_trim                                
+-----------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=990 loops=1)
+   namespaceName: p_ixscan.parallel_scan
+   indexName: _id_
+   ->  Index Scan using _id_ on documents_901 collection (actual rows=990 loops=1)
+         Index Cond: (shard_key_value = '901'::bigint)
+         Filter: (document @> '{ "a" : { "$numberInt" : "10" } }'::bson)
+         Rows Removed by Filter: 10
+(7 rows)
 
 set parallel_tuple_cost to 0;
 set parallel_setup_cost to 0;
@@ -59,108 +62,226 @@ set documentdb.enableCompositeParallelIndexScan to on;
 set parallel_leader_participation to off;
 set enable_seqscan to off;
 set documentdb.forceParallelScanIfAvailable to on;
+set documentdb.enableAddShardKeyOnlyOnPrimaryKeyFilters to on;
+-- Ensure deterministic planner statistics
+SELECT FORMAT('VACUUM FREEZE ANALYZE documentdb_data.documents_%s', :p_col) \gexec
+VACUUM FREEZE ANALYZE documentdb_data.documents_901
+-- Enable leader participation for EXPLAIN ANALYZE so the leader's scan opaque
+-- gets the scan type from DSM during rumgettuple.
+set parallel_leader_participation to on;
 SELECT documentdb_test_helpers.run_explain_and_trim(
     $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
         '{ "find": "parallel_scan", "filter": { "a": { "$gt": 10, "$lt": 50 } } }') $cmd$);
-                                                           run_explain_and_trim                                                            
--------------------------------------------------------------------------------------------------------------------------------------------
+                                                              run_explain_and_trim                                                               
+-------------------------------------------------------------------------------------------------------------------------------------------------
  Gather (actual rows=39 loops=1)
    Workers Planned: 2
    Workers Launched: 2
-   ->  Parallel Index Scan using a_1 on documents_901 collection (actual rows=xyz loops=2)
-         Index Cond: ((document @> '{ "a" : { "$numberInt" : "10" } }'::bson) AND (document @< '{ "a" : { "$numberInt" : "50" } }'::bson))
-(5 rows)
+   ->  Parallel Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=13 loops=3)
+         namespaceName: p_ixscan.parallel_scan
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (10, 50)]
+         innerScanLoops: 42 loops
+         parallelScanCapable: true
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 39)]
+         ->  Parallel Index Scan using a_1 on documents_901 collection (actual rows=xyz loops=3)
+               Index Cond: ((document @> '{ "a" : { "$numberInt" : "10" } }'::bson) AND (document @< '{ "a" : { "$numberInt" : "50" } }'::bson))
+(15 rows)
 
+-- Backward sort on composite index with parallel ordered scan
 SELECT documentdb_test_helpers.run_explain_and_trim(
     $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
         '{ "find": "parallel_scan", "filter": { "a": { "$gt": 10, "$lt": 50 } }, "sort": { "a": -1 } }') $cmd$);
                                                               run_explain_and_trim                                                               
 -------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=39 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Gather (actual rows=39 loops=1)
-         Workers Planned: 2
-         Workers Launched: 2
-         ->  Parallel Index Scan using a_1 on documents_901 collection (actual rows=xyz loops=2)
+ Gather Merge (actual rows=39 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   ->  Parallel Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=13 loops=3)
+         namespaceName: p_ixscan.parallel_scan
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (10, 50)]
+         isBackwardScan: true
+         innerScanLoops: 42 loops
+         parallelScanCapable: false
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 39)]
+         ->  Parallel Index Scan using a_1 on documents_901 collection (actual rows=xyz loops=3)
                Index Cond: ((document @> '{ "a" : { "$numberInt" : "10" } }'::bson) AND (document @< '{ "a" : { "$numberInt" : "50" } }'::bson))
-(8 rows)
+               Order By: (document OPERATOR(documentdb_api_internal.<>-|) '{ "a" : { "$numberInt" : "-1" } }'::bson)
+(17 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim(
     $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
         '{ "find": "parallel_scan", "filter": { "a": { "$gt": 10, "$lt": 50 } }, "sort": { "a": 1 } }') $cmd$);
                                                               run_explain_and_trim                                                               
 -------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=39 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Gather (actual rows=39 loops=1)
-         Workers Planned: 2
-         Workers Launched: 2
-         ->  Parallel Index Scan using a_1 on documents_901 collection (actual rows=xyz loops=2)
+ Gather Merge (actual rows=39 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   ->  Parallel Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=13 loops=3)
+         namespaceName: p_ixscan.parallel_scan
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (10, 50)]
+         innerScanLoops: 42 loops
+         parallelScanCapable: true
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 39)]
+         ->  Parallel Index Scan using a_1 on documents_901 collection (actual rows=xyz loops=3)
                Index Cond: ((document @> '{ "a" : { "$numberInt" : "10" } }'::bson) AND (document @< '{ "a" : { "$numberInt" : "50" } }'::bson))
-(8 rows)
+               Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(16 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim(
     $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
         '{ "find": "parallel_scan", "sort": { "a": 1 } }') $cmd$);
-                                       run_explain_and_trim                                       
---------------------------------------------------------------------------------------------------
- Sort (actual rows=1000 loops=1)
-   Sort Key: (bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Gather (actual rows=1000 loops=1)
-         Workers Planned: 2
-         Workers Launched: 2
-         ->  Parallel Index Scan using _id_ on documents_901 collection (actual rows=xyz loops=2)
-               Index Cond: (shard_key_value = '901'::bigint)
-(8 rows)
+                                         run_explain_and_trim                                          
+-------------------------------------------------------------------------------------------------------
+ Gather Merge (actual rows=1000 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   ->  Parallel Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=333 loops=3)
+         namespaceName: p_ixscan.parallel_scan
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (MinKey, MaxKey)]
+         innerScanLoops: 147 loops
+         parallelScanCapable: true
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 147)]
+         ->  Parallel Index Scan using a_1 on documents_901 collection (actual rows=xyz loops=3)
+               Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+               Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(16 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim(
     $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
         '{ "find": "parallel_scan", "filter": { "b": { "$gt": 10, "$lt": 50 } } }') $cmd$);
-                                                                                                                                                       run_explain_and_trim                                                                                                                                                        
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Gather (actual rows=39 loops=1)
-   Workers Planned: 2
-   Workers Launched: 2
-   ->  Parallel Index Scan using _id_ on documents_901 collection (actual rows=xyz loops=2)
-         Index Cond: (shard_key_value = '901'::bigint)
-         Filter: ((document @<> '{ "b" : { "min" : { "$numberInt" : "10" }, "max" : { "$numberInt" : "50" }, "minInclusive" : false, "maxInclusive" : false } }'::bson) AND (document @<> '{ "b" : { "min" : { "$numberInt" : "10" }, "max" : { "$numberInt" : "50" }, "minInclusive" : false, "maxInclusive" : false } }'::bson))
-         Rows Removed by Filter: 480
-(7 rows)
+                                                                           run_explain_and_trim                                                                            
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=39 loops=1)
+   namespaceName: p_ixscan.parallel_scan
+   indexName: b_1
+   innerScanLoops: 39 loops
+   scanType: regular
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 39), (isInequality: true, estimatedEntryCount: 0)]
+   ->  Index Scan using b_1 on documents_901 collection (actual rows=39 loops=1)
+         Index Cond: (document @<> '{ "b" : { "min" : { "$numberInt" : "10" }, "max" : { "$numberInt" : "50" }, "minInclusive" : false, "maxInclusive" : false } }'::bson)
+(8 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim(
     $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
         '{ "find": "parallel_scan", "filter": { "b": { "$gt": 10, "$lt": 50 } }, "sort": { "b": -1 } }') $cmd$);
-                                                                                                                                                          run_explain_and_trim                                                                                                                                                           
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                              run_explain_and_trim                                                                               
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=39 loops=1)
    Sort Key: (bson_orderby(document, '{ "b" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Gather (actual rows=39 loops=1)
-         Workers Planned: 2
-         Workers Launched: 2
-         ->  Parallel Index Scan using _id_ on documents_901 collection (actual rows=xyz loops=2)
-               Index Cond: (shard_key_value = '901'::bigint)
-               Filter: ((document @<> '{ "b" : { "min" : { "$numberInt" : "10" }, "max" : { "$numberInt" : "50" }, "minInclusive" : false, "maxInclusive" : false } }'::bson) AND (document @<> '{ "b" : { "min" : { "$numberInt" : "10" }, "max" : { "$numberInt" : "50" }, "minInclusive" : false, "maxInclusive" : false } }'::bson))
-               Rows Removed by Filter: 480
-(10 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=39 loops=1)
+         namespaceName: p_ixscan.parallel_scan
+         indexName: b_1
+         innerScanLoops: 39 loops
+         scanType: regular
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 39), (isInequality: true, estimatedEntryCount: 0)]
+         ->  Index Scan using b_1 on documents_901 collection (actual rows=39 loops=1)
+               Index Cond: (document @<> '{ "b" : { "min" : { "$numberInt" : "10" }, "max" : { "$numberInt" : "50" }, "minInclusive" : false, "maxInclusive" : false } }'::bson)
+(11 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim(
     $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
         '{ "find": "parallel_scan", "filter": { "b": { "$gt": 10, "$lt": 50 } }, "sort": { "b": 1 } }') $cmd$);
-                                                                                                                                                          run_explain_and_trim                                                                                                                                                           
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                              run_explain_and_trim                                                                               
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=39 loops=1)
    Sort Key: (bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Gather (actual rows=39 loops=1)
-         Workers Planned: 2
-         Workers Launched: 2
-         ->  Parallel Index Scan using _id_ on documents_901 collection (actual rows=xyz loops=2)
-               Index Cond: (shard_key_value = '901'::bigint)
-               Filter: ((document @<> '{ "b" : { "min" : { "$numberInt" : "10" }, "max" : { "$numberInt" : "50" }, "minInclusive" : false, "maxInclusive" : false } }'::bson) AND (document @<> '{ "b" : { "min" : { "$numberInt" : "10" }, "max" : { "$numberInt" : "50" }, "minInclusive" : false, "maxInclusive" : false } }'::bson))
-               Rows Removed by Filter: 480
-(10 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=39 loops=1)
+         namespaceName: p_ixscan.parallel_scan
+         indexName: b_1
+         innerScanLoops: 39 loops
+         scanType: regular
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 39), (isInequality: true, estimatedEntryCount: 0)]
+         ->  Index Scan using b_1 on documents_901 collection (actual rows=39 loops=1)
+               Index Cond: (document @<> '{ "b" : { "min" : { "$numberInt" : "10" }, "max" : { "$numberInt" : "50" }, "minInclusive" : false, "maxInclusive" : false } }'::bson)
+(11 rows)
+
+-- Restore leader participation off for non-EXPLAIN queries
+set parallel_leader_participation to off;
+-- Test with parallel_leader_participation OFF: the leader does not call rumgettuple,
+-- so scan type is inferred from numberOfOrderBys. Must not crash.
+SELECT documentdb_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
+        '{ "find": "parallel_scan", "filter": { "a": { "$gt": 10, "$lt": 50 } }, "sort": { "a": 1 } }') $cmd$);
+                                                              run_explain_and_trim                                                               
+-------------------------------------------------------------------------------------------------------------------------------------------------
+ Gather Merge (actual rows=39 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   ->  Parallel Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=20 loops=2)
+         namespaceName: p_ixscan.parallel_scan
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (10, 50)]
+         innerScanLoops: 0 loops
+         parallelScanCapable: false
+         scanType: ordered
+         scanKeyDetails: 
+         ->  Parallel Index Scan using a_1 on documents_901 collection (actual rows=xyz loops=2)
+               Index Cond: ((document @> '{ "a" : { "$numberInt" : "10" } }'::bson) AND (document @< '{ "a" : { "$numberInt" : "50" } }'::bson))
+               Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(16 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
+        '{ "find": "parallel_scan", "filter": { "a": { "$gt": 10, "$lt": 50 } }, "sort": { "a": -1 } }') $cmd$);
+                                                              run_explain_and_trim                                                               
+-------------------------------------------------------------------------------------------------------------------------------------------------
+ Gather Merge (actual rows=39 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   ->  Parallel Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=20 loops=2)
+         namespaceName: p_ixscan.parallel_scan
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (10, 50)]
+         innerScanLoops: 0 loops
+         parallelScanCapable: false
+         scanType: ordered
+         scanKeyDetails: 
+         ->  Parallel Index Scan using a_1 on documents_901 collection (actual rows=xyz loops=2)
+               Index Cond: ((document @> '{ "a" : { "$numberInt" : "10" } }'::bson) AND (document @< '{ "a" : { "$numberInt" : "50" } }'::bson))
+               Order By: (document OPERATOR(documentdb_api_internal.<>-|) '{ "a" : { "$numberInt" : "-1" } }'::bson)
+(16 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
+        '{ "find": "parallel_scan", "filter": { "a": { "$gt": 10, "$lt": 50 } } }') $cmd$);
+                                                              run_explain_and_trim                                                               
+-------------------------------------------------------------------------------------------------------------------------------------------------
+ Gather (actual rows=39 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   ->  Parallel Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=20 loops=2)
+         namespaceName: p_ixscan.parallel_scan
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (10, 50)]
+         innerScanLoops: 0 loops
+         parallelScanCapable: false
+         scanType: ordered
+         scanKeyDetails: 
+         ->  Parallel Index Scan using a_1 on documents_901 collection (actual rows=xyz loops=2)
+               Index Cond: ((document @> '{ "a" : { "$numberInt" : "10" } }'::bson) AND (document @< '{ "a" : { "$numberInt" : "50" } }'::bson))
+(15 rows)
 

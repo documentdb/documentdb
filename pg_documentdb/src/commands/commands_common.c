@@ -41,7 +41,7 @@ extern bool RumFailOnLostPath;
  *
  *  Note: Please keep this array sorted.
  */
-static const char *IgnoredCommonSpecFields[] = {
+static const char *const IgnoredCommonSpecFields[] = {
 	"$clusterTime",
 	"$db",
 	"$readPreference",
@@ -92,7 +92,8 @@ static const char *IgnoredCommonSpecFields[] = {
 	"writeConcern"  /* insert, update, delete, createIndex, dropIndex command */
 };
 
-static int NumberOfIgnoredFields = sizeof(IgnoredCommonSpecFields) / sizeof(char *);
+static int NumberOfIgnoredFields = sizeof(IgnoredCommonSpecFields) /
+								   sizeof(IgnoredCommonSpecFields[0]);
 
 /* Forward declartion */
 static int CompareStringsCaseInsensitive(const void *a, const void *b);
@@ -265,9 +266,10 @@ FindShardKeyValueForDocumentId(MongoCollection *collection, const bson_value_t *
 bool
 IsCommonSpecIgnoredField(const char *fieldName)
 {
-	char **pItem = (char **) bsearch(&fieldName, IgnoredCommonSpecFields,
-									 NumberOfIgnoredFields,
-									 sizeof(char *), CompareStringsCaseInsensitive);
+	const char *const *pItem = bsearch(&fieldName, IgnoredCommonSpecFields,
+									   NumberOfIgnoredFields,
+									   sizeof(IgnoredCommonSpecFields[0]),
+									   CompareStringsCaseInsensitive);
 	return (pItem != NULL);
 }
 
@@ -384,7 +386,7 @@ GetObjectIdFilterFromQueryDocument(pgbson *queryDoc, bool *queryHasNonIdFilters,
 static int
 CompareStringsCaseInsensitive(const void *a, const void *b)
 {
-	return strcasecmp(*(char **) a, *(char **) b);
+	return strcasecmp(*(const char *const *) a, *(const char *const *) b);
 }
 
 

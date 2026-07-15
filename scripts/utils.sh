@@ -190,6 +190,7 @@ function InitDatabaseExtended()
 {
   local _directory=$1
   local _sharedPreloadLibraries=$2
+  local _dataChecksums=$3
 
   echo "Initializing PostgreSQL database in $_directory with preload libraries: $_sharedPreloadLibraries"
 
@@ -205,7 +206,13 @@ function InitDatabaseExtended()
   fi
 
   echo "Calling initdb for $_directory"
-  $(GetInitDB) -D $_directory
+  if [ "$_dataChecksums" == "true" ]; then
+    echo "Initializing database with data checksums"
+    $(GetInitDB) -D $_directory --data-checksums
+  else
+    echo "Initializing database without data checksums"
+    $(GetInitDB) -D $_directory
+  fi
   SetupPostgresConfigurations $_directory "$_sharedPreloadLibraries"
 }
 

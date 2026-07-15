@@ -56,6 +56,18 @@ fi
 
 echo "=== Environment tests passed! ==="
 
+# PGDG RHEL's postgresql.conf.sample enables logging_collector by default, which
+# redirects server logs to a separate file and leaves the postmaster stderr
+# logfile empty after startup. The PostgreSQL TAP framework (used by the
+# extended_rum_recovery suite) detects events by scanning that stderr logfile via
+# wait_for_log, so with the collector on those tests hang until timeout even
+# though the behavior under test fires correctly. Disable it in the sample so
+# every TAP cluster initdb'd here logs to stderr.
+PG_SAMPLE_CONF="$($PG_CONFIG --sharedir)/postgresql.conf.sample"
+if [ -f "$PG_SAMPLE_CONF" ]; then
+    sed -i 's/^[[:space:]]*logging_collector[[:space:]]*=.*/#logging_collector = off/' "$PG_SAMPLE_CONF"
+fi
+
 # Ensure the documentdb user has permissions to run tests
 adduser --system --no-create-home documentdb || true
 chown -R documentdb:documentdb .

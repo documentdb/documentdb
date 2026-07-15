@@ -1,0 +1,22 @@
+#!/bin/bash
+set -e
+
+# Real-user E2E flagged (Gap #22): gate on /run/systemd/system so apt
+# purge inside containers without systemd doesn't emit "Host is down" noise.
+has_working_systemd() {
+    [[ -d /run/systemd/system ]] && command -v systemctl >/dev/null 2>&1
+}
+
+case "$1" in
+    remove|deconfigure)
+        if has_working_systemd; then
+            systemctl stop documentdb-gateway 2>/dev/null || true
+            systemctl disable documentdb-gateway 2>/dev/null || true
+            for unit in $(systemctl list-units 'documentdb-gateway-local@*.service' --state=active --plain --no-legend 2>/dev/null | awk '{print $1}'); do
+                systemctl stop "${unit}" 2>/dev/null || true
+            done
+        fi
+        ;;
+esac
+
+exit 0

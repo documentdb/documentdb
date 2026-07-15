@@ -1006,6 +1006,9 @@ SELECT count(*) from ( SELECT shard_key_value, object_id, document  from documen
  10001
 (1 row)
 
+--  Disable autovacuum so the dead index entries left by the TTL purges are not
+--  reclaimed before the eligibleDeadItems EXPLAINs below (Citus propagates this to shards).
+ALTER TABLE documentdb_data.documents_20006 SET (autovacuum_enabled = off);
 --  Call ttl purge procedure with a batch size of 100
 BEGIN;
 SET client_min_messages TO LOG;
@@ -1050,6 +1053,9 @@ EXPLAIN(costs off) SELECT object_id FROM documentdb_data.documents_20006
 (11 rows)
 
 END;
+--  Remove the dead heap tuples while leaving their index entries in place, so the
+--  eligibleDeadItems count in the ordered index scan EXPLAIN below is deterministic.
+VACUUM (INDEX_CLEANUP OFF) documentdb_data.documents_20006;
 --  Check the query to fetch the eligible TTL indexes uses IndexScan.
 BEGIN;
 EXPLAIN(analyze on, verbose on, costs off, timing off, summary off) SELECT ctid FROM documentdb_data.documents_20006_2000105
@@ -1067,12 +1073,13 @@ EXPLAIN(analyze on, verbose on, costs off, timing off, summary off) SELECT ctid 
          isMultiKey: true
          indexBounds: ["ttl": [{ "$date" : { "$numberLong" : "-9223372036854775808" } }, { "$date" : "2025-08-06T21:22:45Z" })]
          innerScanLoops: 4 loops
+         eligibleDeadItems: 200 items
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 12242)]
          ->  Index Scan using ttl_index on documentdb_data.documents_20006_2000105 (actual rows=100 loops=1)
                Output: ctid
                Index Cond: (documents_20006_2000105.document @< '{ "ttl" : { "$date" : { "$numberLong" : "1754515365000" } } }'::bson)
-(14 rows)
+(15 rows)
 
 END;
 --  Shard collection
@@ -1093,6 +1100,9 @@ BEGIN;
 SET LOCAL documentdb.RepeatPurgeIndexesForTTLTask to off;
 CALL documentdb_api_internal.delete_expired_rows(100);
 END;
+--  Remove the dead heap tuples while leaving their index entries in place, so the
+--  eligibleDeadItems count in the EXPLAINs below is deterministic.
+VACUUM (INDEX_CLEANUP OFF) documentdb_data.documents_20006;
 SELECT count(*) from ( SELECT shard_key_value, object_id, document  from documentdb_api.collection('db', 'ttlCompositeOrderedScan') order by object_id) as a;
  count 
 ---------------------------------------------------------------------
@@ -1116,12 +1126,13 @@ EXPLAIN(analyze on, verbose on, costs off, timing off, summary off) SELECT ctid 
          isMultiKey: false
          indexBounds: ["ttl": [{ "$date" : { "$numberLong" : "-9223372036854775808" } }, { "$date" : "2022-07-15T15:47:10.775Z" })]
          innerScanLoops: 1 loops
+         eligibleDeadItems: 100 items
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1207)]
          ->  Index Scan using ttl_index on documentdb_data.documents_20006_2000124 (actual rows=100 loops=1)
                Output: ctid
                Index Cond: (documents_20006_2000124.document @< '{ "ttl" : { "$date" : { "$numberLong" : "1657900030775" } } }'::bson)
-(14 rows)
+(15 rows)
 
 END;
 BEGIN;
@@ -1139,11 +1150,12 @@ EXPLAIN(COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT ctid FROM documen
          isMultiKey: false
          indexBounds: ["ttl": [{ "$date" : { "$numberLong" : "-9223372036854775808" } }, { "$date" : "2022-07-15T15:47:10.775Z" })]
          innerScanLoops: 1 loops
+         eligibleDeadItems: 100 items
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1216)]
          ->  Index Scan using ttl_index on documents_20006_2000122 (actual rows=100 loops=1)
                Index Cond: (document @< '{ "ttl" : { "$date" : { "$numberLong" : "1657900030775" } } }'::bson)
-(11 rows)
+(12 rows)
 
 END;
 SELECT count(*) from ( SELECT shard_key_value, object_id, document  from documentdb_api.collection('db', 'ttlCompositeOrderedScan') order by object_id) as a;
@@ -1191,12 +1203,13 @@ EXPLAIN(COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF)
          indexBounds: ["ttl": [{ "$date" : { "$numberLong" : "-9223372036854775808" } }, { "$date" : "2022-07-15T15:47:10.775Z" })]
          isBackwardScan: true
          innerScanLoops: 1 loops
+         eligibleDeadItems: 200 items
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1216)]
          ->  Index Scan using ttl_index on documents_20006_2000122 (actual rows=100 loops=1)
                Index Cond: (document @< '{ "ttl" : { "$date" : { "$numberLong" : "1657900030775" } } }'::bson)
                Order By: (document OPERATOR(documentdb_api_internal.<>-|) '{ "ttl" : { "$numberInt" : "-1" } }'::bson)
-(13 rows)
+(14 rows)
 
 END;
 -- Test : Tests that creating TTL index with createTTLIndexAsCompositeByDefault GUC on creates composite index and the index is used for TTL deletes

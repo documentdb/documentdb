@@ -86,6 +86,7 @@ PG_FUNCTION_INFO_V1(command_create_collection_view);
 
 extern bool EnableSchemaValidation;
 extern bool EnablePreImages;
+extern bool SkipFailOnCollation;
 
 /*
  * command_create_collection_view represents the wire
@@ -420,6 +421,16 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 			spec->validationAction = ParseAndGetValidationActionOption(&createIter,
 																	   "create.validationAction",
 																	   hasSchemaValidationSpec);
+		}
+		else if (strcmp(key, "collation") == 0)
+		{
+			ReportFeatureUsage(FEATURE_COLLATION_CREATE_COLLECTION);
+			if (!SkipFailOnCollation)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+								errmsg(
+									"Collation is currently not supported")));
+			}
 		}
 		else if (strcmp(key, "writeConcern") == 0)
 		{

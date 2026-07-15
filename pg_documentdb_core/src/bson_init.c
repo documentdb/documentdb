@@ -32,6 +32,10 @@ bool SkipBsonArrayTraverseOptimization = DEFAULT_SKIP_BSON_ARRAY_TRAVERSE_OPTIMI
 #define DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH false
 bool EnableWriteDocumentsInRepath = DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH;
 
+#define DEFAULT_ENABLE_BSON_SELECTIVITY_FROM_BTREE_STATS false
+bool EnableBsonSelectivityFromBtreeStats =
+	DEFAULT_ENABLE_BSON_SELECTIVITY_FROM_BTREE_STATS;
+
 /*
  * Initializes core configurations pertaining to documentdb core.
  */
@@ -67,5 +71,13 @@ InitDocumentDBCoreConfigurations(const char *prefix)
 			"Whether to enable writing documents during bson repath and build."),
 		NULL, &EnableWriteDocumentsInRepath,
 		DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableBsonSelectivityFromBtreeStats", prefix),
+		gettext_noop(
+			"Whether to enable selectivity calculations based on btree statistics for bson btree operators."),
+		NULL, &EnableBsonSelectivityFromBtreeStats,
+		DEFAULT_ENABLE_BSON_SELECTIVITY_FROM_BTREE_STATS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 }

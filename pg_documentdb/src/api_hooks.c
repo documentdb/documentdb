@@ -21,13 +21,17 @@
 #include "utils/query_utils.h"
 #include "utils/documentdb_errors.h"
 #include "vector/vector_spec.h"
+#include "customscan/bson_custom_query_scan.h"
 
 extern bool DefaultUseCompositeOpClass;
 extern bool EnableExtendedIndexes;
 
 IsMetadataCoordinator_HookType is_metadata_coordinator_hook = NULL;
+IsClusterInitialized_HookType is_cluster_initialized_hook = NULL;
 RunCommandOnMetadataCoordinator_HookType run_command_on_metadata_coordinator_hook = NULL;
 RunQueryWithCommutativeWrites_HookType run_query_with_commutative_writes_hook = NULL;
+RunMultiValueQueryWithCommutativeWrites_HookType
+	run_multi_value_query_with_commutative_writes_hook = NULL;
 RunQueryWithSequentialModification_HookType
 	run_query_with_sequential_modification_mode_hook = NULL;
 DistributePostgresTable_HookType distribute_postgres_table_hook = NULL;
@@ -81,6 +85,9 @@ PasswordValidation_HookType
 DefaultEnableCompositeOpClass_HookType
 	default_enable_composite_op_class_hook = NULL;
 
+ExtendedSearchOperatorDefByName_HookType
+	extended_search_operator_def_by_name_hook = NULL;
+
 CreateTtlMetricsContext_HookType
 	create_ttl_metrics_context_hook = NULL;
 RecordTtlMetric_HookType
@@ -91,6 +98,9 @@ FinalizeTtlMetrics_HookType
 UpdateExtendedIndexStats_HookType
 	update_extended_index_stats_hook = NULL;
 
+GetEffectiveAggregateFunctionOid_HookType
+	get_effective_aggregate_function_oid_hook = NULL;
+
 /*
  * Single node scenario is always a metadata coordinator
  */
@@ -100,6 +110,22 @@ IsMetadataCoordinator(void)
 	if (is_metadata_coordinator_hook != NULL)
 	{
 		return is_metadata_coordinator_hook();
+	}
+
+	return true;
+}
+
+
+/*
+ * Returns true if the cluster is fully initialized (e.g. distributed requires initialize cluster to distribute tables).
+ * Non distributed scenario is always considered initialized.
+ */
+bool
+IsClusterInitialized(void)
+{
+	if (is_cluster_initialized_hook != NULL)
+	{
+		return is_cluster_initialized_hook();
 	}
 
 	return true;
@@ -120,6 +146,41 @@ RunCommandOnMetadataCoordinator(const char *query)
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 					errmsg("Unexpected. Should not call RunCommandOnMetadataCoordinator"
 						   "When the node is a MetadataCoordinator")));
+}
+
+
+/*
+ * Runs a multi-value query with commutative writes enabled for the duration of
+ * the query execution only. The GUC is scoped via NewGUCNestLevel/RollbackGUCChange
+ * in distributed mode, ensuring it does not leak to subsequent operations.
+ * In single-node mode, executes the query directly (no GUC needed).
+ * Pass plan as NULL to use SPI_execute_with_args with the query text.
+ */
+void
+RunMultiValueQueryWithCommutativeWrites(const char *query, SPIPlanPtr plan,
+										int nargs, Oid *argTypes,
+										Datum *argValues, char *argNulls,
+										bool readOnly, long maxTupleCount)
+{
+	if (run_multi_value_query_with_commutative_writes_hook != NULL)
+	{
+		run_multi_value_query_with_commutative_writes_hook(query, plan, nargs, argTypes,
+														   argValues, argNulls,
+														   readOnly, maxTupleCount);
+	}
+	else
+	{
+		/* Single-node: all writes are commutative, just execute directly */
+		if (plan != NULL)
+		{
+			SPI_execute_plan(plan, argValues, argNulls, readOnly, maxTupleCount);
+		}
+		else
+		{
+			SPI_execute_with_args(query, nargs, argTypes, argValues, argNulls,
+								  readOnly, maxTupleCount);
+		}
+	}
 }
 
 

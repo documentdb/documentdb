@@ -4,9 +4,9 @@ SET documentdb.next_collection_id TO 177700;
 SET documentdb.next_collection_index_id TO 177700;
 
 -- create a collection and insert a document
-set documentdb.enableSchemaValidation = false;
+set documentdb.enableSchemaValidation = off;
 SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"a": {"bsonType": "int"}}}}, "validationLevel": "strict", "validationAction": "error"}');
-set documentdb.enableSchemaValidation = true;
+set documentdb.enableSchemaValidation = on;
 SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"a": {"bsonType": "int"}}}}, "validationLevel": "strict", "validationAction": "error"}');
 -- get collection info
 SELECT cursorpage, continuation, persistconnection, cursorid  FROM documentdb_api.list_collections_cursor_first_page('schema_validation', '{ "listCollections": 1, "nameOnly": true }');
@@ -47,10 +47,6 @@ SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "
 -- create again with same parameters
 SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col4", "validationLevel": "strict"}');
 
-set documentdb.enableSchemaValidation = false;
--- update validation action
-SELECT documentdb_api.coll_mod('schema_validation', 'col', '{"collMod":"col", "validationAction": "warn"}');
-set documentdb.enableSchemaValidation = true;
 SELECT documentdb_api.coll_mod('schema_validation', 'col', '{"collMod":"col", "validationAction": "warn"}');
 SELECT documentdb_api.coll_mod('schema_validation', 'col', '{"collMod":"col", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"a": {"bsonType": "string"}}}}}');
 -- get updated collection info

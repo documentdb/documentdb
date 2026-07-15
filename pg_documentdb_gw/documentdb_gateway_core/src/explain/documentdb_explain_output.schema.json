@@ -114,6 +114,10 @@
           "type": "string",
           "description": "Name of the index used by this stage. Present for IXSCAN and other index-based stages, but omitted for FETCH stages."
         },
+        "cursorScanType": {
+          "type": "string",
+          "description": "The type of cursor scan used by the streaming or dynamic cursor custom scan. Values include 'streaming' (streaming continuation scan), 'streamingPrimaryKey' (streaming scan using primary key continuation), 'Primary Key Scan', 'Secondary Index Scan', 'Secondary Index Only Scan', 'Secondary Index Bitmap Scan', 'Secondary Index Bitmap AND Scan', 'Secondary Index Bitmap OR Scan', 'TID Range Scan'. Present when the plan uses a cursor-based scan."
+        },
         "direction": {
           "type": "string",
           "description": "The scan direction of the index scan (e.g. 'Forward' or 'Backward'). Only present for index scan stages."
@@ -129,8 +133,13 @@
           "description": "Indicates the index scan can satisfy the query without fetching the heap tuple. Present (and true) for 'Index Only Scan' node types."
         },
         "indexUsage": {
+          "type": "object",
+          "description": "Detailed information about how the index is used in this stage. Present when exactly one matching index entry exists (single index scan). A document with indexKeyString, isMultiKey, bounds, etc.",
+          "$ref": "#/$defs/QueryPlanIndexUsage"
+        },
+        "indexUsages": {
           "type": "array",
-          "description": "Detailed information about how indexes are used in this stage. Only includes entries whose indexName matches the stage's indexName.",
+          "description": "Detailed information about how indexes are used in this stage when multiple matching index entries exist (e.g. BitmapOr with the same index). Each element is a document with indexKeyString, isMultiKey, bounds, etc.",
           "items": {
             "$ref": "#/$defs/QueryPlanIndexUsage"
           }
@@ -138,6 +147,22 @@
         "pageSize": {
           "type": "number",
           "description": "The page size used for batched index lookups. Only present when the PostgreSQL plan reports a non-zero page size."
+        },
+        "sampleSize": {
+          "type": "number",
+          "description": "The requested sample size for a $sample stage. Only present when the PostgreSQL plan reports a non-zero sample size."
+        },
+        "sampleReservoirMethod": {
+          "type": "string",
+          "description": "The reservoir sampling method chosen for a $sample stage. Either 'Materialize' (every matching row is read from the heap) or 'Heap Skip' (unsampled rows are passed over via the index without a heap read). Only present when the plan uses reservoir sampling."
+        },
+        "sampleRowsSkipped": {
+          "type": "number",
+          "description": "The number of matching rows passed over without entering the reservoir during heap skip sampling. Only present under executionStats verbosity when the plan uses heap skip sampling."
+        },
+        "sampleHeapSkips": {
+          "type": "number",
+          "description": "The number of skipped rows that still required a heap read (page not all-visible or a lossy index match); the rest were counted from the visibility map. Only present under executionStats verbosity when the plan uses heap skip sampling."
         },
         "startupCost": {
           "type": "number",
@@ -147,24 +172,28 @@
           "type": "number",
           "description": "PostgreSQL estimated total cost for this plan node. Represents the cost to return all rows. Only present when greater than zero."
         },
+        "workersPlanned": {
+          "type": "integer",
+          "description": "Number of parallel workers planned for this stage. Derived from PostgreSQL's 'Workers Planned'. Omitted if zero. Present in queryPlanner output."
+        },
         "cosmosSearchCustomParams": {
           "$ref": "#/$defs/VectorSearchCustomParams",
           "description": "Custom parameters for Cosmos DB vector search operations. Only present when the plan involves a vector similarity search."
         },
         "runtimeFilterSet": {
           "type": "array",
-          "description": "Array of runtime filter conditions applied after the index scan. Each element is a document mapping an operator (e.g. '$eq', '$gt', '$in') to its operand BSON value. Derived from PostgreSQL 'Filter' expressions. Truncated if total size exceeds 100KB.",
+          "description": "Array of runtime filter conditions applied after the index scan. Each element is a document mapping a field path to a nested document containing the operator and operand, e.g. { 'a.b': { '$gt': 500 } }. When the field path can't be explicitly inferred or when collation is enabled, the element is a flat document mapping the operator to its operand BSON value. Supported operators include '$eq', '$gt', '$gte', '$lt', '$lte', '$in', '$ne', '$nin', '$regExp', '$exists', '$size', '$type'. Derived from PostgreSQL 'Filter' expressions. Truncated if needed.",
           "items": {
             "type": "object",
-            "description": "A single runtime filter condition. Key is the query operator, value is the BSON operand."
+            "description": "A single runtime filter condition. Typically { fieldPath: { operator: operand } }, or { operator: operand } when the field path can't be explicitly inferred or when collation is enabled."
           }
         },
         "indexFilterSet": {
           "type": "array",
-          "description": "Array of index filter conditions pushed down to the index scan. Each element maps a operator to its operand BSON value. Derived from PostgreSQL 'Index Cond' expressions. Truncated if total size exceeds 100KB.",
+          "description": "Array of index filter conditions pushed down to the index scan. Each element is a document mapping a field path to a nested document containing the operator and operand, e.g. { 'a.b': { '$gt': 500 } }. When the field path can't be explicitly inferred or when collation is enabled, the element is a flat document mapping the operator to its operand BSON value. Supported operators include '$eq', '$gt', '$gte', '$lt', '$lte', '$in', '$ne', '$nin', '$regExp', '$exists', '$size', '$type'. Derived from PostgreSQL 'Index Cond' expressions. Truncated if needed.",
           "items": {
             "type": "object",
-            "description": "A single index filter condition. Key is the query operator, value is the BSON operand."
+            "description": "A single index filter condition. Typically { fieldPath: { operator: operand } }, or { operator: operand } when the field path can't be explicitly inferred or when collation is enabled."
           }
         },
         "sortKeysCount": {
@@ -257,24 +286,34 @@
           "type": "boolean",
           "description": "Whether the index is a multikey index (indexes on array fields). Null/omitted if not applicable."
         },
+        "multiKeyPaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "For a composite index with per-path multikey tracking, the list of index paths observed to be multikey (indexed on array values). Null/omitted if not applicable."
+        },
         "hasTruncation": {
           "type": "boolean",
           "description": "Whether the composite index has truncated terms due to exceeding maximum term size. Null/omitted if not applicable."
         },
+        "truncatedPaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "For a composite index with per-path truncation tracking, the list of index paths observed to have truncated terms (capped at the first 6 paths; truncation on later paths is reflected only by hasTruncation). Null/omitted if not applicable."
+        },
         "bounds": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Index scan bounds as string representations. Describes the range of keys scanned. e.g. { $eq: 5 } would be shown as [5, 5]; while { $gt: 5, $lte: 10 } would be shown as (5, 10]."
+          "description": "Index scan bounds as string representations. Describes the range of keys scanned. e.g. { $eq: 5 } would be shown as [5, 5]; while { $gt: 5, $lte: 10 } would be shown as (5, 10]. Individual entries and the overall array are truncated if needed."
         },
         "startBounds": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Starting bounds for the index scan range. Present for range-based index scans where the index chooses to do delayed expansion of bounds. The remainingbounds are present in rawBounds."
+          "description": "Starting bounds for the index scan range. Present for range-based index scans where the index chooses to do delayed expansion of bounds. The remaining bounds are present in rawBounds. Truncated if needed."
         },
         "rawBounds": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Raw (unprocessed) index bounds. Present when the index chooses to do delayed expansion of bounds. The first processed bounds are present in startBounds."
+          "description": "Raw (unprocessed) index bounds. Present when the index chooses to do delayed expansion of bounds. The first processed bounds are present in startBounds. Truncated if needed."
         }
       }
     },
@@ -351,6 +390,10 @@
           "type": "integer",
           "description": "Documents examined by this stage (actual rows + rows removed by filter). Present when the stage has no index or has a filter or has rows removed by filter."
         },
+        "skippedTuples": {
+          "type": "number",
+          "description": "Number of tuples skipped by the cursor scan during execution. Only present when greater than zero."
+        },
         "totalKeysExamined": {
           "type": "integer",
           "description": "Index keys examined by this stage (actual rows + rows removed by index recheck)."
@@ -364,8 +407,13 @@
           "description": "Number of heap fetches (documents fetched from the heap after an index-only scan had to recheck visibility). Derived from PostgreSQL's 'Heap Fetches'. Omitted for FETCH stages."
         },
         "indexUsage": {
+          "type": "object",
+          "description": "Index usage details for execution stats when exactly one matching index entry exists. Contains scan loop counts, scan type, and duplicate information.",
+          "$ref": "#/$defs/ExecutionStatsIndexUsage"
+        },
+        "indexUsages": {
           "type": "array",
-          "description": "Index usage details for execution stats. Contains scan loop counts, scan type, and duplicate information.",
+          "description": "Index usage details for execution stats when multiple matching index entries exist. Each element contains scan loop counts, scan type, and duplicate information.",
           "items": {
             "$ref": "#/$defs/ExecutionStatsIndexUsage"
           }
@@ -383,6 +431,14 @@
         "sortMethod": {
           "type": "string",
           "description": "The sort algorithm used (e.g. 'quicksort', 'top-N heapsort', 'external merge'). Derived from PostgreSQL's 'Sort Method'."
+        },
+        "aggStrategy": {
+          "type": "string",
+          "description": "The aggregation strategy used by the Aggregate node (e.g. 'Plain', 'Sorted', 'Hashed', 'Mixed'). Derived from PostgreSQL's 'Strategy' field."
+        },
+        "joinType": {
+          "type": "string",
+          "description": "The join type used by a $lookup-like node (e.g. 'Inner', 'Left', 'Semi', 'Anti'). Derived from PostgreSQL's 'Join Type' field. Only present for join stages."
         },
         "exactBlocksRead": {
           "type": "integer",
@@ -458,6 +514,10 @@
         "deadEntriesOrPagesSkipped": {
           "type": "number",
           "description": "Number of dead index entries or pages skipped during the index scan (see LP_DEAD). Written as the smallest numeric type (int32 if integral). Omitted if not reported by the index."
+        },
+        "eligibleDeadItems": {
+          "type": "number",
+          "description": "Number of index entries eligible for cleanup as dead items encountered during the index scan. Written as the smallest numeric type (int32 if integral). Omitted if zero or not reported by the index."
         },
         "parallelScanCapable": {
           "type": "boolean",

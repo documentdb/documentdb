@@ -20,12 +20,10 @@
 #include <commands/explain_state.h>
 #include <commands/explain_format.h>
 #endif
-#include <storage/lwlock.h>
+#include "storage/spin.h"
 #include "pg_documentdb_rum.h"
 #include "pg_documentdb_rum_dedup.h"
 
-extern int RumParallelScanTrancheId;
-extern const char *RumParallelScanTrancheName;
 extern const RumIndexArrayStateFuncs RoaringStateFuncs;
 
 #if PG_VERSION_NUM >= 180000
@@ -36,7 +34,6 @@ extern const RumIndexArrayStateFuncs RoaringStateFuncs;
 #define ParallelScanGetOpaque(x) OffsetToPointer((void *) x, \
 												 x->ps_offset)
 
-static bool TrancheRegistered = false;
 #endif
 
 typedef enum RumParallelScanState
@@ -54,7 +51,8 @@ typedef struct RumParallelScanDescData
 	BlockNumber rum_ps_current_page; /* latest or next page to be scanned */
 	RumParallelScanState parallel_scan_state;
 	bool isParallelScanEligible;
-	LWLock rum_ps_lock;             /* protects shared parallel state */
+	RumScanType exec_scan_type;
+	slock_t rum_ps_mutex;           /* protects shared parallel state */
 	ConditionVariable rum_ps_cv;    /* used to synchronize parallel scan */
 } RumParallelScanDescData;
 
@@ -67,9 +65,7 @@ typedef struct ExplainWriterFuncs
 						 void *writer);
 } ExplainWriterFuncs;
 
-extern PGDLLEXPORT void try_explain_documentdb_rum_index(IndexScanDesc scan,
-														 void *state,
-														 ExplainWriterFuncs *funcs);
+RMGR_PG_FUNCTION_INFO_V1(try_explain_documentdb_rum_index);
 
 IndexScanDesc
 rumbeginscan(Relation rel, int nkeys, int norderbys)
@@ -80,12 +76,16 @@ rumbeginscan(Relation rel, int nkeys, int norderbys)
 
 	scan = RelationGetIndexScan(rel, nkeys, norderbys);
 
+	/* Validate the index version for sanity */
+	rumValidateIndexVersion(scan->indexRelation);
+
 	/* allocate private workspace */
 	so = (RumScanOpaque) palloc(sizeof(RumScanOpaqueData));
 	so->sortstate = NULL;
 	so->keys = NULL;
 	so->nkeys = 0;
 	so->firstCall = true;
+	so->isParallelEnabled = false;
 	so->totalentries = 0;
 	so->totalsearchentries = 0;
 	so->sortedEntries = NULL;
@@ -95,6 +95,8 @@ rumbeginscan(Relation rel, int nkeys, int norderbys)
 	so->killedItems = NULL;
 	so->numKilled = 0;
 	so->killedItemsSkipped = 0;
+	so->eligibleDeadItems = 0;
+	so->scanType = RumFastScan;
 	so->orderByKeyIndex = -1;
 	so->scanNumberOfKeys = nkeys;
 	so->orderScanDirection = ForwardScanDirection;
@@ -486,19 +488,10 @@ freeScanEntries(RumScanEntry *entries, uint32 nentries)
 void
 freeScanKeys(RumScanOpaque so)
 {
-	if (RumEnableSupportDeadIndexItems &&
-		so->orderByScanData && so->numKilled > 0 &&
-		so->orderByScanData->isPageValid &&
-		so->orderByScanData->orderByEntryPageCopy &&
-		so->orderByScanData->orderStack)
-	{
-		/* last chance to kill entries - needs to be called
-		 * before freeScanEntries releases buffer pins.
-		 */
-		LockBuffer(so->orderByScanData->orderStack->buffer, RUM_SHARE);
-		RumKillEntryItems(so, so->orderByScanData);
-		LockBuffer(so->orderByScanData->orderStack->buffer, RUM_UNLOCK);
-	}
+	/* last chance to kill entries - needs to be called
+	 * before freeScanEntries releases buffer pins.
+	 */
+	rumFlushKilledEntries(so);
 
 	freeScanEntries(so->entries, so->totalentries);
 
@@ -1234,18 +1227,11 @@ ruminitparallelscan(void *target)
 {
 	RumParallelScanDescData *rum_ps_target = (RumParallelScanDescData *) target;
 
-#if PG_VERSION_NUM < 180000
-	if (!TrancheRegistered)
-	{
-		LWLockRegisterTranche(RumParallelScanTrancheId, RumParallelScanTrancheName);
-		TrancheRegistered = true;
-	}
-#endif
-
-	LWLockInitialize(&rum_ps_target->rum_ps_lock, RumParallelScanTrancheId);
+	SpinLockInit(&rum_ps_target->rum_ps_mutex);
 	rum_ps_target->rum_ps_current_page = InvalidBlockNumber;
 	rum_ps_target->parallel_scan_state = RumParallelScanState_NotInitialized;
 	rum_ps_target->isParallelScanEligible = false;
+	rum_ps_target->exec_scan_type = RumFastScan;
 	ConditionVariableInit(&rum_ps_target->rum_ps_cv);
 }
 
@@ -1265,12 +1251,16 @@ rumparallelrescan(IndexScanDesc scan)
 	 * In theory, we don't need to acquire the spinlock here, because there
 	 * shouldn't be any other workers running at this point, but we do so for
 	 * consistency.
+	 *
+	 * WARNING: SpinLock critical section — must not call any function that
+	 * could block, allocate memory, or call CHECK_FOR_INTERRUPTS().
 	 */
-	LWLockAcquire(&psdata->rum_ps_lock, LW_EXCLUSIVE);
+	SpinLockAcquire(&psdata->rum_ps_mutex);
 	psdata->rum_ps_current_page = InvalidBlockNumber;
 	psdata->parallel_scan_state = RumParallelScanState_NotInitialized;
 	psdata->isParallelScanEligible = false;
-	LWLockRelease(&psdata->rum_ps_lock);
+	psdata->exec_scan_type = RumFastScan;
+	SpinLockRelease(&psdata->rum_ps_mutex);
 }
 
 
@@ -1289,7 +1279,13 @@ rum_parallel_scan_start(IndexScanDesc scan, bool *startScan)
 	while (!exitLoop)
 	{
 		CHECK_FOR_INTERRUPTS();
-		LWLockAcquire(&psdata->rum_ps_lock, LW_EXCLUSIVE);
+
+		/*
+		 * WARNING: SpinLock critical section below — only read/write shared
+		 * state fields. Must not call any function that could block, allocate
+		 * memory, elog/ereport, or call CHECK_FOR_INTERRUPTS() while held.
+		 */
+		SpinLockAcquire(&psdata->rum_ps_mutex);
 		switch (psdata->parallel_scan_state)
 		{
 			case RumParallelScanState_NotInitialized:
@@ -1311,17 +1307,36 @@ rum_parallel_scan_start(IndexScanDesc scan, bool *startScan)
 				break;
 			}
 
-			/* Any higher states should be considered one thread is done with startScan */
 			case RumParallelScanState_StartScanDone:
-			default:
+			case RumParallelScanState_Idle:
+			case RumParallelScanState_ScanningTree:
+			case RumParallelScanState_Done:
 			{
+				/* StartScan phase is complete — read the first worker's result */
 				*startScan = false;
 				exitLoop = true;
 				result = psdata->isParallelScanEligible;
+
+				/* Store the scan type determined by the first worker into
+				 * the local opaque. This ensures so->scanType is correct
+				 * even when the leader doesn't run startScan itself (e.g.,
+				 * when parallel is not eligible for this scan direction).
+				 */
+				RumScanOpaque so = (RumScanOpaque) scan->opaque;
+				so->scanType = psdata->exec_scan_type;
+				break;
+			}
+
+			default:
+			{
+				SpinLockRelease(&psdata->rum_ps_mutex);
+				ereport(ERROR, (errmsg(
+									"Parallel scan start called with unexpected state %d",
+									psdata->parallel_scan_state)));
 				break;
 			}
 		}
-		LWLockRelease(&psdata->rum_ps_lock);
+		SpinLockRelease(&psdata->rum_ps_mutex);
 
 		if (!exitLoop)
 		{
@@ -1330,6 +1345,7 @@ rum_parallel_scan_start(IndexScanDesc scan, bool *startScan)
 		}
 	}
 
+	ConditionVariableCancelSleep();
 	return result;
 }
 
@@ -1348,14 +1364,21 @@ rum_parallel_seize(ParallelIndexScanDesc parallelScan, BlockNumber *blockNumber)
 	while (!exitLoop)
 	{
 		CHECK_FOR_INTERRUPTS();
-		LWLockAcquire(&psdata->rum_ps_lock, LW_EXCLUSIVE);
+
+		/*
+		 * WARNING: SpinLock critical section below — only read/write shared
+		 * state fields. Must not call any function that could block, allocate
+		 * memory, elog/ereport, or call CHECK_FOR_INTERRUPTS() while held.
+		 * The error paths below release the spinlock BEFORE calling ereport.
+		 */
+		SpinLockAcquire(&psdata->rum_ps_mutex);
 		switch (psdata->parallel_scan_state)
 		{
 			case RumParallelScanState_NotInitialized:
 			case RumParallelScanState_RunningStartScan:
 			{
-				/* Unexpected */
-				LWLockRelease(&psdata->rum_ps_lock);
+				/* Unexpected — release spinlock before raising error */
+				SpinLockRelease(&psdata->rum_ps_mutex);
 				ereport(ERROR, (errmsg(
 									"Parallel scan seize called before initialization. Unexpected")));
 				break;
@@ -1387,14 +1410,15 @@ rum_parallel_seize(ParallelIndexScanDesc parallelScan, BlockNumber *blockNumber)
 
 			default:
 			{
-				LWLockRelease(&psdata->rum_ps_lock);
+				/* Release spinlock before raising error */
+				SpinLockRelease(&psdata->rum_ps_mutex);
 				ereport(ERROR, (errmsg(
 									"Parallel scan seize called with unexpected state %d",
 									psdata->parallel_scan_state)));
 				break;
 			}
 		}
-		LWLockRelease(&psdata->rum_ps_lock);
+		SpinLockRelease(&psdata->rum_ps_mutex);
 
 		if (!exitLoop)
 		{
@@ -1403,6 +1427,7 @@ rum_parallel_seize(ParallelIndexScanDesc parallelScan, BlockNumber *blockNumber)
 		}
 	}
 
+	ConditionVariableCancelSleep();
 	return result;
 }
 
@@ -1411,32 +1436,48 @@ void
 rum_parallel_release(ParallelIndexScanDesc parallelScan, BlockNumber nextBlock)
 {
 	RumParallelScanDescData *psdata;
+	bool isDone;
 
 	Assert(parallelScan);
 
 	psdata = (RumParallelScanDescData *) ParallelScanGetOpaque(parallelScan);
 
 
-	LWLockAcquire(&psdata->rum_ps_lock, LW_EXCLUSIVE);
-	if (psdata->parallel_scan_state != RumParallelScanState_ScanningTree)
-	{
-		ereport(ERROR, (errmsg(
-							"rum_parallel_release called with unexpected current state %d",
-							psdata->parallel_scan_state)));
-	}
+	/*
+	 * WARNING: SpinLock critical section below — only read/write shared
+	 * state fields. Must not call any function that could block, allocate
+	 * memory, elog/ereport, or call CHECK_FOR_INTERRUPTS() while held.
+	 * The error path releases the spinlock BEFORE calling ereport.
+	 */
+	SpinLockAcquire(&psdata->rum_ps_mutex);
+	Assert(psdata->parallel_scan_state == RumParallelScanState_ScanningTree);
 
 	if (nextBlock == InvalidBlockNumber)
 	{
 		psdata->parallel_scan_state = RumParallelScanState_Done;
 		psdata->rum_ps_current_page = nextBlock;
+		isDone = true;
 	}
 	else
 	{
 		psdata->parallel_scan_state = RumParallelScanState_Idle;
 		psdata->rum_ps_current_page = nextBlock;
+		isDone = false;
 	}
-	LWLockRelease(&psdata->rum_ps_lock);
-	ConditionVariableBroadcast(&psdata->rum_ps_cv);
+	SpinLockRelease(&psdata->rum_ps_mutex);
+
+	/*
+	 * Use Signal for Idle (only one worker can seize next) and Broadcast
+	 * for Done (all waiting workers must wake up and exit).
+	 */
+	if (isDone)
+	{
+		ConditionVariableBroadcast(&psdata->rum_ps_cv);
+	}
+	else
+	{
+		ConditionVariableSignal(&psdata->rum_ps_cv);
+	}
 }
 
 
@@ -1452,17 +1493,23 @@ rum_parallel_scan_start_notify(IndexScanDesc scan)
 
 	psdata = (RumParallelScanDescData *) ParallelScanGetOpaque(parallel_scan);
 
-
-	LWLockAcquire(&psdata->rum_ps_lock, LW_EXCLUSIVE);
+	/*
+	 * WARNING: SpinLock critical section below — only read/write shared
+	 * state fields. Must not call any function that could block, allocate
+	 * memory, elog/ereport, or call CHECK_FOR_INTERRUPTS() while held.
+	 * All field reads (so->scanType, etc.) are from process-local memory.
+	 */
+	SpinLockAcquire(&psdata->rum_ps_mutex);
 	psdata->parallel_scan_state = RumParallelScanState_StartScanDone;
 
 	/* Can't do parallel scans if there's a need to dedup TIDs across pages */
+	psdata->exec_scan_type = so->scanType;
 	psdata->isParallelScanEligible = so->scanType == RumOrderedScan &&
 									 ScanDirectionIsForward(so->orderScanDirection) &&
 									 so->orderByScanData->orderByDedupState == NULL;
 	psdata->rum_ps_current_page = InvalidBlockNumber;
 	isParallelEnabled = psdata->isParallelScanEligible;
-	LWLockRelease(&psdata->rum_ps_lock);
+	SpinLockRelease(&psdata->rum_ps_mutex);
 	ConditionVariableBroadcast(&psdata->rum_ps_cv);
 	return isParallelEnabled;
 }
@@ -1525,16 +1572,17 @@ rumrestrpos(PG_FUNCTION_ARGS)
 }
 
 
-extern PGDLLEXPORT void
-try_explain_documentdb_rum_index(IndexScanDesc scan,
-								 void *state, ExplainWriterFuncs *funcs)
+RMGR_PG_FUNCTION_DEF(try_explain_documentdb_rum_index)
 {
+	IndexScanDesc scan = (IndexScanDesc) PG_GETARG_POINTER(0);
+	void *state = (void *) PG_GETARG_POINTER(1);
+	ExplainWriterFuncs *funcs = (ExplainWriterFuncs *) PG_GETARG_POINTER(2);
+
 	/* This function is called from explain.c */
 	int i, j;
 	List *entryList = NIL;
 	const char *scanType = "unknown";
 	RumScanOpaque so = (RumScanOpaque) scan->opaque;
-
 
 	if (so->numDuplicates > 0)
 	{
@@ -1557,8 +1605,23 @@ try_explain_documentdb_rum_index(IndexScanDesc scan,
 							so->killedItemsSkipped, state);
 	}
 
+	if (so->eligibleDeadItems > 0)
+	{
+		funcs->writeInteger("eligibleDeadItems", "items",
+							so->eligibleDeadItems, state);
+	}
+
 	if (scan->parallel_scan != NULL)
 	{
+		/*
+		 * If the leader did not participate in the scan (firstCall still true),
+		 * then so->scanType was never set by rumgettuple. Start the scan to set the type.
+		 */
+		if (so->firstCall)
+		{
+			startScan(scan);
+		}
+
 		funcs->writeBool("parallelScanCapable", so->isParallelEnabled, state);
 	}
 
@@ -1624,4 +1687,5 @@ try_explain_documentdb_rum_index(IndexScanDesc scan,
 	}
 
 	funcs->writeStringList("scanKeyDetails", entryList, state);
+	PG_RETURN_VOID();
 }

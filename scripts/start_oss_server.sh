@@ -61,6 +61,7 @@ logPath=""
 numberWorkerNodes=0
 workerNodePortPrefix="1000"  # yields 10001, 10002, ...
 workerNodeDirectoryPrefix=""
+dataChecksums="false"
 
 # Append a configuration line to postgresql.conf in the given Postgres data directory
 AddPostgresConfigToServers() {
@@ -138,7 +139,7 @@ BootstrapGatewayWorkerOnCoordinator() {
   fi
 }
 
-while getopts "d:p:u:a:hcsxegrvf:l:n:w:" opt; do
+while getopts "d:p:u:a:hcsxegrvf:l:n:w:k" opt; do
   case $opt in
     d) postgresDirectory="$OPTARG"
     ;;
@@ -172,6 +173,8 @@ while getopts "d:p:u:a:hcsxegrvf:l:n:w:" opt; do
     n) numberWorkerNodes="$OPTARG"
     ;;
     w) workerNodePortPrefix="$OPTARG"
+    ;;
+    k) dataChecksums="true"
     ;;
   esac
 
@@ -212,6 +215,7 @@ if [ "$help" == "true" ]; then
     echo "${green}[-v] - optional argument. run via valgrind mode"
     echo "${green}[-f <file>] - optional argument. add this extra conf file to postgresql.conf"
     echo "${green}[-l <file>] - optional argument. log to this file for the postgres server logs"
+    echo "${green}[-k] - optional argument. enables data checksums"
     echo "${green}if postgresDir not specified assumed to be $HOME/.documentdb/data"
     exit 1;
 fi
@@ -337,12 +341,12 @@ fi
 echo "InitDatabaseExtended $initSetup $postgresDirectory"
 
 if [ "$initSetup" == "true" ]; then
-    InitDatabaseExtended $postgresDirectory "$sharedPreloadLibraries"
+    InitDatabaseExtended $postgresDirectory "$sharedPreloadLibraries" $dataChecksums
 
     # Initialize worker node data directories for multinode setups
     if [ "$numberWorkerNodes" -gt 0 ]; then
       for (( i=1; i<=$numberWorkerNodes; i++ )); do
-        InitDatabaseExtended "${workerNodeDirectoryPrefix}${i}" "$sharedPreloadLibraries"
+        InitDatabaseExtended "${workerNodeDirectoryPrefix}${i}" "$sharedPreloadLibraries" $dataChecksums
       done
     fi
 fi

@@ -13,7 +13,21 @@
 
 #include "postgres.h"
 
+#include "miscadmin.h"
 #include "pg_documentdb_rum.h"
+
+/* How to prepare the entry page for insertion */
+typedef enum EntryPrepareMode
+{
+	/* Force delete the existing tuple */
+	EntryPrepareMode_ForceDelete = 0,
+
+	/* Allow replacing the existing tuple if it exists and can fit */
+	EntryPrepareMode_AllowReplace = 1,
+
+	/* Delete the existing tuple, but we don't need to reclaim space */
+	EntryPrepareMode_Delete = 2
+} EntryPrepareMode;
 
 
 /*
@@ -273,6 +287,76 @@ rumEntryGetRightMostTuple(Page page)
 	Assert(maxoff != InvalidOffsetNumber);
 
 	return (IndexTuple) PageGetItem(page, PageGetItemId(page, maxoff));
+}
+
+
+/*
+ * Steps in the direction specified in the entryTree for read-only scans.
+ * This is different from rumStep for a few reasons:
+ * Typically for Vacuum, we want to avoid races where a page could get deleted
+ * as we're traversing into it. To avoid this race, we acquire the lock on the
+ * next page first, then release the current page. However, this means that there is
+ * no opportunity where we have no locks to check for interrupts.
+ * We cannot release first, and then lock the next page typically since that races
+ * with vacuum page deletion. However, for entry pages, deleted pages enter a half-dead
+ * state and only get recycled after the transaction xid min. Consequently, stepping
+ * for entry pages can release, check for interrupts, and then acquire the next page.
+ */
+Buffer
+rumStepEntryForScans(Buffer buffer, Relation index, ScanDirection scanDirection)
+{
+	Buffer nextbuffer;
+	Page page = BufferGetPage(buffer);
+	bool isLeaf = RumPageIsLeaf(page);
+	bool isData = RumPageIsData(page);
+	BlockNumber blkno;
+
+entryScanBegin:
+	blkno = (ScanDirectionIsForward(scanDirection)) ?
+			RumPageGetOpaque(page)->rightlink :
+			RumPageGetOpaque(page)->leftlink;
+
+	if (blkno == InvalidBlockNumber)
+	{
+		UnlockReleaseBuffer(buffer);
+		return InvalidBuffer;
+	}
+
+	/* First unlock and release the current buffer */
+	UnlockReleaseBuffer(buffer);
+
+	/* Check for interrupts when we're not holding any pins or locks */
+	CHECK_FOR_INTERRUPTS();
+
+	/* Lock and read the next buffer */
+	nextbuffer = ReadBuffer(index, blkno);
+	LockBuffer(nextbuffer, RUM_SHARE);
+
+	/* Sanity check that the page we stepped to is of similar kind. */
+	page = BufferGetPage(nextbuffer);
+	if (isLeaf != RumPageIsLeaf(page) || isData != RumPageIsData(page))
+	{
+		elog(ERROR, "right sibling of RUM page is of different type");
+	}
+
+	/*
+	 * Given the proper lock sequence above, we should never land on a deleted
+	 * page.
+	 */
+	if (RumPageIsDeleted(page))
+	{
+		elog(ERROR, "%s sibling of RUM page was deleted",
+			 ScanDirectionIsForward(scanDirection) ? "right" : "left");
+	}
+
+	if (RumPageIsHalfDead(page))
+	{
+		/* If on a half dead page, restart and move forward */
+		buffer = nextbuffer;
+		goto entryScanBegin;
+	}
+
+	return nextbuffer;
 }
 
 
@@ -564,17 +648,56 @@ entryIsEnoughSpace(RumBtree btree, Buffer buf, OffsetNumber off)
  * if child split occurred
  */
 static BlockNumber
-entryPreparePage(RumBtree btree, Page page, OffsetNumber off)
+entryPreparePage(RumBtree btree, Page page, OffsetNumber off,
+				 EntryPrepareMode prepareMode,
+				 bool *doReplace, bool *needsOverwrite)
 {
 	BlockNumber ret = InvalidBlockNumber;
 
 	Assert(btree->entry);
 	Assert(!RumPageIsData(page));
 
+	*doReplace = false;
 	if (btree->isDelete)
 	{
 		Assert(RumPageIsLeaf(page));
-		PageIndexTupleDelete(page, off);
+		if (RumAllowReplaceOnInsertTuple && prepareMode != EntryPrepareMode_ForceDelete)
+		{
+			ItemId currentItemId = PageGetItemId(page, off);
+			if (!ItemIdIsNormal(currentItemId))
+			{
+				/* LP_DEAD entries - needs to replace and rewrite and revive */
+				btree->isDelete = true;
+				PageIndexTupleDelete(page, off);
+			}
+			else if (prepareMode != EntryPrepareMode_AllowReplace)
+			{
+				/* Since we're just about to add PageAddItem - skip the compact on this delete */
+				btree->isDelete = true;
+				PageIndexTupleDeleteNoCompact(page, off);
+				*needsOverwrite = true;
+			}
+			else
+			{
+				IndexTuple itup = (IndexTuple) PageGetItem(page, currentItemId);
+				if (MAXALIGN(IndexTupleSize(itup)) >= MAXALIGN(IndexTupleSize(
+																   btree->entry)))
+				{
+					*doReplace = true;
+				}
+				else
+				{
+					/* Since we're just about to add PageAddItem - skip the compact on this delete */
+					btree->isDelete = true;
+					PageIndexTupleDeleteNoCompact(page, off);
+					*needsOverwrite = true;
+				}
+			}
+		}
+		else
+		{
+			PageIndexTupleDelete(page, off);
+		}
 	}
 
 	if (!RumPageIsLeaf(page) && btree->rightblkno != InvalidBlockNumber)
@@ -594,23 +717,58 @@ entryPreparePage(RumBtree btree, Page page, OffsetNumber off)
 /*
  * Place tuple on page and fills WAL record
  */
-static void
-entryPlaceToPage(RumBtree btree, Page page, OffsetNumber off)
+static bool
+entryPlaceToPage(RumBtree btree, Page page, OffsetNumber off,
+				 bool requireWalFromPlaceToPage)
 {
 	OffsetNumber placed;
 
-	entryPreparePage(btree, page, off);
+	/* Don't do a replace if we're writing custom WAL - this ensures that
+	 * the physical bits layout is identical between the primary and standby.
+	 */
+	EntryPrepareMode prepareMode = EntryPrepareMode_ForceDelete;
+	bool needsOverwrite = false;
+	bool doReplace = false;
 
-	placed = PageAddItem(page, (Item) btree->entry, IndexTupleSize(btree->entry), off,
-						 false, false);
-	if (placed != off)
+	if (RumPageIsLeaf(page))
 	{
-		elog(ERROR, "failed to add item to index page in \"%s\"",
-			 RelationGetRelationName(btree->index));
+		prepareMode = requireWalFromPlaceToPage ? EntryPrepareMode_Delete :
+					  EntryPrepareMode_AllowReplace;
+	}
+
+	entryPreparePage(btree, page, off, prepareMode, &doReplace, &needsOverwrite);
+
+	if (doReplace)
+	{
+		Assert(!needsOverwrite);
+		if (!PageIndexTupleOverwrite(page, off, (Item) btree->entry, IndexTupleSize(
+										 btree->entry)))
+		{
+			elog(ERROR, "failed to replace index tuple in tree in \"%s\" offset %d",
+				 RelationGetRelationName(btree->index), off);
+		}
+	}
+	else
+	{
+		placed = PageAddItem(page, (Item) btree->entry, IndexTupleSize(btree->entry), off,
+							 needsOverwrite, false);
+		if (placed != off)
+		{
+			elog(ERROR, "failed to add item to index page in \"%s\" offset %d",
+				 RelationGetRelationName(btree->index), off);
+		}
 	}
 
 	Assert(ItemIdIsNormal(PageGetItemId(page, off)));
+
+	if (requireWalFromPlaceToPage)
+	{
+		/* In the standby we need to redo for delete + add for both delete and replace */
+		WriteInsertEntryWalRecord(btree->isDelete, off, btree->entry);
+	}
+
 	btree->entry = NULL;
+	return requireWalFromPlaceToPage;
 }
 
 
@@ -644,8 +802,12 @@ entrySplitPage(RumBtree btree, Buffer lbuf, Buffer rbuf,
 	static char tupstoreStorage[2 * BLCKSZ + MAXIMUM_ALIGNOF];
 	char *tupstore = (char *) MAXALIGN(tupstoreStorage);
 
-	entryPreparePage(btree, newlPage, off);
+	bool needsOverwrite = false;
+	bool doReplace = false;
+	entryPreparePage(btree, newlPage, off, EntryPrepareMode_ForceDelete, &doReplace,
+					 &needsOverwrite);
 
+	Assert(!needsOverwrite && !doReplace);
 	maxoff = PageGetMaxOffsetNumber(newlPage);
 	ptr = tupstore;
 

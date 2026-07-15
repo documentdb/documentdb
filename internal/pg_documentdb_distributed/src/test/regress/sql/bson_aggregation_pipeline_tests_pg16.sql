@@ -116,7 +116,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 SET documentdb.enableNewWithExprAccumulators TO on;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$sum": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$sum": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- $group with keys having dotted path
@@ -127,7 +127,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 SET documentdb.enableNewWithExprAccumulators TO on;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d.e": { "$sum": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d.e": { "$sum": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- $group with first/last

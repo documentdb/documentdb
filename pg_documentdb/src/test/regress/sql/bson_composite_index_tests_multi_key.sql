@@ -3,9 +3,6 @@ SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 500;
 SET documentdb.next_collection_index_id TO 500;
 
-set documentdb.enableCompositeReducedCorrelatedTerms to on;
-set documentdb.enableUniqueCompositeReducedCorrelatedTerms to on;
-
 CREATE SCHEMA multi_key_tests;
 CREATE FUNCTION multi_key_tests.gin_bson_get_composite_path_generated_terms(documentdb_core.bson, text, int4, bool, p_wildcardIndex int4 = -1, p_reduced_correlated bool = TRUE)
     RETURNS SETOF documentdb_core.bson LANGUAGE C IMMUTABLE PARALLEL SAFE STRICT AS '$libdir/pg_documentdb',
@@ -102,11 +99,9 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 -- now test unique constraint checks
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkey_db', '{ "createIndexes": "mkey_coll_unique", "indexes": [ { "key": { "a.b": 1, "a.c": 1 }, "name": "a_b_c_1", "enableOrderedIndex": 1, "unique": true } ] }');
 
-set documentdb.enableUniqueCompositeReducedCorrelatedTerms to off;
 set documentdb.enableCompositeReducedCorrelatedTermsOnCommonSubPath to off;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkey_db', '{ "createIndexes": "mkey_coll_unique_base", "indexes": [ { "key": { "a.b": 1, "a.c": 1 }, "name": "a_b_c_1", "enableOrderedIndex": 1, "unique": true } ] }');
 
-set documentdb.enableUniqueCompositeReducedCorrelatedTerms to on;
 set documentdb.enableCompositeReducedCorrelatedTermsOnCommonSubPath to on;
 \d documentdb_data.documents_502
 \d documentdb_data.documents_503

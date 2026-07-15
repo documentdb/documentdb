@@ -17,7 +17,15 @@
 #include "query/bson_compare.h"
 #include "aggregation/bson_query.h"
 #include "utils/documentdb_errors.h"
+#include "planner/mongo_query_operator.h"
 
+
+/*
+ * Feature flag gating whether the $comment query metadata field is skipped when
+ * building the document for an upsert. Default off to preserve the historical
+ * behavior for existing customers that may depend on $comment being persisted.
+ */
+extern bool EnableSkipCommentFieldOnUpsert;
 
 typedef struct
 {
@@ -96,225 +104,312 @@ TraverseQueryDocumentAndProcess(bson_iter_t *queryDocument, void *context,
 	while (bson_iter_next(queryDocument))
 	{
 		const char *key = bson_iter_key(queryDocument);
-		if (strcmp(key, "$nor") == 0)
+		const MongoQueryOperator *operator =
+			GetMongoQueryOperatorByMongoOpName(key, MongoQueryOperatorInputType_Bson);
+		switch (operator->operatorType)
 		{
-			if (processFilterFunc)
+			case QUERY_OPERATOR_NOR:
 			{
-				processFilterFunc(context);
-			}
-			continue;
-		}
-		else if (strcmp(key, "$and") == 0)
-		{
-			bson_iter_t andIterator;
-			if (!BSON_ITER_HOLDS_ARRAY(queryDocument) ||
-				!bson_iter_recurse(queryDocument, &andIterator))
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-									"Could not iterate through query document $and.")));
-			}
-
-			while (bson_iter_next(&andIterator))
-			{
-				bson_iter_t andElementIterator;
-				if (!BSON_ITER_HOLDS_DOCUMENT(&andIterator) ||
-					!bson_iter_recurse(&andIterator, &andElementIterator))
+				if (processFilterFunc)
 				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-										"Could not iterate through elements within $and query.")));
+					processFilterFunc(context);
 				}
 
-				TraverseQueryDocumentAndProcess(&andElementIterator, context,
-												processValueFunc,
-												processFilterFunc,
-												isUpsert);
-			}
-		}
-		else if (strcmp(key, "$or") == 0)
-		{
-			bson_iter_t orIterator;
-			if (!BSON_ITER_HOLDS_ARRAY(queryDocument) ||
-				!bson_iter_recurse(queryDocument, &orIterator))
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-									"Could not iterate through query document $or.")));
+				continue;
 			}
 
-			/* the _id can be extracted iff the "or" is a single element array. */
-			pgbsonelement orElement;
-			if (TryGetSinglePgbsonElementFromBsonIterator(&orIterator, &orElement) &&
-				orElement.bsonValue.value_type == BSON_TYPE_DOCUMENT)
+			case QUERY_OPERATOR_AND:
 			{
-				/* a $or is only considered if it's a single element or. */
-				bson_iter_t orElementIterator;
-				bson_iter_init_from_data(&orElementIterator,
-										 orElement.bsonValue.value.v_doc.data,
-										 orElement.bsonValue.value.v_doc.data_len);
-				TraverseQueryDocumentAndProcess(&orElementIterator, context,
-												processValueFunc,
-												processFilterFunc,
-												isUpsert);
-			}
-			else if (isUpsert &&
-					 bson_iter_recurse(queryDocument, &orIterator) &&
-					 BsonIterSearchKeyRecursive(&orIterator, "$expr"))
-			{
-				/* Throw an error in case of upsert if querySpec holds $expr */
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYFEATURENOTALLOWED),
-								errmsg(
-									"Use of the $expr operator is not permitted within the query predicate for an upsert operation.")));
-			}
-
-			if (processFilterFunc)
-			{
-				processFilterFunc(context);
-			}
-		}
-		else if (strcmp(key, "$expr") == 0)
-		{
-			if (isUpsert)
-			{
-				/* Throw an error in case of upsert if querySpec holds $expr */
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYFEATURENOTALLOWED),
-								errmsg(
-									"Use of the $expr operator is not permitted within the query predicate for an upsert operation.")));
-			}
-
-			if (processFilterFunc)
-			{
-				processFilterFunc(context);
-			}
-		}
-		else
-		{
-			/* it's a field specification. consider it if it's a $eq, $all, $in operators or a document without any operator. */
-			bson_iter_t idIterator;
-			if (BSON_ITER_HOLDS_DOCUMENT(queryDocument) &&
-				bson_iter_recurse(queryDocument, &idIterator))
-			{
-				/* When the document contains one or more operators (implicit AND) */
-				/* e.g. { _id: {$eq: 10}                                 */
-				/*      { _id: {$eq: 10, $ne: null} }    Implicit AND    */
-				/*      { _id: {a: 10, b: 20} }          Object as value */
-				/*      { _id: {$eq: 10, b: 20} }        Error Case      */
-				/*      { _id: {a: 10, $eq: 20} }        Not Error Case  */
-				/*      { $ref: "foo", $id: ObjectId("49d4j9jdjd949djd9449jd") } */
-				bool isEmptyDoc = true;
-				while (bson_iter_next(&idIterator))
+				bson_iter_t andIterator;
+				if (!BSON_ITER_HOLDS_ARRAY(queryDocument) ||
+					!bson_iter_recurse(queryDocument, &andIterator))
 				{
-					isEmptyDoc = false;
-					const char *op = bson_iter_key(&idIterator);
-					const bson_value_t *opValue = bson_iter_value(&idIterator);
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
+										"Could not iterate through query document $and.")));
+				}
 
-					if (strcmp(op, "$eq") == 0)
+				while (bson_iter_next(&andIterator))
+				{
+					bson_iter_t andElementIterator;
+					if (!BSON_ITER_HOLDS_DOCUMENT(&andIterator) ||
+						!bson_iter_recurse(&andIterator, &andElementIterator))
 					{
-						processValueFunc(context, key, opValue);
+						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
+											"Could not iterate through elements within $and query.")));
 					}
-					else if (strcmp(op, "$all") == 0)
+
+					TraverseQueryDocumentAndProcess(&andElementIterator, context,
+													processValueFunc,
+													processFilterFunc,
+													isUpsert);
+				}
+
+				continue;
+			}
+
+			case QUERY_OPERATOR_OR:
+			{
+				bson_iter_t orIterator;
+				if (!BSON_ITER_HOLDS_ARRAY(queryDocument) ||
+					!bson_iter_recurse(queryDocument, &orIterator))
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
+										"Could not iterate through query document $or.")));
+				}
+
+				/* the _id can be extracted iff the "or" is a single element array. */
+				pgbsonelement orElement;
+				if (TryGetSinglePgbsonElementFromBsonIterator(&orIterator, &orElement) &&
+					orElement.bsonValue.value_type == BSON_TYPE_DOCUMENT)
+				{
+					/* a $or is only considered if it's a single element or. */
+					bson_iter_t orElementIterator;
+					bson_iter_init_from_data(&orElementIterator,
+											 orElement.bsonValue.value.v_doc.data,
+											 orElement.bsonValue.value.v_doc.data_len);
+					TraverseQueryDocumentAndProcess(&orElementIterator, context,
+													processValueFunc,
+													processFilterFunc,
+													isUpsert);
+				}
+				else if (isUpsert &&
+						 bson_iter_recurse(queryDocument, &orIterator) &&
+						 BsonIterSearchKeyRecursive(&orIterator, "$expr"))
+				{
+					/* Throw an error in case of upsert if querySpec holds $expr */
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYFEATURENOTALLOWED),
+									errmsg(
+										"Use of the $expr operator is not permitted within the query predicate for an upsert operation.")));
+				}
+
+				if (processFilterFunc)
+				{
+					processFilterFunc(context);
+				}
+
+				continue;
+			}
+
+			case QUERY_OPERATOR_COMMENT:
+			{
+				/*
+				 * $comment is request-only metadata; when the feature flag is enabled, never
+				 * consider the $comment field for query predicate processing. Gated for backward compatibility.
+				 */
+				if (EnableSkipCommentFieldOnUpsert)
+				{
+					continue;
+				}
+				else if (!BSON_ITER_HOLDS_REGEX(queryDocument))
+				{
+					/* it's the form of "field": <value>   e.g. { _id: 10 } */
+					/* however note that, "field" : /regex/ is not equality */
+					processValueFunc(context, key, bson_iter_value(queryDocument));
+				}
+				else if (processFilterFunc)
+				{
+					/* { "_id" : { "$regularExpression" : { "pattern" : "abc", "options" : "i" } } } */
+					processFilterFunc(context);
+				}
+
+				continue;
+			}
+
+			case QUERY_OPERATOR_EXPR:
+			{
+				if (isUpsert)
+				{
+					/* Throw an error in case of upsert if querySpec holds $expr */
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYFEATURENOTALLOWED),
+									errmsg(
+										"Use of the $expr operator is not permitted within the query predicate for an upsert operation.")));
+				}
+
+				if (processFilterFunc)
+				{
+					processFilterFunc(context);
+				}
+
+				continue;
+			}
+
+			case QUERY_OPERATOR_ALWAYS_TRUE:
+			case QUERY_OPERATOR_ALWAYS_FALSE:
+			case QUERY_OPERATOR_TEXT:
+			case QUERY_OPERATOR_JSONSCHEMA:
+			case QUERY_OPERATOR_SAMPLERATE:
+			{
+				/*
+				 * These are filter-only query operators that never contribute equality
+				 * predicates to an upsert document. Skip them entirely.
+				 */
+				if (EnableSkipCommentFieldOnUpsert)
+				{
+					if (processFilterFunc)
 					{
-						if (opValue->value_type != BSON_TYPE_ARRAY)
-						{
-							ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-											errmsg("$all needs an array")));
-						}
-
-						bson_iter_t allIterator;
-						BsonValueInitIterator(opValue, &allIterator);
-
-						while (bson_iter_next(&allIterator))
-						{
-							processValueFunc(context, key, bson_iter_value(&allIterator));
-						}
+						processFilterFunc(context);
 					}
-					else if (strcmp(op, "$in") == 0)
+
+					continue;
+				}
+
+				/* Fall through to default */
+			}
+
+			default:
+			{
+				/*
+				 * $where is not a registered query operator but is a filter-only
+				 * construct that should never be persisted in an upsert document.
+				 */
+				if (EnableSkipCommentFieldOnUpsert &&
+					strcmp(key, "$where") == 0)
+				{
+					if (processFilterFunc)
 					{
-						bson_iter_t inIterator;
-						if (opValue->value_type != BSON_TYPE_ARRAY)
+						processFilterFunc(context);
+					}
+
+					continue;
+				}
+
+				/* it's a field specification. consider it if it's a $eq, $all, $in operators or a document without any operator. */
+				bson_iter_t idIterator;
+				if (BSON_ITER_HOLDS_DOCUMENT(queryDocument) &&
+					bson_iter_recurse(queryDocument, &idIterator))
+				{
+					/* When the document contains one or more operators (implicit AND) */
+					/* e.g. { _id: {$eq: 10}                                 */
+					/*      { _id: {$eq: 10, $ne: null} }    Implicit AND    */
+					/*      { _id: {a: 10, b: 20} }          Object as value */
+					/*      { _id: {$eq: 10, b: 20} }        Error Case      */
+					/*      { _id: {a: 10, $eq: 20} }        Not Error Case  */
+					/*      { $ref: "foo", $id: ObjectId("49d4j9jdjd949djd9449jd") } */
+					bool isEmptyDoc = true;
+					while (bson_iter_next(&idIterator))
+					{
+						isEmptyDoc = false;
+						const char *op = bson_iter_key(&idIterator);
+						const bson_value_t *opValue = bson_iter_value(&idIterator);
+
+						if (strcmp(op, "$eq") == 0)
 						{
-							ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-											errmsg(
-												"Expected 'array' type for $in but found '%s' type",
-												BsonTypeName(opValue->value_type))));
+							processValueFunc(context, key, opValue);
 						}
-
-						BsonValueInitIterator(opValue, &inIterator);
-
-						if (bson_iter_next(&inIterator))
+						else if (strcmp(op, "$all") == 0)
 						{
-							const bson_value_t *inValue = bson_iter_value(&inIterator);
-
-							/* if $in has more than one element in array then ignore that field */
-							if (!bson_iter_next(&inIterator))
+							if (opValue->value_type != BSON_TYPE_ARRAY)
 							{
-								processValueFunc(context, key, inValue);
+								ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+												errmsg("$all needs an array")));
+							}
+
+							bson_iter_t allIterator;
+							BsonValueInitIterator(opValue, &allIterator);
+
+							while (bson_iter_next(&allIterator))
+							{
+								processValueFunc(context, key, bson_iter_value(
+													 &allIterator));
 							}
 						}
-
-						if (processFilterFunc)
+						else if (strcmp(op, "$in") == 0)
 						{
-							processFilterFunc(context);
+							bson_iter_t inIterator;
+							if (opValue->value_type != BSON_TYPE_ARRAY)
+							{
+								ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+												errmsg(
+													"Expected 'array' type for $in but found '%s' type",
+													BsonTypeName(opValue->value_type))));
+							}
+
+							BsonValueInitIterator(opValue, &inIterator);
+
+							if (bson_iter_next(&inIterator))
+							{
+								const bson_value_t *inValue = bson_iter_value(
+									&inIterator);
+
+								/* if $in has more than one element in array then ignore that field */
+								if (!bson_iter_next(&inIterator))
+								{
+									processValueFunc(context, key, inValue);
+								}
+							}
+
+							if (processFilterFunc)
+							{
+								processFilterFunc(context);
+							}
 						}
-					}
-					else if (strlen(op) > 0 && op[0] != '$')
-					{
-						/* when operator does not start with $, its a regular value. Process entire document as single value */
-						/* e.g. {_id: {a: 10}}            */
-						/*      {_id: {a: 10, $eq: 20}}   */
-						processValueFunc(context, key, bson_iter_value(queryDocument));
-						break;
-					}
-					else if (isUpsert && ((strcmp(op, "$ref") == 0) ||
-										  (strcmp(op, "$id") == 0)))
-					{
-						/* handle $ref scenario */
-						/* { $ref: "foo", $id: ObjectId("49d4j9jdjd949djd9449jd") } */
-						/* { $id: ObjectId("49d4j9jdjd949djd9449jd"), $ref: "foo" } */
-						bson_iter_t refIterator = idIterator;
-
-						if (!bson_iter_next(&refIterator))
+						else if (strlen(op) > 0 && op[0] != '$')
 						{
-							ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-												"Unrecognized operator specified: %s",
-												op),
-											errdetail_log(
-												"Unrecognized operator specified: %s",
-												op)));
-						}
-
-						bool isRef = strcmp(op, "$ref") == 0;
-						if ((isRef && strcmp(bson_iter_key(&refIterator), "$id") == 0) ||
-							(!isRef && strcmp(bson_iter_key(&refIterator), "$ref") == 0))
-						{
+							/* when operator does not start with $, its a regular value. Process entire document as single value */
+							/* e.g. {_id: {a: 10}}            */
+							/*      {_id: {a: 10, $eq: 20}}   */
 							processValueFunc(context, key, bson_iter_value(
 												 queryDocument));
 							break;
 						}
-					}
-					else
-					{
-						/* Other operators like $gt, $lt, $ne etc. are ignored we don't call processValueFunc */
-						if (processFilterFunc)
+						else if (isUpsert && ((strcmp(op, "$ref") == 0) ||
+											  (strcmp(op, "$id") == 0)))
 						{
-							processFilterFunc(context);
+							/* handle $ref scenario */
+							/* { $ref: "foo", $id: ObjectId("49d4j9jdjd949djd9449jd") } */
+							/* { $id: ObjectId("49d4j9jdjd949djd9449jd"), $ref: "foo" } */
+							bson_iter_t refIterator = idIterator;
+
+							if (!bson_iter_next(&refIterator))
+							{
+								ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+												errmsg(
+													"Unrecognized operator specified: %s",
+													op),
+												errdetail_log(
+													"Unrecognized operator specified: %s",
+													op)));
+							}
+
+							bool isRef = strcmp(op, "$ref") == 0;
+							if ((isRef && strcmp(bson_iter_key(&refIterator), "$id") ==
+								 0) ||
+								(!isRef && strcmp(bson_iter_key(&refIterator), "$ref") ==
+								 0))
+							{
+								processValueFunc(context, key, bson_iter_value(
+													 queryDocument));
+								break;
+							}
+						}
+						else
+						{
+							/* Other operators like $gt, $lt, $ne etc. are ignored we don't call processValueFunc */
+							if (processFilterFunc)
+							{
+								processFilterFunc(context);
+							}
 						}
 					}
+					if (isEmptyDoc)
+					{
+						/* empty document case:  {_id: {} } */
+						processValueFunc(context, key, bson_iter_value(queryDocument));
+					}
 				}
-				if (isEmptyDoc)
+				else if (!BSON_ITER_HOLDS_REGEX(queryDocument))
 				{
-					/* empty document case:  {_id: {} } */
+					/* it's the form of "field": <value>   e.g. { _id: 10 } */
+					/* however note that, "field" : /regex/ is not equality */
 					processValueFunc(context, key, bson_iter_value(queryDocument));
 				}
-			}
-			else if (!BSON_ITER_HOLDS_REGEX(queryDocument))
-			{
-				/* it's the form of "field": <value>   e.g. { _id: 10 } */
-				/* however note that, "field" : /regex/ is not equality */
-				processValueFunc(context, key, bson_iter_value(queryDocument));
-			}
-			else if (processFilterFunc)
-			{
-				/* { "_id" : { "$regularExpression" : { "pattern" : "abc", "options" : "i" } } } */
-				processFilterFunc(context);
+				else if (processFilterFunc)
+				{
+					/* { "_id" : { "$regularExpression" : { "pattern" : "abc", "options" : "i" } } } */
+					processFilterFunc(context);
+				}
+
+				continue;
 			}
 		}
 	}

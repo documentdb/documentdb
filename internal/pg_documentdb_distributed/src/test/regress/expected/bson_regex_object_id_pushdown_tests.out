@@ -1,0 +1,484 @@
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
+SET citus.next_shard_id TO 80000000;
+SET documentdb.next_collection_id TO 8000;
+SET documentdb.next_collection_index_id TO 8000;
+-- Create collection and insert test data with string _id values for regex testing
+SELECT documentdb_api.create_collection('regexDistDb', 'regex_id_dist');
+NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT COUNT(*) FROM (
+    SELECT documentdb_api.insert_one('regexDistDb', 'regex_id_dist',
+        FORMAT('{ "_id": "str_%s", "a": %s }', g, g)::bson)
+    FROM generate_series(1, 20) g
+) i;
+ count 
+---------------------------------------------------------------------
+    20
+(1 row)
+
+-- Insert non-string _id values to verify type filtering
+SELECT documentdb_api.insert_one('regexDistDb', 'regex_id_dist', '{ "_id": 100, "a": 100 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regexDistDb', 'regex_id_dist', '{ "_id": true, "a": 200 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Insert specific string _ids for pattern matching
+SELECT documentdb_api.insert_one('regexDistDb', 'regex_id_dist', '{ "_id": "abc_one", "a": 21 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regexDistDb', 'regex_id_dist', '{ "_id": "abc_two", "a": 22 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regexDistDb', 'regex_id_dist', '{ "_id": "abd_three", "a": 23 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('regexDistDb', 'regex_id_dist', '{ "_id": "xyz_four", "a": 24 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- =============================================
+-- Section 1: Result verification - anchored prefix regex on _id
+-- =============================================
+-- ^str_ should match all str_* _ids
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regex": "^str_" } }, "sort": { "_id": 1 } }');
+                      document                       
+---------------------------------------------------------------------
+ { "_id" : "str_1", "a" : { "$numberInt" : "1" } }
+ { "_id" : "str_10", "a" : { "$numberInt" : "10" } }
+ { "_id" : "str_11", "a" : { "$numberInt" : "11" } }
+ { "_id" : "str_12", "a" : { "$numberInt" : "12" } }
+ { "_id" : "str_13", "a" : { "$numberInt" : "13" } }
+ { "_id" : "str_14", "a" : { "$numberInt" : "14" } }
+ { "_id" : "str_15", "a" : { "$numberInt" : "15" } }
+ { "_id" : "str_16", "a" : { "$numberInt" : "16" } }
+ { "_id" : "str_17", "a" : { "$numberInt" : "17" } }
+ { "_id" : "str_18", "a" : { "$numberInt" : "18" } }
+ { "_id" : "str_19", "a" : { "$numberInt" : "19" } }
+ { "_id" : "str_2", "a" : { "$numberInt" : "2" } }
+ { "_id" : "str_20", "a" : { "$numberInt" : "20" } }
+ { "_id" : "str_3", "a" : { "$numberInt" : "3" } }
+ { "_id" : "str_4", "a" : { "$numberInt" : "4" } }
+ { "_id" : "str_5", "a" : { "$numberInt" : "5" } }
+ { "_id" : "str_6", "a" : { "$numberInt" : "6" } }
+ { "_id" : "str_7", "a" : { "$numberInt" : "7" } }
+ { "_id" : "str_8", "a" : { "$numberInt" : "8" } }
+ { "_id" : "str_9", "a" : { "$numberInt" : "9" } }
+(20 rows)
+
+-- ^abc should match abc_one, abc_two
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regex": "^abc" } }, "sort": { "_id": 1 } }');
+                       document                       
+---------------------------------------------------------------------
+ { "_id" : "abc_one", "a" : { "$numberInt" : "21" } }
+ { "_id" : "abc_two", "a" : { "$numberInt" : "22" } }
+(2 rows)
+
+-- ^xyz should match xyz_four
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regex": "^xyz" } }, "sort": { "_id": 1 } }');
+                       document                        
+---------------------------------------------------------------------
+ { "_id" : "xyz_four", "a" : { "$numberInt" : "24" } }
+(1 row)
+
+-- =============================================
+-- Section 2: Result verification - non-anchored regex on _id
+-- =============================================
+-- non-anchored: "one" should match abc_one and str_1 (since "one" is not in "str_1", only abc_one)
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regex": "one" } }, "sort": { "_id": 1 } }');
+                       document                       
+---------------------------------------------------------------------
+ { "_id" : "abc_one", "a" : { "$numberInt" : "21" } }
+(1 row)
+
+-- non-anchored: "str" should match all str_* ids
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regex": "str" } }, "sort": { "_id": 1 } }');
+                      document                       
+---------------------------------------------------------------------
+ { "_id" : "str_1", "a" : { "$numberInt" : "1" } }
+ { "_id" : "str_10", "a" : { "$numberInt" : "10" } }
+ { "_id" : "str_11", "a" : { "$numberInt" : "11" } }
+ { "_id" : "str_12", "a" : { "$numberInt" : "12" } }
+ { "_id" : "str_13", "a" : { "$numberInt" : "13" } }
+ { "_id" : "str_14", "a" : { "$numberInt" : "14" } }
+ { "_id" : "str_15", "a" : { "$numberInt" : "15" } }
+ { "_id" : "str_16", "a" : { "$numberInt" : "16" } }
+ { "_id" : "str_17", "a" : { "$numberInt" : "17" } }
+ { "_id" : "str_18", "a" : { "$numberInt" : "18" } }
+ { "_id" : "str_19", "a" : { "$numberInt" : "19" } }
+ { "_id" : "str_2", "a" : { "$numberInt" : "2" } }
+ { "_id" : "str_20", "a" : { "$numberInt" : "20" } }
+ { "_id" : "str_3", "a" : { "$numberInt" : "3" } }
+ { "_id" : "str_4", "a" : { "$numberInt" : "4" } }
+ { "_id" : "str_5", "a" : { "$numberInt" : "5" } }
+ { "_id" : "str_6", "a" : { "$numberInt" : "6" } }
+ { "_id" : "str_7", "a" : { "$numberInt" : "7" } }
+ { "_id" : "str_8", "a" : { "$numberInt" : "8" } }
+ { "_id" : "str_9", "a" : { "$numberInt" : "9" } }
+(20 rows)
+
+-- =============================================
+-- Section 3: Result verification - regex via $regularExpression (regex type)
+-- =============================================
+-- Regex type (BSON regex) with anchored prefix
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regularExpression": { "pattern": "^abc", "options": "" } } }, "sort": { "_id": 1 } }');
+                       document                       
+---------------------------------------------------------------------
+ { "_id" : "abc_one", "a" : { "$numberInt" : "21" } }
+ { "_id" : "abc_two", "a" : { "$numberInt" : "22" } }
+(2 rows)
+
+-- Regex type without anchor
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regularExpression": { "pattern": "four", "options": "" } } }, "sort": { "_id": 1 } }');
+                       document                        
+---------------------------------------------------------------------
+ { "_id" : "xyz_four", "a" : { "$numberInt" : "24" } }
+(1 row)
+
+-- Regex type with case-insensitive option
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regularExpression": { "pattern": "^ABC", "options": "i" } } }, "sort": { "_id": 1 } }');
+                       document                       
+---------------------------------------------------------------------
+ { "_id" : "abc_one", "a" : { "$numberInt" : "21" } }
+ { "_id" : "abc_two", "a" : { "$numberInt" : "22" } }
+(2 rows)
+
+-- =============================================
+-- Section 4: Combined regex on _id with other filters
+-- =============================================
+-- regex on _id combined with equality on another field
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regex": "^abc" }, "a": 21 }, "sort": { "_id": 1 } }');
+                       document                       
+---------------------------------------------------------------------
+ { "_id" : "abc_one", "a" : { "$numberInt" : "21" } }
+(1 row)
+
+-- regex on _id combined with $gt on another field
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regex": "^str_1" }, "a": { "$gt": 15 } }, "sort": { "_id": 1 } }');
+                      document                       
+---------------------------------------------------------------------
+ { "_id" : "str_16", "a" : { "$numberInt" : "16" } }
+ { "_id" : "str_17", "a" : { "$numberInt" : "17" } }
+ { "_id" : "str_18", "a" : { "$numberInt" : "18" } }
+ { "_id" : "str_19", "a" : { "$numberInt" : "19" } }
+(4 rows)
+
+-- =============================================
+-- Section 5: EXPLAIN plans via Citus remote execution
+-- Force remote execution to verify the pushdown goes through Citus
+-- =============================================
+BEGIN;
+SET LOCAL citus.enable_local_execution TO OFF;
+SET LOCAL documentdb.useLocalExecutionShardQueries TO OFF;
+SET LOCAL enable_seqscan TO OFF;
+-- Anchored prefix: should show Custom Scan (Citus Adaptive) with btree pushdown
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regex": "^abc" } } }')
+$cmd$);
+                                                                                                                                                         run_explain_and_trim                                                                                                                                                         
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT document FROM documentdb_data.documents_8001_80000002 collection WHERE (documentdb_api_catalog.bson_dollar_regex(document, object_id, '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '8001'::bigint))
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using _id_ on documentdb_data.documents_8001_80000002 collection
+               Output: document
+               Index Cond: ((collection.shard_key_value = '8001'::bigint) AND (collection.object_id OPERATOR(documentdb_core.>=) '{ "" : "abc" }'::documentdb_core.bson) AND (collection.object_id OPERATOR(documentdb_core.<) '{ "" : "abd" }'::documentdb_core.bson))
+               Filter: (collection.document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::documentdb_core.bson)
+(11 rows)
+
+-- Non-anchored regex: should show Custom Scan (Citus Adaptive) with btree pushdown
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regex": "one" } } }')
+$cmd$);
+                                                                                                                                                        run_explain_and_trim                                                                                                                                                         
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT document FROM documentdb_data.documents_8001_80000002 collection WHERE (documentdb_api_catalog.bson_dollar_regex(document, object_id, '{ "_id" : { "$regularExpression" : { "pattern" : "one", "options" : "" } } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '8001'::bigint))
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using _id_ on documentdb_data.documents_8001_80000002 collection
+               Output: document
+               Index Cond: ((collection.shard_key_value = '8001'::bigint) AND (collection.object_id OPERATOR(documentdb_core.>=) '{ "" : "" }'::documentdb_core.bson) AND (collection.object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson))
+               Filter: (collection.document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "one", "options" : "" } } }'::documentdb_core.bson)
+(11 rows)
+
+-- Regex type ($regularExpression) with anchored prefix
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regularExpression": { "pattern": "^abc", "options": "" } } } }')
+$cmd$);
+                                                                                                                                                         run_explain_and_trim                                                                                                                                                         
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT document FROM documentdb_data.documents_8001_80000002 collection WHERE (documentdb_api_catalog.bson_dollar_regex(document, object_id, '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '8001'::bigint))
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using _id_ on documentdb_data.documents_8001_80000002 collection
+               Output: document
+               Index Cond: ((collection.shard_key_value = '8001'::bigint) AND (collection.object_id OPERATOR(documentdb_core.>=) '{ "" : "abc" }'::documentdb_core.bson) AND (collection.object_id OPERATOR(documentdb_core.<) '{ "" : "abd" }'::documentdb_core.bson))
+               Filter: (collection.document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::documentdb_core.bson)
+(11 rows)
+
+-- Regex type with case-insensitive option
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regularExpression": { "pattern": "^ABC", "options": "i" } } } }')
+$cmd$);
+                                                                                                                                                         run_explain_and_trim                                                                                                                                                          
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT document FROM documentdb_data.documents_8001_80000002 collection WHERE (documentdb_api_catalog.bson_dollar_regex(document, object_id, '{ "_id" : { "$regularExpression" : { "pattern" : "^ABC", "options" : "i" } } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '8001'::bigint))
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using _id_ on documentdb_data.documents_8001_80000002 collection
+               Output: document
+               Index Cond: ((collection.shard_key_value = '8001'::bigint) AND (collection.object_id OPERATOR(documentdb_core.>=) '{ "" : "" }'::documentdb_core.bson) AND (collection.object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson))
+               Filter: (collection.document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^ABC", "options" : "i" } } }'::documentdb_core.bson)
+(11 rows)
+
+-- Combined _id regex with field filter
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regex": "^abc" }, "a": 21 } }')
+$cmd$);
+                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                  
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT document FROM documentdb_data.documents_8001_80000002 collection WHERE (documentdb_api_catalog.bson_dollar_regex(document, object_id, '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#=) '{ "a" : { "$numberInt" : "21" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '8001'::bigint))
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using _id_ on documentdb_data.documents_8001_80000002 collection
+               Output: document
+               Index Cond: ((collection.shard_key_value = '8001'::bigint) AND (collection.object_id OPERATOR(documentdb_core.>=) '{ "" : "abc" }'::documentdb_core.bson) AND (collection.object_id OPERATOR(documentdb_core.<) '{ "" : "abd" }'::documentdb_core.bson))
+               Filter: ((collection.document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "21" } }'::documentdb_core.bson))
+(11 rows)
+
+COMMIT;
+-- =============================================
+-- Section 6: EXPLAIN ANALYZE via Citus remote execution
+-- Verify actual execution through Citus with bson_regex_object_id_match pushdown
+-- =============================================
+BEGIN;
+SET LOCAL citus.enable_local_execution TO OFF;
+SET LOCAL documentdb.useLocalExecutionShardQueries TO OFF;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL enable_bitmapscan TO OFF;
+-- Anchored prefix regex: verify Index Scan through Citus
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regex": "^abc" } } }')
+$cmd$);
+                                                                                                         run_explain_and_trim                                                                                                          
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 58 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 58 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using _id_ on documents_8001_80000002 collection (actual rows=2 loops=1)
+               Index Cond: ((shard_key_value = '8001'::bigint) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : "abc" }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<) '{ "" : "abd" }'::documentdb_core.bson))
+               Filter: (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::documentdb_core.bson)
+(10 rows)
+
+-- Non-anchored regex through Citus
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regex": "one" } } }')
+$cmd$);
+                                                                                                       run_explain_and_trim                                                                                                        
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 29 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 29 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using _id_ on documents_8001_80000002 collection (actual rows=1 loops=1)
+               Index Cond: ((shard_key_value = '8001'::bigint) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : "" }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson))
+               Filter: (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "one", "options" : "" } } }'::documentdb_core.bson)
+               Rows Removed by Filter: 23
+(11 rows)
+
+-- Regex type ($regularExpression) through Citus
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regularExpression": { "pattern": "^abc", "options": "" } } } }')
+$cmd$);
+                                                                                                         run_explain_and_trim                                                                                                          
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 58 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 58 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using _id_ on documents_8001_80000002 collection (actual rows=2 loops=1)
+               Index Cond: ((shard_key_value = '8001'::bigint) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : "abc" }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<) '{ "" : "abd" }'::documentdb_core.bson))
+               Filter: (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::documentdb_core.bson)
+(10 rows)
+
+-- Regex with case-insensitive through Citus
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regularExpression": { "pattern": "^ABC", "options": "i" } } } }')
+$cmd$);
+                                                                                                       run_explain_and_trim                                                                                                        
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 58 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 58 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using _id_ on documents_8001_80000002 collection (actual rows=2 loops=1)
+               Index Cond: ((shard_key_value = '8001'::bigint) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : "" }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson))
+               Filter: (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^ABC", "options" : "i" } } }'::documentdb_core.bson)
+               Rows Removed by Filter: 22
+(11 rows)
+
+-- Combined regex + field filter through Citus
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regex": "^str_1" }, "a": { "$gt": 15 } } }')
+$cmd$);
+                                                                                                                                    run_explain_and_trim                                                                                                                                     
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=4 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 112 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 112 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using _id_ on documents_8001_80000002 collection (actual rows=4 loops=1)
+               Index Cond: ((shard_key_value = '8001'::bigint) AND (object_id OPERATOR(documentdb_core.>=) '{ "" : "str_1" }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<) '{ "" : "str_2" }'::documentdb_core.bson))
+               Filter: ((document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^str_1", "options" : "" } } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>) '{ "a" : { "$numberInt" : "15" } }'::documentdb_core.bson))
+               Rows Removed by Filter: 7
+(11 rows)
+
+COMMIT;
+-- =============================================
+-- Section 7: Composite RUM index with _id regex through Citus
+-- =============================================
+SELECT documentdb_api_internal.create_indexes_non_concurrently('regexDistDb',
+    '{ "createIndexes": "regex_id_dist", "indexes": [ { "key": { "a": 1, "_id": 1 }, "name": "idx_a_id" } ]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+BEGIN;
+SET LOCAL citus.enable_local_execution TO OFF;
+SET LOCAL documentdb.useLocalExecutionShardQueries TO OFF;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL enable_bitmapscan TO OFF;
+-- Combined _id regex + field filter should use composite RUM index through Citus
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regex": "^abc" }, "a": { "$gt": 20 } } }')
+$cmd$);
+                                                                                                                                     run_explain_and_trim                                                                                                                                      
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive) (actual rows=2 loops=1)
+   Task Count: 1
+   Tuple data received from nodes: 58 bytes
+   Tasks Shown: All
+   ->  Task
+         Tuple data received from node: 58 bytes
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_a_id on documents_8001_80000002 collection (actual rows=2 loops=1)
+               Index Cond: ((document OPERATOR(documentdb_api_catalog.@>) '{ "a" : { "$numberInt" : "20" } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::documentdb_core.bson))
+(9 rows)
+
+COMMIT;
+-- =============================================
+-- Section 8: Feature flag toggle through Citus
+-- =============================================
+BEGIN;
+SET LOCAL citus.enable_local_execution TO OFF;
+SET LOCAL documentdb.useLocalExecutionShardQueries TO OFF;
+SET LOCAL enable_seqscan TO OFF;
+-- With feature flag off, verify regex still works but no object_id pushdown
+SET LOCAL documentdb.enableObjectIdFuncExprConversion TO off;
+SET LOCAL documentdb.forceDisableSeqScan TO off;
+SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regex": "^abc" } }, "sort": { "_id": 1 } }');
+                       document                       
+---------------------------------------------------------------------
+ { "_id" : "abc_one", "a" : { "$numberInt" : "21" } }
+ { "_id" : "abc_two", "a" : { "$numberInt" : "22" } }
+(2 rows)
+
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexDistDb',
+    '{ "find": "regex_id_dist", "filter": { "_id": { "$regex": "^abc" } } }')
+$cmd$);
+                                                                                                                                                 run_explain_and_trim                                                                                                                                                 
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Output: remote_scan.document
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Query: SELECT document FROM documentdb_data.documents_8001_80000002 collection WHERE (documentdb_api_catalog.bson_dollar_regex(document, '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::documentdb_core.bson) AND (shard_key_value OPERATOR(pg_catalog.=) '8001'::bigint))
+         Node: host=localhost port=58070 dbname=regression
+         ->  Index Scan using idx_a_id on documentdb_data.documents_8001_80000002 collection
+               Output: document
+               Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@~) '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::documentdb_core.bson)
+(10 rows)
+
+COMMIT;

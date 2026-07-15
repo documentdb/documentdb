@@ -1,3 +1,12 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Microsoft Corporation.  All rights reserved.
+ *
+ * include/utils/role_utils.h
+ *
+ * Headers of role utility functions.
+ *
+ *-------------------------------------------------------------------------
+ */
 #ifndef ROLE_UTILS_H
 #define ROLE_UTILS_H
 

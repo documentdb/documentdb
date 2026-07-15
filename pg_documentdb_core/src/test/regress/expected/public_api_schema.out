@@ -6,6 +6,7 @@ set search_path to documentdb_core;
 -----------------+---------------------------+------------------+----------------------------------------+------
  documentdb_core | bson_build_document       | bson             | VARIADIC "any"                         | func
  documentdb_core | bson_compare              | integer          | bson, bson                             | func
+ documentdb_core | bson_eqsel                | double precision | internal, oid, internal, integer       | func
  documentdb_core | bson_equal                | boolean          | bson, bson                             | func
  documentdb_core | bson_from_bytea           | bson             | bytea                                  | func
  documentdb_core | bson_get_value            | bson             | bson, text                             | func
@@ -22,12 +23,17 @@ set search_path to documentdb_core;
  documentdb_core | bson_json_to_bson         | bson             | text                                   | func
  documentdb_core | bson_lt                   | boolean          | bson, bson                             | func
  documentdb_core | bson_lte                  | boolean          | bson, bson                             | func
+ documentdb_core | bson_neqsel               | double precision | internal, oid, internal, integer       | func
  documentdb_core | bson_not_equal            | boolean          | bson, bson                             | func
  documentdb_core | bson_object_keys          | SETOF text       | bson                                   | func
  documentdb_core | bson_operator_selectivity | double precision | internal, oid, internal, integer       | func
  documentdb_core | bson_out                  | cstring          | bson                                   | func
  documentdb_core | bson_recv                 | bson             | internal                               | func
  documentdb_core | bson_repath_and_build     | bson             | VARIADIC "any"                         | func
+ documentdb_core | bson_scalargesel          | double precision | internal, oid, internal, integer       | func
+ documentdb_core | bson_scalargtsel          | double precision | internal, oid, internal, integer       | func
+ documentdb_core | bson_scalarlesel          | double precision | internal, oid, internal, integer       | func
+ documentdb_core | bson_scalarltsel          | double precision | internal, oid, internal, integer       | func
  documentdb_core | bson_send                 | bytea            | bson                                   | func
  documentdb_core | bson_to_bson_hex          | cstring          | bson                                   | func
  documentdb_core | bson_to_bsonsequence      | bsonsequence     | bson                                   | func
@@ -55,7 +61,7 @@ set search_path to documentdb_core;
  documentdb_core | bsonsequence_send         | bytea            | bsonsequence                           | func
  documentdb_core | bsonsequence_to_bytea     | bytea            | bsonsequence                           | func
  documentdb_core | row_get_bson              | bson             | record                                 | func
-(51 rows)
+(57 rows)
 
 -- show all aggregates exported
 \da+ documentdb_core.*

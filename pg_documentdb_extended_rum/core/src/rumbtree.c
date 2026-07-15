@@ -550,6 +550,7 @@ rumPlaceToPage(RumBtree btree, RumBtreeStack *stack,
 	page = BufferGetPage(stack->buffer);
 	savedLeftLink = RumPageGetOpaque(page)->leftlink;
 	savedRightLink = RumPageGetOpaque(page)->rightlink;
+	bool requireWalFromPlaceToPage = false;
 	if (btree->isEnoughSpace(btree, stack->buffer, stack->off))
 	{
 		if (btree->rumstate->isBuild)
@@ -557,13 +558,23 @@ rumPlaceToPage(RumBtree btree, RumBtreeStack *stack,
 			page = BufferGetPage(stack->buffer);
 			START_CRIT_SECTION();
 		}
+		else if (SupportsXLogInsertForEntry(page, childbuf))
+		{
+			/* Entry page XLog is handled inside placeToPage */
+			START_CRIT_SECTION();
+			MarkBufferDirty(stack->buffer);
+			XLogBeginInsert();
+			XLogRegisterBuffer(0, stack->buffer, REGBUF_STANDARD);
+			requireWalFromPlaceToPage = true;
+		}
 		else
 		{
 			state = GenericXLogStart(btree->index);
 			page = GenericXLogRegisterBuffer(state, stack->buffer, 0);
 		}
 
-		btree->placeToPage(btree, page, stack->off);
+		bool placedAndWalWritten = btree->placeToPage(btree, page, stack->off,
+													  requireWalFromPlaceToPage);
 
 		/* An insert to an internal page finishes the split of the child. */
 		if (BufferIsValid(childbuf))
@@ -587,11 +598,23 @@ rumPlaceToPage(RumBtree btree, RumBtreeStack *stack,
 			MarkBufferDirty(stack->buffer);
 			END_CRIT_SECTION();
 		}
+		else if (requireWalFromPlaceToPage)
+		{
+			Assert(!BufferIsValid(childbuf));
+			WriteInsertWalRecord(stack->buffer, page);
+			END_CRIT_SECTION();
+		}
 		else
 		{
 			GenericXLogFinish(state);
 		}
 
+		/* Now that END_CRIT_SECTION is called, throw if it's not consistent */
+		if (requireWalFromPlaceToPage && !placedAndWalWritten)
+		{
+			ereport(ERROR, (errmsg(
+								"failed to write WAL record for RUM index entry insertion")));
+		}
 		return true;
 	}
 	else
@@ -1095,7 +1118,8 @@ rumInsertValueOld(Relation index, RumBtree btree, RumBtreeStack *stack,
 				page = GenericXLogRegisterBuffer(state, stack->buffer, 0);
 			}
 
-			btree->placeToPage(btree, page, stack->off);
+			bool requireWalFromEntry = false;
+			btree->placeToPage(btree, page, stack->off, requireWalFromEntry);
 
 			if (btree->rumstate->isBuild)
 			{

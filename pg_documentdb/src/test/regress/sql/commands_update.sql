@@ -619,3 +619,35 @@ select documentdb_api.update('update', '{"update":"server1470_noid", "updates":[
 select documentdb_api.update('update', '{"update":"server1470_noref", "updates":[{"q": {"name": "first", "pic": {"$id": {"$oid": "4c48d04cd33a5a92628c9af6"} } }, "u":{"$set": {"refx": 1}}, "multi": true, "upsert": true} ] }');
 select documentdb_api.update('update', '{"update":"server1470_extraf_1", "updates":[{"q": {"name": "first", "pic": {"$ref": "foo", "extraField": "extraField", "$id": {"$oid": "4c48d04cd33a5a92628c9af6"} } }, "u":{"$set": {"refx": 1}}, "multi": true, "upsert": true} ] }');
 select documentdb_api.update('update', '{"update":"server1470_extraf_2", "updates":[{"q": {"name": "first", "pic": {"$id": {"$oid": "4c48d04cd33a5a92628c9af6"}, "extraField": "extraFiele", "$ref": "foo" } }, "u":{"$set": {"refx": 1}}, "multi": true, "upsert": true} ] }');
+
+-- update 'multi'/'upsert' accept a bool, or null/undefined for the default (false)
+select 1 from documentdb_api.insert_one('db', 'update_bool_validation', '{"_id":1,"r":"a"}');
+select 1 from documentdb_api.insert_one('db', 'update_bool_validation', '{"_id":2,"r":"b"}');
+select 1 from documentdb_api.insert_one('db', 'update_bool_validation', '{"_id":3,"r":"b"}');
+
+-- multi:null defaults to false (updates one)
+begin;
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"multi":null}]}');
+rollback;
+
+-- upsert:null defaults to false (no upsert)
+begin;
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"_id":99},"u":{"$set":{"t":1}},"upsert":null}]}');
+select count(*) from documentdb_api.collection('db', 'update_bool_validation');
+rollback;
+
+-- multi true updates all matches, false updates one
+begin;
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"multi":true}]}');
+rollback;
+begin;
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"multi":false}]}');
+rollback;
+
+-- non-boolean multi/upsert is rejected
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"multi":1}]}');
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"multi":0.5}]}');
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"upsert":1}]}');
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"upsert":"x"}]}');
+
+select documentdb_api.drop_collection('db', 'update_bool_validation');

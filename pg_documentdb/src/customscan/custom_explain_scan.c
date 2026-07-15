@@ -164,12 +164,51 @@ AddExplainCustomScanWrapper(PlannerInfo *root, RelOptInfo *rel,
 							RangeTblEntry *rte, uint64 collectionId)
 {
 	rel->pathlist = AddExplainCustomPathCore(rel->pathlist, rte->relid, collectionId);
+	rel->partial_pathlist = AddExplainCustomPathCore(rel->partial_pathlist, rte->relid,
+													 collectionId);
 }
 
 
 /* --------------------------------------------------------- */
 /* Helper methods exports */
 /* --------------------------------------------------------- */
+
+
+static bool
+IsValidPath(Path *inputPath)
+{
+	CHECK_FOR_INTERRUPTS();
+	check_stack_depth();
+	if (inputPath->param_info != NULL)
+	{
+		return false;
+	}
+
+	if (inputPath->pathtype == T_IndexScan ||
+		inputPath->pathtype == T_IndexOnlyScan ||
+		inputPath->pathtype == T_BitmapHeapScan)
+	{
+		return true;
+	}
+	else if (inputPath->pathtype == T_CustomScan)
+	{
+		CustomPath *customPath = (CustomPath *) inputPath;
+		ListCell *cell;
+		foreach(cell, customPath->custom_paths)
+		{
+			Path *childPath = (Path *) lfirst(cell);
+			if (!IsValidPath(childPath))
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/* we only wrap IndexScan, IndexOnlyScan, and BitmapHeapScan */
+	return false;
+}
 
 
 /*
@@ -184,76 +223,8 @@ AddExplainCustomPathCore(List *pathList, Oid relOid, uint64 collectionId)
 
 	foreach(cell, pathList)
 	{
-		bool isValidPath = false;
 		Path *inputPath = lfirst(cell);
-
-		if (inputPath->pathtype == T_IndexScan ||
-			inputPath->pathtype == T_IndexOnlyScan)
-		{
-			IndexPath *indexPath = (IndexPath *) inputPath;
-			isValidPath = IsBsonRegularIndexAm(indexPath->indexinfo->relam);
-		}
-		else if (inputPath->pathtype == T_BitmapHeapScan)
-		{
-			BitmapHeapPath *bitmapHeapPath = (BitmapHeapPath *) inputPath;
-			if (bitmapHeapPath->bitmapqual->pathtype == T_IndexScan ||
-				bitmapHeapPath->bitmapqual->pathtype == T_IndexOnlyScan)
-			{
-				IndexPath *indexPath = (IndexPath *) bitmapHeapPath->bitmapqual;
-				isValidPath = IsBsonRegularIndexAm(indexPath->indexinfo->relam);
-			}
-			else if (bitmapHeapPath->bitmapqual->pathtype == T_BitmapAnd)
-			{
-				/* BitmapAnd is valid if all its children are valid */
-				BitmapAndPath *bitmapAndPath =
-					(BitmapAndPath *) bitmapHeapPath->bitmapqual;
-				ListCell *bitmapCell;
-				isValidPath = true;
-				foreach(bitmapCell, bitmapAndPath->bitmapquals)
-				{
-					Path *childPath = (Path *) lfirst(bitmapCell);
-					if ((childPath->pathtype != T_IndexScan &&
-						 childPath->pathtype != T_IndexOnlyScan) ||
-						!IsBsonRegularIndexAm(
-							((IndexPath *) childPath)->indexinfo->relam))
-					{
-						isValidPath = false;
-						break;
-					}
-				}
-			}
-			else if (bitmapHeapPath->bitmapqual->pathtype == T_BitmapOr)
-			{
-				/* BitmapOr is valid if all its children are valid */
-				BitmapOrPath *bitmapOrPath = (BitmapOrPath *) bitmapHeapPath->bitmapqual;
-				ListCell *bitmapCell;
-				isValidPath = true;
-				foreach(bitmapCell, bitmapOrPath->bitmapquals)
-				{
-					Path *childPath = (Path *) lfirst(bitmapCell);
-					if ((childPath->pathtype != T_IndexScan &&
-						 childPath->pathtype != T_IndexOnlyScan) ||
-						!IsBsonRegularIndexAm(
-							((IndexPath *) childPath)->indexinfo->relam))
-					{
-						isValidPath = false;
-						break;
-					}
-				}
-			}
-		}
-		else
-		{
-			/* we only wrap IndexScan and BitmapHeapScan */
-			isValidPath = false;
-		}
-
-		if (inputPath->param_info != NULL)
-		{
-			isValidPath = false;
-		}
-
-		if (!isValidPath)
+		if (!IsValidPath(inputPath))
 		{
 			customPlanPaths = lappend(customPlanPaths, inputPath);
 			continue;
@@ -281,12 +252,15 @@ AddExplainCustomPathCore(List *pathList, Oid relOid, uint64 collectionId)
 
 		/* For now the custom path is as parallel safe as its inner path */
 		path->parallel_safe = inputPath->parallel_safe;
+		path->parallel_aware = inputPath->parallel_aware;
+		path->parallel_workers = inputPath->parallel_workers;
 
 		/* move the 'projection' from the path to the custom path. */
 		path->pathtarget = inputPath->pathtarget;
 
 		/* Copy the param paths */
 		path->param_info = inputPath->param_info;
+
 		customPath->custom_paths = list_make1(inputPath);
 		customPath->path.pathkeys = inputPath->pathkeys;
 
@@ -566,6 +540,16 @@ WalkAndExplainScanState(PlanState *scanState, ExplainState *es)
 		for (int i = 0; i < bitmapOrState->nplans; i++)
 		{
 			WalkAndExplainScanState(bitmapOrState->bitmapplans[i], es);
+		}
+	}
+	else if (IsA(scanState, CustomScanState))
+	{
+		CustomScanState *customScanState = (CustomScanState *) scanState;
+		ListCell *cell;
+		foreach(cell, customScanState->custom_ps)
+		{
+			PlanState *child = (PlanState *) lfirst(cell);
+			WalkAndExplainScanState(child, es);
 		}
 	}
 

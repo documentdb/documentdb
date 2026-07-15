@@ -1,0 +1,1 @@
+\i sql/bson_composite_index_multi_key_per_path_filter_tests.sql

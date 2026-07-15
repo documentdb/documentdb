@@ -152,6 +152,9 @@ typedef struct IndexDetails
 
 	/* Whether or not the index build is in progress (background build) */
 	bool isIndexBuildInProgress;
+
+	/* Whether or not the index is valid */
+	bool isIndexValid;
 } IndexDetails;
 
 /*
@@ -260,6 +263,7 @@ MongoIndexKind GetMongoIndexKind(char *indexKindName, bool *isSupported);
 IndexDetails * FindIndexWithSpecOptions(uint64 collectionId,
 										const IndexSpec *targetIndexSpec);
 IndexDetails * IndexIdGetIndexDetails(int indexId);
+IndexDetails * IndexIdGetIndexDetailsWithCurrentTxns(int indexId);
 IndexDetails * IndexNameGetIndexDetails(uint64 collectionId, const char *indexName);
 IndexDetails * IndexNameGetReadyIndexDetails(uint64 collectionId, const char *indexName);
 List * IndexKeyGetMatchingIndexes(uint64 collectionId,

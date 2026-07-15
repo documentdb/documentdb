@@ -229,6 +229,7 @@ SELECT documentdb_api.update('idx_only_scan_db', '{"update": "idx_only_scan_coll
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
 (1 row)
 
+CALL documentdb_distributed_test_helpers.wait_for_vacuum_horizon();
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_count('idx_only_scan_db', '{"count": "idx_only_scan_coll", "query": {"country": {"$eq": "USA"}}}')$$, p_ignore_heap_fetches => true);
                                                    run_explain_and_trim                                                   
 ---------------------------------------------------------------------
@@ -240,12 +241,13 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          isMultiKey: false
          indexBounds: ["country": ["USA", "USA"]]
          innerScanLoops: 1 loops
+         eligibleDeadItems: 1 items
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 4)]
          ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=3 loops=1)
                Index Cond: (collection.document @= '{ "country" : "USA" }'::bson)
                Heap Fetches: xxx
-(13 rows)
+(14 rows)
 
 SELECT document FROM bson_aggregation_count('idx_only_scan_db', '{"count": "idx_only_scan_coll", "query": {"country": {"$eq": "USA"}}}');
                                document                               
@@ -264,12 +266,13 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          isMultiKey: false
          indexBounds: ["country": ["USA", "USA"]], ["country": ["Italy", "Italy"]]
          innerScanLoops: 3 loops
+         eligibleDeadItems: 1 items
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 4), (isInequality: false, estimatedEntryCount: 2)]
          ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=5 loops=1)
                Index Cond: (collection.document @*= '{ "country" : [ "USA", "Italy" ] }'::bson)
                Heap Fetches: xxx
-(13 rows)
+(14 rows)
 
 SELECT document FROM bson_aggregation_count('idx_only_scan_db', '{"count": "idx_only_scan_coll", "query": {"country": {"$in": ["USA", "Italy"]}}}');
                                document                               
@@ -289,12 +292,13 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          isMultiKey: false
          indexBounds: ["country": ("India", { })]
          innerScanLoops: 5 loops
+         eligibleDeadItems: 1 items
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 11)]
          ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=10 loops=1)
                Index Cond: (collection.document @> '{ "country" : "India" }'::bson)
                Heap Fetches: xxx
-(13 rows)
+(14 rows)
 
 SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$gt": "India"}} }, { "$count": "count" }]}');
                document                
@@ -433,12 +437,13 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                isMultiKey: false
                indexBounds: ["country": ["USA", "USA"]]
                innerScanLoops: 1 loops
+               eligibleDeadItems: 1 items
                scanType: ordered
                scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 4)]
                ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=3 loops=1)
                      Index Cond: (collection.document @= '{ "country" : "USA" }'::bson)
                      Heap Fetches: xxx
-(16 rows)
+(17 rows)
 
 SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "country": {"$eq": "USA"} }}, { "$limit": 5 }, { "$count": "count" }]}');
                document               
@@ -448,79 +453,91 @@ SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate
 
 -- No filters and not sharded should use _id_ index
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": {}}, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
-                                              run_explain_and_trim                                              
+                                                 run_explain_and_trim                                                 
 ---------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, bsoncount(1))
-   ->  Index Only Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=16 loops=1)
-         Output: collection.shard_key_value, collection.object_id
-         Index Cond: (collection.shard_key_value = '69001'::bigint)
-         Heap Fetches: xxx
-(6 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=16 loops=1)
+         indexName: _id_
+         ->  Index Only Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=16 loops=1)
+               Index Cond: (collection.shard_key_value = '69001'::bigint)
+               Heap Fetches: xxx
+(7 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
-                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                               
+                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                  
 ---------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, bsoncount(1))
-   ->  Index Only Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=4 loops=1)
-         Output: collection.shard_key_value, collection.object_id
-         Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
-         Heap Fetches: xxx
-(6 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+         indexName: _id_
+         ->  Index Only Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=4 loops=1)
+               Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+               Heap Fetches: xxx
+(7 rows)
 
 -- count with match + limit uses index only scan 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$limit": 10 }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
-                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                  
+                                                                                                                                                                                    run_explain_and_trim                                                                                                                                                                                     
 ---------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, bsoncount(1))
    ->  Limit (actual rows=4 loops=1)
          Output: NULL::bson
-         ->  Index Only Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=4 loops=1)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
                Output: NULL::bson
-               Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
-               Heap Fetches: xxx
-(8 rows)
+               indexName: _id_
+               ->  Index Only Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=4 loops=1)
+                     Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+                     Heap Fetches: xxx
+(10 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$sum": 1 } } }]}')$$, p_ignore_heap_fetches => true);
-                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                  
+                                                                                                                                                                                    run_explain_and_trim                                                                                                                                                                                     
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'c'::text, bsoncount(1)), '{ "" : { "$numberInt" : "1" } }'::bson
    ->  Limit (actual rows=4 loops=1)
          Output: NULL::bson
-         ->  Index Only Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=4 loops=1)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
                Output: NULL::bson
-               Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
-               Heap Fetches: xxx
-(8 rows)
+               indexName: _id_
+               ->  Index Only Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=4 loops=1)
+                     Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+                     Heap Fetches: xxx
+(10 rows)
 
 -- this will need index scan
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$max": "$_id" } } }]}')$$, p_ignore_heap_fetches => true);
-                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                  
+                                                                                                                                                                                    run_explain_and_trim                                                                                                                                                                                     
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'c'::text, bsonmax(bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), '{ "" : { "$numberInt" : "1" } }'::bson
    ->  Limit (actual rows=4 loops=1)
          Output: collection.document
-         ->  Index Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=4 loops=1)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
                Output: collection.document
-               Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
-(7 rows)
+               indexName: _id_
+               ->  Index Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=4 loops=1)
+                     Output: collection.document
+                     Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+(10 rows)
 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$max": "$_id" } } }]}')$$, p_ignore_heap_fetches => true);
-                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                  
+                                                                                                                                                                                    run_explain_and_trim                                                                                                                                                                                     
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'c'::text, bsonmaxwithexpr(collection.document, '{ "" : "$_id" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), '{ "" : { "$numberInt" : "1" } }'::bson
    ->  Limit (actual rows=4 loops=1)
          Output: collection.document
-         ->  Index Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=4 loops=1)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
                Output: collection.document
-               Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
-(7 rows)
+               indexName: _id_
+               ->  Index Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=4 loops=1)
+                     Output: collection.document
+                     Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+(10 rows)
 
 SET documentdb.enableNewWithExprAccumulators TO off;
 -- HINTED QUERIES: hint should preserve IOS behavior without bypassing coverage checks
@@ -580,12 +597,13 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          isMultiKey: false
          indexBounds: ["country": ["Brazil", { })]
          innerScanLoops: 7 loops
+         eligibleDeadItems: 1 items
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 17)]
          ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=16 loops=1)
                Index Cond: (collection.document @>= '{ "country" : "Brazil" }'::bson)
                Heap Fetches: xxx
-(13 rows)
+(14 rows)
 
 SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "hint" : "country_1", "pipeline" : [{ "$match" : {"country": {"$gte": "Brazil"}} }, { "$group" : { "_id" : 1, "n" : { "$sum" : 1 } } }]}');
                              document                              
@@ -605,12 +623,13 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          isMultiKey: false
          indexBounds: ["country": (MinKey, MaxKey)]
          innerScanLoops: 7 loops
+         eligibleDeadItems: 1 items
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 17)]
          ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=16 loops=1)
                Index Cond: (collection.document @<> '{ "country" : { "fullScan" : true } }'::bson)
                Heap Fetches: xxx
-(13 rows)
+(14 rows)
 
 -- hint + no match + constant-group $sum: fullScan should use IOS
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "hint" : "country_1", "pipeline" : [{ "$group" : { "_id" : 1, "n" : { "$sum" : 1 } } }]}')$$, p_ignore_heap_fetches => true);
@@ -624,12 +643,13 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          isMultiKey: false
          indexBounds: ["country": (MinKey, MaxKey)]
          innerScanLoops: 7 loops
+         eligibleDeadItems: 1 items
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 17)]
          ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=16 loops=1)
                Index Cond: (collection.document @<> '{ "country" : { "fullScan" : true } }'::bson)
                Heap Fetches: xxx
-(13 rows)
+(14 rows)
 
 -- hint + $match + uncovered accumulator (provider not in country_1 index): should NOT use IOS
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "hint" : "country_1", "pipeline" : [{ "$match" : {"country": {"$eq": "Mexico"}} }, { "$group" : { "_id" : 1, "maxProvider" : { "$max" : "$provider" } } }]}')$$, p_ignore_heap_fetches => true);
@@ -708,16 +728,17 @@ SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate
 
 -- if the filter doesn't match the first field in the index, shouldn't use the compound index and not index only scan
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"provider": {"$eq": "AWS"}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
-                                           run_explain_and_trim                                           
+                                              run_explain_and_trim                                              
 ---------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, bsoncount(1))
-   ->  Index Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=6 loops=1)
-         Output: collection.shard_key_value, collection.object_id, collection.document
-         Index Cond: (collection.shard_key_value = '69001'::bigint)
-         Filter: (collection.document @= '{ "provider" : "AWS" }'::bson)
-         Rows Removed by Filter: 10
-(7 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+         indexName: _id_
+         ->  Index Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=6 loops=1)
+               Index Cond: (collection.shard_key_value = '69001'::bigint)
+               Filter: (collection.document @= '{ "provider" : "AWS" }'::bson)
+               Rows Removed by Filter: 10
+(8 rows)
 
 -- range match on an uncovered field: country is in the index but provider is not;
 -- hint forces country_1 and the provider range becomes a residual Filter. IOS must be rejected.
@@ -732,12 +753,13 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          isMultiKey: false
          indexBounds: ["country": ["USA", "USA"]]
          innerScanLoops: 4 loops
+         eligibleDeadItems: 1 items
          scanType: regular
          scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 4)]
          ->  Index Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=3 loops=1)
                Index Cond: (collection.document @= '{ "country" : "USA" }'::bson)
                Filter: ((collection.document @> '{ "provider" : "A" }'::bson) AND (collection.document @< '{ "provider" : "Z" }'::bson))
-(13 rows)
+(14 rows)
 
 -- Ensure visibility map is up-to-date so IOS is available
 VACUUM documentdb_data.documents_69001;
@@ -1031,7 +1053,7 @@ SELECT documentdb_api.delete('idx_only_scan_db', '{ "delete": "idx_only_scan_col
 CALL documentdb_distributed_test_helpers.wait_for_vacuum_horizon();
 set client_min_messages to DEBUG1;
 VACUUM (FREEZE ON) documentdb_data.documents_69001;
-psql:sql/bson_composite_index_only_scan_tests.sql:184: LOG:  Vacuum[index=84537,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=0, numVoidPages=0
+psql:sql/bson_composite_index_only_scan_tests.sql:186: LOG:  Vacuum[index=22082,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=1, numEntryPages=1, numDataPages=0, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0
 reset client_min_messages;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$eq": "Mexico"}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
                                                    run_explain_and_trim                                                   
@@ -1053,26 +1075,28 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 
 -- test _id index only scans
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"_id": {"$gt": 5 }} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
-                                                                                                   run_explain_and_trim                                                                                                    
+                                                                                                      run_explain_and_trim                                                                                                       
 ---------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, bsoncount(1))
-   ->  Index Only Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=12 loops=1)
-         Output: collection.shard_key_value, collection.object_id
-         Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "5" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
-         Heap Fetches: xxx
-(6 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=12 loops=1)
+         indexName: _id_
+         ->  Index Only Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=12 loops=1)
+               Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "5" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+               Heap Fetches: xxx
+(7 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"_id": {"$gt": 5, "$lt": 8 }} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
-                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                               
+                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                  
 ---------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, bsoncount(1))
-   ->  Index Only Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=2 loops=1)
-         Output: collection.shard_key_value, collection.object_id
-         Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "5" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
-         Heap Fetches: xxx
-(6 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         indexName: _id_
+         ->  Index Only Scan using _id_ on documentdb_data.documents_69001_690002 collection (actual rows=2 loops=1)
+               Index Cond: ((collection.shard_key_value = '69001'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "5" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+               Heap Fetches: xxx
+(7 rows)
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"_id": {"$gt": 5, "$lt": 8 }, "country": { "$lt": { "$maxKey": 1 }}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
                                                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                                              
@@ -1095,7 +1119,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 
 -- Sharded collections can't be supported with a shard key filter because in RUM indexes the shard_key_value becomes a runtime filter and for index only scans everything needs to be satisfied by the index. 
 SELECT COUNT(documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_sharded', bson_build_document('_id'::text, i, 'shardKey'::text, i % 10, 'value'::text, i))) FROM generate_series(1, 1000) i;
-psql:sql/bson_composite_index_only_scan_tests.sql:196: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:198: NOTICE:  creating collection
  count 
 ---------------------------------------------------------------------
   1000
@@ -1162,7 +1186,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 ROLLBACK;
 -- test index only scan is not enabled for wildcard indexes
 SELECT documentdb_api.insert_one('idx_only_scan_db', 'compwildcard2', '{ "a": { "b": 1, "c": 5 }}');
-psql:sql/bson_composite_index_only_scan_tests.sql:215: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:217: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1220,7 +1244,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 RESET documentdb.forceIndexOnlyScanIfAvailable;
 -- test $sum/$avg on numeric field with ordered index (future index-only scan optimization candidate)
 SELECT documentdb_api.create_collection('idx_only_scan_db', 'idx_only_scan_numeric');
-psql:sql/bson_composite_index_only_scan_tests.sql:228: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:230: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t
@@ -1464,7 +1488,7 @@ SET documentdb.enableNewWithExprAccumulators TO off;
 -- Sharded collection: verify index-only scan with covered $group accumulators pushes down to shard workers
 ---------------------------------------------------------------------
 SELECT documentdb_api.create_collection('idx_only_scan_db', 'ios_sharded_accum');
-psql:sql/bson_composite_index_only_scan_tests.sql:271: NOTICE:  creating collection
+psql:sql/bson_composite_index_only_scan_tests.sql:273: NOTICE:  creating collection
  create_collection 
 ---------------------------------------------------------------------
  t

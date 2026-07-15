@@ -23,7 +23,8 @@ use crate::{
 /// pool unit tests against a local `PostgreSQL` instance.
 #[must_use]
 pub fn test_setup_configuration() -> DocumentDBSetupConfiguration {
-    let system_user = std::env::var("PostgresSystemUser").unwrap_or_else(|_| whoami::username());
+    let system_user = std::env::var("PostgresSystemUser")
+        .unwrap_or_else(|_| whoami::username().unwrap_or_default());
 
     DocumentDBSetupConfiguration {
         node_host_name: "localhost".to_owned(),

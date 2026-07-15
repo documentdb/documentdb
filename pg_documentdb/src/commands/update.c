@@ -113,6 +113,7 @@ extern int BatchUpdateLockTimeoutMs;
 /* This guc is temporary and is used to handle whether the parameter “bypassDocumentValidation” could be set in the request command.*/
 extern bool EnableBypassDocumentValidation;
 extern bool EnableSchemaValidation;
+extern bool EnableCommutativeUpdateMany;
 
 /*
  * UpdateSpec describes a single update operation.
@@ -1005,15 +1006,19 @@ BuildUpdateSpec(bson_iter_t *updateIter, const bson_value_t *variableSpec)
 		}
 		else if (strcmp(field, "multi") == 0)
 		{
-			EnsureTopLevelFieldType("update.updates.multi", updateIter, BSON_TYPE_BOOL);
-
-			isMulti = bson_iter_bool(updateIter);
+			if (EnsureTopLevelFieldTypeNullOkUndefinedOK("update.updates.multi",
+														 updateIter, BSON_TYPE_BOOL))
+			{
+				isMulti = bson_iter_bool(updateIter);
+			}
 		}
 		else if (strcmp(field, "upsert") == 0)
 		{
-			EnsureTopLevelFieldType("update.updates.upsert", updateIter, BSON_TYPE_BOOL);
-
-			isUpsert = bson_iter_bool(updateIter);
+			if (EnsureTopLevelFieldTypeNullOkUndefinedOK("update.updates.upsert",
+														 updateIter, BSON_TYPE_BOOL))
+			{
+				isUpsert = bson_iter_bool(updateIter);
+			}
 		}
 		else if (strcmp(field, "arrayFilters") == 0)
 		{
@@ -1682,6 +1687,7 @@ ProcessUpdate(MongoCollection *collection, UpdateSpec *updateSpec,
 								"multi=true and replace-style updates cannot be used together.")));
 		}
 
+		ReportFeatureUsage(FEATURE_UPDATE_MANY);
 
 		/*
 		 * Update as many document as match the query. This is not a retryable
@@ -2184,7 +2190,23 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 														argCount)
 						  : GetSPIQueryPlan(collection->collectionId, preparedQueryKey,
 											updateQuery.data, argTypes, argCount);
-		SPI_execute_plan(plan, argValues, argNulls, readOnly, maxTupleCount);
+
+		if (collection->shardKey != NULL && EnableCommutativeUpdateMany)
+		{
+			/*
+			 * In distributed scenarios, enable commutative writes to improve
+			 * updateMany performance. The GUC is scoped to just this query
+			 * execution to avoid leaking into subsequent operations (e.g., deletes)
+			 * in the same transaction.
+			 */
+			RunMultiValueQueryWithCommutativeWrites(updateQuery.data, plan, argCount,
+													argTypes, argValues, argNulls,
+													readOnly, maxTupleCount);
+		}
+		else
+		{
+			SPI_execute_plan(plan, argValues, argNulls, readOnly, maxTupleCount);
+		}
 	}
 	else
 	{
@@ -3385,10 +3407,23 @@ UpdateOneInternal(MongoCollection *collection, UpdateOneParams *updateOneParams,
 								   variableSpec->value_type == BSON_TYPE_DOCUMENT ?
 								   PgbsonInitFromDocumentBsonValue(variableSpec) : NULL;
 
+		pgbson *querySpecBson = updateOneParams->query != NULL &&
+								updateOneParams->query->value_type == BSON_TYPE_DOCUMENT ?
+								PgbsonInitFromDocumentBsonValue(
+			updateOneParams->query) : NULL;
+
+		/* UpdateOneParams does not support collation yet (update.updates.collation
+		 * raises ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED).
+		 * When collation is added, thread it through here. */
+		const char *collationString = NULL;
+
 		const BsonProjectionQueryState *projectionState =
-			GetProjectionStateForBsonProject(&projectIter,
-											 forceProjectId, allowInclusionExclusion,
-											 variableSpecBson);
+			GetProjectionStateForBsonProjectFind(&projectIter,
+												 forceProjectId,
+												 allowInclusionExclusion,
+												 variableSpecBson,
+												 querySpecBson,
+												 collationString);
 		result->resultDocument = ProjectDocumentWithState(result->resultDocument,
 														  projectionState);
 	}

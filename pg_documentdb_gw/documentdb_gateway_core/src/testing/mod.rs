@@ -20,7 +20,8 @@ pub use connection_context::test_connection_context;
 pub use dynamic_configuration::TestDynamicConfiguration;
 pub use env_guard::EnvGuard;
 pub use op_msg::{
-    assert_error_response, assert_header_matches, assert_success_response, build_op_msg_parts,
+    assert_error_response, assert_header_matches, assert_success_response, build_document_section,
+    build_document_sequence_section, build_op_msg_parts, build_op_msg_parts_with_sections,
     build_op_msg_request, build_raw_document, decode_op_msg_response, decode_op_msg_responses,
 };
 pub use pool::{test_connection_pool, test_setup_configuration};

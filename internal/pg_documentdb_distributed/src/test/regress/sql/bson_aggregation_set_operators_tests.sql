@@ -137,6 +137,14 @@ select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{"$oid"
 select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{"$oid": "639926cee6bda3127f153bf1"}],[{"$oid": "739926cee6bda3127f153bf1"}]]} }');
 select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$code": "var a = 1;"}],[{ "$code": "var a = 1;"}]]} }');
 select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$code": "var a = 1;"}],[{ "$code": "var b = 1;"}]]} }');
+-- CodeWScope: identical (code + scope) dedupe; differing scope stays distinct; plain Code (different type) stays distinct:
+select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$code": "var a = 1;", "$scope" : { "k" : 1 } }],[{ "$code": "var a = 1;", "$scope" : { "k" : 1 } }]]} }');
+select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$code": "var a = 1;", "$scope" : { "k" : 1 } }],[{ "$code": "var a = 1;", "$scope" : { "k" : 2 } }]]} }');
+select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$code": "var a = 1;", "$scope" : { "k" : 1 } }],[{ "$code": "var a = 1;"}]]} }');
+-- Regex: identical pattern+options dedupe; distinct pattern/options stay separate; long pattern (longer than a pointer) must not over-read:
+select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$regularExpression" : { "pattern" : "abc", "options" : "i" } }],[{ "$regularExpression" : { "pattern" : "abc", "options" : "i" } }]]} }');
+select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$regularExpression" : { "pattern" : "abc", "options" : "i" } }],[{ "$regularExpression" : { "pattern" : "abc", "options" : "" } }]]} }');
+select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$regularExpression" : { "pattern" : "a_very_long_regex_pattern_exceeding_pointer_size", "options" : "" } }],[{ "$regularExpression" : { "pattern" : "a_very_long_regex_pattern_exceeding_pointer_size", "options" : "" } }]]} }');
 select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$dbPointer" : { "$ref" : "db.test", "$id" : { "$oid" : "347f000000c1de008ec19ceb" }}}],[{ "$dbPointer" : { "$ref" : "db.test", "$id" : { "$oid" : "347f000000c1de008ec19ceb" }}}]]} }');
 select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$dbPointer" : { "$ref" : "db.test", "$id" : { "$oid" : "347f000000c1de008ec19ceb" }}}],[{ "$dbPointer" : { "$ref" : "db.test2", "$id" : { "$oid" : "347f000000c1de008ec19ceb" }}}]]} }');
 select bson_dollar_project('{"_id":"1" }', '{"union" : { "$setUnion" : [[{ "$dbPointer" : { "$ref" : "db.test", "$id" : { "$oid" : "347f000000c1de008ec19ceb" }}}],[{ "$dbPointer" : { "$ref" : "db.test", "$id" : { "$oid" : "447f000000c1de008ec19ceb" }}}]]} }');

@@ -25,6 +25,7 @@ use crate::{
         },
         PgDocument,
     },
+    requests::ExplainTarget,
     responses::{PgResponse, Response},
 };
 
@@ -53,8 +54,16 @@ pub trait PgDataClient: Send + Sync {
 
     async fn pull_connection_with_transaction(&self, in_transaction: bool) -> Result<Connection> {
         let pool_connection = self.acquire_pool_connection().await?;
+        let sql_commenter_enabled = self
+            .connection_pool()
+            .map(ConnectionPool::sql_commenter_enabled)
+            .unwrap_or(false);
 
-        Ok(Connection::new(pool_connection, in_transaction))
+        Ok(Connection::new(
+            pool_connection,
+            in_transaction,
+            sql_commenter_enabled,
+        ))
     }
 
     /// Returns the underlying connection pool.
@@ -161,6 +170,7 @@ pub trait PgDataClient: Send + Sync {
     async fn execute_explain(
         &self,
         request_context: &RequestContext<'_>,
+        explain_target: &ExplainTarget<'_>,
         query_base: &str,
         verbosity: Verbosity,
         connection_context: &ConnectionContext,
@@ -445,8 +455,8 @@ pub trait PgDataClient: Send + Sync {
             }
         };
 
-        let (_, request_info, request_tracker) = request_context.get_components();
-        let command_timeout_ms = request_info.max_time_ms.map(i64::cast_unsigned);
+        let request = request_context.request();
+        let command_timeout_ms = request.max_time_ms().map(i64::cast_unsigned);
         let req_opts = self.request_options(command_timeout_ms);
 
         run_request_with_retries(
@@ -458,7 +468,7 @@ pub trait PgDataClient: Send + Sync {
                     .setup_configuration()
                     .postgres_command_timeout_secs(),
             ),
-            Some(request_tracker),
+            request_context,
             run_func,
         )
         .await
@@ -503,18 +513,17 @@ pub trait PgDataClient: Send + Sync {
                 },
             );
 
-            let request_info = request_context.info();
-            let lsid = request_info.lsid.clone();
-            let transaction_number = request_info
-                .transaction_info
-                .as_ref()
+            let request = request_context.request();
+            let lsid = request.lsid().cloned();
+            let transaction_number = request
+                .transaction_info()
                 .map(|txn_info| txn_info.transaction_number);
 
             connection_context.add_cursor(
                 connection,
                 cursor,
-                request_info.db()?,
-                request_info.collection()?,
+                request.db(),
+                request.collection()?,
                 cursor_timeout,
                 lsid,
                 transaction_number,

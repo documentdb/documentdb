@@ -113,7 +113,7 @@ FROM generate_series(1, 10000) AS i;
 SET client_min_messages = error;
 WITH internal_pages AS (
     SELECT i AS pageno FROM generate_series(1,
-        (pg_relation_size(FORMAT('documentdb_data.documents_rum_index_%s', :isplit_idx)::regclass) / 8192)::int - 1) i
+        (pg_relation_size(FORMAT('documentdb_data.documents_rum_index_%s', :isplit_idx)::regclass) / current_setting('block_size')::int)::int - 1) i
     WHERE (rum_incomplete_split_test.documentdb_rum_page_get_stats(
         public.get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :isplit_idx), i))
         ->>'flagsStr') NOT LIKE '%LEAF%'

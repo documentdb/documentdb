@@ -632,14 +632,14 @@ SELECT document FROM documentdb_api.collection('db', 'index_truncation_symbol_te
 (0 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api.collection('db', 'index_truncation_symbol_tests') WHERE document @@ '{ "ikey": { "$in": [{ "$symbol" : "dGhpcyBpcyBhIHRlc3Qgc3RyaW5n" }, { "$symbol" : "MTIzNDUxMjM0NQ==" }] } }';
-                                                                                                                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                                                                                                                   
+                                                                                                                                                                QUERY PLAN                                                                                                                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_11700_1170005 collection WHERE (documentdb_api_catalog.bson_dollar_in(document, '{ "ikey" : [ { "$symbol" : "dGhpcyBpcyBhIHRlc3Qgc3RyaW5n" }, { "$symbol" : "MTIzNDUxMjM0NQ==" } ] }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_internal.##=) ANY (ARRAY['{ "ikey" : { "$symbol" : "dGhpcyBpcyBhIHRlc3Qgc3RyaW5n" } }'::documentdb_api_internal.bsonindexbounds, '{ "ikey" : { "$symbol" : "MTIzNDUxMjM0NQ==" } }'::documentdb_api_internal.bsonindexbounds])) AND (shard_key_value OPERATOR(pg_catalog.=) '11700'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_11700_1170005 collection WHERE (documentdb_api_catalog.bson_dollar_in(document, '{ "ikey" : [ { "$symbol" : "dGhpcyBpcyBhIHRlc3Qgc3RyaW5n" }, { "$symbol" : "MTIzNDUxMjM0NQ==" } ] }'::documentdb_core.bson) AND (shard_key_value OPERATOR(pg_catalog.=) '11700'::bigint))
          Node: host=localhost port=58070 dbname=regression
          ->  Bitmap Heap Scan on documentdb_data.documents_11700_1170005 collection
                Output: document

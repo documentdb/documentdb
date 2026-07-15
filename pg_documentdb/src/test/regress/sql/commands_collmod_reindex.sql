@@ -46,6 +46,11 @@ SET documentdb.enableUniqueReindex TO true;
 ------------------------------------------------------------
 SELECT documentdb_api.coll_mod('reindex_db', 'reindex_unique_coll', '{ "collMod": "reindex_unique_coll", "index": { "name": "a_1_unique", "reindex": true, "hidden": true } }');
 
+------------------------------------------------------------
+-- Error case: updateOptions requires reindex
+------------------------------------------------------------
+SELECT documentdb_api.coll_mod('reindex_db', 'reindex_unique_coll', '{ "collMod": "reindex_unique_coll", "index": { "name": "a_1_unique", "updateOptions": true } }');
+
 -- Capture collection_id for \d checks
 SELECT collection_id as unique_coll_id FROM documentdb_api_catalog.collections WHERE database_name = 'reindex_db' AND collection_name = 'reindex_unique_coll' \gset
 
@@ -126,6 +131,17 @@ ORDER BY conname;
 
 -- Verify _id index still works after reindex
 SELECT document FROM documentdb_api_catalog.bson_aggregation_find('reindex_db', '{ "find": "reindex_unique_coll", "filter": { "_id": 10 } }');
+
+------------------------------------------------------------
+-- Error case: reindex with updateOptions is not supported for the _id_ index
+-- (its opclass options are fixed and must not be regenerated). Both the
+-- name-based and keyPattern-based forms must be rejected, and nothing should be
+-- queued.
+------------------------------------------------------------
+SELECT documentdb_api.coll_mod('reindex_db', 'reindex_unique_coll', '{ "collMod": "reindex_unique_coll", "index": { "name": "_id_", "reindex": true, "updateOptions": true } }');
+SELECT documentdb_api.coll_mod('reindex_db', 'reindex_unique_coll', '{ "collMod": "reindex_unique_coll", "index": { "keyPattern": { "_id": 1 }, "reindex": true, "updateOptions": true } }');
+-- The queue must be empty: the rejected requests were never enqueued.
+SELECT cmd_type, index_cmd FROM documentdb_api_catalog.documentdb_index_queue WHERE index_id >= 25703000 AND index_id <= 25703100 ORDER BY index_id;
 
 ------------------------------------------------------------
 -- Reindex unique index via collMod using keyPattern

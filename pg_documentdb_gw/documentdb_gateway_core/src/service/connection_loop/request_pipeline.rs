@@ -8,24 +8,46 @@
 
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    time::Instant,
+    time::{Duration, Instant},
 };
+use tracing::field::Empty;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
     context::{ConnectionContext, RequestContext},
     postgres::PgDataClient,
     protocol::{self, header::Header},
-    requests::{request_tracker::RequestTracker, validation, RequestIntervalKind},
+    requests::{
+        request_tracker::RequestTracker, validation, RequestIntervalKind, RequestObservation,
+    },
     service::connection_loop::{
         error_reply,
         read_ahead::{self, PendingHeaderRead},
         request_execution,
     },
+    telemetry::context_propagation,
 };
 
 #[expect(
     clippy::too_many_lines,
     reason = "Request hot path coordinates read-ahead, parsing, validation, response writing, and telemetry"
+)]
+#[tracing::instrument(
+    name = "gateway.request",
+    skip_all,
+    fields(
+        otel.kind = "server",
+        otel.status_code = Empty,
+        db.system.name = "documentdb",
+        db.operation.name = Empty,
+        db.collection.name = Empty,
+        db.namespace = Empty,
+        connection.id = %connection_context.connection_id,
+        network.protocol = %connection_context.transport_protocol(),
+        network.transport.tls = !connection_context.ssl_protocol.is_empty(),
+        request.id = header.request_id(),
+        activity_id = %activity_id,
+    )
 )]
 pub(super) async fn handle_message<'a, T, R, W>(
     connection_context: &mut ConnectionContext,
@@ -33,6 +55,7 @@ pub(super) async fn handle_message<'a, T, R, W>(
     reader: &'a mut R,
     writer: &mut W,
     activity_id: &str,
+    idle_timeout: Duration,
 ) -> PendingHeaderRead<'a>
 where
     T: PgDataClient,
@@ -43,29 +66,52 @@ where
 
     let read_request_start = Instant::now();
     let authenticated = connection_context.auth_state.is_authenticated();
-    let message = match protocol::reader::read_request(authenticated, header, reader).await {
+    let message = match protocol::reader::read_request_with_timeout(
+        authenticated,
+        header,
+        reader,
+        idle_timeout,
+    )
+    .await
+    {
         Ok(message) => message,
         Err(error) => {
+            if protocol::reader::is_idle_timeout_error(&error) {
+                return read_ahead::closed_header_read();
+            }
+
+            tracing::Span::current().record("otel.status_code", "ERROR");
             error_reply::reply_with_request_error::<W>(
                 connection_context,
                 header,
                 &error,
                 None,
                 writer,
+                true,
                 None,
                 &request_tracker,
                 activity_id,
                 None,
             )
             .await;
-            return read_ahead::start_next_header_read(reader).await;
+            return read_ahead::start_next_header_read(reader, idle_timeout).await;
         }
     };
     request_tracker.record_duration(RequestIntervalKind::ReadRequest, read_request_start);
+    let mut requires_response =
+        protocol::reader::requires_response_from_parsed_message(&message).unwrap_or(true);
+    let shutdown_requires_response = if connection_context
+        .dynamic_configuration()
+        .send_shutdown_responses()
+    {
+        requires_response
+    } else {
+        true
+    };
 
     // Start receiving the next request as soon as the current request bytes are fully consumed,
     // mirroring the managed gateway's read-ahead overlap before deeper parsing/handling work.
-    let next_header = read_ahead::start_next_header_read(reader).await;
+    let next_header = read_ahead::start_next_header_read(reader, idle_timeout).await;
 
     // HandleMessage captures the overall duration needed by the server to handle/process
     // a user operation message/request. Client-to-Gateway networking latency should be
@@ -76,6 +122,7 @@ where
         connection_context,
         header,
         writer,
+        shutdown_requires_response,
         &request_tracker,
         activity_id,
         handle_message_start,
@@ -84,20 +131,30 @@ where
     {
         return next_header;
     }
-
     let format_request_start = Instant::now();
-    let request = match protocol::reader::parse_request(
-        &message,
-        &mut connection_context.requires_response,
-    ) {
+    let wire_request = match protocol::reader::parse_request(&message, &mut requires_response) {
         Ok(request) => request,
         Err(error) => {
+            let span = tracing::Span::current();
+            span.record("otel.status_code", "ERROR");
+            let telemetry_wire_request =
+                protocol::reader::parse_request_payload(&message, &mut requires_response).ok();
+            if let Some(preview) = telemetry_wire_request.as_ref() {
+                span.record(
+                    "db.operation.name",
+                    tracing::field::display(preview.request_type()),
+                );
+                span.record("db.namespace", preview.db_hint().unwrap_or(""));
+            }
             error_reply::reply_with_request_error::<W>(
                 connection_context,
                 header,
                 &error,
-                None,
+                telemetry_wire_request
+                    .as_ref()
+                    .map(RequestObservation::Preview),
                 writer,
+                requires_response,
                 None,
                 &request_tracker,
                 activity_id,
@@ -108,52 +165,50 @@ where
             return next_header;
         }
     };
+    connection_context.requires_response = requires_response;
     request_tracker.record_duration(RequestIntervalKind::FormatRequest, format_request_start);
 
-    let request_info = match request.extract_common() {
-        Ok(request_info) => request_info,
-        Err(error) => {
-            error_reply::reply_with_request_error::<W>(
-                connection_context,
-                header,
-                &error,
-                Some(&request),
-                writer,
-                None,
-                &request_tracker,
-                activity_id,
-                Some(handle_message_start),
-            )
-            .await;
+    let span = tracing::Span::current();
+    span.record(
+        "db.operation.name",
+        tracing::field::display(wire_request.request_type()),
+    );
+    span.record(
+        "db.collection.name",
+        wire_request.collection().unwrap_or(""),
+    );
+    span.record("db.namespace", wire_request.db());
 
-            return next_header;
+    // If the client carried a W3C trace context in the request `comment`, re-parent
+    // the gateway's root span onto it so this request (and its downstream
+    // `postgres.execute` span) appear under the caller's distributed trace. Absent
+    // or malformed context leaves the gateway starting its own trace.
+    if let Some(comment) = wire_request.comment() {
+        if let Some(parent_context) = context_propagation::extract_context_from_comment(comment) {
+            span.set_parent(parent_context);
         }
-    };
+    }
 
-    if let Err(error) = validation::validate_request(connection_context, &request_info, &request) {
-        let collection = request_info.collection().unwrap_or("").to_owned();
+    if let Err(error) = validation::validate_request(connection_context, &wire_request) {
+        span.record("otel.status_code", "ERROR");
+        let collection = wire_request.collection().unwrap_or("").to_owned();
         error_reply::reply_with_request_error::<W>(
             connection_context,
             header,
             &error,
-            Some(&request),
+            Some(RequestObservation::Strict(&wire_request)),
             writer,
+            connection_context.requires_response,
             Some(collection),
             &request_tracker,
             activity_id,
             Some(handle_message_start),
         )
         .await;
-
         return next_header;
     }
 
-    let request_context = RequestContext {
-        activity_id,
-        payload: &request,
-        info: &request_info,
-        tracker: &request_tracker,
-    };
+    let request_context = RequestContext::new(activity_id, &wire_request, &request_tracker);
 
     // Errors in request handling are handled explicitly so that telemetry can have access to the
     // request. The next header read is already pending, so the caller can await it on the next
@@ -167,13 +222,19 @@ where
     )
     .await
     {
-        let collection = request_context.info.collection().unwrap_or("").to_owned();
+        span.record("otel.status_code", "ERROR");
+        let collection = request_context
+            .request()
+            .collection()
+            .unwrap_or("")
+            .to_owned();
         error_reply::reply_with_request_error::<W>(
             connection_context,
             header,
             &error,
-            Some(&request),
+            Some(RequestObservation::Strict(request_context.request())),
             writer,
+            connection_context.requires_response,
             Some(collection),
             request_context.tracker,
             activity_id,
@@ -191,7 +252,7 @@ mod tests {
 
     use std::sync::Arc;
 
-    use bson::doc;
+    use bson::{doc, spec::BinarySubtype, Binary};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use crate::{
@@ -199,11 +260,14 @@ mod tests {
         postgres::DocumentDBDataClient,
         protocol::opcode::OpCode,
         testing::{
-            assert_error_response, assert_header_matches, build_op_msg_parts,
-            decode_op_msg_response, invalid_transaction_find_document, logout_document,
-            malformed_sasl_start_document, test_connection_context, TestDynamicConfiguration,
+            assert_error_response, assert_header_matches, build_document_section,
+            build_op_msg_parts, build_op_msg_parts_with_sections, decode_op_msg_response,
+            invalid_transaction_find_document, logout_document, malformed_sasl_start_document,
+            test_connection_context, TestDynamicConfiguration,
         },
     };
+
+    const NON_EXPIRING_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
     async fn execute_handle_message<T>(
         connection_context: &mut ConnectionContext,
@@ -231,6 +295,7 @@ mod tests {
             &mut request_reader,
             &mut response_writer,
             activity_id,
+            NON_EXPIRING_IDLE_TIMEOUT,
         )
         .await;
         drop(response_writer);
@@ -278,6 +343,54 @@ mod tests {
                 .expect("next header future should resolve cleanly after truncated request")
                 .is_none(),
             "connection should be at EOF after the truncated request body"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_message_closes_when_request_body_idle_times_out() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        let logout_document = logout_document();
+        let (_, full_body) = build_op_msg_parts(&logout_document, 71);
+        let length = i32::try_from(Header::LENGTH + full_body.len())
+            .expect("message size should fit into i32");
+        let header = Header::new(length, 71, 0, OpCode::Msg).expect("test header should be valid");
+        let (mut request_reader, mut request_writer) = tokio::io::duplex(4096);
+        request_writer
+            .write_all(&full_body[..1])
+            .await
+            .expect("partial request bytes should be written");
+
+        let (mut response_writer, mut response_reader) = tokio::io::duplex(4096);
+        let next_header = handle_message::<DocumentDBDataClient, _, _>(
+            &mut connection_context,
+            &header,
+            &mut request_reader,
+            &mut response_writer,
+            "activity-read-request-timeout",
+            Duration::ZERO,
+        )
+        .await;
+        drop(response_writer);
+        drop(request_writer);
+
+        let mut response_bytes = Vec::new();
+        response_reader
+            .read_to_end(&mut response_bytes)
+            .await
+            .expect("response reader should drain bytes");
+
+        assert!(
+            response_bytes.is_empty(),
+            "idle request body timeout should close without a response"
+        );
+        assert!(
+            next_header
+                .await
+                .expect("idle request body timeout should resolve cleanly")
+                .is_none(),
+            "idle request body timeout should stop the connection loop"
         );
     }
 
@@ -354,6 +467,199 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn handle_message_skips_error_response_when_more_to_come() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        let invalid_document = doc! {
+            "ping": 1_i32,
+            "$db": 7_i32,
+        };
+        let (header, mut body) = build_op_msg_parts(&invalid_document, 68);
+        body[..std::mem::size_of::<u32>()].copy_from_slice(&2_u32.to_le_bytes());
+
+        let (response_bytes, next_header_result) = execute_handle_message::<DocumentDBDataClient>(
+            &mut connection_context,
+            header,
+            body,
+            "activity-more-to-come-error",
+        )
+        .await;
+
+        assert!(
+            response_bytes.is_empty(),
+            "moreToCome requests must not receive error responses"
+        );
+        assert!(
+            next_header_result
+                .expect("next header future should resolve after moreToCome error")
+                .is_none(),
+            "connection should be at EOF after the single invalid request"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_message_skips_error_response_when_more_to_come_msg_is_malformed() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        connection_context.requires_response = false;
+        let body = 2_u32.to_le_bytes().to_vec();
+        let length =
+            i32::try_from(Header::LENGTH + body.len()).expect("message size should fit into i32");
+        let header = Header::new(length, 69, 0, OpCode::Msg).expect("test header should be valid");
+
+        let (response_bytes, next_header_result) = execute_handle_message::<DocumentDBDataClient>(
+            &mut connection_context,
+            header,
+            body,
+            "activity-malformed-more-to-come",
+        )
+        .await;
+
+        assert!(
+            response_bytes.is_empty(),
+            "malformed moreToCome requests must not receive error responses"
+        );
+        assert!(
+            next_header_result
+                .expect("next header future should resolve after malformed moreToCome request")
+                .is_none(),
+            "connection should be at EOF after the single malformed request"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_message_skips_required_flag_error_response_when_more_to_come() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        let command = doc! { "ping": 1_i32, "$db": "admin" };
+        let (header, mut body) = build_op_msg_parts(&command, 74);
+        let unknown_required_flag = 0x0004_u32;
+        let flags = 2_u32 | unknown_required_flag;
+        body[..std::mem::size_of::<u32>()].copy_from_slice(&flags.to_le_bytes());
+
+        let (response_bytes, next_header_result) = execute_handle_message::<DocumentDBDataClient>(
+            &mut connection_context,
+            header,
+            body,
+            "activity-more-to-come-unknown-required-flag",
+        )
+        .await;
+
+        assert!(
+            response_bytes.is_empty(),
+            "unknown required flag errors must not reply to moreToCome requests"
+        );
+        assert!(
+            next_header_result
+                .expect("next header future should resolve after required flag failure")
+                .is_none(),
+            "connection should be at EOF after the single invalid request"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_message_skips_too_many_sections_error_when_more_to_come() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        let command = doc! { "ping": 1_i32, "$db": "admin" };
+        let extra_a = doc! { "a": 1_i32 };
+        let extra_b = doc! { "b": 1_i32 };
+        let command_section = build_document_section(&command);
+        let first_extra_section = build_document_section(&extra_a);
+        let second_extra_section = build_document_section(&extra_b);
+        let (header, mut body) = build_op_msg_parts_with_sections(
+            &[command_section, first_extra_section, second_extra_section],
+            70,
+        );
+        body[..std::mem::size_of::<u32>()].copy_from_slice(&2_u32.to_le_bytes());
+
+        let (response_bytes, next_header_result) = execute_handle_message::<DocumentDBDataClient>(
+            &mut connection_context,
+            header,
+            body,
+            "activity-more-to-come-too-many-sections",
+        )
+        .await;
+
+        assert!(
+            response_bytes.is_empty(),
+            "parsed moreToCome envelopes must not receive shape-error responses"
+        );
+        assert!(
+            next_header_result
+                .expect("next header future should resolve after too-many-sections error")
+                .is_none(),
+            "connection should be at EOF after the single invalid request"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_message_shutdown_skips_response_when_more_to_come() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        dynamic_configuration.set_send_shutdown_responses(true);
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        let command = doc! { "ping": 1_i32, "$db": "admin" };
+        let (header, mut body) = build_op_msg_parts(&command, 71);
+        body[..std::mem::size_of::<u32>()].copy_from_slice(&2_u32.to_le_bytes());
+
+        let (response_bytes, next_header_result) = execute_handle_message::<DocumentDBDataClient>(
+            &mut connection_context,
+            header,
+            body,
+            "activity-shutdown-more-to-come",
+        )
+        .await;
+
+        assert!(
+            response_bytes.is_empty(),
+            "shutdown handling must not reply when current request has moreToCome"
+        );
+        assert!(
+            next_header_result
+                .expect("next header future should resolve after shutdown moreToCome")
+                .is_none(),
+            "connection should be at EOF after the single shutdown request"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_message_shutdown_skips_response_when_more_to_come_msg_is_malformed() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        dynamic_configuration.set_send_shutdown_responses(true);
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        connection_context.requires_response = false;
+        let body = 2_u32.to_le_bytes().to_vec();
+        let length =
+            i32::try_from(Header::LENGTH + body.len()).expect("message size should fit into i32");
+        let header = Header::new(length, 72, 0, OpCode::Msg).expect("test header should be valid");
+
+        let (response_bytes, next_header_result) = execute_handle_message::<DocumentDBDataClient>(
+            &mut connection_context,
+            header,
+            body,
+            "activity-shutdown-malformed-more-to-come",
+        )
+        .await;
+
+        assert!(
+            response_bytes.is_empty(),
+            "shutdown handling must not reply to malformed moreToCome requests"
+        );
+        assert!(
+            next_header_result
+                .expect("next header future should resolve after malformed shutdown request")
+                .is_none(),
+            "connection should be at EOF after the single malformed request"
+        );
+    }
+
+    #[tokio::test]
     async fn handle_message_replies_when_transaction_validation_fails() {
         let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
         let mut connection_context =
@@ -384,6 +690,111 @@ mod tests {
         assert!(
             next_header_result
                 .expect("next header future should resolve after validation failure")
+                .is_none(),
+            "connection should be at EOF after the single invalid request"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_message_skips_validation_error_response_when_more_to_come() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        let invalid_document = invalid_transaction_find_document();
+        let (header, mut body) = build_op_msg_parts(&invalid_document, 73);
+        body[..std::mem::size_of::<u32>()].copy_from_slice(&2_u32.to_le_bytes());
+
+        let (response_bytes, next_header_result) = execute_handle_message::<DocumentDBDataClient>(
+            &mut connection_context,
+            header,
+            body,
+            "activity-more-to-come-validation-error",
+        )
+        .await;
+
+        assert!(
+            response_bytes.is_empty(),
+            "post-parse validation errors must not reply to moreToCome requests"
+        );
+        assert!(
+            next_header_result
+                .expect("next header future should resolve after validation failure")
+                .is_none(),
+            "connection should be at EOF after the single invalid request"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_message_replies_when_pre_auth_request_has_transaction_metadata() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        let invalid_document = doc! {
+            "ping": 1_i32,
+            "$db": "admin",
+            "lsid": { "id": Binary { subtype: BinarySubtype::Uuid, bytes: vec![0_u8; 16] } },
+            "txnNumber": 1_i64,
+            "autocommit": false,
+        };
+        let (header, body) = build_op_msg_parts(&invalid_document, 66);
+
+        let (response_bytes, next_header_result) = execute_handle_message::<DocumentDBDataClient>(
+            &mut connection_context,
+            header,
+            body,
+            "activity-pre-auth-transaction-metadata",
+        )
+        .await;
+
+        let (response_header, response_document) = decode_op_msg_response(&response_bytes);
+        assert_header_matches(
+            &response_header,
+            response_header.message_length(),
+            66,
+            66,
+            OpCode::Msg,
+        );
+        assert_error_response(&response_document, ErrorCode::Unauthorized);
+        assert!(
+            next_header_result
+                .expect("next header future should resolve after pre-auth metadata failure")
+                .is_none(),
+            "connection should be at EOF after the single invalid request"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_message_replies_when_pre_auth_request_has_explain_flag() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        let mut connection_context =
+            test_connection_context(false, dynamic_configuration, None).await;
+        let invalid_document = doc! {
+            "ping": 1_i32,
+            "$db": "admin",
+            "explain": true,
+        };
+        let (header, body) = build_op_msg_parts(&invalid_document, 67);
+
+        let (response_bytes, next_header_result) = execute_handle_message::<DocumentDBDataClient>(
+            &mut connection_context,
+            header,
+            body,
+            "activity-pre-auth-explain",
+        )
+        .await;
+
+        let (response_header, response_document) = decode_op_msg_response(&response_bytes);
+        assert_header_matches(
+            &response_header,
+            response_header.message_length(),
+            67,
+            67,
+            OpCode::Msg,
+        );
+        assert_error_response(&response_document, ErrorCode::BadValue);
+        assert!(
+            next_header_result
+                .expect("next header future should resolve after pre-auth explain failure")
                 .is_none(),
             "connection should be at EOF after the single invalid request"
         );

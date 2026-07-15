@@ -140,8 +140,8 @@ rollback;
 -- update multi with a replace is not supported
 begin;
 select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":{"$lte":3}},"u":{"b":0},"multi":true}]}');
-                                                                                                                                                                    update                                                                                                                                                                     
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                               update                                                                                                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""50331677"" }, ""errmsg"" : ""multi=true and replace-style updates cannot be used together."" } ] }",f)
 (1 row)
 
@@ -164,7 +164,7 @@ select documentdb_api.update('db', '{"update":"notexists", "updates":[{"q":{},"u
 
 -- query syntax errors are added the response
 select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":{"$ltr":5}},"u":{"$set":{"b":0}},"multi":true}]}');
-                                                                                                                                           update                                                                                                                                            
+                                                                                                                                                   update                                                                                                                                                   
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""Unrecognized operator specified: $ltr"" } ] }",f)
 (1 row)
@@ -1500,43 +1500,43 @@ NOTICE:  creating collection
 
 --upsert with $expr
 select documentdb_api.update('update', '{"update":"single", "updates":[{"q":{"$and" : [{"$expr" : {"$eq": ["$a",1]}}]},"u":{},"upsert":true}]}');
-                                                                                                                                                             update                                                                                                                                                             
+                                                                                                                                                                               update                                                                                                                                                                                
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""50593821"" }, ""errmsg"" : ""Use of the $expr operator is not permitted within the query predicate for an upsert operation."" } ] }",f)
 (1 row)
 
 select documentdb_api.update('update', '{"update":"single", "updates":[{"q":{"$or" : [{"$expr" : {"$gt": ["$b",1]}}, {"x": 2}]},"u":{"$set" : {"a": 10}},"upsert":true}]}');
-                                                                                                                                                             update                                                                                                                                                             
+                                                                                                                                                                               update                                                                                                                                                                                
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""50593821"" }, ""errmsg"" : ""Use of the $expr operator is not permitted within the query predicate for an upsert operation."" } ] }",f)
 (1 row)
 
 select documentdb_api.update('update', '{"update":"single", "updates":[{"q":{"$or" : [{"$expr" : {"$gte": ["$c", 100]}}]},"u":{"$set": {"a" :10}},"upsert":true}]}');
-                                                                                                                                                             update                                                                                                                                                             
+                                                                                                                                                                               update                                                                                                                                                                                
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""50593821"" }, ""errmsg"" : ""Use of the $expr operator is not permitted within the query predicate for an upsert operation."" } ] }",f)
 (1 row)
 
 select documentdb_api.update('update', '{"update":"single", "updates":[{"q":{"$or" : [{"$or" : [{"$expr" : {"$gte": ["$c", 100]}}]}]},"u":{"$set": {"a" :10}},"upsert":true}]}');
-                                                                                                                                                             update                                                                                                                                                             
+                                                                                                                                                                               update                                                                                                                                                                                
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""50593821"" }, ""errmsg"" : ""Use of the $expr operator is not permitted within the query predicate for an upsert operation."" } ] }",f)
 (1 row)
 
 select documentdb_api.update('update', '{"update":"single", "updates":[{"q":{"$and" : [{"$or" : [{"x": 10},{"$expr" : {"$gte": ["$c", 100]}}, {"y": 10}]}]},"u":{"$set": {"a" :10}},"upsert":true}]}');
-                                                                                                                                                             update                                                                                                                                                             
+                                                                                                                                                                               update                                                                                                                                                                                
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""50593821"" }, ""errmsg"" : ""Use of the $expr operator is not permitted within the query predicate for an upsert operation."" } ] }",f)
 (1 row)
 
 select documentdb_api.update('update', '{"update":"single", "updates":[{"q":{"$expr": {"$gt" : ["$x",10]}},"u":{},"upsert":true}]}');
-                                                                                                                                                             update                                                                                                                                                             
+                                                                                                                                                                               update                                                                                                                                                                                
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""50593821"" }, ""errmsg"" : ""Use of the $expr operator is not permitted within the query predicate for an upsert operation."" } ] }",f)
 (1 row)
 
 select documentdb_api.update('update', '{"update":"single", "updates":[{"q":{"$and" : [{"a": 10}, {"$or" : [{"x": 10},{"$expr" : {"$gte": ["$c", 100]}}, {"y": 10}]}, {"b":11} ]},"u":{"$set": {"a" :10}},"upsert":true}]}');
-                                                                                                                                                             update                                                                                                                                                             
+                                                                                                                                                                               update                                                                                                                                                                                
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""50593821"" }, ""errmsg"" : ""Use of the $expr operator is not permitted within the query predicate for an upsert operation."" } ] }",f)
 (1 row)
@@ -1587,14 +1587,14 @@ EXECUTE distinctQueryWithFilter('update', 'server1470_2', 'name', '{ "pic": {"$r
 --upsert with $ref negative test
 select documentdb_api.update('update', '{"update":"server1470_noid", "updates":[{"q": {"name": "first", "pic": {"$ref": "foo" } }, "u":{"$set": {"refx": 1}}, "multi": true, "upsert": true} ] }');
 NOTICE:  creating collection
-                                                                                                                                           update                                                                                                                                            
+                                                                                                                                                   update                                                                                                                                                   
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""Unrecognized operator specified: $ref"" } ] }",f)
 (1 row)
 
 select documentdb_api.update('update', '{"update":"server1470_noref", "updates":[{"q": {"name": "first", "pic": {"$id": {"$oid": "4c48d04cd33a5a92628c9af6"} } }, "u":{"$set": {"refx": 1}}, "multi": true, "upsert": true} ] }');
 NOTICE:  creating collection
-                                                                                                                                           update                                                                                                                                           
+                                                                                                                                                  update                                                                                                                                                   
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""Unrecognized operator specified: $id"" } ] }",f)
 (1 row)
@@ -1608,8 +1608,84 @@ NOTICE:  creating collection
 
 select documentdb_api.update('update', '{"update":"server1470_extraf_2", "updates":[{"q": {"name": "first", "pic": {"$id": {"$oid": "4c48d04cd33a5a92628c9af6"}, "extraField": "extraFiele", "$ref": "foo" } }, "u":{"$set": {"refx": 1}}, "multi": true, "upsert": true} ] }');
 NOTICE:  creating collection
-                                                                                                                                           update                                                                                                                                           
+                                                                                                                                                  update                                                                                                                                                   
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""Unrecognized operator specified: $id"" } ] }",f)
+(1 row)
+
+-- update 'multi'/'upsert' accept a bool, or null/undefined for the default (false)
+select 1 from documentdb_api.insert_one('db', 'update_bool_validation', '{"_id":1,"r":"a"}');
+NOTICE:  creating collection
+ ?column? 
+----------
+        1
+(1 row)
+
+select 1 from documentdb_api.insert_one('db', 'update_bool_validation', '{"_id":2,"r":"b"}');
+ ?column? 
+----------
+        1
+(1 row)
+
+select 1 from documentdb_api.insert_one('db', 'update_bool_validation', '{"_id":3,"r":"b"}');
+ ?column? 
+----------
+        1
+(1 row)
+
+-- multi:null defaults to false (updates one)
+begin;
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"multi":null}]}');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+rollback;
+-- upsert:null defaults to false (no upsert)
+begin;
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"_id":99},"u":{"$set":{"t":1}},"upsert":null}]}');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" } }",t)
+(1 row)
+
+select count(*) from documentdb_api.collection('db', 'update_bool_validation');
+ count 
+-------
+     3
+(1 row)
+
+rollback;
+-- multi true updates all matches, false updates one
+begin;
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"multi":true}]}');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""2"" }, ""n"" : { ""$numberInt"" : ""2"" } }",t)
+(1 row)
+
+rollback;
+begin;
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"multi":false}]}');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+rollback;
+-- non-boolean multi/upsert is rejected
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"multi":1}]}');
+ERROR:  The BSON field 'update.updates.multi' has an incorrect type 'int'; it should be of type 'bool'.
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"multi":0.5}]}');
+ERROR:  The BSON field 'update.updates.multi' has an incorrect type 'double'; it should be of type 'bool'.
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"upsert":1}]}');
+ERROR:  The BSON field 'update.updates.upsert' has an incorrect type 'int'; it should be of type 'bool'.
+select documentdb_api.update('db', '{"update":"update_bool_validation", "updates":[{"q":{"r":"b"},"u":{"$set":{"t":1}},"upsert":"x"}]}');
+ERROR:  The BSON field 'update.updates.upsert' has an incorrect type 'string'; it should be of type 'bool'.
+select documentdb_api.drop_collection('db', 'update_bool_validation');
+ drop_collection 
+-----------------
+ t
 (1 row)
 

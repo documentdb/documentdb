@@ -20,6 +20,8 @@ pub use request::RequestContext;
 pub use service::ServiceContext;
 pub use session::{LogicalSessionId, SessionManager};
 pub use store_key::StoreKey;
+pub(crate) use transaction::transaction_error::map_transaction_error;
 pub use transaction::{
-    GatewayTransaction, RequestTransactionInfo, TransactionNumber, TransactionStore,
+    GatewayTransaction, RequestTransactionInfo, TransactionError, TransactionNumber,
+    TransactionStore,
 };

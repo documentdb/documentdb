@@ -12,15 +12,20 @@ use crate::{error::Result, protocol::OK_SUCCEEDED};
 
 pub mod constant;
 pub mod custom_error_mapping;
+mod custom_pg_db_error;
 mod error;
 mod pg;
 mod raw;
 pub mod writer;
 
-pub use custom_error_mapping::CustomPostgresErrorMapper;
-pub use error::CommandError;
+pub use custom_error_mapping::{
+    global_custom_error_mapper, register_custom_error_mapper, CustomPostgresErrorMapper,
+};
+pub use custom_pg_db_error::CustomPgDbError;
+pub(crate) use error::enhance_internal_error_message;
+pub use error::error_to_raw_document_buf;
 pub use pg::{
-    from_known_external_error_code, i32_to_postgres_sqlstate, map_pg_error,
+    from_known_external_error_code, i32_to_postgres_sqlstate, map_pg_db_error, map_pg_error,
     postgres_sqlstate_to_i32, PgResponse, PostgresErrorMappedResult,
 };
 pub use raw::RawResponse;
@@ -59,9 +64,20 @@ impl Response {
 
     #[must_use]
     pub fn ok() -> Self {
-        Self::Raw(RawResponse(rawdoc! {
+        Self::Raw(RawResponse::new(rawdoc! {
             "ok":OK_SUCCEEDED,
         }))
+    }
+
+    /// Returns `true` if this response was produced by a write operation
+    /// whose `PostgreSQL` UDF signalled failure (`p_success = false`) and
+    /// the BSON contains `writeErrors`.
+    #[must_use]
+    pub const fn has_write_errors(&self) -> bool {
+        match self {
+            Self::Raw(raw) => raw.has_write_errors(),
+            Self::Pg(_) => false,
+        }
     }
 }
 
@@ -75,7 +91,10 @@ mod tests {
     fn raw_response_byte_len_matches_bson_bytes() {
         // An empty BSON document is exactly 5 bytes: 4-byte i32 size + 1 null terminator.
         let empty = rawdoc! {};
-        assert_eq!(Response::Raw(RawResponse(empty)).response_byte_len(), 5);
+        assert_eq!(
+            Response::Raw(RawResponse::new(empty)).response_byte_len(),
+            5
+        );
 
         // { "ok": 1.0 } = 4 (size) + [1 (type 0x01 double) + 3 ("ok\0") + 8 (f64)] + 1 (null) = 17
         let ok_response = Response::ok();
@@ -91,7 +110,7 @@ mod tests {
             .to_writer(&mut re_encoded)
             .expect("re-encoding should succeed");
         assert_eq!(
-            Response::Raw(RawResponse(doc)).response_byte_len(),
+            Response::Raw(RawResponse::new(doc)).response_byte_len(),
             re_encoded.len()
         );
     }

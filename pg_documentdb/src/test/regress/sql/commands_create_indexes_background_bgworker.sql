@@ -16,6 +16,7 @@ SELECT documentdb_api.drop_collection('db', 'LargeKeySize') IS NOT NULL;
 SELECT documentdb_api.drop_collection('db', 'UnsupportedLanguage') IS NOT NULL;
 SELECT documentdb_api.drop_collection('db', 'backgroundcoll1') IS NOT NULL;
 SELECT documentdb_api.drop_collection('db', 'backgroundcoll2') IS NOT NULL;
+SELECT documentdb_api.drop_collection('db', 'skip_wait_coll') IS NOT NULL;
 
 \o
 \set ECHO :prevEcho
@@ -29,5 +30,4 @@ ALTER SYSTEM SET documentdb.indexBuildsScheduledOnBgWorker = off;
 SELECT pg_reload_conf();
 
 -- Reset -- so that other tests do not get impacted
-SELECT change_index_jobs_schema.change_index_jobs_status(false);
-DROP SCHEMA change_index_jobs_schema CASCADE;
+SELECT documentdb_test_helpers.change_index_jobs_status(false);

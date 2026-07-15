@@ -5,7 +5,7 @@ print("Initializing users collection...");
 use('sampledb');
 
 // Create users collection and insert sample users
-db.users.insertMany([
+const sampleUsers = [
     {
         _id: "user1",
         username: "alice_smith",
@@ -96,7 +96,16 @@ db.users.insertMany([
         },
         tags: ["premium", "beta_tester"]
     }
-]);
+];
+
+// Idempotent seed: insert each document only if its _id is not already present, so re-running
+// this script against a persistent volume is a no-op instead of crashing with a duplicate-key
+// error (#612). A partial first run is also repaired (only the missing documents are inserted).
+sampleUsers.forEach(function (doc) {
+    if (db.users.countDocuments({ _id: doc._id }) === 0) {
+        db.users.insertOne(doc);
+    }
+});
 
 // Create indexes for better query performance
 db.runCommand({

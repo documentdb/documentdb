@@ -505,11 +505,12 @@ ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableNewWithExprAccumulators TO on;
 SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 -- =============================================================================
--- 18. GUC gating: enableCollation off → collation ignored, binary comparison
+-- 18. GUC gating: enableCollation off + skipFailOnCollation on → collation ignored, binary comparison
 -- =============================================================================
+-- With enableCollation off and skipFailOnCollation on, the collation string is
+-- not applicable so it is ignored (no error) and binary comparison applies.
 SET documentdb_core.enableCollation TO off;
--- With enableCollation off, the collation string is not applicable so
--- it should not error out (collation is simply ignored) and binary comparison applies.
+SET documentdb.skipFailOnCollation TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "firstMatch": { "$first": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
                   document                  
 --------------------------------------------
@@ -518,6 +519,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collati
 (2 rows)
 
 -- Reset GUCs and cleanup
+RESET documentdb.skipFailOnCollation;
 SET documentdb_core.enableCollation TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;

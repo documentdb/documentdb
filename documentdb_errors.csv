@@ -554,3 +554,5 @@ OrdinalPosition,ErrorName
 553,Location51071
 554,CannotIndexParallelArrays
 555,QueryPlanKilled
+556,Location15974
+557,Location15975

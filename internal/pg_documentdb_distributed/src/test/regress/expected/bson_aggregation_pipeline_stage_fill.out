@@ -315,6 +315,74 @@ SELECT document FROM bson_aggregation_pipeline('db','{ "aggregate": "filltest", 
  { "_id" : { "$numberInt" : "9" }, "a" : "p3", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841606023" } }, "quantity" : { "$numberInt" : "100" } }
 (11 rows)
 
+-- partitionByFields combined with a stage that migrates the window query into a
+-- subquery: a preceding $sort leaves resjunk sort keys and $limit sets a limit
+-- count. Previously the partition expression was built before the migration and
+-- referenced a stale range-table level, aborting the planner.
+SELECT document FROM bson_aggregation_pipeline('db','{ "aggregate": "filltest", "pipeline":  [{"$sort": { "_id": 1 }}, {"$fill": {"partitionByFields": ["a"], "output": {"quantity": { "method": "locf"}}}}]}');
+                                                                                      document                                                                                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "cost" : { "$numberInt" : "5" }, "date" : { "$date" : { "$numberLong" : "1718841600001" } }, "quantity" : { "$numberInt" : "500" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : "abc", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600002" } }, "quantity" : { "$numberInt" : "500" } }
+ { "_id" : { "$numberInt" : "3" }, "a" : "abc", "cost" : { "$numberInt" : "4" }, "date" : { "$date" : { "$numberLong" : "1718841600004" } }, "quantity" : { "$numberInt" : "503" } }
+ { "_id" : { "$numberInt" : "4" }, "a" : "abc", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600003" } }, "quantity" : { "$numberInt" : "503" } }
+ { "_id" : { "$numberInt" : "5" }, "a" : "p2", "cost" : { "$numberInt" : "3" }, "date" : { "$date" : { "$numberLong" : "1718841600011" } }, "quantity" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "6" }, "a" : "p2", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600012" } }, "quantity" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "7" }, "a" : "p2", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600013" } }, "quantity" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "8" }, "a" : "p2", "cost" : { "$numberInt" : "4" }, "date" : { "$date" : { "$numberLong" : "1718841600014" } }, "quantity" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "9" }, "a" : "p3", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841606023" } }, "quantity" : null }
+ { "_id" : { "$numberInt" : "10" }, "a" : "p3", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841605022" } }, "quantity" : null }
+ { "_id" : { "$numberInt" : "11" }, "a" : "p3", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600021" } }, "quantity" : { "$numberInt" : "100" } }
+(11 rows)
+
+SELECT document FROM bson_aggregation_pipeline('db','{ "aggregate": "filltest", "pipeline":  [{"$sort": { "_id": 1 }}, {"$fill": {"partitionByFields": ["a", "cost"], "output": {"quantity": { "method": "locf"}}}}]}');
+                                                                                      document                                                                                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : "abc", "cost" : { "$numberInt" : "4" }, "date" : { "$date" : { "$numberLong" : "1718841600004" } }, "quantity" : { "$numberInt" : "503" } }
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "cost" : { "$numberInt" : "5" }, "date" : { "$date" : { "$numberLong" : "1718841600001" } }, "quantity" : { "$numberInt" : "500" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : "abc", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600002" } }, "quantity" : null }
+ { "_id" : { "$numberInt" : "4" }, "a" : "abc", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600003" } }, "quantity" : null }
+ { "_id" : { "$numberInt" : "5" }, "a" : "p2", "cost" : { "$numberInt" : "3" }, "date" : { "$date" : { "$numberLong" : "1718841600011" } }, "quantity" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "8" }, "a" : "p2", "cost" : { "$numberInt" : "4" }, "date" : { "$date" : { "$numberLong" : "1718841600014" } }, "quantity" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "6" }, "a" : "p2", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600012" } }, "quantity" : null }
+ { "_id" : { "$numberInt" : "7" }, "a" : "p2", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600013" } }, "quantity" : null }
+ { "_id" : { "$numberInt" : "9" }, "a" : "p3", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841606023" } }, "quantity" : null }
+ { "_id" : { "$numberInt" : "10" }, "a" : "p3", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841605022" } }, "quantity" : null }
+ { "_id" : { "$numberInt" : "11" }, "a" : "p3", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600021" } }, "quantity" : { "$numberInt" : "100" } }
+(11 rows)
+
+SELECT document FROM bson_aggregation_pipeline('db','{ "aggregate": "filltest", "pipeline":  [{"$sort": { "date": 1 }}, {"$fill": {"partitionByFields": ["a"], "sortBy": { "date": 1 }, "output": {"quantity": { "method": "linear"}}}}]}');
+                                                                                         document                                                                                         
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "cost" : { "$numberInt" : "5" }, "date" : { "$date" : { "$numberLong" : "1718841600001" } }, "quantity" : { "$numberInt" : "500" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : "abc", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600002" } }, "quantity" : { "$numberDouble" : "501.0" } }
+ { "_id" : { "$numberInt" : "4" }, "a" : "abc", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600003" } }, "quantity" : { "$numberDouble" : "502.0" } }
+ { "_id" : { "$numberInt" : "3" }, "a" : "abc", "cost" : { "$numberInt" : "4" }, "date" : { "$date" : { "$numberLong" : "1718841600004" } }, "quantity" : { "$numberInt" : "503" } }
+ { "_id" : { "$numberInt" : "5" }, "a" : "p2", "cost" : { "$numberInt" : "3" }, "date" : { "$date" : { "$numberLong" : "1718841600011" } }, "quantity" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "6" }, "a" : "p2", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600012" } }, "quantity" : { "$numberDouble" : "2.0" } }
+ { "_id" : { "$numberInt" : "7" }, "a" : "p2", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600013" } }, "quantity" : { "$numberDouble" : "3.0" } }
+ { "_id" : { "$numberInt" : "8" }, "a" : "p2", "cost" : { "$numberInt" : "4" }, "date" : { "$date" : { "$numberLong" : "1718841600014" } }, "quantity" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "11" }, "a" : "p3", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600021" } }, "quantity" : { "$numberInt" : "100" } }
+ { "_id" : { "$numberInt" : "10" }, "a" : "p3", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841605022" } }, "quantity" : null }
+ { "_id" : { "$numberInt" : "9" }, "a" : "p3", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841606023" } }, "quantity" : null }
+(11 rows)
+
+SELECT document FROM bson_aggregation_pipeline('db','{ "aggregate": "filltest", "pipeline":  [{"$sort": { "_id": 1 }}, {"$limit": 100}, {"$fill": {"partitionByFields": ["a"], "output": {"quantity": { "method": "locf"}}}}]}');
+                                                                                      document                                                                                       
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "abc", "cost" : { "$numberInt" : "5" }, "date" : { "$date" : { "$numberLong" : "1718841600001" } }, "quantity" : { "$numberInt" : "500" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : "abc", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600002" } }, "quantity" : { "$numberInt" : "500" } }
+ { "_id" : { "$numberInt" : "3" }, "a" : "abc", "cost" : { "$numberInt" : "4" }, "date" : { "$date" : { "$numberLong" : "1718841600004" } }, "quantity" : { "$numberInt" : "503" } }
+ { "_id" : { "$numberInt" : "4" }, "a" : "abc", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600003" } }, "quantity" : { "$numberInt" : "503" } }
+ { "_id" : { "$numberInt" : "5" }, "a" : "p2", "cost" : { "$numberInt" : "3" }, "date" : { "$date" : { "$numberLong" : "1718841600011" } }, "quantity" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "6" }, "a" : "p2", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600012" } }, "quantity" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "7" }, "a" : "p2", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600013" } }, "quantity" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "8" }, "a" : "p2", "cost" : { "$numberInt" : "4" }, "date" : { "$date" : { "$numberLong" : "1718841600014" } }, "quantity" : { "$numberInt" : "4" } }
+ { "_id" : { "$numberInt" : "9" }, "a" : "p3", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841606023" } }, "quantity" : null }
+ { "_id" : { "$numberInt" : "10" }, "a" : "p3", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841605022" } }, "quantity" : null }
+ { "_id" : { "$numberInt" : "11" }, "a" : "p3", "cost" : { "$numberInt" : "8" }, "date" : { "$date" : { "$numberLong" : "1718841600021" } }, "quantity" : { "$numberInt" : "100" } }
+(11 rows)
+
 ---------------------------------------------------------------------
 -- positive corner case
 ---------------------------------------------------------------------

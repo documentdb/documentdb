@@ -1,0 +1,139 @@
+#!/bin/bash
+set -e
+
+# Real-user E2E flagged (Gap #22): `command -v systemctl` returns true
+# inside containers that have the binary but no running systemd, so the
+# subsequent systemctl calls emit "Failed to connect to bus: Host is down"
+# noise during apt purge/install. Gate on /run/systemd/system which is
+# only present when systemd is actually PID 1.
+has_working_systemd() {
+    [[ -d /run/systemd/system ]] && command -v systemctl >/dev/null 2>&1
+}
+
+restart_active_services_after_upgrade() {
+    local previous_version="${1:-}"
+
+    if [[ -z "${previous_version}" ]] || ! has_working_systemd; then
+        return 0
+    fi
+
+    # Restart standalone gateway if active
+    if systemctl is-active --quiet documentdb-gateway.service 2>/dev/null; then
+        if ! systemctl restart documentdb-gateway.service 2>/dev/null; then
+            echo "WARNING: Failed to restart documentdb-gateway.service after package upgrade." >&2
+        fi
+    fi
+
+    # Restart any active appliance gateway instances (documentdb-gateway-local@N.service)
+    local unit
+    for unit in $(systemctl list-units 'documentdb-gateway-local@*.service' --state=active --plain --no-legend 2>/dev/null | awk '{print $1}'); do
+        if ! systemctl restart "${unit}" 2>/dev/null; then
+            echo "WARNING: Failed to restart ${unit} after package upgrade." >&2
+        fi
+    done
+}
+
+ensure_gateway_user() {
+    if command -v systemd-sysusers >/dev/null 2>&1; then
+        if systemd-sysusers /usr/lib/sysusers.d/documentdb-gateway.conf 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    if ! getent group documentdb-gateway >/dev/null 2>&1; then
+        groupadd --system documentdb-gateway
+    fi
+    if ! id -u documentdb-gateway >/dev/null 2>&1; then
+        NOLOGIN=$(command -v nologin 2>/dev/null || echo /usr/sbin/nologin)
+        useradd --system --no-create-home --home-dir /nonexistent --shell "$NOLOGIN" --gid documentdb-gateway -c "DocumentDB Gateway" documentdb-gateway
+    fi
+}
+
+ensure_gateway_tmpfiles() {
+    if command -v systemd-tmpfiles >/dev/null 2>&1; then
+        if systemd-tmpfiles --create /usr/lib/tmpfiles.d/documentdb-gateway.conf 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    install -d -m 0750 -o documentdb-gateway -g documentdb-gateway /run/documentdb-gateway
+}
+
+case "$1" in
+    configure)
+        ensure_gateway_user
+        ensure_gateway_tmpfiles
+
+        # Ensure gateway working directory exists
+        install -d -m 0750 -o documentdb-gateway -g documentdb-gateway /var/lib/documentdb-gateway
+
+        if has_working_systemd; then
+            systemctl daemon-reload 2>/dev/null || true
+        fi
+        restart_active_services_after_upgrade "${2:-}"
+
+        # Detect transitive install: if any documentdb-N stand-alone
+        # package (or the documentdb meta) is already unpacked /
+        # installed / pending-config in this dpkg transaction, our long
+        # Workflow B banner duplicates what the stand-alone / meta
+        # postinst will print right after us (dpkg orders dependent
+        # packages last). Suppress to one banner per `apt install`.
+        is_transitive_install=false
+        if command -v dpkg-query >/dev/null 2>&1; then
+            for parent in $(dpkg-query -W -f='${Package}\n' 'documentdb-[0-9]*' documentdb 2>/dev/null); do
+                status=$(dpkg-query -W -f='${db:Status-Status}\n' "${parent}" 2>/dev/null || true)
+                case "${status}" in
+                    installed|half-installed|unpacked|half-configured|triggers-awaited|triggers-pending)
+                        is_transitive_install=true
+                        break
+                        ;;
+                esac
+            done
+        fi
+
+        if [ "${is_transitive_install}" = "true" ]; then
+            echo "DocumentDB Gateway installed (as a dependency of another"
+            echo "DocumentDB package). The pulling package's postinst will"
+            echo "print the recommended setup steps."
+            exit 0
+        fi
+
+        echo "DocumentDB Gateway installed."
+        echo ""
+        echo "Configuration is taken from the environment first; the"
+        echo "systemd unit reads /etc/documentdb/gateway/gateway.env if"
+        echo "it exists. To customize (listen port, TLS cert paths, etc.):"
+        echo "  sudo install -d -m 0755 /etc/documentdb/gateway"
+        echo "  sudo install -m 0640 -o root -g documentdb-gateway \\"
+        echo "                       /usr/share/doc/documentdb-gateway/examples/gateway.env.sample \\"
+        echo "                       /etc/documentdb/gateway/gateway.env"
+        echo "  sudoedit /etc/documentdb/gateway/gateway.env"
+        echo ""
+        # Reviewer-flagged (external review iter 17): when this package
+        # is pulled in transitively by `apt install documentdb`, the
+        # documentdb-N standalone postinst is going to print its own
+        # "Next steps" (run documentdb-setup, enable target). We do
+        # NOT duplicate a Workflow C suggestion here — that would
+        # double-print and confuse the operator. Only print the
+        # Workflow B steps that are specific to using this gateway
+        # package on its own.
+        #
+        # Reviewer-flagged (multi-model should-fix O): the prior 8-line
+        # numbered Workflow B recipe duplicated the design doc and aged
+        # quickly. Keep this banner short and point at one canonical
+        # reference (the design doc) for the full Workflow B steps.
+        echo "Next: choose one workflow."
+        echo "  • Workflow C (recommended): \`sudo apt install documentdb && sudo documentdb-setup --admin-user admin\`"
+        echo "  • Workflow B (gateway on top of an existing PG, replace <N> with the PG major such as 18):"
+        echo "      sudo apt install postgresql-<N>-documentdb documentdb-postgresql-tools && \\"
+        echo "        sudo documentdb-tune --pg-version <N> --cluster main --yes && \\"
+        echo "        sudo systemctl restart postgresql@<N>-main && \\"
+        echo "        sudo -u postgres psql -c 'CREATE EXTENSION documentdb CASCADE;' && \\"
+        echo "        sudo documentdb-register-gateway --target-postgres-instance <N>/main --admin-user admin --yes && \\"
+        echo "        sudo systemctl reload postgresql@<N>-main && \\"
+        echo "        sudo systemctl enable --now documentdb-gateway"
+        echo "  See /usr/share/doc/documentdb-gateway/ and the packaging-design.md \"User workflows\" section."
+        ;;
+esac
+
+exit 0

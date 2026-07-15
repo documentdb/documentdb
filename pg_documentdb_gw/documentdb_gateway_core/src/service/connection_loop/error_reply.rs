@@ -13,8 +13,8 @@ use crate::{
     context::ConnectionContext,
     error::{DocumentDBError, ErrorCode, Result},
     protocol::header::Header,
-    requests::{request_tracker::RequestTracker, Request, RequestIntervalKind},
-    responses::{self, CommandError},
+    requests::{request_tracker::RequestTracker, RequestIntervalKind, RequestObservation},
+    responses::{self, error_to_raw_document_buf},
     telemetry::{self, client_info},
 };
 
@@ -26,8 +26,9 @@ pub(super) async fn log_and_write_error<W>(
     connection_context: &ConnectionContext,
     header: &Header,
     error: &DocumentDBError,
-    request: Option<&Request<'_>>,
+    request: Option<RequestObservation<'_, '_>>,
     writer: &mut W,
+    requires_response: bool,
     collection: Option<String>,
     request_tracker: &RequestTracker,
     activity_id: &str,
@@ -36,19 +37,26 @@ pub(super) async fn log_and_write_error<W>(
 where
     W: AsyncWrite + Unpin,
 {
-    let command_error = CommandError::from_error(connection_context, error, activity_id);
-    let response = command_error.to_raw_document_buf();
+    let response = error_to_raw_document_buf(error, activity_id);
 
     if let Some(start) = handle_message_start {
         request_tracker.record_duration(RequestIntervalKind::HandleMessage, start);
     }
 
-    let write_response_start = Instant::now();
-    responses::writer::write_and_flush(header, &response, writer).await?;
-    request_tracker.record_duration(RequestIntervalKind::WriteResponse, write_response_start);
+    let response_length = if requires_response {
+        let response_length = response.as_bytes().len();
+
+        let write_response_start = Instant::now();
+        responses::writer::write_and_flush(header, &response, writer).await?;
+        request_tracker.record_duration(RequestIntervalKind::WriteResponse, write_response_start);
+
+        response_length
+    } else {
+        0
+    };
 
     // telemetry can block so do it after write and flush.
-    telemetry::log_request_failure(error, connection_context, activity_id, request);
+    telemetry::log_request_failure(error, activity_id, request);
 
     let collection = collection.unwrap_or_default();
 
@@ -56,7 +64,7 @@ where
         telemetry::record_gateway_metrics(
             header,
             request,
-            Right((&command_error, response.as_bytes().len())),
+            Right((error, response_length)),
             &collection,
             request_tracker,
         );
@@ -67,9 +75,8 @@ where
             connection_context,
             header,
             request,
-            Right((&command_error, response.as_bytes().len())),
-            Some(error),
-            collection,
+            Right((error, response_length)),
+            &collection,
             request_tracker,
             activity_id,
             &client_info::parse_client_info(connection_context.client_information.as_ref()),
@@ -87,8 +94,9 @@ pub(super) async fn reply_with_request_error<W>(
     connection_context: &ConnectionContext,
     header: &Header,
     error: &DocumentDBError,
-    request: Option<&Request<'_>>,
+    request: Option<RequestObservation<'_, '_>>,
     writer: &mut W,
+    requires_response: bool,
     collection: Option<String>,
     request_tracker: &RequestTracker,
     activity_id: &str,
@@ -102,6 +110,7 @@ pub(super) async fn reply_with_request_error<W>(
         error,
         request,
         writer,
+        requires_response,
         collection,
         request_tracker,
         activity_id,
@@ -120,6 +129,7 @@ pub(super) async fn maybe_reply_shutdown<W>(
     connection_context: &ConnectionContext,
     header: &Header,
     writer: &mut W,
+    requires_response: bool,
     request_tracker: &RequestTracker,
     activity_id: &str,
     handle_message_start: Instant,
@@ -137,7 +147,6 @@ where
     let error = DocumentDBError::documentdb_error(
         ErrorCode::ShutdownInProgress,
         "Graceful shutdown requested".to_owned(),
-        0,
     );
     reply_with_request_error(
         connection_context,
@@ -145,6 +154,7 @@ where
         &error,
         None,
         writer,
+        requires_response,
         None,
         request_tracker,
         activity_id,
@@ -164,7 +174,7 @@ mod tests {
 
     use crate::{
         protocol::opcode::OpCode,
-        requests::RequestType,
+        requests::{Request, RequestType, WireRequest},
         testing::{
             assert_error_response, assert_header_matches, build_op_msg_parts, build_raw_document,
             decode_op_msg_response, logout_document, test_connection_context,
@@ -178,12 +188,14 @@ mod tests {
         request_tracker: &RequestTracker,
         activity_id: &str,
         handle_message_start: Instant,
+        requires_response: bool,
     ) -> (bool, Vec<u8>) {
         let (mut response_writer, mut response_reader) = tokio::io::duplex(4096);
         let should_stop = maybe_reply_shutdown(
             connection_context,
             header,
             &mut response_writer,
+            requires_response,
             request_tracker,
             activity_id,
             handle_message_start,
@@ -214,6 +226,7 @@ mod tests {
             &request_tracker,
             "activity-shutdown-disabled",
             Instant::now(),
+            true,
         )
         .await;
 
@@ -242,6 +255,7 @@ mod tests {
             &request_tracker,
             "activity-shutdown-enabled",
             Instant::now(),
+            true,
         )
         .await;
 
@@ -258,6 +272,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn maybe_reply_shutdown_skips_wire_response_when_not_required() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        dynamic_configuration.set_send_shutdown_responses(true);
+        let connection_context = test_connection_context(false, dynamic_configuration, None).await;
+        let logout_document = logout_document();
+        let (header, _) = build_op_msg_parts(&logout_document, 53);
+        let request_tracker = RequestTracker::new();
+
+        let (should_stop, response_bytes) = execute_maybe_reply_shutdown(
+            &connection_context,
+            &header,
+            &request_tracker,
+            "activity-shutdown-no-response",
+            Instant::now(),
+            false,
+        )
+        .await;
+
+        assert!(
+            should_stop,
+            "shutdown handling still stops request processing"
+        );
+        assert!(
+            response_bytes.is_empty(),
+            "no wire response should be written when a response is not required"
+        );
+    }
+
+    #[tokio::test]
     async fn log_and_write_error_writes_error_response_and_emits_failure_event() {
         let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
         let telemetry_provider = RecordingTelemetryProvider::default();
@@ -269,12 +312,15 @@ mod tests {
         .await;
         let logout_document = logout_document();
         let request = Request::RawBuf(RequestType::Logout, build_raw_document(&logout_document));
+        let request_info = request
+            .extract_common()
+            .expect("logout request should have valid common fields");
+        let wire_request = WireRequest::from_request_and_info(&request, request_info);
         let request_tracker = RequestTracker::new();
         let (header, _) = build_op_msg_parts(&logout_document, 73);
         let error = DocumentDBError::documentdb_error(
             ErrorCode::BadValue,
             "bad request payload".to_owned(),
-            0,
         );
         let (mut response_writer, mut response_reader) = tokio::io::duplex(4096);
 
@@ -282,8 +328,9 @@ mod tests {
             &connection_context,
             &header,
             &error,
-            Some(&request),
+            Some(RequestObservation::Strict(&wire_request)),
             &mut response_writer,
+            true,
             Some("admin".to_owned()),
             &request_tracker,
             "activity-log-and-write-error",

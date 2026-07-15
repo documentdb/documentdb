@@ -44,6 +44,10 @@ SOURCES = $(wildcard src/*.c) $(wildcard src/**/*.c)
 
 OBJS = $(patsubst %.c,%.o,$(SOURCES))
 
+# Update to notify roaring to use the C atomics implementation (as opposed to c++): See roaring.h CROARING_ATOMIC_IMPL_C
+PG_CFLAGS += -DCROARING_ATOMIC_IMPL=3
+PG_CPPFLAGS += -DCROARING_ATOMIC_IMPL=3
+
 DEBUG ?= no
 ifeq ($(DEBUG),yes)
   PG_CPPFLAGS += -ggdb -O0 -g
@@ -75,6 +79,9 @@ check-documentdb-minimal: check-minimal
 
 check-extended-rum-minimal:
 	$(MAKE) -C src/test/extended_rum_tests check-minimal
+
+check-extended-rum-recovery:
+	$(MAKE) -C src/test/extended_rum_recovery_tests all
 
 check-isolation:
 	$(MAKE) -C src/test/regress check-isolation

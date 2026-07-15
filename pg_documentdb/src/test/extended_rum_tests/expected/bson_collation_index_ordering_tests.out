@@ -2146,23 +2146,29 @@ $cmd$);
  Sort (actual rows=17 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level2'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Index Scan using _id_ on documents_8115 collection (actual rows=17 loops=1)
-         Index Cond: (shard_key_value = '8115'::bigint)
-         Filter: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "de-u-ks-level2" }'::bson)
-         Rows Removed by Filter: 10
-(7 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_not_intervals
+         indexName: _id_
+         ->  Index Scan using _id_ on documents_8115 collection (actual rows=17 loops=1)
+               Index Cond: (shard_key_value = '8115'::bigint)
+               Filter: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "de-u-ks-level2" }'::bson)
+               Rows Removed by Filter: 10
+(10 rows)
 
 -- No collation on query — should also fall back
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": 1 } }')
 $cmd$);
-                                 run_explain_and_trim                                  
----------------------------------------------------------------------------------------
- Index Scan using _id_ on documents_8115 collection (actual rows=18 loops=1)
-   Index Cond: (shard_key_value = '8115'::bigint)
-   Filter: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry" }'::bson)
-   Rows Removed by Filter: 9
-(4 rows)
+                                    run_explain_and_trim                                     
+---------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=18 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_not_intervals
+   indexName: _id_
+   ->  Index Scan using _id_ on documents_8115 collection (actual rows=18 loops=1)
+         Index Cond: (shard_key_value = '8115'::bigint)
+         Filter: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry" }'::bson)
+         Rows Removed by Filter: 9
+(7 rows)
 
 -- ===== Section 16: Composite index (a, b) — positive on first key, negation on second =====
 -- Setup: collection with two string fields, dense data across both dimensions
@@ -5879,11 +5885,14 @@ $cmd$);
  Sort (actual rows=5 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Index Scan using _id_ on documents_8121 collection (actual rows=5 loops=1)
-         Index Cond: (shard_key_value = '8121'::bigint)
-         Filter: (document @#? '{ "a" : { "$not" : { "$gt" : "cherry" } }, "collation" : "en-u-ks-level1" }'::bson)
-         Rows Removed by Filter: 5
-(7 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
+         indexName: _id_
+         ->  Index Scan using _id_ on documents_8121 collection (actual rows=5 loops=1)
+               Index Cond: (shard_key_value = '8121'::bigint)
+               Filter: (document @#? '{ "a" : { "$not" : { "$gt" : "cherry" } }, "collation" : "en-u-ks-level1" }'::bson)
+               Rows Removed by Filter: 5
+(10 rows)
 
 -- 28h: $elemMatch $ne + sort {a: 1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$ne": "apple" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5906,11 +5915,14 @@ $cmd$);
  Sort (actual rows=7 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Index Scan using _id_ on documents_8121 collection (actual rows=7 loops=1)
-         Index Cond: (shard_key_value = '8121'::bigint)
-         Filter: (document @#? '{ "a" : { "$ne" : "apple" }, "collation" : "en-u-ks-level1" }'::bson)
-         Rows Removed by Filter: 3
-(7 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
+         indexName: _id_
+         ->  Index Scan using _id_ on documents_8121 collection (actual rows=7 loops=1)
+               Index Cond: (shard_key_value = '8121'::bigint)
+               Filter: (document @#? '{ "a" : { "$ne" : "apple" }, "collation" : "en-u-ks-level1" }'::bson)
+               Rows Removed by Filter: 3
+(10 rows)
 
 -- 28i: $elemMatch with mismatched collation + sort
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -5921,11 +5933,14 @@ $cmd$);
  Sort (actual rows=3 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Index Scan using _id_ on documents_8121 collection (actual rows=3 loops=1)
-         Index Cond: (shard_key_value = '8121'::bigint)
-         Filter: (document @#? '{ "a" : { "$eq" : "apple" }, "collation" : "de-u-ks-level1" }'::bson)
-         Rows Removed by Filter: 7
-(7 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
+         indexName: _id_
+         ->  Index Scan using _id_ on documents_8121 collection (actual rows=3 loops=1)
+               Index Cond: (shard_key_value = '8121'::bigint)
+               Filter: (document @#? '{ "a" : { "$eq" : "apple" }, "collation" : "de-u-ks-level1" }'::bson)
+               Rows Removed by Filter: 7
+(10 rows)
 
 -- 28j: $elemMatch with non-string value + sort
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": 42 } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -6082,11 +6097,14 @@ $cmd$);
  Sort (actual rows=7 loops=1)
    Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Index Scan using _id_ on documents_8121 collection (actual rows=7 loops=1)
-         Index Cond: (shard_key_value = '8121'::bigint)
-         Filter: (document @#? '{ "a" : { "$not" : { "$eq" : "apple" } }, "collation" : "en-u-ks-level1" }'::bson)
-         Rows Removed by Filter: 3
-(7 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
+         indexName: _id_
+         ->  Index Scan using _id_ on documents_8121 collection (actual rows=7 loops=1)
+               Index Cond: (shard_key_value = '8121'::bigint)
+               Filter: (document @#? '{ "a" : { "$not" : { "$eq" : "apple" } }, "collation" : "en-u-ks-level1" }'::bson)
+               Rows Removed by Filter: 3
+(10 rows)
 
 -- 28o: $elemMatch three-way ($gt + $lt + $ne) + sort {a: 1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gt": "apple", "$lt": "fox", "$ne": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -6216,6 +6234,1165 @@ $cmd$);
 (16 rows)
 
 RESET documentdb.max_non_ordered_term_scan_threshold;
+-- ===== Section 29: ORDER BY pushdown with numericOrdering ======
+SET documentdb.enableExtendedExplainPlans TO on;
+SET enable_seqscan TO OFF;
+SET documentdb.max_non_ordered_term_scan_threshold TO 1;
+SET documentdb.enableOrderByIndexTerm TO on;
+SET documentdb.forceUseIndexIfAvailable TO on;
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_numeric',
+  FORMAT('{"_id": %s, "a": "%s"}', g.idx, g.a)::documentdb_core.bson, NULL)
+FROM (VALUES
+  (1, 'item20'), (2, 'item3'), (3, 'item11'),
+  (4, 'item1'), (5, 'item100'), (6, 'item2')
+) AS g(idx, a);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(6 rows)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_orderby_numeric",
+    "indexes": [{
+      "key": { "a": 1 },
+      "name": "idx_orderby_numeric_en_num",
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE;
+-- 29a: ASC sort with matching numericOrdering collation
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+                      document                       
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : "item1" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item2" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "item100" }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                            run_explain_and_trim                                             
+-------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_orderby_numeric
+   indexName: idx_orderby_numeric_en_num
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": (MinKey, MaxKey)]
+   innerScanLoops: 6 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+   ->  Index Scan using idx_orderby_numeric_en_num on documents_8122 collection (actual rows=6 loops=1)
+         Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
+
+-- 29b: DESC sort with matching numericOrdering collation
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": -1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+                      document                       
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "item100" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item2" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "item1" }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": -1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                             run_explain_and_trim                                             
+--------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_orderby_numeric
+   indexName: idx_orderby_numeric_en_num
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": (MinKey, MaxKey)]
+   isBackwardScan: true
+   innerScanLoops: 6 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+   ->  Index Scan using idx_orderby_numeric_en_num on documents_8122 collection (actual rows=6 loops=1)
+         Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "-1" } }'::bson)
+(13 rows)
+
+-- 29c: top-N sort with matching numericOrdering collation
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": 1 }, "limit": 3, "collation": { "locale": "en", "numericOrdering": true } }');
+                     document                      
+---------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : "item1" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item2" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3" }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": 1 }, "limit": 3, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                               run_explain_and_trim                                                
+-------------------------------------------------------------------------------------------------------------------
+ Limit (actual rows=3 loops=1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_orderby_numeric
+         indexName: idx_orderby_numeric_en_num
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (MinKey, MaxKey)]
+         innerScanLoops: 3 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+         ->  Index Scan using idx_orderby_numeric_en_num on documents_8122 collection (actual rows=3 loops=1)
+               Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+               Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
+
+-- 29d: locale mismatch retains a separate Sort
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": 1 }, "collation": { "locale": "fr", "numericOrdering": true } }')
+$cmd$);
+                                                                   run_explain_and_trim                                                                   
+----------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=6 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level3-kn-true'::text)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_orderby_numeric
+         indexName: _id_
+         ->  Index Scan using _id_ on documents_8122 collection (actual rows=6 loops=1)
+               Index Cond: (shard_key_value = '8122'::bigint)
+(8 rows)
+
+-- 29e: numericOrdering mismatch retains a separate Sort
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": 1 }, "collation": { "locale": "en" } }')
+$cmd$);
+                                                               run_explain_and_trim                                                               
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=6 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_orderby_numeric
+         indexName: _id_
+         ->  Index Scan using _id_ on documents_8122 collection (actual rows=6 loops=1)
+               Index Cond: (shard_key_value = '8122'::bigint)
+(8 rows)
+
+-- 29f: uncollated query against numericOrdering index retains a separate Sort
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": 1 } }')
+$cmd$);
+                                                   run_explain_and_trim                                                   
+--------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=6 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_orderby_numeric
+         indexName: _id_
+         ->  Index Scan using _id_ on documents_8122 collection (actual rows=6 loops=1)
+               Index Cond: (shard_key_value = '8122'::bigint)
+(8 rows)
+
+-- 29y: aggregation pipeline $sort + $skip + $limit with matching numericOrdering collation
+SELECT document FROM bson_aggregation_pipeline('ord_coll_ordered_db', '{ "aggregate": "ord_orderby_numeric", "pipeline": [ { "$sort": { "a": 1 } }, { "$skip": 2 }, { "$limit": 3 } ], "cursor": {}, "collation": { "locale": "en", "numericOrdering": true } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20" }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ordered_db', '{ "aggregate": "ord_orderby_numeric", "pipeline": [ { "$sort": { "a": 1 } }, { "$skip": 2 }, { "$limit": 3 } ], "cursor": {}, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                                     run_explain_and_trim                                                      
+-------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual rows=3 loops=1)
+   ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
+         ->  Limit (actual rows=3 loops=1)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
+                     namespaceName: ord_coll_ordered_db.ord_orderby_numeric
+                     indexName: idx_orderby_numeric_en_num
+                     indexKey: {"a": 1}
+                     isMultiKey: false
+                     indexBounds: ["a": (MinKey, MaxKey)]
+                     innerScanLoops: 5 loops
+                     scanType: ordered
+                     scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
+                     ->  Index Scan using idx_orderby_numeric_en_num on documents_8122 collection (actual rows=5 loops=1)
+                           Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(15 rows)
+
+-- 29z: aggregation pipeline $sort + $limit with matching numericOrdering collation
+SELECT document FROM bson_aggregation_pipeline('ord_coll_ordered_db', '{ "aggregate": "ord_orderby_numeric", "pipeline": [ { "$sort": { "a": 1 } }, { "$limit": 3 } ], "cursor": {}, "collation": { "locale": "en", "numericOrdering": true } }');
+                     document                      
+---------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : "item1" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item2" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3" }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ordered_db', '{ "aggregate": "ord_orderby_numeric", "pipeline": [ { "$sort": { "a": 1 } }, { "$limit": 3 } ], "cursor": {}, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                               run_explain_and_trim                                                
+-------------------------------------------------------------------------------------------------------------------
+ Limit (actual rows=3 loops=1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_orderby_numeric
+         indexName: idx_orderby_numeric_en_num
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (MinKey, MaxKey)]
+         innerScanLoops: 3 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+         ->  Index Scan using idx_orderby_numeric_en_num on documents_8122 collection (actual rows=3 loops=1)
+               Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+               Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_filter',
+  FORMAT('{"_id": %s, "a": "%s", "tag": "%s"}', g.idx, g.a, g.tag)::documentdb_core.bson, NULL)
+FROM (VALUES
+  (1, 'item20', 'tag1'), (2, 'item3', 'tag2'), (3, 'item11', 'tag3'),
+  (4, 'item1', 'tag4'), (5, 'item100', 'tag5'), (6, 'item2', 'tag6'),
+  (10, 'item12', 'tag10'), (11, 'item10', 'tag11'), (12, 'item4', 'tag12')
+) AS g(idx, a, tag);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(9 rows)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_filter', '{"_id": 7, "tag": "missing-a"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_filter', '{"_id": 8, "a": 42, "tag": "number-a"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_filter', '{"_id": 9, "a": null, "tag": "null-a"}', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_orderby_filter",
+    "indexes": [{
+      "key": { "a": 1 },
+      "name": "idx_orderby_filter_en_num",
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE;
+-- 29g: $exists true + sort on collated field
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$exists": true } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+                                       document                                        
+---------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "9" }, "a" : null, "tag" : "null-a" }
+ { "_id" : { "$numberInt" : "8" }, "a" : { "$numberInt" : "42" }, "tag" : "number-a" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "item1", "tag" : "tag4" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item2", "tag" : "tag6" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3", "tag" : "tag2" }
+ { "_id" : { "$numberInt" : "12" }, "a" : "item4", "tag" : "tag12" }
+ { "_id" : { "$numberInt" : "11" }, "a" : "item10", "tag" : "tag11" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11", "tag" : "tag3" }
+ { "_id" : { "$numberInt" : "10" }, "a" : "item12", "tag" : "tag10" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20", "tag" : "tag1" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "item100", "tag" : "tag5" }
+(11 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$exists": true } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                                                                                                                           run_explain_and_trim                                                                                                                                           
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=11 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3-kn-true'::text)) NULLS FIRST, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3-kn-true'::text)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=11 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_orderby_filter
+         indexName: idx_orderby_filter_en_num
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [MinKey, MaxKey]]
+         innerScanLoops: 12 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 11)]
+         ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=11 loops=1)
+               Index Cond: (document @>= '{ "a" : { "$minKey" : 1 }, "collation" : "en-u-ks-level3-kn-true" }'::bson)
+               Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(15 rows)
+
+-- 29h: $type string + reverse sort on collated field
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$type": "string" } }, "sort": { "a": -1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "item100", "tag" : "tag5" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20", "tag" : "tag1" }
+ { "_id" : { "$numberInt" : "10" }, "a" : "item12", "tag" : "tag10" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11", "tag" : "tag3" }
+ { "_id" : { "$numberInt" : "11" }, "a" : "item10", "tag" : "tag11" }
+ { "_id" : { "$numberInt" : "12" }, "a" : "item4", "tag" : "tag12" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3", "tag" : "tag2" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item2", "tag" : "tag6" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "item1", "tag" : "tag4" }
+(9 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$type": "string" } }, "sort": { "a": -1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                             run_explain_and_trim                                             
+--------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=9 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_orderby_filter
+   indexName: idx_orderby_filter_en_num
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": ["", { })]
+   isBackwardScan: true
+   innerScanLoops: 10 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 9)]
+   ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=9 loops=1)
+         Index Cond: (document @# '{ "a" : "string", "collation" : "en-u-ks-level3-kn-true" }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "-1" } }'::bson)
+(13 rows)
+
+-- 29i: equality filter + sort
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$eq": "item3" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+                             document                              
+-------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3", "tag" : "tag2" }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$eq": "item3" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                            run_explain_and_trim                                             
+-------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_orderby_filter
+   indexName: idx_orderby_filter_en_num
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": ["item3", "item3"]]
+   innerScanLoops: 2 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 1)]
+   ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=1 loops=1)
+         Index Cond: (document @= '{ "a" : "item3", "collation" : "en-u-ks-level3-kn-true" }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
+
+-- 29j: greater-than filter + sort
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$gt": "item10" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11", "tag" : "tag3" }
+ { "_id" : { "$numberInt" : "10" }, "a" : "item12", "tag" : "tag10" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20", "tag" : "tag1" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "item100", "tag" : "tag5" }
+(4 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$gt": "item10" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                            run_explain_and_trim                                             
+-------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_orderby_filter
+   indexName: idx_orderby_filter_en_num
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": ("item10", { })]
+   innerScanLoops: 5 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
+   ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=4 loops=1)
+         Index Cond: (document @> '{ "a" : "item10", "collation" : "en-u-ks-level3-kn-true" }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
+
+-- 29k: less-than filter + sort
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$lt": "item10" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+                              document                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : "item1", "tag" : "tag4" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item2", "tag" : "tag6" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3", "tag" : "tag2" }
+ { "_id" : { "$numberInt" : "12" }, "a" : "item4", "tag" : "tag12" }
+(4 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$lt": "item10" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                            run_explain_and_trim                                             
+-------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_orderby_filter
+   indexName: idx_orderby_filter_en_num
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": ["", "item10")]
+   innerScanLoops: 6 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
+   ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=4 loops=1)
+         Index Cond: (document @< '{ "a" : "item10", "collation" : "en-u-ks-level3-kn-true" }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
+
+-- 29l: bounded range filter + sort
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$gte": "item3", "$lte": "item20" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3", "tag" : "tag2" }
+ { "_id" : { "$numberInt" : "12" }, "a" : "item4", "tag" : "tag12" }
+ { "_id" : { "$numberInt" : "11" }, "a" : "item10", "tag" : "tag11" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11", "tag" : "tag3" }
+ { "_id" : { "$numberInt" : "10" }, "a" : "item12", "tag" : "tag10" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20", "tag" : "tag1" }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$gte": "item3", "$lte": "item20" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                                                                     run_explain_and_trim                                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_orderby_filter
+   indexName: idx_orderby_filter_en_num
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": ["item3", "item20"]]
+   innerScanLoops: 7 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+   ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=6 loops=1)
+         Index Cond: ((document @>= '{ "a" : "item3", "collation" : "en-u-ks-level3-kn-true" }'::bson) AND (document @<= '{ "a" : "item20", "collation" : "en-u-ks-level3-kn-true" }'::bson))
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
+
+-- 29m: not-equal filter + sort
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$ne": "item3" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+                                       document                                        
+---------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "7" }, "tag" : "missing-a" }
+ { "_id" : { "$numberInt" : "9" }, "a" : null, "tag" : "null-a" }
+ { "_id" : { "$numberInt" : "8" }, "a" : { "$numberInt" : "42" }, "tag" : "number-a" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "item1", "tag" : "tag4" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item2", "tag" : "tag6" }
+ { "_id" : { "$numberInt" : "12" }, "a" : "item4", "tag" : "tag12" }
+ { "_id" : { "$numberInt" : "11" }, "a" : "item10", "tag" : "tag11" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11", "tag" : "tag3" }
+ { "_id" : { "$numberInt" : "10" }, "a" : "item12", "tag" : "tag10" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20", "tag" : "tag1" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "item100", "tag" : "tag5" }
+(11 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$ne": "item3" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                            run_explain_and_trim                                             
+-------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=11 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_orderby_filter
+   indexName: idx_orderby_filter_en_num
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": [MinKey, MaxKey]]
+   innerScanLoops: 12 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 11)]
+   ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=11 loops=1)
+         Index Cond: (document @!= '{ "a" : "item3", "collation" : "en-u-ks-level3-kn-true" }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
+
+-- 29n: negated comparison filter + sort
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$not": { "$gt": "item20" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+                                       document                                        
+---------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "7" }, "tag" : "missing-a" }
+ { "_id" : { "$numberInt" : "9" }, "a" : null, "tag" : "null-a" }
+ { "_id" : { "$numberInt" : "8" }, "a" : { "$numberInt" : "42" }, "tag" : "number-a" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "item1", "tag" : "tag4" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item2", "tag" : "tag6" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3", "tag" : "tag2" }
+ { "_id" : { "$numberInt" : "12" }, "a" : "item4", "tag" : "tag12" }
+ { "_id" : { "$numberInt" : "11" }, "a" : "item10", "tag" : "tag11" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11", "tag" : "tag3" }
+ { "_id" : { "$numberInt" : "10" }, "a" : "item12", "tag" : "tag10" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20", "tag" : "tag1" }
+(11 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$not": { "$gt": "item20" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                                          run_explain_and_trim                                                           
+-----------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=11 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_orderby_filter
+   indexName: idx_orderby_filter_en_num
+   indexKey: {"a": 1}
+   isMultiKey: false
+   startBounds: ["a": [MinKey, "item20"]]
+   rawBounds: ["a": [MinKey, "item20"], ({ }, MaxKey]]
+   innerScanLoops: 12 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 11)]
+   ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=11 loops=1)
+         Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "item20", "collation" : "en-u-ks-level3-kn-true" }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
+
+-- 29o: filter on collated field + sort on _id
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$gt": "item10" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20", "tag" : "tag1" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11", "tag" : "tag3" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "item100", "tag" : "tag5" }
+ { "_id" : { "$numberInt" : "10" }, "a" : "item12", "tag" : "tag10" }
+(4 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$gt": "item10" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                                                    run_explain_and_trim                                                                    
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=4 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3-kn-true'::text)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_orderby_filter
+         indexName: idx_orderby_filter_en_num
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ("item10", { })]
+         innerScanLoops: 5 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
+         ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=4 loops=1)
+               Index Cond: (document @> '{ "a" : "item10", "collation" : "en-u-ks-level3-kn-true" }'::bson)
+(14 rows)
+
+-- 29x: aggregation pipeline $match + $sort + $project with matching numericOrdering collation
+SELECT document FROM bson_aggregation_pipeline('ord_coll_ordered_db', '{ "aggregate": "ord_orderby_filter", "pipeline": [ { "$match": { "a": { "$gte": "item3" } } }, { "$sort": { "a": 1 } }, { "$project": { "_id": 0, "a": 1 } }, { "$limit": 3 } ], "cursor": {}, "collation": { "locale": "en", "numericOrdering": true } }');
+      document      
+--------------------
+ { "a" : "item3" }
+ { "a" : "item4" }
+ { "a" : "item10" }
+(3 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ordered_db', '{ "aggregate": "ord_orderby_filter", "pipeline": [ { "$match": { "a": { "$gte": "item3" } } }, { "$sort": { "a": 1 } }, { "$project": { "_id": 0, "a": 1 } }, { "$limit": 3 } ], "cursor": {}, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                               run_explain_and_trim                                                
+-------------------------------------------------------------------------------------------------------------------
+ Limit (actual rows=3 loops=1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_orderby_filter
+         indexName: idx_orderby_filter_en_num
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": ["item3", { })]
+         innerScanLoops: 3 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+         ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=3 loops=1)
+               Index Cond: (document @>= '{ "a" : "item3", "collation" : "en-u-ks-level3-kn-true" }'::bson)
+               Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_compound',
+  FORMAT('{"_id": %s, "a": "%s", "b": "%s"}', g.idx, g.a, g.b)::documentdb_core.bson, NULL)
+FROM (VALUES
+  (1, 'item1', 'sub20'), (2, 'item2', 'sub3'), (3, 'item2', 'sub11'),
+  (4, 'item10', 'sub10'), (5, 'item10', 'sub2'), (6, 'item3', 'sub2')
+) AS g(idx, a, b);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(6 rows)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_orderby_compound",
+    "indexes": [{
+      "key": { "a": 1, "b": 1 },
+      "name": "idx_orderby_compound_en_num",
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE;
+-- 29p: compound sort with matching numericOrdering collation
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_compound", "filter": {}, "sort": { "a": 1, "b": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+                             document                              
+-------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "item1", "b" : "sub20" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item2", "b" : "sub3" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item2", "b" : "sub11" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item3", "b" : "sub2" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "item10", "b" : "sub2" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "item10", "b" : "sub10" }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_compound", "filter": {}, "sort": { "a": 1, "b": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                                                                            run_explain_and_trim                                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_orderby_compound
+   indexName: idx_orderby_compound_en_num
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   indexBounds: ["a": (MinKey, MaxKey), "b": (MinKey, MaxKey)]
+   innerScanLoops: 6 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+   ->  Index Scan using idx_orderby_compound_en_num on documents_8124 collection (actual rows=6 loops=1)
+         Index Cond: ((document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+         Order By: ((document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document OPERATOR(documentdb_api_internal.|<>) '{ "b" : { "$numberInt" : "1" } }'::bson))
+(12 rows)
+
+-- 29q: equality on leading compound key + sort on secondary numeric string key
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_compound", "filter": { "a": "item10" }, "sort": { "b": 1, "_id": 1 }, "limit": 4, "collation": { "locale": "en", "numericOrdering": true } }');
+                             document                              
+-------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "item10", "b" : "sub2" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "item10", "b" : "sub10" }
+(2 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_compound", "filter": { "a": "item10" }, "sort": { "b": 1, "_id": 1 }, "limit": 4, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                                                                                                                              run_explain_and_trim                                                                                                                                              
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual rows=2 loops=1)
+   ->  Sort (actual rows=2 loops=1)
+         Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "b" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3-kn-true'::text)) NULLS FIRST, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3-kn-true'::text)) NULLS FIRST
+         Sort Method: quicksort  Memory: xxxkB
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+               namespaceName: ord_coll_ordered_db.ord_orderby_compound
+               indexName: idx_orderby_compound_en_num
+               indexKey: {"a": 1,"b": 1}
+               isMultiKey: false
+               indexBounds: ["a": ["item10", "item10"], "b": (MinKey, MaxKey)]
+               innerScanLoops: 2 loops
+               scanType: ordered
+               scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
+               ->  Index Scan using idx_orderby_compound_en_num on documents_8124 collection (actual rows=2 loops=1)
+                     Index Cond: (document @= '{ "a" : "item10", "collation" : "en-u-ks-level3-kn-true" }'::bson)
+                     Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "b" : { "$numberInt" : "1" } }'::bson)
+(16 rows)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_mixed',
+  FORMAT('{"_id": %s, "a": "%s", "b": "%s"}', g.idx, g.a, g.b)::documentdb_core.bson, NULL)
+FROM (VALUES
+  (1, 'item1', 'sub20'), (2, 'item2', 'sub3'), (3, 'item2', 'sub11'),
+  (4, 'item10', 'sub10'), (5, 'item10', 'sub2'), (6, 'item3', 'sub2')
+) AS g(idx, a, b);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(6 rows)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_orderby_mixed",
+    "indexes": [{
+      "key": { "a": 1, "b": -1 },
+      "name": "idx_orderby_mixed_en_num",
+      "collation": { "locale": "en", "numericOrdering": true }
+    }]
+  }',
+  TRUE
+);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE;
+-- 29r: mixed-direction compound sort with matching numericOrdering collation
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_mixed", "filter": {}, "sort": { "a": 1, "b": -1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+                             document                              
+-------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : "item1", "b" : "sub20" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item2", "b" : "sub11" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item2", "b" : "sub3" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item3", "b" : "sub2" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "item10", "b" : "sub10" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "item10", "b" : "sub2" }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_mixed", "filter": {}, "sort": { "a": 1, "b": -1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                                                                             run_explain_and_trim                                                                                             
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_orderby_mixed
+   indexName: idx_orderby_mixed_en_num
+   indexKey: {"a": 1,"b": -1}
+   isMultiKey: false
+   indexBounds: ["a": (MinKey, MaxKey), "b": DESC(MinKey, MaxKey)]
+   innerScanLoops: 6 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+   ->  Index Scan using idx_orderby_mixed_en_num on documents_8125 collection (actual rows=6 loops=1)
+         Index Cond: ((document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson))
+         Order By: ((document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document OPERATOR(documentdb_api_internal.|<>) '{ "b" : { "$numberInt" : "-1" } }'::bson))
+(12 rows)
+
+-- 29s: reverse mixed-direction compound sort with matching numericOrdering collation
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_mixed", "filter": {}, "sort": { "a": -1, "b": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+                             document                              
+-------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : "item10", "b" : "sub2" }
+ { "_id" : { "$numberInt" : "4" }, "a" : "item10", "b" : "sub10" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item3", "b" : "sub2" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item2", "b" : "sub3" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item2", "b" : "sub11" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item1", "b" : "sub20" }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_mixed", "filter": {}, "sort": { "a": -1, "b": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                                                                             run_explain_and_trim                                                                                             
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_orderby_mixed
+   indexName: idx_orderby_mixed_en_num
+   indexKey: {"a": 1,"b": -1}
+   isMultiKey: false
+   indexBounds: ["a": (MinKey, MaxKey), "b": DESC(MinKey, MaxKey)]
+   isBackwardScan: true
+   innerScanLoops: 6 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+   ->  Index Scan using idx_orderby_mixed_en_num on documents_8125 collection (actual rows=6 loops=1)
+         Index Cond: ((document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson) AND (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+         Order By: ((document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "-1" } }'::bson) AND (document OPERATOR(documentdb_api_internal.|<>) '{ "b" : { "$numberInt" : "1" } }'::bson))
+(13 rows)
+
+-- 29t: mixed-direction mismatch retains a separate Sort
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_mixed", "filter": {}, "sort": { "a": 1, "b": 1, "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=6 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3-kn-true'::text)) NULLS FIRST, (documentdb_api_internal.bson_orderby_index(document, '{ "b" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3-kn-true'::text)) NULLS FIRST, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3-kn-true'::text)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_orderby_mixed
+         indexName: idx_orderby_mixed_en_num
+         indexKey: {"a": 1,"b": -1}
+         isMultiKey: false
+         indexBounds: ["a": (MinKey, MaxKey), "b": DESC(MinKey, MaxKey)]
+         innerScanLoops: 6 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+         ->  Index Scan using idx_orderby_mixed_en_num on documents_8125 collection (actual rows=6 loops=1)
+               Index Cond: ((document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+               Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(15 rows)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_id',
+  FORMAT('{"_id": "%s", "a": %s}', g.id, g.a)::documentdb_core.bson, NULL)
+FROM (VALUES
+  ('item1', 1), ('item10', 2), ('item2', 3),
+  ('item20', 4), ('item3', 5), ('item30', 6)
+) AS g(id, a);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(6 rows)
+
+ANALYZE;
+-- 29u: _id sort without collation baseline
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_id", "filter": {}, "sort": { "_id": 1 } }')
+$cmd$);
+                               run_explain_and_trim                               
+----------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_orderby_id
+   indexName: _id_
+   ->  Index Scan using _id_ on documents_8126 collection (actual rows=6 loops=1)
+         Index Cond: (shard_key_value = '8126'::bigint)
+(5 rows)
+
+-- 29v: _id sort with collation does not use _id order
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_id", "filter": {}, "sort": { "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                                                    run_explain_and_trim                                                                    
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=6 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3-kn-true'::text)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_orderby_id
+         indexName: _id_
+         ->  Index Scan using _id_ on documents_8126 collection (actual rows=6 loops=1)
+               Index Cond: (shard_key_value = '8126'::bigint)
+(8 rows)
+
+-- 29w: _id equality filter + collated _id sort
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_id", "filter": { "_id": "item2" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                                                    run_explain_and_trim                                                                    
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=1 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3-kn-true'::text)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_orderby_id
+         indexName: _id_
+         ->  Index Scan using _id_ on documents_8126 collection (actual rows=1 loops=1)
+               Index Cond: (shard_key_value = '8126'::bigint)
+               Filter: (document @= '{ "_id" : "item2", "collation" : "en-u-ks-level3-kn-true" }'::bson)
+               Rows Removed by Filter: 5
+(10 rows)
+
+SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_samefield',
+  FORMAT('{"_id": %s, "a": "%s"}', g.idx, g.a)::documentdb_core.bson, NULL)
+FROM (VALUES
+  (1, 'item20'), (2, 'item3'), (3, 'item11'),
+  (4, 'item1'), (5, 'item100'), (6, 'item2')
+) AS g(idx, a);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(6 rows)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+  'ord_coll_ordered_db',
+  '{
+    "createIndexes": "ord_orderby_samefield",
+    "indexes": [
+      {
+        "key": { "a": 1 },
+        "name": "idx_orderby_samefield_en_num",
+        "collation": { "locale": "en", "numericOrdering": true }
+      },
+      {
+        "key": { "a": 1 },
+        "name": "idx_orderby_samefield_fr_num",
+        "collation": { "locale": "fr", "numericOrdering": true }
+      },
+      {
+        "key": { "a": 1 },
+        "name": "idx_orderby_samefield_simple"
+      }
+    ]
+  }',
+  TRUE
+);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT
+  (ci.index_spec).index_name,
+  documentdb_api_internal.index_spec_as_bson(ci.index_spec, for_get_indexes=>true) AS index_spec,
+  ci.index_is_valid
+FROM documentdb_api_catalog.collection_indexes ci
+JOIN documentdb_api_catalog.collections c ON c.collection_id = ci.collection_id
+WHERE c.database_name = 'ord_coll_ordered_db'
+  AND c.collection_name = 'ord_orderby_samefield'
+  AND (ci.index_spec).index_name LIKE 'idx_orderby_samefield%'
+ORDER BY (ci.index_spec).index_name;
+          index_name          |                                                                                                             index_spec                                                                                                              | index_is_valid 
+------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------
+ idx_orderby_samefield_en_num | { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" } }, "name" : "idx_orderby_samefield_en_num", "collation" : { "locale" : "en", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } | t
+ idx_orderby_samefield_fr_num | { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" } }, "name" : "idx_orderby_samefield_fr_num", "collation" : { "locale" : "fr", "numericOrdering" : true }, "storageEngine" : { "enableOrderedIndex" : true } } | t
+ idx_orderby_samefield_simple | { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" } }, "name" : "idx_orderby_samefield_simple", "storageEngine" : { "enableOrderedIndex" : true } }                                                              | t
+(3 rows)
+
+ANALYZE;
+-- 29aa: same field has three indexes; no hint picks matching numericOrdering index
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
+                      document                       
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : "item1" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item2" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "item100" }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                            run_explain_and_trim                                             
+-------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_orderby_samefield
+   indexName: idx_orderby_samefield_en_num
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": (MinKey, MaxKey)]
+   innerScanLoops: 6 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+   ->  Index Scan using idx_orderby_samefield_en_num on documents_8127 collection (actual rows=6 loops=1)
+         Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
+
+-- 29ab: matching hint on the same field preserves ordered output
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_en_num", "collation": { "locale": "en", "numericOrdering": true } }');
+                      document                       
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : "item1" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item2" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "item100" }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_en_num", "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                            run_explain_and_trim                                             
+-------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_orderby_samefield
+   indexName: idx_orderby_samefield_en_num
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": (MinKey, MaxKey)]
+   innerScanLoops: 6 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+   ->  Index Scan using idx_orderby_samefield_en_num on documents_8127 collection (actual rows=6 loops=1)
+         Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
+
+-- 29ac: locale-specific hint on the same field uses the matching collated index
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_fr_num", "collation": { "locale": "fr", "numericOrdering": true } }');
+                      document                       
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : "item1" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item2" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "item100" }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_fr_num", "collation": { "locale": "fr", "numericOrdering": true } }')
+$cmd$);
+                                            run_explain_and_trim                                             
+-------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_orderby_samefield
+   indexName: idx_orderby_samefield_fr_num
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": (MinKey, MaxKey)]
+   innerScanLoops: 6 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+   ->  Index Scan using idx_orderby_samefield_fr_num on documents_8127 collection (actual rows=6 loops=1)
+         Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
+
+-- 29ad: uncollated hint on the same field uses the simple index
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_simple" }');
+                      document                       
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : "item1" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "item100" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item2" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3" }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_simple" }')
+$cmd$);
+                                            run_explain_and_trim                                             
+-------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_orderby_samefield
+   indexName: idx_orderby_samefield_simple
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": (MinKey, MaxKey)]
+   innerScanLoops: 6 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+   ->  Index Scan using idx_orderby_samefield_simple on documents_8127 collection (actual rows=6 loops=1)
+         Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
+
+-- 29ae: wrong collation hint still returns correct order via a separate Sort
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_fr_num", "collation": { "locale": "en", "numericOrdering": true } }');
+                      document                       
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : "item1" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item2" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "item100" }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_fr_num", "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                                                   run_explain_and_trim                                                                   
+----------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=6 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3-kn-true'::text)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_orderby_samefield
+         indexName: idx_orderby_samefield_fr_num
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (MinKey, MaxKey)]
+         innerScanLoops: 6 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+         ->  Index Scan using idx_orderby_samefield_fr_num on documents_8127 collection (actual rows=6 loops=1)
+               Index Cond: (document @<> '{ "a" : { "fullScan" : true } }'::bson)
+(14 rows)
+
+-- 29af: collated query with simple hint still returns correct order via a separate Sort
+SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_simple", "collation": { "locale": "en", "numericOrdering": true } }');
+                      document                       
+-----------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : "item1" }
+ { "_id" : { "$numberInt" : "6" }, "a" : "item2" }
+ { "_id" : { "$numberInt" : "2" }, "a" : "item3" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "item11" }
+ { "_id" : { "$numberInt" : "1" }, "a" : "item20" }
+ { "_id" : { "$numberInt" : "5" }, "a" : "item100" }
+(6 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_simple", "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+                                                                   run_explain_and_trim                                                                   
+----------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=6 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3-kn-true'::text)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+         namespaceName: ord_coll_ordered_db.ord_orderby_samefield
+         indexName: idx_orderby_samefield_simple
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (MinKey, MaxKey)]
+         innerScanLoops: 6 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+         ->  Index Scan using idx_orderby_samefield_simple on documents_8127 collection (actual rows=6 loops=1)
+               Index Cond: (document @<> '{ "a" : { "fullScan" : true } }'::bson)
+(14 rows)
+
+RESET documentdb.max_non_ordered_term_scan_threshold;
+RESET documentdb.enableOrderByIndexTerm;
+RESET documentdb.forceUseIndexIfAvailable;
 RESET documentdb.enableExtendedExplainPlans;
 RESET enable_seqscan;
 DROP SCHEMA collation_ordered_test_schema CASCADE;

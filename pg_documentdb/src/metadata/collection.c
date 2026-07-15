@@ -1382,30 +1382,73 @@ CompareStringPointers(const void *a, const void *b)
 
 
 /*
- * this function restricts the usage of certain namespaces that are reserved for internal use.
- * For example, we reserve the 'config' database for internal use and disallow users from creating collections with certain names in that database.
- * TODO : add restrictions for 'admin' and 'local' database
+ * this function restricts the usage of certain namespaces that are reserved
+ * for internal use in the 'config' and 'local' built-in databases. Reserved
+ * 'admin' names (and any 'local' names beginning with 'system.') are already
+ * blocked earlier in ValidateCollectionNameForValidSystemNamespace via the
+ * system.* allowlist + NonWritable checks, so they are not duplicated here.
+ * Gated by the EnableNewNamespaceValidation GUC.
  */
 static void
 ValidateSystemNamespace(const char *databaseName, const char *collectionName)
 {
-	/* restrict limited collection in 'config' db (sorted for bsearch) */
-	const char *limitedConfigCollections[] = {
-		"_shards", "chunks", "collections", "databases", "settings", "shards", "version"
+	/* Each list MUST stay sorted (bsearch). */
+	static const char *limitedConfigCollections[] = {
+		"_shards",
+		"cache.collections",
+		"cache.databases",
+		"changelog",
+		"chunks",
+		"collections",
+		"databases",
+		"lockpings",
+		"locks",
+		"migrationCoordinators",
+		"migrations",
+		"mongos",
+		"placementHistory",
+		"rangeDeletions",
+		"reshardingOperations",
+		"settings",
+		"shards",
+		"tags",
+		"transactions",
+		"version"
 	};
-	const int limitedConfigCollectionsLength = sizeof(limitedConfigCollections) /
-											   sizeof(char *);
+	static const char *limitedLocalCollections[] = {
+		"oplog.rs",
+		"replset.election",
+		"replset.initialSyncId",
+		"replset.minvalid",
+		"replset.oplogTruncateAfterPoint",
+		"startup_log"
+	};
+
+	const char **list = NULL;
+	int listLen = 0;
+
 	if (strcmp(databaseName, "config") == 0)
 	{
-		if (bsearch(&collectionName, limitedConfigCollections,
-					limitedConfigCollectionsLength, sizeof(const char *),
-					CompareStringPointers) != NULL)
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_ILLEGALOPERATION),
-							errmsg(
-								"The namespace %s.%s is reserved and cannot be used",
-								databaseName, collectionName)));
-		}
+		list = limitedConfigCollections;
+		listLen = lengthof(limitedConfigCollections);
+	}
+	else if (strcmp(databaseName, "local") == 0)
+	{
+		list = limitedLocalCollections;
+		listLen = lengthof(limitedLocalCollections);
+	}
+	else
+	{
+		return;
+	}
+
+	if (bsearch(&collectionName, list, listLen, sizeof(const char *),
+				CompareStringPointers) != NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_ILLEGALOPERATION),
+						errmsg(
+							"The namespace %s.%s is reserved and cannot be used",
+							databaseName, collectionName)));
 	}
 }
 
@@ -2323,6 +2366,40 @@ UpdateEnableUpdateDescription(MongoCollection *collection, bool enabled)
 }
 
 
+/*
+ * UpdateCollectionStatsEnabledOption stores or removes the statsEnabled
+ * option in the collection's options column. This is used to track whether
+ * planner statistics are enabled for the collection without requiring a
+ * FOR UPDATE lock on collection_indexes.
+ */
+void
+UpdateCollectionStatsEnabledOption(uint64 collectionId, bool enabled)
+{
+	MongoCollection *collection = GetMongoCollectionByColId(collectionId, NoLock);
+	if (collection == NULL)
+	{
+		return;
+	}
+
+	pgbson_writer optionWriter;
+	PgbsonWriterInit(&optionWriter);
+
+	if (enabled)
+	{
+		PgbsonWriterAppendBool(&optionWriter, "statsEnabled",
+							   strlen("statsEnabled"), true);
+		pgbson *updateSpec = PgbsonWriterGetPgbson(&optionWriter);
+		UpdateCollectionOptions(collection, updateSpec);
+	}
+	else
+	{
+		PgbsonWriterAppendUtf8(&optionWriter, "", 0, "statsEnabled");
+		pgbson *removeSpec = PgbsonWriterGetPgbson(&optionWriter);
+		RemoveCollectionOptions(collection, removeSpec);
+	}
+}
+
+
 static void
 UpdateCollectionOptions(MongoCollection *collection, const pgbson *updateSpec)
 {
@@ -2452,6 +2529,11 @@ CopyCollectionOptions(const pgbson *options, MongoCollection *collection)
 			 * for this collection.
 			 */
 			collection->options.updateDescriptionEnabled =
+				BsonValueAsBool(bson_iter_value(&optionsIter));
+		}
+		else if (strcmp(key, "statsEnabled") == 0)
+		{
+			collection->options.statsEnabled =
 				BsonValueAsBool(bson_iter_value(&optionsIter));
 		}
 	}

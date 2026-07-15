@@ -53,6 +53,7 @@
 #include "utils/documentdb_errors.h"
 #include "opclass/bson_gin_index_mgmt.h"
 #include "utils/docdb_make_funcs.h"
+#include "query/bson_dollar_selectivity.h"
 
 #define InputContinuationNodeName "DynamicCursorScanInputContinuation"
 
@@ -123,6 +124,9 @@ typedef struct ParsedContinuationState
 
 	/* The continuation state passed in by the user */
 	ItemPointerData userContinuationState;
+
+	/* The direction of the index scan */
+	ScanDirection indexScanDirection;
 
 	Datum cursorDatums[INDEX_MAX_KEYS];
 } ParsedContinuationState;
@@ -208,6 +212,8 @@ PG_FUNCTION_INFO_V1(command_cursor_tracker);
 
 extern bool EnableRumCursorDynamicIndexScans;
 extern bool EnableRumDynamicIndexScansSkipToTid;
+extern bool EnableOrderByIdOnCostFunction;
+extern bool EnableDynamicPersistentCursorsWithStats;
 
 /* Declaration of extensibility paths for query processing (See extensible.h) */
 static const struct CustomPathMethods DynamicExtensionCursorScanMethods = {
@@ -264,15 +270,50 @@ RegisterDynamicCursorScanNodes(void)
 bool
 IsDynamicCustomScanPath(Plan *plan)
 {
-	if (!IsA(plan, CustomScan))
+	CHECK_FOR_INTERRUPTS();
+	check_stack_depth();
+	if (IsA(plan, CustomScan))
 	{
-		return false;
+		CustomScan *scan = (CustomScan *) plan;
+		return strcmp(scan->methods->CustomName,
+					  DynamicExtensionCursorScanMethods.CustomName) == 0 &&
+			   scan->methods == &ExtensionCursorScanMethods;
 	}
 
-	CustomScan *scan = (CustomScan *) plan;
-	return strcmp(scan->methods->CustomName,
-				  DynamicExtensionCursorScanMethods.CustomName) == 0 &&
-		   scan->methods == &ExtensionCursorScanMethods;
+	if (IsA(plan, SubqueryScan))
+	{
+		SubqueryScan *subqueryScan = (SubqueryScan *) plan;
+		return IsDynamicCustomScanPath(subqueryScan->subplan);
+	}
+
+	return false;
+}
+
+
+CustomScanState *
+GetDynamicStreamingCustomScanState(PlanState *planState)
+{
+	CHECK_FOR_INTERRUPTS();
+	check_stack_depth();
+	if (IsA(planState, CustomScanState))
+	{
+		CustomScanState *scanState = (CustomScanState *) planState;
+		if (strcmp(scanState->methods->CustomName,
+				   DynamicExtensionCursorScanMethods.CustomName) == 0)
+		{
+			return scanState;
+		}
+
+		return NULL;
+	}
+
+	if (IsA(planState, SubqueryScanState))
+	{
+		SubqueryScanState *subqueryScan = (SubqueryScanState *) planState;
+		return GetDynamicStreamingCustomScanState(subqueryScan->subplan);
+	}
+
+	return NULL;
 }
 
 
@@ -328,7 +369,7 @@ CreateCustomScanPathForStreaming(PlannerInfo *root, RelOptInfo *rel, Path *input
 	path->param_info = NULL;
 
 	/* Copy scalar values in from the inner path */
-	path->rows = rel->rows;
+	path->rows = inputPath->rows;
 	path->startup_cost = inputPath->startup_cost;
 	path->total_cost = inputPath->total_cost;
 
@@ -341,8 +382,18 @@ CreateCustomScanPathForStreaming(PlannerInfo *root, RelOptInfo *rel, Path *input
 		{
 			/* Projection of all base table columns to extract shard_key_value & object_id.
 			 * Move projection to the top level pathTarget.
+			 *
+			 * Copy the outer pathtarget instead of aliasing inputPath->pathtarget:
+			 * the shared baseRelPathTarget is reused as the inner projection of
+			 * every custom path for this relation, and aliasing here could make
+			 * that wide pathtarget the top-level target of a rel->pathlist path.
+			 * apply_scanjoin_target_to_paths() would then relabel it in place with
+			 * the narrower final-target sortgrouprefs, leaving the inner
+			 * projection with a sortgrouprefs array shorter than its exprs list
+			 * and causing build_path_tlist() to read past its end. An independent
+			 * copy keeps baseRelPathTarget off rel->pathlist.
 			 */
-			path->pathtarget = inputPath->pathtarget;
+			path->pathtarget = copy_pathtarget(inputPath->pathtarget);
 			inputPath->pathtarget = baseRelPathTarget;
 			break;
 		}
@@ -373,6 +424,7 @@ CreateCustomScanPathForStreaming(PlannerInfo *root, RelOptInfo *rel, Path *input
 	memcpy(inputContinuationCopy, inputContinuation,
 		   sizeof(DynamicCursorInputContinuation));
 	customPath->custom_private = list_make1(inputContinuationCopy);
+	customPath->path.pathkeys = inputPath->pathkeys;
 
 	return customPath;
 }
@@ -387,23 +439,14 @@ GetIndexSupportsGetIndexKey(Oid relam, Oid opfamily)
 }
 
 
-static List *
-WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
-											 DynamicCursorInputContinuation *
-											 inputContinuation,
-											 PathTarget *baseRelPathTarget)
+static Path *
+UpdateAndClassifyPath(Path *inputPath, PlannerInfo *root, RelOptInfo *rel,
+					  uint64 collectionId, QueryScanType *scanType)
 {
-	List *customPlanPaths = NIL;
-	ListCell *cell;
-
-	/* Walk the existing paths and wrap them in a custom scan */
-	foreach(cell, rel->pathlist)
+	*scanType = QueryScanType_Unknown;
+	switch (inputPath->pathtype)
 	{
-		Path *inputPath = lfirst(cell);
-
-		inputContinuation->scanType = QueryScanType_Unknown;
-		QueryScanType scanType = QueryScanType_Unknown;
-		if (inputPath->pathtype == T_IndexScan)
+		case T_IndexScan:
 		{
 			IndexPath *indexPath = (IndexPath *) inputPath;
 
@@ -411,13 +454,13 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 				indexPath->indexinfo);
 			if (isPrimaryKeyPath)
 			{
-				scanType = QueryScanType_PrimaryKeyScan;
+				*scanType = QueryScanType_PrimaryKeyScan;
 			}
 			else if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
 												 indexPath->indexinfo->opfamily[0]))
 			{
 				/* Mark as supported indexscan */
-				scanType = QueryScanType_SecondaryIndexScan;
+				*scanType = QueryScanType_SecondaryIndexScan;
 				AddOrderByRequiredClausesIfNecessary(indexPath, root, rel);
 			}
 			else if (indexPath->indexinfo->amhasgetbitmap)
@@ -435,23 +478,26 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 					inputPath->startup_cost = 0;
 				}
 
-				scanType = QueryScanType_SecondaryIndexBitmapScan;
+				*scanType = QueryScanType_SecondaryIndexBitmapScan;
 			}
+
+			return inputPath;
 		}
-		else if (inputPath->pathtype == T_IndexOnlyScan)
+
+		case T_IndexOnlyScan:
 		{
 			IndexPath *indexPath = (IndexPath *) inputPath;
 			if (IsBtreePrimaryKeyIndex(indexPath->indexinfo))
 			{
 				/* Convert back to index scan to get cursors */
 				inputPath->pathtype = T_IndexScan;
-				scanType = QueryScanType_PrimaryKeyScan;
+				*scanType = QueryScanType_PrimaryKeyScan;
 			}
 			else if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
 												 indexPath->indexinfo->opfamily[0]))
 			{
 				/* IndexOnlyScan is always an ordered scan - nothing to do here */
-				scanType = QueryScanType_SecondaryIndexOnlyScan;
+				*scanType = QueryScanType_SecondaryIndexOnlyScan;
 			}
 			else if (indexPath->indexinfo->amhasgetbitmap)
 			{
@@ -468,10 +514,13 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 					inputPath->startup_cost = 0;
 				}
 
-				scanType = QueryScanType_SecondaryIndexBitmapScan;
+				*scanType = QueryScanType_SecondaryIndexBitmapScan;
 			}
+
+			return inputPath;
 		}
-		else if (inputPath->pathtype == T_BitmapHeapScan)
+
+		case T_BitmapHeapScan:
 		{
 			BitmapHeapPath *bitmapHeapPath = (BitmapHeapPath *) inputPath;
 			Path *bitmapQualPath = bitmapHeapPath->bitmapqual;
@@ -488,7 +537,7 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 						inputPath->pathtype = T_IndexScan;
 					}
 
-					scanType = QueryScanType_PrimaryKeyScan;
+					*scanType = QueryScanType_PrimaryKeyScan;
 				}
 				else if (bitmapQualPath->pathtype == T_IndexOnlyScan)
 				{
@@ -496,12 +545,12 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 													indexPath->indexinfo->opfamily[0]))
 					{
 						/* IndexOnlyScan is always an ordered scan - nothing to do here */
-						scanType = QueryScanType_SecondaryIndexOnlyScan;
+						*scanType = QueryScanType_SecondaryIndexOnlyScan;
 						inputPath = (Path *) indexPath;
 					}
 					else
 					{
-						scanType = QueryScanType_SecondaryIndexBitmapScan;
+						*scanType = QueryScanType_SecondaryIndexBitmapScan;
 					}
 				}
 				else
@@ -510,27 +559,46 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 					if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
 													indexPath->indexinfo->opfamily[0]))
 					{
-						scanType = QueryScanType_SecondaryIndexScan;
+						*scanType = QueryScanType_SecondaryIndexScan;
 						AddOrderByRequiredClausesIfNecessary(indexPath, root, rel);
 						inputPath = (Path *) indexPath;
 					}
 					else
 					{
-						scanType = QueryScanType_SecondaryIndexBitmapScan;
+						*scanType = QueryScanType_SecondaryIndexBitmapScan;
 					}
 				}
 			}
 			else if (bitmapQualPath->pathtype == T_BitmapAnd)
 			{
-				scanType = QueryScanType_SecondaryIndexBitmapAnd;
+				/* In this path, we have a special case, we can get a bitmapAnd where there's
+				 * one branch that is just shard_key_value = <value> - see
+				 * OptimizeBitmapQualsForBitmapAnd in index_support.
+				 */
+				BitmapAndPath *bitmapAndPath = (BitmapAndPath *) bitmapQualPath;
+				if (collectionId != 0)
+				{
+					Path *newPath = OptimizeAndTrimBitmapQualsForBitmapAnd(bitmapAndPath,
+																		   collectionId);
+					if (newPath != NULL && newPath != (Path *) bitmapAndPath)
+					{
+						/* the bitmapAnd path got optimized and replaced - reclassify the new path */
+						return UpdateAndClassifyPath(newPath, root, rel, collectionId,
+													 scanType);
+					}
+				}
+
+				*scanType = QueryScanType_SecondaryIndexBitmapAnd;
 			}
 			else if (bitmapQualPath->pathtype == T_BitmapOr)
 			{
-				scanType = QueryScanType_SecondaryIndexBitmapOr;
+				*scanType = QueryScanType_SecondaryIndexBitmapOr;
 			}
+
+			return inputPath;
 		}
 
-		if (inputPath->pathtype == T_SeqScan)
+		case T_SeqScan:
 		{
 			/* See if we can convert to primary key scan */
 			IndexOptInfo *info = GetPrimaryKeyIndexOptCore(rel);
@@ -540,7 +608,7 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 					root, info, NIL, NIL, NIL, NIL, ForwardScanDirection, false,
 					rel->lateral_relids,
 					1, false);
-				scanType = QueryScanType_PrimaryKeyScan;
+				*scanType = QueryScanType_PrimaryKeyScan;
 			}
 			else if ((rel->amflags & AMFLAG_HAS_TID_RANGE) != 0)
 			{
@@ -564,7 +632,116 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 				inputPath = (Path *) create_tidrangescan_path(root, rel, list_make1(
 																  rinfo),
 															  rel->lateral_relids);
-				scanType = QueryScanType_TidRangeScan;
+				*scanType = QueryScanType_TidRangeScan;
+			}
+
+			return inputPath;
+		}
+
+		default:
+		{
+			*scanType = QueryScanType_Unknown;
+			return inputPath;
+		}
+	}
+}
+
+
+static List *
+WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
+											 DynamicCursorInputContinuation *
+											 inputContinuation,
+											 PathTarget *baseRelPathTarget,
+											 uint64_t optCollectionId)
+{
+	List *customPlanPaths = NIL;
+	ListCell *cell;
+
+	/*
+	 * When non-streaming paths are allowed ( i.e., per-collection
+	 * statistics give the planner reliable cost estimates), skip the sort-based
+	 * pruning below so every scan type stays a candidate. The custom path then
+	 * advertises the pathkeys its inner path truly provides letting the planner
+	 * add a runtime Sort where needed and pick the cheapest plan; the cursor type
+	 * check in PlanDynamicQueryAndDetermineCursorType() falls back to a persistent
+	 * cursor (file-based on remote shard) when the chosen plan needs a top-level sort.
+	 */
+	bool isOperatorSelectivityEnabled =
+		EnablePlannerCostSelectivityFromRelOptInfo(root, rel);
+
+
+	/* Walk the existing paths and wrap them in a custom scan */
+	List *alternativePaths = NIL;
+	foreach(cell, rel->pathlist)
+	{
+		Path *inputPath = lfirst(cell);
+
+		inputContinuation->scanType = QueryScanType_Unknown;
+		QueryScanType scanType = QueryScanType_Unknown;
+		Path *originalPath = inputPath;
+		inputPath = UpdateAndClassifyPath(inputPath, root, rel, optCollectionId,
+										  &scanType);
+
+		if (root->sort_pathkeys != NIL)
+		{
+			bool isSupportedPath = scanType != QueryScanType_Unknown;
+			switch (scanType)
+			{
+				case QueryScanType_SecondaryIndexScan:
+				case QueryScanType_SecondaryIndexOnlyScan:
+				{
+					IndexPath *ipath = (IndexPath *) inputPath;
+					if (list_length(ipath->indexorderbys) != list_length(
+							root->sort_pathkeys))
+					{
+						/* The pathkeys required by the query are not provided by the index order by - we can't use this path for streaming */
+						isSupportedPath = false;
+					}
+					break;
+				}
+
+				case QueryScanType_PrimaryKeyScan:
+				{
+					IndexPath *ipath = (IndexPath *) inputPath;
+
+					/* By default we don't add orderby for _id indexes until after the query is fully optimized.
+					 * We need to attempt that here before deciding to bail on the _id index.
+					 */
+					if (!EnableOrderByIdOnCostFunction &&
+						list_length(root->query_pathkeys) == 1)
+					{
+						ConsiderBtreeOrderByPushdown(root, ipath);
+					}
+
+					if (list_length(ipath->path.pathkeys) != list_length(
+							root->sort_pathkeys))
+					{
+						/* The pathkeys required by the query are not provided by the index order by - we can't use this path for streaming */
+						isSupportedPath = false;
+					}
+					break;
+				}
+
+				default:
+				{
+					/* For other scan types, there is no pre-determined ordering - we can't stream these paths */
+					isSupportedPath = false;
+					break;
+				}
+			}
+
+			if (!isSupportedPath)
+			{
+				if (isOperatorSelectivityEnabled)
+				{
+					/* If operator selectivity is enabled - then we can potentially still consider the original path for planning
+					 * since it may be a better fit from a cost perspective.
+					 */
+					alternativePaths = lappend(alternativePaths, originalPath);
+				}
+
+				/* If operator selectivity is not enabled, only consider streaming plans */
+				continue;
 			}
 		}
 
@@ -580,118 +757,32 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 		customPlanPaths = lappend(customPlanPaths, customPath);
 	}
 
+	if (list_length(customPlanPaths) > 0 && EnableDynamicPersistentCursorsWithStats)
+	{
+		/* If we created at least 1 streaming path and we have alternative paths to consider
+		 * add them to the global paths (see comment above about operator selectivity).
+		 * If no paths were added, return NIL still so that we return false back to the planner.
+		 */
+		customPlanPaths = list_concat(customPlanPaths, alternativePaths);
+	}
+
+	list_free(alternativePaths);
 	return customPlanPaths;
 }
 
 
-bool
-UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
-										   RangeTblEntry *rte,
-										   ReplaceExtensionFunctionContext *context)
+static bool
+IsPlannerInfoValidForDynamicCursorPlans(PlannerInfo *root)
 {
-	/*
-	 *  Check for various cases that can't handle streaming cursors
-	 */
-	if (rte->tablesample != NULL ||
-		list_length(rel->baserestrictinfo) < 1)
-	{
-		return false;
-	}
+	check_stack_depth();
+	CHECK_FOR_INTERRUPTS();
 
-	if (!IsClusterVersionAtleast(DocDB_V0, 113, 0))
-	{
-		ereport(ERROR, (errmsg(
-							"Dynamic streaming cursors require cluster version at least 0.113.0")));
-	}
-
-	/* first look for a continuation function in the base quals */
-	bool hasContinuation = false;
-	pgbson *continuation = NULL;
-	ListCell *cell;
-
-	foreach(cell, rel->baserestrictinfo)
-	{
-		RestrictInfo *rinfo = lfirst_node(RestrictInfo, cell);
-
-		if (IsA(rinfo->clause, FuncExpr))
-		{
-			FuncExpr *expr = (FuncExpr *) rinfo->clause;
-			if (expr->funcid == ApiCursorTrackerFunctionId())
-			{
-				if (hasContinuation)
-				{
-					ereport(ERROR, (errmsg(
-										"More than one continuation provided. this is unsupported")));
-				}
-
-				if (list_length(expr->args) != 2)
-				{
-					ereport(ERROR, (errmsg(
-										"Invalid cursor state provided - must have 2 arguments.")));
-				}
-
-				Node *secondArg = lsecond(expr->args);
-				if (IsA(secondArg, Param))
-				{
-					/*
-					 * The only reason why parameters would not be resolved at this stage
-					 * is if we are dealing with a generic plan.
-					 *
-					 * Instead of throwing an error, stop and give the planner another
-					 * chance to generate a plan with bound parameters.
-					 */
-					return false;
-				}
-
-				if (!IsA(secondArg, Const))
-				{
-					ereport(ERROR, (errmsg(
-										"Invalid cursor state provided - must be a const value. found: %d",
-										secondArg->type)));
-				}
-
-				/* constvalue is safe to cast directly: the continuation is always
-				 * generated internally by the query parser as an inline Datum,
-				 * never as an external/TOAST'd value. */
-				Const *constValue = (Const *) secondArg;
-				continuation = (pgbson *) constValue->constvalue;
-				hasContinuation = true;
-			}
-			else if (expr->funcid == ApiCursorStateFunctionId())
-			{
-				ereport(ERROR, (errmsg(
-									"Cannot have both cursorTracker and cursorState funcs")));
-			}
-		}
-	}
-
-	/* No continuation found. We can skip. */
-	if (!hasContinuation)
-	{
-		return false;
-	}
-
-	if (rte->rtekind != RTE_RELATION)
-	{
-		/* Dynamic streaming cursors not supported for non-relation RTEs. */
-		return false;
-	}
-
-	/*
-	 *  If a continuation is provided, ensure that the plan paths are valid.
-	 */
 	if (root->hasJoinRTEs || root->hasRecursion || root->hasLateralRTEs ||
-		root->group_pathkeys != NIL || root->sort_pathkeys != NIL ||
+		root->group_pathkeys != NIL || root->distinct_pathkeys != NIL ||
 		root->agginfos != NIL || root->hasAlternativeSubPlans ||
 		root->window_pathkeys != NIL || root->parse->hasTargetSRFs)
 	{
 		/* Use persisted cursors for these scenarios */
-		return false;
-	}
-
-	if (root->parent_root != NULL)
-	{
-		/* In a subquery - use persisted cursors */
 		return false;
 	}
 
@@ -739,6 +830,131 @@ UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 		}
 	}
 
+	if (root->parent_root != NULL &&
+		!IsPlannerInfoValidForDynamicCursorPlans(root->parent_root))
+	{
+		/* In an unsupported subquery - use persisted cursors */
+		return false;
+	}
+
+	return true;
+}
+
+
+bool
+UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
+										   RangeTblEntry *rte,
+										   ReplaceExtensionFunctionContext *context)
+{
+	/*
+	 *  Check for various cases that can't handle streaming cursors
+	 */
+	if (rte->tablesample != NULL ||
+		list_length(rel->baserestrictinfo) < 1)
+	{
+		return false;
+	}
+
+	if (!IsClusterVersionAtleast(DocDB_V0, 112, 1))
+	{
+		ereport(ERROR, (errmsg(
+							"Dynamic streaming cursors require cluster version at least 0.113.0")));
+	}
+
+	/* first look for a continuation function in the base quals */
+	bool hasContinuation = false;
+	pgbson *continuation = NULL;
+	ListCell *cell;
+
+	foreach(cell, rel->baserestrictinfo)
+	{
+		RestrictInfo *rinfo = lfirst_node(RestrictInfo, cell);
+
+		if (IsA(rinfo->clause, FuncExpr))
+		{
+			FuncExpr *expr = (FuncExpr *) rinfo->clause;
+			if (expr->funcid == ApiCursorTrackerFunctionId())
+			{
+				if (hasContinuation)
+				{
+					ereport(ERROR, (errmsg(
+										"More than one continuation provided. this is unsupported")));
+				}
+
+				if (list_length(expr->args) != 2)
+				{
+					ereport(ERROR, (errmsg(
+										"Invalid dynamic cursor state provided - must have 2 arguments.")));
+				}
+
+				Node *secondArg = lsecond(expr->args);
+				if (IsA(secondArg, Param))
+				{
+					/*
+					 * The only reason why parameters would not be resolved at this stage
+					 * is if we are dealing with a generic plan.
+					 *
+					 * Instead of throwing an error, stop and give the planner another
+					 * chance to generate a plan with bound parameters.
+					 */
+					return false;
+				}
+
+				if (!IsA(secondArg, Const))
+				{
+					secondArg = eval_const_expressions(NULL, secondArg);
+
+					if (!IsA(secondArg, Const) && IsA(secondArg, CoerceViaIO))
+					{
+						Node *resolved = ResolveCoerceViaIOToConst(secondArg,
+																   BsonTypeId());
+						if (resolved != NULL)
+						{
+							secondArg = resolved;
+						}
+					}
+
+					if (!IsA(secondArg, Const))
+					{
+						ereport(ERROR, (errmsg(
+											"Invalid dynamic cursor state provided - must be a const value. found: %d",
+											secondArg->type)));
+					}
+				}
+
+				/* constvalue is safe to cast directly: the continuation is always
+				 * generated internally by the query parser as an inline Datum,
+				 * never as an external/TOAST'd value. */
+				Const *constValue = (Const *) secondArg;
+				continuation = (pgbson *) constValue->constvalue;
+				hasContinuation = true;
+			}
+			else if (expr->funcid == ApiCursorStateFunctionId())
+			{
+				ereport(ERROR, (errmsg(
+									"Cannot have both cursorTracker and cursorState funcs")));
+			}
+		}
+	}
+
+	/* No continuation found. We can skip. */
+	if (!hasContinuation)
+	{
+		return false;
+	}
+
+	if (rte->rtekind != RTE_RELATION)
+	{
+		/* Dynamic streaming cursors not supported for non-relation RTEs. */
+		return false;
+	}
+
+	if (!IsPlannerInfoValidForDynamicCursorPlans(root))
+	{
+		/* The planner info is not valid for dynamic cursor plans - use persisted */
+		return false;
+	}
+
 	/* Parse the continuation state */
 	DynamicCursorInputContinuation inputContinuation = { 0 };
 	inputContinuation.extensible.type = T_ExtensibleNode;
@@ -772,7 +988,8 @@ UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 	{
 		/* Walk the existing paths and wrap them in a custom scan */
 		customPlanPaths = WalkRelPathsAndCreateCustomPathsForFirstPage(
-			root, rel, &inputContinuation, baseRelPathTarget);
+			root, rel, &inputContinuation, baseRelPathTarget,
+			context->inputData.collectionId);
 	}
 
 	if (customPlanPaths == NIL)
@@ -982,6 +1199,7 @@ ExtensionCursorScanEndCustomScan(CustomScanState *node)
 {
 	ExtensionCursorScanState *extensionCursorScanState =
 		(ExtensionCursorScanState *) node;
+
 	ExecEndNode((PlanState *) extensionCursorScanState->innerScanState);
 }
 
@@ -1007,43 +1225,43 @@ ExtensionCursorScanExplainCustomScan(CustomScanState *node, List *ancestors,
 	{
 		case QueryScanType_PrimaryKeyScan:
 		{
-			ExplainPropertyText("scanType", "Primary Key Scan", es);
+			ExplainPropertyText("cursorScanType", "Primary Key Scan", es);
 			break;
 		}
 
 		case QueryScanType_SecondaryIndexScan:
 		{
-			ExplainPropertyText("scanType", "Secondary Index Scan", es);
+			ExplainPropertyText("cursorScanType", "Secondary Index Scan", es);
 			break;
 		}
 
 		case QueryScanType_SecondaryIndexOnlyScan:
 		{
-			ExplainPropertyText("scanType", "Secondary Index Only Scan", es);
+			ExplainPropertyText("cursorScanType", "Secondary Index Only Scan", es);
 			break;
 		}
 
 		case QueryScanType_SecondaryIndexBitmapScan:
 		{
-			ExplainPropertyText("scanType", "Secondary Index Bitmap Scan", es);
+			ExplainPropertyText("cursorScanType", "Secondary Index Bitmap Scan", es);
 			break;
 		}
 
 		case QueryScanType_SecondaryIndexBitmapAnd:
 		{
-			ExplainPropertyText("scanType", "Secondary Index Bitmap AND Scan", es);
+			ExplainPropertyText("cursorScanType", "Secondary Index Bitmap AND Scan", es);
 			break;
 		}
 
 		case QueryScanType_SecondaryIndexBitmapOr:
 		{
-			ExplainPropertyText("scanType", "Secondary Index Bitmap OR Scan", es);
+			ExplainPropertyText("cursorScanType", "Secondary Index Bitmap OR Scan", es);
 			break;
 		}
 
 		case QueryScanType_TidRangeScan:
 		{
-			ExplainPropertyText("scanType", "TID Range Scan", es);
+			ExplainPropertyText("cursorScanType", "TID Range Scan", es);
 			break;
 		}
 
@@ -1125,7 +1343,7 @@ ExtensionCursorScanNextWithIndexContinuation(CustomScanState *node)
 
 	TupleTableSlot *slot = NULL;
 	IndexScanDesc scanDesc = NULL;
-	SkipTidsOnCurrentEntryFunc skipTidsFunc = NULL;
+	PGFunction skipTidsFunc = NULL;
 	bool pathKeySummarizationForced = false;
 	double numSkipped = 0;
 
@@ -1374,6 +1592,59 @@ ReadDynamicCursorInputContinuation(struct ExtensibleNode *node)
 
 
 static void
+RecurseAndWriteBitmapContinuation(pgbson_array_writer *arrayWriter,
+								  PlanState *planState)
+{
+	CHECK_FOR_INTERRUPTS();
+	check_stack_depth();
+
+	int numPlans;
+	PlanState **bitmapPlans;
+
+	if (IsA(planState, BitmapOrState))
+	{
+		BitmapOrState *bitmapOrState = (BitmapOrState *) planState;
+		numPlans = bitmapOrState->nplans;
+		bitmapPlans = bitmapOrState->bitmapplans;
+	}
+	else if (IsA(planState, BitmapAndState))
+	{
+		BitmapAndState *bitmapAndState = (BitmapAndState *) planState;
+		numPlans = bitmapAndState->nplans;
+		bitmapPlans = bitmapAndState->bitmapplans;
+	}
+	else if (IsA(planState, BitmapIndexScanState))
+	{
+		numPlans = 1;
+		bitmapPlans = &planState;
+	}
+	else
+	{
+		/* MultiExecProcNode only supports IndexScanState, BitmapAndState, BitmapOrState, or HashState */
+		/* HashState is not applicable here since that's only for a HashJoin. */
+		ereport(ERROR, (errmsg("Unsupported bitmap scan type %d",
+							   (int) planState->type)));
+	}
+
+	for (int i = 0; i < numPlans; i++)
+	{
+		if (IsA(bitmapPlans[i], BitmapIndexScanState))
+		{
+			BitmapIndexScanState *biss = (BitmapIndexScanState *) bitmapPlans[i];
+			Oid indexOid = biss->biss_ScanDesc->indexRelation->rd_rel->oid;
+			const char *indexName = get_rel_name(indexOid);
+			PgbsonArrayWriterWriteUtf8(arrayWriter, indexName);
+		}
+		else
+		{
+			/* It's a nested bitmap And or Or state */
+			RecurseAndWriteBitmapContinuation(arrayWriter, bitmapPlans[i]);
+		}
+	}
+}
+
+
+static void
 WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
 										 QueryScanType scanType)
 {
@@ -1413,6 +1684,10 @@ WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
 			PgbsonWriterAppendInt64(&pkDoc, "sk", 2, shardKeyValue);
 			PgbsonWriterAppendDocument(&pkDoc, "id", 2, objectId);
 			PgbsonWriterEndDocument(writer, &pkDoc);
+
+			/* For primary key cursor scan track the direction of the scan */
+			PgbsonWriterAppendInt32(writer, "dir", 3,
+									((IndexScan *) ps->ps.plan)->indexorderdir);
 			break;
 		}
 
@@ -1472,34 +1747,18 @@ WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
 		case QueryScanType_SecondaryIndexBitmapOr:
 		case QueryScanType_SecondaryIndexBitmapAnd:
 		{
-			int numPlans;
-			PlanState **bitmapPlans;
 			BitmapHeapScanState *bitmapScanState = (BitmapHeapScanState *) ps;
 
-			if (scanType == QueryScanType_SecondaryIndexBitmapOr)
-			{
-				BitmapOrState *bitmapOrState =
-					(BitmapOrState *) bitmapScanState->ss.ps.lefttree;
-				numPlans = bitmapOrState->nplans;
-				bitmapPlans = bitmapOrState->bitmapplans;
-			}
-			else
-			{
-				BitmapAndState *bitmapAndState =
-					(BitmapAndState *) bitmapScanState->ss.ps.lefttree;
-				numPlans = bitmapAndState->nplans;
-				bitmapPlans = bitmapAndState->bitmapplans;
-			}
-
+			PlanState *lefttree = bitmapScanState->ss.ps.lefttree;
 			pgbson_array_writer arrayWriter;
+
+			/* We just need to write out the index names. Note that deduping
+			 * and order don't matter as in the getMore we just ensure these indexes
+			 * are picked. The scan order is determined by the fact that we have TID
+			 * ordering of the matching tuples.
+			 */
 			PgbsonWriterStartArray(writer, "idxs", 4, &arrayWriter);
-			for (int i = 0; i < numPlans; i++)
-			{
-				BitmapIndexScanState *biss = (BitmapIndexScanState *) bitmapPlans[i];
-				Oid indexOid = biss->biss_ScanDesc->indexRelation->rd_rel->oid;
-				const char *indexName = get_rel_name(indexOid);
-				PgbsonArrayWriterWriteUtf8(&arrayWriter, indexName);
-			}
+			RecurseAndWriteBitmapContinuation(&arrayWriter, lefttree);
 			PgbsonWriterEndArray(writer, &arrayWriter);
 
 			break;
@@ -1524,6 +1783,7 @@ ParseContinuationDocument(pgbson *continuation, ParsedContinuationState *state)
 	bson_iter_t reader;
 	bson_value_t pkContinuation = { 0 };
 	bson_value_t secondaryIndexContinuation = { 0 };
+	state->indexScanDirection = ForwardScanDirection;
 	PgbsonInitIterator(continuation, &reader);
 
 	while (bson_iter_next(&reader))
@@ -1634,6 +1894,23 @@ ParseContinuationDocument(pgbson *continuation, ParsedContinuationState *state)
 				if (strcmp(fieldName, "sik") == 0)
 				{
 					secondaryIndexContinuation = *bson_iter_value(&reader);
+				}
+
+				continue;
+			}
+
+			case 'd':
+			{
+				if (strcmp(fieldName, "dir") == 0)
+				{
+					state->indexScanDirection = (ScanDirection) bson_iter_int32(&reader);
+
+					if (!ScanDirectionIsValid(state->indexScanDirection))
+					{
+						ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+										errmsg(
+											"Invalid scan direction in continuation document")));
+					}
 				}
 
 				continue;
@@ -1810,17 +2087,34 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 			bool rowCompareInclusive = true;
 			if (existingPkPath != NULL)
 			{
+				if (root->sort_pathkeys != NULL && existingPkPath->path.pathkeys == NIL)
+				{
+					ConsiderBtreeOrderByPushdown(root, existingPkPath);
+				}
+
 				inputPath = AddRowCompareToExistingPrimaryKeyPath(root, rel,
 																  existingPkPath,
 																  state->cursorDatums,
 																  rowCompareInclusive);
 			}
-
-			if (inputPath == NULL)
+			else
 			{
 				inputPath = GetPrimaryKeyContinuationIndexPath(root, rel,
 															   state->cursorDatums,
+															   state->indexScanDirection,
 															   rowCompareInclusive);
+
+				if (root->sort_pathkeys != NULL && inputPath->path.pathkeys == NIL)
+				{
+					ConsiderBtreeOrderByPushdown(root, inputPath);
+
+					if (inputPath->indexscandir != state->indexScanDirection)
+					{
+						ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+										errmsg(
+											"Index scan direction mismatch between prior pages and current plan")));
+					}
+				}
 			}
 
 			/* Trim restrict info clauses already satisfied by the index path */

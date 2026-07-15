@@ -28,6 +28,7 @@
  #include <lib/stringinfo.h>
  #include <nodes/pathnodes.h>
  #include <access/gin.h>
+ #include <utils/search_utils.h>
 
  #include "io/bson_core.h"
  #include "aggregation/bson_query_common.h"
@@ -150,7 +151,42 @@ PGDLLIMPORT typedef struct RumConfig
 
 	bool skipGenerateEmptyEntries;
 	bool compareFunctionHasRecheck;
+	bool enableOpClassMetadataStorage;
 }   RumConfig;
+
+/*
+ * Metadata blob reservation for the composite index.
+ * bit0 - isMultiKey
+ * bit1-33 - pathWiseMultiKey
+ * bit34 - reduced correlated
+ * bit35 - truncated
+ * bit36-42 - perPathTruncated
+ * 43-63 -> Unused
+ */
+typedef uint64_t RumCompositeIndexMetadataBitMask;
+
+/* The multikey bit is the LSB which just globally says if the index is multikey. */
+#define CompositeIndexMetadata_MultiKeyBitMask 0x1
+
+/* The next 32 bits store the path-wise multikey information. */
+#define CompositeIndexMetadata_PathWiseMultiKeyBitPosition 1
+
+/* The next bit (34) indicates if the index is reduced and correlated. */
+#define CompositeIndexMetadata_ReducedCorrelatedBitPosition 34
+#define CompositeIndexMetadata_ReducedCorrelatedBitMask (1ULL << \
+														 CompositeIndexMetadata_ReducedCorrelatedBitPosition)
+
+/* The next bit (35) indicates if the index is truncated. */
+#define CompositeIndexMetadata_TruncatedBitPosition 35
+#define CompositeIndexMetadata_TruncationBitMask (1ULL << \
+												  CompositeIndexMetadata_TruncatedBitPosition)
+
+/* The next 6 bits (36-41) store the path-wise truncated information. Only the
+ * first 6 paths are tracked per-path; truncation on any later path is lossy and
+ * is reflected only in the global truncated bit (35) above. */
+#define CompositeIndexMetadata_PerPathTruncatedBitPosition 36
+#define CompositeIndexMetadata_PerPathTruncatedBitCount 6
+#define CompositeIndexMetadata_PerPathTruncatedBitMask 0x3F
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -169,7 +205,6 @@ extern bool RumHasMultiKeyPaths;
 extern int MaxWildcardIndexKeySize;
 extern int MaxNonOrderedTermScanThreshold;
 extern bool EnableOrderedCompositeOperatorScan;
-extern bool EnableBinarySearchForOrderedMove;
 extern bool EnableComparableTerms;
 extern bool EnablePartialMatchHasRecheck;
 extern bool EnableFailureOnParallelIndexArrays;
@@ -179,7 +214,8 @@ static Size FillCompositePathSpec(const char *prefix, void *buffer);
 static Size FillCompositePathSpecFromBson(pgbson *bson, void *buffer, bool isIndexSpec);
 static Datum * GenerateCompositeTermsCore(pgbson *doc,
 										  BsonGinCompositePathOptions *options,
-										  int32_t *nentries, bool addMetadataTerms);
+										  int32_t *nentries, bool addMetadataTerms,
+										  uint64_t *termBlobMetadata);
 static int32_t GetIndexPathsFromOptions(BsonGinCompositePathOptions *options,
 										const char **indexPaths,
 										int8_t *sortOrders);
@@ -206,7 +242,8 @@ static bytea * BuildTermForBounds(CompositeQueryRunData *runData,
 static void ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
 									bool *isMultiKey,
 									bool *hasCorrelatedReducedTerms,
-									bool *supportsOrderedOperatorScans);
+									bool *supportsOrderedOperatorScans,
+									uint32_t *multiKeyBitMask);
 static int32_t RunCompareOnBounds(CompositeIndexBounds *bounds,
 								  SerializedCompositeTermPair *termPair,
 								  bool hasEqualityPrefix, bool isBackwardScan,
@@ -220,6 +257,7 @@ static void OptimizeVariableBoundsForQuery(CompositeQueryRunData *runData,
 										   VariableIndexBounds *variableBounds,
 										   bool hasArrayPaths, bool isOrderedScan,
 										   bool isCorrelatedReducedScan,
+										   uint32_t multiKeyBitMask,
 										   BsonGinCompositePathOptions *options,
 										   const char *indexPaths[INDEX_MAX_KEYS]);
 static void OptimizeVariableBoundsForOrderedScans(CompositeQueryRunData *runData,
@@ -287,6 +325,47 @@ GetCompositeIndexTermMetadata(void *options)
 }
 
 
+static void
+SetRequiredMetadataFieldsForTruncation(
+	RumCompositeIndexMetadataBitMask *opClassMetadataBlob,
+	uint32_t perPathTruncationBitMask)
+{
+	/* Set the global truncated bit as well as the per-path truncated flags (only
+	 * the first 6 paths are tracked; bits beyond that are lossy per the contract
+	 * reservation above). */
+	*opClassMetadataBlob |= (RumCompositeIndexMetadataBitMask) 1 <<
+							CompositeIndexMetadata_TruncatedBitPosition;
+	*opClassMetadataBlob |=
+		((RumCompositeIndexMetadataBitMask) (perPathTruncationBitMask &
+											 CompositeIndexMetadata_PerPathTruncatedBitMask))
+			<<
+			CompositeIndexMetadata_PerPathTruncatedBitPosition;
+}
+
+
+static void
+SetRequiredMetadataFieldsForReducedCorrelated(
+	RumCompositeIndexMetadataBitMask *opClassMetadataBlob)
+{
+	*opClassMetadataBlob |= (RumCompositeIndexMetadataBitMask) 1 <<
+							CompositeIndexMetadata_ReducedCorrelatedBitPosition;
+}
+
+
+static void
+SetRequiredMetadataFieldsForMultiKey(
+	RumCompositeIndexMetadataBitMask *opClassMetadataBlob, uint32_t multiKeyBitMask)
+{
+	/* Set the per path multi-key flags as well as the LSB per the contract reservation above. */
+	if (multiKeyBitMask != 0)
+	{
+		*opClassMetadataBlob |= ((RumCompositeIndexMetadataBitMask) multiKeyBitMask <<
+								 CompositeIndexMetadata_PathWiseMultiKeyBitPosition) |
+								CompositeIndexMetadata_MultiKeyBitMask;
+	}
+}
+
+
 /*
  * gin_bson_composite_path_extract_value is run on the insert/update path and collects the terms
  * that will be indexed for indexes for a single path definition. the method provides the bson document as an input, and
@@ -298,6 +377,8 @@ gin_bson_composite_path_extract_value(PG_FUNCTION_ARGS)
 {
 	pgbson *bson = PG_GETARG_PGBSON_PACKED(0);
 	int32_t *nentries = (int32_t *) PG_GETARG_POINTER(1);
+	uint64_t *termBlobMetadata = PG_NARGS() > 5 ? (uint64_t *) PG_GETARG_POINTER(5) :
+								 NULL;
 	if (!PG_HAS_OPCLASS_OPTIONS())
 	{
 		ereport(ERROR, (errmsg("Index does not have options")));
@@ -308,7 +389,8 @@ gin_bson_composite_path_extract_value(PG_FUNCTION_ARGS)
 
 	bool addMetadataTerms = true;
 	Datum *indexEntries = GenerateCompositeTermsCore(bson, options, nentries,
-													 addMetadataTerms);
+													 addMetadataTerms,
+													 termBlobMetadata);
 	PG_RETURN_POINTER(indexEntries);
 }
 
@@ -380,6 +462,13 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 			/* Consider only the root multi-key term */
 			*nentries = 1;
 			Datum *result = palloc(sizeof(Datum));
+
+			if (options->enableMetadataBasedTracking)
+			{
+				ereport(ERROR, (errmsg(
+									"Per-path multi-key terms are not supported in global metadata mode")));
+			}
+
 			result[0] = GenerateRootMultiKeyTerm(&compositeMetadata);
 			PG_RETURN_POINTER(result);
 		}
@@ -387,6 +476,12 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 		case BSON_INDEX_STRATEGY_HAS_TRUNCATED_TERMS:
 		{
 			/* Consider only the root truncated term */
+			if (options->enableMetadataBasedTracking)
+			{
+				ereport(ERROR, (errmsg(
+									"Truncated terms are not supported in global metadata mode")));
+			}
+
 			*nentries = 1;
 			Datum *result = palloc(sizeof(Datum));
 			result[0] = GenerateRootTruncatedTerm(&compositeMetadata);
@@ -396,6 +491,12 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 		case BSON_INDEX_STRATEGY_HAS_CORRELATED_REDUCED_TERMS:
 		{
 			/* Consider only the root truncated term */
+			if (options->enableMetadataBasedTracking)
+			{
+				ereport(ERROR, (errmsg(
+									"Reduced correlated terms are not supported in global metadata mode")));
+			}
+
 			*nentries = 1;
 			Datum *result = palloc(sizeof(Datum));
 			result[0] = GenerateCorrelatedRootArrayTerm(&compositeMetadata);
@@ -426,6 +527,7 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	/* key that we're doing an ordered scan based off of search mode */
 	bool isCorrelatedReducedScan = false;
 	bool supportsOrderedOperatorScans = false;
+	uint32_t multiKeyBitMask = 0;
 
 	/* Round 1, collect fixed index bounds and collect variable index bounds */
 	ScanDirection scanDir = NoMovementScanDirection;
@@ -459,7 +561,8 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 		pgbsonelement singleElement;
 		ParseCompositeQuerySpec(query, &singleElement, &hasArrayPaths,
 								&isCorrelatedReducedScan,
-								&supportsOrderedOperatorScans);
+								&supportsOrderedOperatorScans,
+								&multiKeyBitMask);
 		ParseBoundsForCompositeOperator(&singleElement, indexPaths, indexPathLengths,
 										sortOrders, numPaths,
 										metaInfo->wildcardPathIndex,
@@ -513,7 +616,9 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	 */
 	OptimizeVariableBoundsForQuery(runData, &variableBounds, hasArrayPaths,
 								   metaInfo->isOrderedScan,
-								   isCorrelatedReducedScan, options, indexPaths);
+								   isCorrelatedReducedScan,
+								   multiKeyBitMask,
+								   options, indexPaths);
 
 	/* Tally up the total variable bound counts - this is the permutation of all variable terms
 	 * e.g. if we have { "a": { "$in": [ 1, 2, 3 ]}} && { "b": { "$in": [ 4, 5 ] } }
@@ -929,6 +1034,7 @@ OptimizeVariableBoundsForQuery(CompositeQueryRunData *runData,
 							   VariableIndexBounds *variableBounds,
 							   bool hasArrayPaths, bool isOrderedScan,
 							   bool isCorrelatedReducedScan,
+							   uint32_t multiKeyBitMask,
 							   BsonGinCompositePathOptions *options,
 							   const char *indexPaths[INDEX_MAX_KEYS])
 {
@@ -950,13 +1056,15 @@ OptimizeVariableBoundsForQuery(CompositeQueryRunData *runData,
 			TrimSecondaryVariableBounds(variableBounds, runData, indexPaths);
 		}
 
-		if (!hasArrayPaths)
+		if (!hasArrayPaths || options->enableMetadataBasedTracking)
 		{
 			variableBounds->variableBoundsList =
 				MergeSingleVariableBounds(variableBounds->variableBoundsList,
 										  &runData->wildcardPath,
 										  runData->indexBounds,
-										  runData->metaInfo->collation);
+										  runData->metaInfo->collation,
+										  hasArrayPaths,
+										  multiKeyBitMask);
 		}
 	}
 
@@ -1527,46 +1635,6 @@ MoveUnsatisfiableBoundForward(CompositeQueryRunData *runData, int compareIndex)
 }
 
 
-/*
- * Modified binary search where on mismatch returns the position.
- * returns index if item is found;
- * otherwise, a negative number that is the bitwise complement of the index of the next element that is larger than item or,
- * if there is no larger element, the bitwise complement of length.
- * See https://github.com/dotnet/runtime/blob/4fa917e666f88701785d0ed5e801fded279ee2a8/src/libraries/System.Private.CoreLib/src/System/Array.cs#L1254-L1279
- */
-static int32
-BinarySearchBoundsArray(void *pointer, int startIndex, int length,
-						int elemSize, const void *toFind,
-						int (*compar)(const void *, const void *, void *),
-						void *arg)
-{
-	const char *base = (const char *) pointer;
-	int lo = startIndex;
-	int hi = length - 1;
-	while (lo <= hi)
-	{
-		int i = lo + ((hi - lo) >> 1);
-
-		const char *p = base + (i * elemSize);
-		int c = compar(p, toFind, arg);
-		if (c == 0)
-		{
-			return i;
-		}
-		if (c < 0)
-		{
-			lo = i + 1;
-		}
-		else
-		{
-			hi = i - 1;
-		}
-	}
-
-	return ~lo;
-}
-
-
 static int
 CompareOnBoundsForSearch(const void *a, const void *b, void *arg)
 {
@@ -1654,14 +1722,14 @@ advance_ordered_scan_data_start:
 			/* This particular bound is exhausted - move to the next one
 			 * We find the next possible bound for this path.
 			 */
-			if (entry->isBoundsAllEquality && EnableBinarySearchForOrderedMove)
+			if (entry->isBoundsAllEquality)
 			{
 				CompareMetadata searchMetadata = {
 					.isBackwardScan = runData->metaInfo->isBackwardScan,
 					.isWildcardScan = entry->boundsSet->wildcardPath != NULL,
 					.collation = runData->metaInfo->collation
 				};
-				int foundIndex = BinarySearchBoundsArray(
+				int foundIndex = BinarySearchWithMissingPositionCheck(
 					entry->boundsSet->bounds, entry->currentOperatorIndex + 1,
 					entry->boundsSet->numBounds, sizeof(CompositeIndexBounds),
 					&serializedTermsSet[compareIndex], CompareOnBoundsForSearch,
@@ -1801,6 +1869,28 @@ SetBoundaryStoppingValueGreaterThan(bool hasEqualityPrefix, bytea *serializedter
 
 
 /*
+ * CompareSerializedBsonIndexTerms returns a sort-order comparison that negates
+ * the result for descending terms. However, RunCompareOnBounds expects a
+ * natural-order comparison (larger values always yield a positive result)
+ * because it handles the descending direction separately via
+ * SetBoundaryStoppingValueLessThan/GreaterThan. This wrapper reverses the
+ * negation for descending terms so bounds checks work correctly.
+ */
+static inline int32_t
+CompareSerializedTermsNaturalOrder(bytea *indexTerm, bytea *boundTerm,
+								   const char *collation, bool *isComparisonValid)
+{
+	int32_t cmp = CompareSerializedBsonIndexTerms(indexTerm, boundTerm,
+												  collation, isComparisonValid);
+	if (IsSerializedTermValueDescending(indexTerm))
+	{
+		cmp = -cmp;
+	}
+	return cmp;
+}
+
+
+/*
  * When running compare_partial, we first check if the current term matches
  * based purely on the lower and upper bounds.
  * Returns 0 if true, -1/1 if we need to bail.
@@ -1820,7 +1910,7 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, SerializedCompositeTermPair *te
 		int32_t compareBounds;
 		if (EnableComparableTerms && !isWildCardMatch)
 		{
-			compareBounds = CompareSerializedBsonIndexTerms(
+			compareBounds = CompareSerializedTermsNaturalOrder(
 				termPair->serializedTerm, bounds->lowerBound.serializedTerm,
 				collation, &isComparisonValid);
 		}
@@ -1872,7 +1962,7 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, SerializedCompositeTermPair *te
 		int32_t compareBounds;
 		if (EnableComparableTerms && !isWildCardMatch)
 		{
-			compareBounds = CompareSerializedBsonIndexTerms(
+			compareBounds = CompareSerializedTermsNaturalOrder(
 				termPair->serializedTerm, bounds->lowerBound.serializedTerm,
 				collation, &isComparisonValid);
 		}
@@ -1951,7 +2041,7 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, SerializedCompositeTermPair *te
 		int32_t compareBounds;
 		if (EnableComparableTerms && !isWildCardMatch)
 		{
-			compareBounds = CompareSerializedBsonIndexTerms(
+			compareBounds = CompareSerializedTermsNaturalOrder(
 				termPair->serializedTerm, bounds->upperBound.serializedTerm,
 				collation, &isComparisonValid);
 		}
@@ -2173,9 +2263,11 @@ GenerateCompositeTermsFromIndexSpec(pgbson *document, pgbson *keySpec, uint32_t 
 
 	GinEntryPathData pathData = { 0 };
 	bool addMetadataTerms = false;
+	uint64_t termBlobMetadataIgnore = 0;
 	pathData.terms.entries = GenerateCompositeTermsCore(document, options,
 														&pathData.terms.index,
-														addMetadataTerms);
+														addMetadataTerms,
+														&termBlobMetadataIgnore);
 	*numTerms = pathData.terms.index;
 	pfree(options);
 	return pathData.terms.entries;
@@ -2213,6 +2305,7 @@ gin_bson_get_composite_path_generated_terms(PG_FUNCTION_ARGS)
 		int32_t wildcardPathIndex = PG_GETARG_INT32(4);
 		bool enableCompositeReducedCorrelatedTerms = PG_NARGS() > 5 ? PG_GETARG_BOOL(5) :
 													 false;
+		bool enableGlobalTermMetadata = PG_NARGS() > 6 ? PG_GETARG_BOOL(6) : false;
 
 		functionContext = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(functionContext->multi_call_memory_ctx);
@@ -2228,6 +2321,7 @@ gin_bson_get_composite_path_generated_terms(PG_FUNCTION_ARGS)
 		options->wildcardPathIndex = wildcardPathIndex;
 		options->enableCompositeReducedCorrelatedTerms =
 			enableCompositeReducedCorrelatedTerms;
+		options->enableMetadataBasedTracking = enableGlobalTermMetadata;
 
 		FillCompositePathSpec(
 			pathSpec,
@@ -2235,12 +2329,19 @@ gin_bson_get_composite_path_generated_terms(PG_FUNCTION_ARGS)
 
 		pathData = palloc0(sizeof(GinEntryPathData));
 		bool addMetadataTerms = true;
+		uint64_t termBlobMetadata = 0;
 		pathData->terms.entries = GenerateCompositeTermsCore(document, options,
 															 &pathData->
 															 terms.index,
-															 addMetadataTerms);
+															 addMetadataTerms,
+															 &termBlobMetadata);
 		pathData->terms.entryCapacity = pathData->terms.index;
 		pathData->terms.index = 0;
+		if (termBlobMetadata != 0)
+		{
+			elog(NOTICE, "Term blob metadata: %lu", (unsigned long) termBlobMetadata);
+		}
+
 		MemoryContextSwitchTo(oldcontext);
 		functionContext->user_fctx = (void *) pathData;
 	}
@@ -2579,6 +2680,13 @@ gin_bson_composite_rum_config(PG_FUNCTION_ARGS)
 	if (EnablePartialMatchHasRecheck)
 	{
 		config->compareFunctionHasRecheck = true;
+	}
+
+	BsonGinCompositePathOptions *options =
+		(BsonGinCompositePathOptions *) PG_GET_OPCLASS_OPTIONS();
+	if (options->enableMetadataBasedTracking)
+	{
+		config->enableOpClassMetadataStorage = true;
 	}
 
 	PG_RETURN_VOID();
@@ -3085,6 +3193,12 @@ gin_bson_composite_path_options(PG_FUNCTION_ARGS)
 							 false, /* default value */
 							 offsetof(BsonGinCompositePathOptions,
 									  enableCompositeReducedCorrelatedTerms));
+
+	add_local_bool_reloption(relopts, "mkp",
+							 "Whether or not to enable the metadata based tracking of system state.",
+							 false, /* default value */
+							 offsetof(BsonGinCompositePathOptions,
+									  enableMetadataBasedTracking));
 	add_local_int_reloption(relopts, "v",
 							"The version of the options struct.",
 							IndexOptionsVersion_V0,          /* default value */
@@ -3646,6 +3760,75 @@ SerializeCompositeIndexKeyForExplain(bytea *entry)
 }
 
 
+void
+DecodeCompositeOpClassQueryMetadata(void *options, uint64_t opclassMetadata,
+									bool *hasMultiKey, uint32_t *multiKeyPathBitmask,
+									bool *hasCorrelatedReducedTerms, bool *hasTruncation)
+{
+	*hasMultiKey = (opclassMetadata & CompositeIndexMetadata_MultiKeyBitMask) != 0;
+	*multiKeyPathBitmask = (uint32_t) (opclassMetadata >>
+									   CompositeIndexMetadata_PathWiseMultiKeyBitPosition);
+	*hasCorrelatedReducedTerms = (opclassMetadata &
+								  CompositeIndexMetadata_ReducedCorrelatedBitMask) != 0;
+	*hasTruncation = (opclassMetadata & CompositeIndexMetadata_TruncationBitMask) != 0;
+}
+
+
+/*
+ * Serializes the per-path multi-key status bitmask into a list of index path
+ * strings for explain output. Each set bit in multiKeyPerPathStatus corresponds
+ * to an index path (by position) that has been observed to be multi-key. Returns
+ * NIL when no per-path bits are set.
+ */
+void
+DecodeCompositeOpClassMetadata(void *options, uint64_t opclassMetadata, bool *hasMultiKey,
+							   uint32_t *multiKeyBitMask, List **multiKeyPerPathList,
+							   bool *hasCorrelatedReducedTerms, bool *hasTruncation,
+							   List **truncatedPerPathList)
+{
+	BsonGinCompositePathOptions *pathOptions = (BsonGinCompositePathOptions *) options;
+	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
+	uint32_t indexPathsLengths[INDEX_MAX_KEYS] = { 0 };
+	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
+
+	int numPaths = GetIndexPathsFromOptionsWithLength(
+		pathOptions,
+		indexPaths, indexPathsLengths, sortOrders);
+
+	uint32_t multiKeyPerPathStatus = 0;
+	DecodeCompositeOpClassQueryMetadata(options, opclassMetadata, hasMultiKey,
+										&multiKeyPerPathStatus, hasCorrelatedReducedTerms,
+										hasTruncation);
+	*multiKeyPerPathList = NIL;
+	*multiKeyBitMask = multiKeyPerPathStatus;
+	for (int i = 0; i < numPaths; i++)
+	{
+		if (multiKeyPerPathStatus & (UINT32_C(1) << i))
+		{
+			*multiKeyPerPathList = lappend(*multiKeyPerPathList, pstrdup(indexPaths[i]));
+		}
+	}
+
+	/* Per-path truncation is tracked only for the first 6 paths; truncation on
+	 * later paths is lossy and surfaces solely via the global truncated flag. */
+	uint32_t truncatedPerPathStatus =
+		(uint32_t) (opclassMetadata >>
+					CompositeIndexMetadata_PerPathTruncatedBitPosition) &
+		CompositeIndexMetadata_PerPathTruncatedBitMask;
+	int maxTruncatedPaths = numPaths < CompositeIndexMetadata_PerPathTruncatedBitCount ?
+							numPaths : CompositeIndexMetadata_PerPathTruncatedBitCount;
+	*truncatedPerPathList = NIL;
+	for (int i = 0; i < maxTruncatedPaths; i++)
+	{
+		if (truncatedPerPathStatus & (UINT32_C(1) << i))
+		{
+			*truncatedPerPathList = lappend(*truncatedPerPathList,
+											pstrdup(indexPaths[i]));
+		}
+	}
+}
+
+
 static void
 SerializeOneBound(StringInfo s, const char *indexPath,
 				  int8_t sortOrder, CompositeIndexBounds *bound,
@@ -3672,6 +3855,12 @@ SerializeOneBound(StringInfo s, const char *indexPath,
 	{
 		appendStringInfoString(s, "MinKey");
 	}
+	else if (bound->lowerBound.indexTermValue.element.bsonValue.value_type !=
+			 BSON_TYPE_EOD)
+	{
+		appendStringInfo(s, "%s", BsonValueToJsonForLogging(
+							 &bound->lowerBound.indexTermValue.element.bsonValue));
+	}
 	else
 	{
 		appendStringInfo(s, "%s", BsonValueToJsonForLogging(
@@ -3691,6 +3880,12 @@ SerializeOneBound(StringInfo s, const char *indexPath,
 		bound->upperBound.bound.value_type == BSON_TYPE_MAXKEY)
 	{
 		appendStringInfoString(s, "MaxKey");
+	}
+	else if (bound->upperBound.indexTermValue.element.bsonValue.value_type !=
+			 BSON_TYPE_EOD)
+	{
+		appendStringInfo(s, "%s", BsonValueToJsonForLogging(
+							 &bound->upperBound.indexTermValue.element.bsonValue));
 	}
 	else
 	{
@@ -3843,7 +4038,8 @@ SerializeBoundsStringForExplain(bytea *entry, void *extraData, PG_FUNCTION_ARGS,
 
 Datum
 FormCompositeDatumFromQuals(List *indexQuals, bool isMultiKey, bool
-							hasCorrelatedReducedTerm, bool supportsOperatorOrderedScans)
+							hasCorrelatedReducedTerm, bool supportsOperatorOrderedScans,
+							uint32_t multiKeyBitMask)
 {
 	ScanKeyData *scanKeys = palloc0(sizeof(ScanKeyData) * list_length(indexQuals));
 	ScanKeyData targetScanKey = { 0 };
@@ -3912,7 +4108,7 @@ FormCompositeDatumFromQuals(List *indexQuals, bool isMultiKey, bool
 	/* TODO: Extract order by scan direction from index orderby */
 	if (!ModifyScanKeysForCompositeScan(scanKeys, list_length(indexQuals), &targetScanKey,
 										isMultiKey, hasCorrelatedReducedTerm,
-										supportsOperatorOrderedScans))
+										supportsOperatorOrderedScans, multiKeyBitMask))
 	{
 		return (Datum) 0;
 	}
@@ -3934,7 +4130,8 @@ FormCompositeDatumFromQuals(List *indexQuals, bool isMultiKey, bool
 bool
 ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetScanKey,
 							   bool hasArrayKeys, bool hasCorrelatedReducedTerms,
-							   bool supportsOrderedOperatorScans)
+							   bool supportsOrderedOperatorScans, uint32_t
+							   multiKeyBitMask)
 {
 	pgbson_writer querySpecWriter;
 	PgbsonWriterInit(&querySpecWriter);
@@ -3982,6 +4179,11 @@ ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetSca
 	if (supportsOrderedOperatorScans)
 	{
 		PgbsonWriterAppendBool(&querySpecWriter, "oo", 2, true);
+	}
+
+	if (multiKeyBitMask != 0)
+	{
+		PgbsonWriterAppendInt64(&querySpecWriter, "mk", 2, (int64_t) multiKeyBitMask);
 	}
 
 	Datum finalDatum = PointerGetDatum(
@@ -4033,6 +4235,17 @@ GetScanTypeForScanDirection(ScanDirection scanDirection)
 
 
 ScanDirection
+GetIndexScanDirectionForComposite(bytea *opClassoptions)
+{
+	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
+	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
+	BsonGinCompositePathOptions *options = (BsonGinCompositePathOptions *) opClassoptions;
+	GetIndexPathsFromOptions(options, indexPaths, sortOrders);
+	return (ScanDirection) sortOrders[0];
+}
+
+
+ScanDirection
 GetOrderByScanDirectionFromDatum(bytea *opClassoptions, Datum orderByDatum)
 {
 	return (ScanDirection) CompositeIndexDetermineOrderByDirectionCore(opClassoptions,
@@ -4044,7 +4257,8 @@ static void
 ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
 						bool *isMultiKey,
 						bool *hasCorrelatedReducedTerms,
-						bool *supportsOrderedOperatorScans)
+						bool *supportsOrderedOperatorScans,
+						uint32_t *multiKeyBitMask)
 {
 	bson_iter_t queryIter;
 	PgbsonInitIterator(querySpec, &queryIter);
@@ -4073,6 +4287,10 @@ ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
 		{
 			*supportsOrderedOperatorScans = *supportsOrderedOperatorScans ||
 											bson_iter_bool(&queryIter);
+		}
+		else if (strcmp(key, "mk") == 0)
+		{
+			*multiKeyBitMask = (uint32_t) bson_iter_int64(&queryIter);
 		}
 		else
 		{
@@ -4440,13 +4658,15 @@ UpdateCompositePathData(GinEntryPathData *pathData,
 
 
 static uint32_t
-BuildSinglePathTermsForCompositeTermsNew(pgbson *bson,
-										 BsonGinCompositePathOptions *options,
-										 GinEntrySet *entries,
-										 CompositeTermGenerateState *termState,
-										 bool *entryHasMultiKey, bool *entryHasTruncation,
-										 uint32_t *pathCountOut,
-										 List **correlatedTerms)
+BuildSinglePathTermsForCompositeTerms(pgbson *bson,
+									  BsonGinCompositePathOptions *options,
+									  GinEntrySet *entries,
+									  CompositeTermGenerateState *termState,
+									  bool *entryHasTruncation,
+									  uint32_t *pathCountOut,
+									  uint32_t *pathMultiKeyBitMask,
+									  uint32_t *pathTruncationBitMask,
+									  List **correlatedTerms)
 {
 	termState->pathCount = (uint32_t) GetIndexPathsFromOptions(options,
 															   termState->indexPaths,
@@ -4489,7 +4709,20 @@ BuildSinglePathTermsForCompositeTermsNew(pgbson *bson,
 		entries[i].index = termState->pathData[i].terms.index;
 		entries[i].entryCapacity = termState->pathData[i].terms.entryCapacity;
 
-		*entryHasMultiKey = *entryHasMultiKey || termState->pathData[i].hasArrayValues;
+		if (termState->pathData[i].hasArrayValues)
+		{
+			*pathMultiKeyBitMask |= (UINT32_C(1) << i);
+		}
+
+		if (termState->pathData[i].hasTruncatedTerms)
+		{
+			/* Track truncation for every path here; the bitmask is capped to the
+			 * first 6 paths only when it is written into the opclass-metadata blob
+			 * (see SetRequiredMetadataFieldsForTruncation), so truncation on later
+			 * paths is reflected solely by the global truncated flag. */
+			*pathTruncationBitMask |= (UINT32_C(1) << i);
+		}
+
 		*entryHasTruncation = *entryHasTruncation ||
 							  termState->pathData[i].hasTruncatedTerms;
 
@@ -4506,9 +4739,12 @@ BuildSinglePathTermsForCompositeTermsNew(pgbson *bson,
 static Datum *
 AddTruncationOrMultiKeyTerms(Datum *indexEntries, uint32_t totalTermCount,
 							 int32_t indexEntryCapacity, bool considerMultiTermAsMultiKey,
-							 bool entryHasMultiKey, bool hasTruncation,
+							 uint32_t multiKeyBitMask, bool hasTruncation,
+							 uint32_t pathTruncationBitMask,
 							 int32_t *nentries, bool addMetadataTerms,
-							 IndexTermCreateMetadata *overallMetadata)
+							 BsonGinCompositePathOptions *options,
+							 IndexTermCreateMetadata *overallMetadata,
+							 uint64_t *opClassMetadataBlob)
 {
 	if (!addMetadataTerms)
 	{
@@ -4516,6 +4752,35 @@ AddTruncationOrMultiKeyTerms(Datum *indexEntries, uint32_t totalTermCount,
 		return indexEntries;
 	}
 
+
+	if (options->enableMetadataBasedTracking)
+	{
+		/* In this path, we update the int64 blob we've been given by the opclass and return the
+		 * original termsSet.
+		 */
+		if (opClassMetadataBlob == NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"Opclass provided metadata blob is NULL but is required")));
+		}
+
+		/* Whenever there is truncation, always set the global truncated bit; the
+		 * per-path mask (capped to the first 6 paths inside the helper) is layered
+		 * on top of it in the next 6 bits. */
+		if (hasTruncation)
+		{
+			SetRequiredMetadataFieldsForTruncation(opClassMetadataBlob,
+												   pathTruncationBitMask);
+		}
+
+		SetRequiredMetadataFieldsForMultiKey(opClassMetadataBlob, multiKeyBitMask);
+
+		*nentries = totalTermCount;
+		return indexEntries;
+	}
+
+	bool entryHasMultiKey = (multiKeyBitMask != 0);
 	bool hasExtra = (totalTermCount > 1 || entryHasMultiKey) || hasTruncation;
 
 	uint32_t requiredSize = hasExtra ? (totalTermCount + 2) : totalTermCount;
@@ -4649,31 +4914,36 @@ BuildCurrentEntrySetFromMergedSet(MergedTermSet *mergedSet, GinEntrySet *current
 
 static Datum *
 GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
-						   int32_t *nentries, bool addMetadataTerms)
+						   int32_t *nentries, bool addMetadataTerms,
+						   uint64_t *termBlobMetadata)
 {
 	CompositeTermGenerateState termState = { 0 };
 	GinEntrySet entrySet[INDEX_MAX_KEYS] = { 0 };
-	bool entryHasMultiKey = false;
 	bool entryHasTruncation = false;
 	bool considerMultiTermAsMultiKey = options->wildcardPathIndex < 0;
 	IndexTermCreateMetadata overallMetadata = GetCompositeIndexTermMetadata(options);
 	uint32_t totalTermCount;
 	uint32_t pathCount;
+	uint32_t pathMultiKeyBitMask = 0;
+	uint32_t pathTruncationBitMask = 0;
 	List *correlatedTerms = NIL;
-	totalTermCount = BuildSinglePathTermsForCompositeTermsNew(bson, options,
-															  entrySet,
-															  &termState,
-															  &entryHasMultiKey,
-															  &entryHasTruncation,
-															  &pathCount,
-															  &correlatedTerms);
+	totalTermCount = BuildSinglePathTermsForCompositeTerms(bson, options,
+														   entrySet,
+														   &termState,
+														   &entryHasTruncation,
+														   &pathCount,
+														   &pathMultiKeyBitMask,
+														   &pathTruncationBitMask,
+														   &correlatedTerms);
 
 	if (pathCount == 1)
 	{
 		return AddTruncationOrMultiKeyTerms(
 			entrySet[0].entries, totalTermCount, entrySet[0].entryCapacity,
-			considerMultiTermAsMultiKey, entryHasMultiKey,
-			entryHasTruncation, nentries, addMetadataTerms, &overallMetadata);
+			considerMultiTermAsMultiKey, pathMultiKeyBitMask,
+			entryHasTruncation, pathTruncationBitMask, nentries, addMetadataTerms,
+			options, &overallMetadata,
+			termBlobMetadata);
 	}
 
 	bool hasTruncation = false;
@@ -4726,8 +4996,23 @@ GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
 		}
 
 		/* Emit a term that tracks that this is a reduced correlated term set */
-		indexEntries[totalTermCount] = GenerateCorrelatedRootArrayTerm(&overallMetadata);
-		totalTermCount++;
+		if (options->enableMetadataBasedTracking)
+		{
+			if (termBlobMetadata == NULL)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg(
+									"Opclass provided metadata blob is NULL but is required")));
+			}
+
+			SetRequiredMetadataFieldsForReducedCorrelated(termBlobMetadata);
+		}
+		else
+		{
+			indexEntries[totalTermCount] = GenerateCorrelatedRootArrayTerm(
+				&overallMetadata);
+			totalTermCount++;
+		}
 	}
 	else
 	{
@@ -4765,7 +5050,9 @@ GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
 
 	return AddTruncationOrMultiKeyTerms(
 		indexEntries, totalTermCount, finalEntryCapacity, considerMultiTermAsMultiKey,
-		entryHasMultiKey, hasTruncation, nentries, addMetadataTerms, &overallMetadata);
+		pathMultiKeyBitMask, hasTruncation, pathTruncationBitMask, nentries,
+		addMetadataTerms, options,
+		&overallMetadata, termBlobMetadata);
 }
 
 
@@ -4814,24 +5101,32 @@ GenerateCompositedUniqueEqualQueryValues(Datum *indexEntries, bool *partialMatch
 				}
 
 				/* If we're a partial match, then we are matching for nulls */
-				indexTerm.element.bsonValue.value_type = BSON_TYPE_MINKEY;
 				IndexTermCreateMetadata metadata = GetSinglePathTermCreateMetadata(
 					options, (int32_t) pathCount);
 				metadata.isDescending = IsIndexTermValueDescending(&indexTerm);
-				BsonIndexTermSerialized nullSerialized = SerializeBsonIndexTerm(
+
+				BsonIndexTermSerialized nullKeySerialized = SerializeBsonIndexTerm(
 					&indexTerm.element, &metadata);
 
-				compositeDatums[j] = nullSerialized.indexTermVal;
+				indexTerm.element.bsonValue.value_type = BSON_TYPE_MINKEY;
+				BsonIndexTermSerialized minKeySerialized = SerializeBsonIndexTerm(
+					&indexTerm.element, &metadata);
+
+				compositeDatums[j] = minKeySerialized.indexTermVal;
 				runDataForEntry->indexBounds[j].lowerBound.bound.value_type =
 					BSON_TYPE_MINKEY;
 				runDataForEntry->indexBounds[j].lowerBound.indexTermValue.element.
 				bsonValue.value_type = BSON_TYPE_MINKEY;
 				runDataForEntry->indexBounds[j].lowerBound.isBoundInclusive = false;
+				runDataForEntry->indexBounds[j].lowerBound.serializedTerm =
+					minKeySerialized.indexTermVal;
 				runDataForEntry->indexBounds[j].upperBound.indexTermValue.element.
 				bsonValue.value_type = BSON_TYPE_NULL;
 				runDataForEntry->indexBounds[j].upperBound.bound.value_type =
 					BSON_TYPE_NULL;
 				runDataForEntry->indexBounds[j].upperBound.isBoundInclusive = true;
+				runDataForEntry->indexBounds[j].upperBound.serializedTerm =
+					nullKeySerialized.indexTermVal;
 				runDataForEntry->indexBounds[j].isEqualityBound = false;
 			}
 			else
@@ -4841,6 +5136,10 @@ GenerateCompositedUniqueEqualQueryValues(Datum *indexEntries, bool *partialMatch
 					indexTerm.element.bsonValue;
 				runDataForEntry->indexBounds[j].upperBound.bound =
 					indexTerm.element.bsonValue;
+				runDataForEntry->indexBounds[j].lowerBound.serializedTerm =
+					DatumGetByteaPP(term);
+				runDataForEntry->indexBounds[j].upperBound.serializedTerm =
+					DatumGetByteaPP(term);
 				runDataForEntry->indexBounds[j].lowerBound.indexTermValue = indexTerm;
 				runDataForEntry->indexBounds[j].upperBound.indexTermValue = indexTerm;
 				runDataForEntry->indexBounds[j].upperBound.isBoundInclusive = true;
@@ -4873,18 +5172,20 @@ GenerateCompositeExtractQueryUniqueEqual(pgbson *bson,
 	uint32_t pathCount;
 	CompositeTermGenerateState termState = { 0 };
 	GinEntrySet entrySet[INDEX_MAX_KEYS] = { 0 };
-	bool hasArrayPaths = false;
 	bool hasTruncation = false;
 	uint32_t totalTermCount;
 	List *correlatedTerms = NIL;
+	uint32_t pathMultiKeyBitMask = 0;
+	uint32_t pathTruncationBitMask = 0;
 
-	totalTermCount = BuildSinglePathTermsForCompositeTermsNew(bson, options,
-															  entrySet,
-															  &termState,
-															  &hasArrayPaths,
-															  &hasTruncation,
-															  &pathCount,
-															  &correlatedTerms);
+	totalTermCount = BuildSinglePathTermsForCompositeTerms(bson, options,
+														   entrySet,
+														   &termState,
+														   &hasTruncation,
+														   &pathCount,
+														   &pathMultiKeyBitMask,
+														   &pathTruncationBitMask,
+														   &correlatedTerms);
 
 	/* Now that we have the per term counts, generate the overall terms */
 	/* Add an additional one in case we need a truncated term */

@@ -6,12 +6,17 @@
  *-------------------------------------------------------------------------
  */
 
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::{
+    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
+    time::{timeout, Duration},
+};
 
 use crate::{
     context::ConnectionContext, postgres::PgDataClient, responses,
     service::connection_loop::read_ahead, service::connection_loop::request_pipeline,
 };
+
+const CONNECTION_WRITER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub async fn handle_stream<T, S>(stream: S, mut connection_context: ConnectionContext)
 where
@@ -20,24 +25,32 @@ where
 {
     let connection_activity_id = connection_context.connection_id.to_string();
     let connection_activity_id_as_str = connection_activity_id.as_str();
+    let idle_timeout = Duration::from_secs(
+        connection_context
+            .dynamic_configuration()
+            .socket_connection_idle_timeout_sec(),
+    );
     let (mut reader, mut writer) = tokio::io::split(stream);
-    let mut next_header = read_ahead::start_next_header_read(&mut reader).await;
+    let mut next_header = read_ahead::start_next_header_read(&mut reader, idle_timeout).await;
 
     loop {
-        let next_header_result = next_header.as_mut().await;
-        drop(next_header);
+        let next_header_result = next_header.await;
 
         match next_header_result {
             Ok(Some(header)) => {
-                let request_activity_id =
+                let activity_uuid =
                     connection_context.generate_request_activity_id(header.request_id());
+                let mut activity_buf = [0u8; uuid::fmt::Hyphenated::LENGTH];
+                let request_activity_id =
+                    activity_uuid.hyphenated().encode_lower(&mut activity_buf);
 
                 next_header = request_pipeline::handle_message::<T, _, _>(
                     &mut connection_context,
                     &header,
                     &mut reader,
                     &mut writer,
-                    &request_activity_id,
+                    request_activity_id,
+                    idle_timeout,
                 )
                 .await;
             }
@@ -52,10 +65,9 @@ where
 
             Err(error) => {
                 if let Err(write_error) = responses::writer::write_error_without_header(
-                    &connection_context,
                     error,
-                    &mut writer,
                     connection_activity_id_as_str,
+                    &mut writer,
                 )
                 .await
                 {
@@ -66,9 +78,21 @@ where
                     break;
                 }
 
-                next_header = read_ahead::start_next_header_read(&mut reader).await;
+                next_header = read_ahead::start_next_header_read(&mut reader, idle_timeout).await;
             }
         }
+    }
+
+    match timeout(CONNECTION_WRITER_SHUTDOWN_TIMEOUT, writer.shutdown()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::debug!(
+            activity_id = connection_activity_id_as_str,
+            "Connection writer shutdown failed: {error:?}."
+        ),
+        Err(_) => tracing::debug!(
+            activity_id = connection_activity_id_as_str,
+            "Connection writer shutdown timed out."
+        ),
     }
 }
 
@@ -83,7 +107,7 @@ mod tests {
         task::{Context, Poll},
     };
 
-    use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadBuf};
+    use tokio::io::{AsyncReadExt, ReadBuf};
 
     use crate::{
         error::ErrorCode,
@@ -94,6 +118,8 @@ mod tests {
             TestDynamicConfiguration,
         },
     };
+
+    const TEST_COMPLETION_TIMEOUT: Duration = Duration::from_secs(1);
 
     #[derive(Debug)]
     enum ReadState {
@@ -247,6 +273,35 @@ mod tests {
         assert!(
             response_bytes.is_empty(),
             "no responses should be written when the connection closes before any request"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_stream_exits_on_idle_header_timeout() {
+        let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
+        dynamic_configuration.set_socket_connection_idle_timeout_sec(0);
+        let connection_context = test_connection_context(false, dynamic_configuration, None).await;
+        let (mut client_stream, server_stream) = tokio::io::duplex(1024);
+
+        let server_task = tokio::spawn(async move {
+            handle_stream::<DocumentDBDataClient, _>(server_stream, connection_context).await;
+        });
+
+        let mut response_bytes = Vec::new();
+        timeout(
+            TEST_COMPLETION_TIMEOUT,
+            client_stream.read_to_end(&mut response_bytes),
+        )
+        .await
+        .expect("idle header timeout should close the stream")
+        .expect("client reader should drain responses");
+        server_task
+            .await
+            .expect("server task should finish without panicking");
+
+        assert!(
+            response_bytes.is_empty(),
+            "idle header timeout should close without a response"
         );
     }
 

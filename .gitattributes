@@ -8,7 +8,8 @@ pg_documentdb_extended_rum/core/src/roaring_bitmaps/*.[ch] -citus-style
 *.md text eol=lf
 *.sql text eol=lf
 
-# All Rust Files are UTF-8 and use lf instead of crlf
-*.rs       text diff=rust encoding=utf-8 eol=lf
-*.toml     text diff=toml encoding=utf-8 eol=lf
+# All Rust files are UTF-8 and use lf instead of crlf.
+# `encoding` is kept for existing tooling; `working-tree-encoding` is the Git-enforced form.
+*.rs       text diff=rust encoding=utf-8 working-tree-encoding=UTF-8 eol=lf
+*.toml     text diff=toml encoding=utf-8 working-tree-encoding=UTF-8 eol=lf
 Cargo.lock text

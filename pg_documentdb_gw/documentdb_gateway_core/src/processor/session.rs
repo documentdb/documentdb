@@ -9,7 +9,7 @@
 use bson::RawArray;
 
 use crate::{
-    context::{ConnectionContext, LogicalSessionId, RequestContext},
+    context::{map_transaction_error, ConnectionContext, LogicalSessionId, RequestContext},
     error::{DocumentDBError, Result},
     postgres::PgDataClient,
     requests::RequestType,
@@ -44,6 +44,10 @@ async fn terminate_sessions(
     let logical_session_ids = parse_logical_session_ids(sessions_field)?;
     let caller = connection_context.auth_state.principal()?;
     let transaction_store = connection_context.service_context.transaction_store();
+    let is_replica_cluster = connection_context
+        .dynamic_configuration()
+        .is_replica_cluster();
+    let activity_id = request_context.activity_id;
 
     for lsid in &logical_session_ids {
         // Remove all cursors for the session
@@ -64,7 +68,8 @@ async fn terminate_sessions(
         // Best effort to remove any transaction for the session
         let _ = transaction_store
             .remove_transaction_by_session(lsid, caller)
-            .await?;
+            .await
+            .map_err(|e| map_transaction_error(e, is_replica_cluster, activity_id))?;
     }
 
     Ok(())
@@ -75,9 +80,9 @@ pub async fn end_or_kill_sessions(
     connection_context: &ConnectionContext,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
-    let request = request_context.payload;
+    let request = request_context.request();
 
-    let key = if request_context.payload.request_type() == RequestType::KillSessions {
+    let key = if request_context.request_type() == RequestType::KillSessions {
         "killSessions"
     } else {
         "endSessions"

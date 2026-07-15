@@ -32,10 +32,10 @@
 
 #include "pg_documentdb_rum.h"
 
-PG_FUNCTION_INFO_V1(documentdb_rumhandler);
-extern PGDLLIMPORT void InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
-													   char *documentDBRumGucPrefix);
+/* Kind of relation optioms for rum index */
+static relopt_kind rum_relopt_kind;
 
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rumhandler);
 static char * rumbuildphasename(int64 phasenum);
 
 
@@ -43,8 +43,7 @@ static char * rumbuildphasename(int64 phasenum);
  * RUM handler function: return IndexAmRoutine with access method parameters
  * and callbacks.
  */
-PGDLLEXPORT Datum
-documentdb_rumhandler(PG_FUNCTION_ARGS)
+RMGR_PG_FUNCTION_DEF(documentdb_rumhandler)
 {
 	IndexAmRoutine *amroutine = makeNode(IndexAmRoutine);
 
@@ -127,6 +126,7 @@ initRumState(RumState *state, Relation index)
 	state->attrnAttachColumn = InvalidAttrNumber;
 	state->attrnAddToColumn = InvalidAttrNumber;
 	state->fillFactor = RumDefaultPageFillFactor;
+	state->enableOpClassMetadataStorage = false;
 	if (index->rd_options)
 	{
 		RumOptions *options = (RumOptions *) index->rd_options;
@@ -214,6 +214,7 @@ initRumState(RumState *state, Relation index)
 		rumConfig->addInfoTypeOid = InvalidOid;
 		rumConfig->skipGenerateEmptyEntries = false;
 		rumConfig->compareFunctionHasRecheck = false;
+		rumConfig->enableOpClassMetadataStorage = false;
 
 		if (index_getprocid(index, i + 1, RUM_CONFIG_PROC) != InvalidOid)
 		{
@@ -222,6 +223,16 @@ initRumState(RumState *state, Relation index)
 						   CurrentMemoryContext);
 
 			FunctionCall1(&state->configFn[i], PointerGetDatum(rumConfig));
+		}
+
+		if (rumConfig->enableOpClassMetadataStorage)
+		{
+			if (state->enableOpClassMetadataStorage)
+			{
+				elog(ERROR, "only one opclass can have metadata storage enabled");
+			}
+
+			state->enableOpClassMetadataStorage = true;
 		}
 
 		if (state->attrnAddToColumn == i + 1)
@@ -560,6 +571,12 @@ RumNewBuffer(Relation index)
 			}
 			if (RumPageIsDeleted(page))
 			{
+				if (RumEnableEmitReusePageOnRecycle &&
+					XLogStandbyInfoActive())
+				{
+					RumLogReusePage(index, buffer);
+				}
+
 				return buffer;  /* OK to use */
 			}
 			LockBuffer(buffer, RUM_UNLOCK);
@@ -780,7 +797,8 @@ Datum *
 rumExtractEntries(RumState *rumstate, OffsetNumber attnum,
 				  Datum value, bool isNull,
 				  int32 *nentries, RumNullCategory **categories,
-				  Datum **addInfo, bool **addInfoIsNull)
+				  Datum **addInfo, bool **addInfoIsNull,
+				  uint64_t *opClassMetadata)
 {
 	Datum *entries;
 	bool *nullFlags;
@@ -809,13 +827,14 @@ rumExtractEntries(RumState *rumstate, OffsetNumber attnum,
 	*addInfo = NULL;
 	*addInfoIsNull = NULL;
 	entries = (Datum *)
-			  DatumGetPointer(FunctionCall5Coll(&rumstate->extractValueFn[attnum - 1],
+			  DatumGetPointer(FunctionCall6Coll(&rumstate->extractValueFn[attnum - 1],
 												rumstate->supportCollation[attnum - 1],
 												value,
 												PointerGetDatum(nentries),
 												PointerGetDatum(&nullFlags),
 												PointerGetDatum(addInfo),
-												PointerGetDatum(addInfoIsNull)
+												PointerGetDatum(addInfoIsNull),
+												PointerGetDatum(opClassMetadata)
 												));
 
 	/*
@@ -1067,6 +1086,51 @@ rumGetStats(Relation index, RumStatsData *stats)
 }
 
 
+uint64_t
+rumGetOpclassMetadata(Relation index)
+{
+	Buffer metabuffer;
+	Page metapage;
+	RumMetaPageData *metadata;
+	uint64_t opClassMetadata;
+
+	metabuffer = ReadBuffer(index, RUM_METAPAGE_BLKNO);
+	LockBuffer(metabuffer, RUM_SHARE);
+	metapage = BufferGetPage(metabuffer);
+	metadata = RumPageGetMeta(metapage);
+	if (metadata->rumVersion != RUM_CURRENT_VERSION)
+	{
+		elog(ERROR, "unexpected RUM index version. Reindex");
+	}
+	opClassMetadata = (uint64) metadata->nPendingHeapTuples;
+
+	UnlockReleaseBuffer(metabuffer);
+	return opClassMetadata;
+}
+
+
+void
+rumValidateIndexVersion(Relation index)
+{
+	Buffer metabuffer;
+	Page metapage;
+	RumMetaPageData *metadata;
+	uint32_t rumVersion;
+
+	metabuffer = ReadBuffer(index, RUM_METAPAGE_BLKNO);
+	LockBuffer(metabuffer, RUM_SHARE);
+	metapage = BufferGetPage(metabuffer);
+	metadata = RumPageGetMeta(metapage);
+	rumVersion = metadata->rumVersion;
+	UnlockReleaseBuffer(metabuffer);
+
+	if (rumVersion != RUM_CURRENT_VERSION)
+	{
+		elog(ERROR, "unexpected RUM index version. Reindex");
+	}
+}
+
+
 /*
  * Write the given statistics to the index's metapage
  *
@@ -1102,6 +1166,66 @@ rumUpdateStats(Relation index, const RumStatsData *stats, bool isBuild)
 	if (isBuild)
 	{
 		MarkBufferDirty(metaBuffer);
+	}
+	else
+	{
+		GenericXLogFinish(state);
+	}
+
+	UnlockReleaseBuffer(metaBuffer);
+
+	if (isBuild)
+	{
+		END_CRIT_SECTION();
+	}
+}
+
+
+extern void
+rumUpdateOpclassMetadataInMetapage(Relation index, uint64_t opClassMetadata,
+								   bool isBuild)
+{
+	Buffer metaBuffer;
+	Page metapage;
+	RumMetaPageData *metadata;
+	GenericXLogState *state;
+	uint64_t originalMetadata = 0;
+
+	metaBuffer = ReadBuffer(index, RUM_METAPAGE_BLKNO);
+	LockBuffer(metaBuffer, RUM_EXCLUSIVE);
+
+	/* Check if we even need to write anything out */
+	if (isBuild)
+	{
+		metapage = BufferGetPage(metaBuffer);
+		START_CRIT_SECTION();
+	}
+	else
+	{
+		state = GenericXLogStart(index);
+		metapage = GenericXLogRegisterBuffer(state, metaBuffer, 0);
+	}
+	metadata = RumPageGetMeta(metapage);
+
+	if (isBuild)
+	{
+		metadata->nPendingHeapTuples = opClassMetadata;
+	}
+	else
+	{
+		originalMetadata = metadata->nPendingHeapTuples;
+		metadata->nPendingHeapTuples |= opClassMetadata;
+	}
+
+
+	if (isBuild)
+	{
+		MarkBufferDirty(metaBuffer);
+	}
+	else if (originalMetadata == metadata->nPendingHeapTuples)
+	{
+		/* No changes were made to the field - skip writing WAL */
+		GenericXLogAbort(state);
 	}
 	else
 	{
@@ -1244,4 +1368,54 @@ rumbuildphasename(int64 phasenum)
 		default:
 			return NULL;
 	}
+}
+
+
+void
+initialize_rumoptions(void)
+{
+	rum_relopt_kind = add_reloption_kind();
+
+	add_string_reloption(rum_relopt_kind, "attach",
+						 "Column name to attach as additional info",
+						 NULL, NULL, AccessExclusiveLock);
+	add_string_reloption(rum_relopt_kind, "to",
+						 "Column name to add a order by column",
+						 NULL, NULL, AccessExclusiveLock);
+	add_bool_reloption(rum_relopt_kind, "order_by_attach",
+					   "Use (addinfo, itempointer) order instead of just itempointer",
+					   false, AccessExclusiveLock);
+	add_int_reloption(rum_relopt_kind, "fill_factor",
+					  "Page fill factor for RUM index",
+					  RUM_DEFAULT_FILL_FACTOR, 10, 100,
+					  AccessExclusiveLock);
+}
+
+
+bytea *
+documentdb_rumoptions(Datum reloptions, bool validate)
+{
+#if PG_VERSION_NUM >= 180000
+	static const int offsetIfDefault = -1;
+	static const relopt_parse_elt tab[] = {
+		{ "attach", RELOPT_TYPE_STRING, offsetof(RumOptions, attachColumn),
+		  offsetIfDefault },
+		{ "to", RELOPT_TYPE_STRING, offsetof(RumOptions, addToColumn), offsetIfDefault },
+		{ "order_by_attach", RELOPT_TYPE_BOOL, offsetof(RumOptions, useAlternativeOrder),
+		  offsetIfDefault },
+		{ "fill_factor", RELOPT_TYPE_INT, offsetof(RumOptions, fillFactor),
+		  offsetIfDefault }
+	};
+#else
+	static const relopt_parse_elt tab[] = {
+		{ "attach", RELOPT_TYPE_STRING, offsetof(RumOptions, attachColumn) },
+		{ "to", RELOPT_TYPE_STRING, offsetof(RumOptions, addToColumn) },
+		{ "order_by_attach", RELOPT_TYPE_BOOL, offsetof(RumOptions,
+														useAlternativeOrder) },
+		{ "fill_factor", RELOPT_TYPE_INT, offsetof(RumOptions, fillFactor) }
+	};
+#endif
+
+	return (bytea *) build_reloptions(reloptions, validate, rum_relopt_kind,
+									  sizeof(RumOptions), tab, lengthof(tab));
 }

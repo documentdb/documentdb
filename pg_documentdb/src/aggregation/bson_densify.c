@@ -30,6 +30,7 @@
 #include "metadata/metadata_cache.h"
 #include "query/bson_dollar_operators.h"
 #include "query/bson_compare.h"
+#include "collation/collation.h"
 #include "utils/hashset_utils.h"
 #include "utils/fmgr_utils.h"
 #include "utils/feature_counter.h"
@@ -500,6 +501,13 @@ HandleDensify(const bson_value_t *existingValue, Query *query,
 						errdetail_log(
 							"The $densify stage specification must be provided as an object, but encountered %s instead",
 							BsonTypeName(existingValue->value_type))));
+	}
+
+	if (IsCollationApplicable(context->collationString))
+	{
+		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg(
+							"collation is not supported in the $densify stage yet.")));
 	}
 
 	RangeTblEntry *rte = linitial(query->rtable);

@@ -31,7 +31,10 @@ RUN dnf -y swap curl-minimal curl && \
     zlib-devel \
     libuuid-devel \
     libicu-devel \
-    krb5-devel
+    krb5-devel \
+    perl-IPC-Run \
+    perl-Test-Harness \
+    perl-Test-Simple
 
 RUN echo "Detected architecture: ${TARGETARCH}"
 

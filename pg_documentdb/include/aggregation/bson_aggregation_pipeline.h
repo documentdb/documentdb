@@ -16,6 +16,7 @@
 #include "operators/bson_expression.h"
 #include "utils/documentdb_errors.h"
 #include "utils/version_utils.h"
+#include "metadata/collection.h"
 
 typedef enum QueryCursorType
 {
@@ -82,6 +83,21 @@ typedef enum CursorParamKind
 } CursorParamKind;
 
 /*
+ * Tracks the collection topology relevant to cursor behavior.
+ * This is set during initial query generation and then reported
+ * during getMore operations.
+ */
+typedef enum CursorTopology
+{
+	CursorTopology_Unknown = 0,
+	CursorTopology_LocalUnsharded,
+	CursorTopology_RemoteUnsharded,
+	CursorTopology_ShardedWithShardKeyEquality,
+	CursorTopology_ShardedWithInOnShardKey,
+	CursorTopology_GeneralSharded,
+} CursorTopology;
+
+/*
  * Tracks the overall query spec data
  * that can be extracted from the query.
  * Used in cursor management to page and
@@ -107,19 +123,47 @@ typedef struct
 	QueryCursorType cursorKind;
 
 	/*
+	 * The collection topology for this cursor query.
+	 */
+	CursorTopology cursorTopology;
+
+	/*
 	 * The requested batchSize in the query request.
 	 */
 	int32_t batchSize;
 
 	/*
+	 * The maxAwaitTimeMS in the query request for tailable cursors.
+	 */
+	int64_t maxAwaitTimeMS;
+
+	/*
 	 * The time system variables ($$NOW, $$CLUSTER_TIME).
 	 */
 	TimeSystemVariables timeSystemVariables;
+
+	/*
+	 * Whether this query is being built from the planner aggregation
+	 * query cursor rewrite path (enableCursorsOnAggregationQueryRewrite).
+	 */
+	bool isAggregationQueryCursorRewrite;
 } QueryData;
 
 
 Query * GenerateFindQuery(text *database, pgbson *findSpec, QueryData *queryData,
 						  CursorParamKind cursorParamKind, bool setStatementTimeout);
+
+/*
+ * Opaque handle for the two-phase find query path: ParseFindQueryAndLookupCollection
+ * parses the spec and looks up the collection (without generating the query), and
+ * ApplyParsedFindQuery generates the local query from the parsed handle.
+ */
+typedef struct FindQueryPlan FindQueryPlan;
+FindQueryPlan * ParseFindQueryAndLookupCollection(text *database, pgbson *findSpec,
+												  QueryData *queryData,
+												  bool setStatementTimeout,
+												  MongoCollection **outCollection);
+Query * ApplyParsedFindQuery(FindQueryPlan *plan, CursorParamKind cursorParamKind);
 Query * GenerateGetMoreQuery(text *database, pgbson *getMoreSpec,
 							 pgbson *continuationSpec,
 							 QueryData *queryData, bool setStatementTimeout);
@@ -137,8 +181,25 @@ Query * GenerateAggregationQuery(text *database, pgbson *aggregationSpec,
 								 QueryData *queryData, CursorParamKind cursorParamKind,
 								 bool setStatementTimeout);
 
+/*
+ * Opaque handle for the two-phase aggregation query path:
+ * ParseAggregationQueryAndLookupCollection parses the spec, extracts the pipeline
+ * stages, and looks up the collection (without generating the query);
+ * ApplyParsedAggregationQuery generates the local query from the parsed handle.
+ */
+typedef struct AggregationQueryPlan AggregationQueryPlan;
+AggregationQueryPlan * ParseAggregationQueryAndLookupCollection(text *database,
+																pgbson *aggregationSpec,
+																QueryData *queryData,
+																CursorParamKind
+																cursorParamKind,
+																bool setStatementTimeout,
+																MongoCollection **
+																outCollection);
+Query * ApplyParsedAggregationQuery(AggregationQueryPlan *plan);
+
 int64_t ParseGetMore(text **databaseName, pgbson *getMoreSpec, QueryData *queryData, bool
-					 setStatementTimeout);
+					 setStatementTimeout, bool isTailableCursor);
 
 void ValidateAggregationPipeline(text *databaseDatum, const StringView *baseCollection,
 								 const bson_value_t *pipelineValue);
