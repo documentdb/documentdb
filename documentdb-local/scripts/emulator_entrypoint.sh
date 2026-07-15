@@ -290,6 +290,64 @@ echo "Using username: $USERNAME"
 echo "Using owner: $OWNER"
 echo "Using data path: $DATA_PATH"
 
+# Reject usernames that use a gateway-reserved role prefix. The gateway blocks
+# these prefixes at authentication time (BlockedRolePrefixes in
+# SetupConfiguration.json) using a case-insensitive prefix match, so creating
+# such a user would produce a container that reports ready but can never
+# authenticate. Validate against the same configuration the gateway reads.
+GATEWAY_SETUP_CONFIG="$GATEWAY_HOME/pg_documentdb_gw/SetupConfiguration.json"
+if [ ! -f "$GATEWAY_SETUP_CONFIG" ]; then
+    echo "Error: gateway configuration '$GATEWAY_SETUP_CONFIG' not found; cannot validate the username against reserved role prefixes." >&2
+    exit 1
+fi
+# The gateway deserializes BlockedRolePrefixes as a required array of strings
+# (a non-defaulted Vec<String> in setup.rs), so fail closed on a parse error or
+# any other shape instead of silently skipping validation (which would re-open
+# the false-success-startup bug) or letting the gateway fail later with a cryptic
+# deserialization error. An empty array is valid and means "no blocked prefixes".
+if ! blocked_prefixes_type=$(jq -r '.BlockedRolePrefixes | type' "$GATEWAY_SETUP_CONFIG" 2>/dev/null); then
+    echo "Error: failed to parse gateway configuration '$GATEWAY_SETUP_CONFIG'; cannot validate the username against reserved role prefixes." >&2
+    exit 1
+fi
+if [ "$blocked_prefixes_type" != "array" ]; then
+    echo "Error: BlockedRolePrefixes in '$GATEWAY_SETUP_CONFIG' must be a JSON array of strings." >&2
+    exit 1
+fi
+if ! jq -e 'all(.BlockedRolePrefixes[]; type == "string")' "$GATEWAY_SETUP_CONFIG" >/dev/null 2>&1; then
+    echo "Error: BlockedRolePrefixes in '$GATEWAY_SETUP_CONFIG' must contain only strings." >&2
+    exit 1
+fi
+# Read every entry via process substitution so a stray empty prefix is preserved
+# (command substitution would strip it away with the trailing newline).
+mapfile -t blocked_role_prefixes < <(jq -r '.BlockedRolePrefixes[]?' "$GATEWAY_SETUP_CONFIG")
+if [ "${#blocked_role_prefixes[@]}" -gt 0 ]; then
+    # Lowercase via bash parameter expansion (locale-aware in the image's UTF-8
+    # locale). This is exact for the shipped ASCII reserved prefixes; for
+    # non-ASCII prefixes bash's one-to-one case folding may differ from the
+    # gateway's Rust to_lowercase() (full Unicode folding), so exact parity is
+    # only guaranteed for ASCII prefixes.
+    username_lower=${USERNAME,,}
+    blocked_list=$(printf '%s, ' "${blocked_role_prefixes[@]}")
+    blocked_list=${blocked_list%, }
+    for blocked_prefix in "${blocked_role_prefixes[@]}"; do
+        prefix_lower=${blocked_prefix,,}
+        if [ -z "$prefix_lower" ]; then
+            # The gateway's starts_with("") matches every username, so an empty
+            # entry blocks all authentication. Fail fast rather than start a
+            # container whose configured user can never authenticate.
+            echo "Error: BlockedRolePrefixes in '$GATEWAY_SETUP_CONFIG' contains an empty entry, which the gateway treats as blocking every username. Fix the gateway configuration." >&2
+            exit 1
+        fi
+        case "$username_lower" in
+            "$prefix_lower"*)
+                echo "Error: username '$USERNAME' uses reserved prefix '$blocked_prefix'." >&2
+                echo "Choose a username that does not begin with any of: ${blocked_list}." >&2
+                exit 1
+                ;;
+        esac
+    done
+fi
+
 if { [ -n "${CERT_PATH:-}" ] && [ -z "${KEY_FILE:-}" ]; } || \
    { [ -z "${CERT_PATH:-}" ] && [ -n "${KEY_FILE:-}" ]; }; then
     echo "Error: Both CERT_PATH and KEY_FILE must be set together, or neither should be set."
