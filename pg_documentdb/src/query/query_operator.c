@@ -252,7 +252,25 @@ static pgbson * HandleEqualityNamespaceFilter(bson_iter_t *iter, bool *nsInlined
 static inline bool
 IsDoubleAFixedInteger(double value)
 {
-	return floor(value) == value;
+	/* Infinity satisfies floor(value) == value but has no integer
+	 * representation; narrowing it silently saturates to INT64_MAX. */
+	return isfinite(value) && floor(value) == value;
+}
+
+
+/* Throws for a non-finite numeric $type code, spelled the way MongoDB
+ * spells it (inf/-inf/nan) rather than the generic
+ * "Unsupported or invalid numerical type code" message.
+ */
+static inline void
+EnsureTypeCodeIsFinite(double value)
+{
+	if (isnan(value) || isinf(value))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
+							"Invalid numerical type code: %s",
+							isnan(value) ? "nan" : (value > 0 ? "inf" : "-inf"))));
+	}
 }
 
 
@@ -2765,6 +2783,7 @@ CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 			else if (BSON_ITER_HOLDS_NUMBER(operatorDocIterator))
 			{
 				double doubleValue = BsonValueAsDouble(typeIdValue);
+				EnsureTypeCodeIsFinite(doubleValue);
 				if (!IsDoubleAFixedInteger(doubleValue))
 				{
 					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
@@ -2796,6 +2815,7 @@ CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 					else if (BSON_ITER_HOLDS_NUMBER(&arrayIterator))
 					{
 						double doubleValue = BsonValueAsDouble(typeIdArrayValue);
+						EnsureTypeCodeIsFinite(doubleValue);
 						if (!IsDoubleAFixedInteger(doubleValue))
 						{
 							ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
