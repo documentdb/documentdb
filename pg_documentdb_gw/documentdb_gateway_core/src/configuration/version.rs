@@ -41,6 +41,19 @@ impl Version {
         }
     }
 
+    /// Returns the `featureCompatibilityVersion` string (major.minor form),
+    /// as reported by `getParameter { featureCompatibilityVersion: 1 }`.
+    #[must_use]
+    pub const fn feature_compatibility_version(&self) -> &str {
+        match self {
+            Self::FourTwo => "4.2",
+            Self::Five => "5.0",
+            Self::Six => "6.0",
+            Self::Seven => "7.0",
+            Self::Eight => "8.0",
+        }
+    }
+
     #[must_use]
     pub const fn as_array(&self) -> [i32; 4] {
         match self {
@@ -70,6 +83,28 @@ impl Version {
             Self::Six => 17,
             Self::Seven => 21,
             Self::Eight => 25,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Version;
+
+    #[test]
+    fn feature_compatibility_version_is_major_minor() {
+        assert_eq!(Version::FourTwo.feature_compatibility_version(), "4.2");
+        assert_eq!(Version::Five.feature_compatibility_version(), "5.0");
+        assert_eq!(Version::Six.feature_compatibility_version(), "6.0");
+        assert_eq!(Version::Seven.feature_compatibility_version(), "7.0");
+        assert_eq!(Version::Eight.feature_compatibility_version(), "8.0");
+    }
+
+    #[test]
+    fn parse_round_trips_to_feature_compatibility_version() {
+        for fcv in ["4.2", "5.0", "6.0", "7.0", "8.0"] {
+            let version = Version::parse(fcv).expect("known version should parse");
+            assert_eq!(version.feature_compatibility_version(), fcv);
         }
     }
 }

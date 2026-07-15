@@ -1024,41 +1024,6 @@ impl PgDataClient for DocumentDBDataClient {
         .await
     }
 
-    async fn execute_get_parameter(
-        &self,
-        request_context: &RequestContext<'_>,
-        all: bool,
-        show_details: bool,
-        params: Vec<String>,
-        connection_context: &ConnectionContext,
-    ) -> Result<Response> {
-        let run_get_param = |conn: Arc<Connection>| {
-            let params = params.clone();
-            async move {
-                let rows = conn
-                    .query(
-                        self.service_context.query_catalog().get_parameter(),
-                        &[Type::BOOL, Type::BOOL, Type::TEXT_ARRAY],
-                        &[&all, &show_details, &params],
-                    )
-                    .await?;
-
-                Ok(Response::Pg(PgResponse::new(rows)))
-            }
-        };
-
-        self.run_query(
-            request_context,
-            connection_context,
-            PullConnection::PoolOrTransaction,
-            QueryOptions::builder()
-                .supports_backend_timeout(false)
-                .build(),
-            run_get_param,
-        )
-        .await
-    }
-
     async fn execute_db_stats(
         &self,
         request_context: &RequestContext<'_>,

@@ -10,7 +10,6 @@ use bson::{spec::ElementType, RawBsonRef};
 use std::sync::Arc;
 
 use crate::{
-    bson::convert_to_bool,
     configuration::DynamicConfiguration,
     context::{ConnectionContext, RequestContext},
     error::{DocumentDBError, ErrorCode, Result},
@@ -269,96 +268,6 @@ pub async fn process_kill_op(
     pg_data_client
         .execute_kill_op(request_context, &op_id, connection_context)
         .await
-}
-
-async fn get_parameter(
-    connection_context: &ConnectionContext,
-    request_context: &RequestContext<'_>,
-    all: bool,
-    show_details: bool,
-    params: Vec<String>,
-    pg_data_client: &impl PgDataClient,
-) -> Result<Response> {
-    pg_data_client
-        .execute_get_parameter(
-            request_context,
-            all,
-            show_details,
-            params,
-            connection_context,
-        )
-        .await
-}
-
-pub async fn process_get_parameter(
-    request_context: &RequestContext<'_>,
-    connection_context: &ConnectionContext,
-    pg_data_client: &impl PgDataClient,
-) -> Result<Response> {
-    let request = request_context.request();
-
-    let mut all_parameters = false;
-    let mut show_details = false;
-    let mut star = false;
-    let mut params = Vec::new();
-    request.extract_fields(|k, v| {
-        match k {
-            "getParameter" => {
-                if v.as_str().is_some_and(|s| s == "*") {
-                    star = true;
-                } else if let Some(doc) = v.as_document() {
-                    for pair in doc {
-                        let (k, v) = pair?;
-                        match k {
-                            "allParameters" => {
-                                all_parameters =
-                                    convert_to_bool(v).ok_or(DocumentDBError::type_mismatch(
-                                        "allParameters should be a bool".to_owned(),
-                                    ))?;
-                            }
-                            "showDetails" => {
-                                show_details =
-                                    convert_to_bool(v).ok_or(DocumentDBError::type_mismatch(
-                                        "showDetails should be convertible to a bool".to_owned(),
-                                    ))?;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-            _ => params.push(k.to_owned()),
-        }
-        Ok(())
-    })?;
-    if request.db() != "admin" {
-        return Err(DocumentDBError::documentdb_error(
-            ErrorCode::Unauthorized,
-            "getParameter may only be run against the admin database.".to_owned(),
-        ));
-    }
-
-    if star {
-        return get_parameter(
-            connection_context,
-            request_context,
-            true,
-            false,
-            vec![],
-            pg_data_client,
-        )
-        .await;
-    }
-
-    get_parameter(
-        connection_context,
-        request_context,
-        all_parameters,
-        show_details,
-        params,
-        pg_data_client,
-    )
-    .await
 }
 
 pub async fn process_compact(

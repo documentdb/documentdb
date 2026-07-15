@@ -86,7 +86,6 @@ pub struct QueryCatalog {
     pub coll_stats: String,
     pub db_stats: String,
     pub current_op: String,
-    pub get_parameter: String,
     pub compact: String,
     pub kill_op: String,
     pub balancer_start: String,
@@ -438,11 +437,6 @@ impl QueryCatalog {
     }
 
     #[must_use]
-    pub fn get_parameter(&self) -> &str {
-        &self.get_parameter
-    }
-
-    #[must_use]
     pub fn move_collection(&self) -> &str {
         &self.move_collection
     }
@@ -628,7 +622,6 @@ pub fn create_query_catalog() -> QueryCatalog {
             coll_stats: "SELECT documentdb_api.coll_stats($1, $2, $3)".to_owned(),
             db_stats: "SELECT documentdb_api.db_stats($1, $2, $3)".to_owned(),
             current_op: "SELECT documentdb_api.current_op_command($1)".to_owned(),
-            get_parameter: "SELECT documentdb_api.get_parameter($1, $2, $3)".to_owned(),
             compact: "SELECT documentdb_api.compact($1)".to_owned(),
             kill_op: "SELECT documentdb_api.kill_op($1)".to_owned(),
 

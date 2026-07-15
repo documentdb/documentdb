@@ -9,7 +9,7 @@
 use documentdb_tests::{
     commands::{
         aggregate, coll_stats, collection_cmd, constant, count, delete, distinct, find,
-        find_and_modify, indexing, insert, list_collections, update, validate_cmd,
+        find_and_modify, get_parameter, indexing, insert, list_collections, update, validate_cmd,
     },
     test_setup::initialize,
 };
@@ -160,6 +160,58 @@ async fn get_cmd_line_opts() -> Result<(), Error> {
     let db = initialize::initialize_with_db("commands_tests_get_cmd_line_opts").await?;
 
     constant::validate_get_cmd_line_opts(&db).await
+}
+
+#[tokio::test]
+async fn get_parameter_feature_compatibility_version() -> Result<(), Error> {
+    let client = initialize::initialize().await?;
+
+    get_parameter::validate_get_parameter_fcv(&client).await
+}
+
+#[tokio::test]
+async fn get_parameter_star() -> Result<(), Error> {
+    let client = initialize::initialize().await?;
+
+    get_parameter::validate_get_parameter_star(&client).await
+}
+
+#[tokio::test]
+async fn get_parameter_all_parameters() -> Result<(), Error> {
+    let client = initialize::initialize().await?;
+
+    get_parameter::validate_get_parameter_all_parameters(&client).await
+}
+
+#[tokio::test]
+async fn get_parameter_show_details() -> Result<(), Error> {
+    let client = initialize::initialize().await?;
+
+    get_parameter::validate_get_parameter_show_details(&client).await
+}
+
+#[tokio::test]
+async fn get_parameter_unknown_parameter() -> Result<(), Error> {
+    let client = initialize::initialize().await?;
+
+    get_parameter::validate_get_parameter_unknown(&client).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_parameter_no_parameters() -> Result<(), Error> {
+    let client = initialize::initialize().await?;
+
+    get_parameter::validate_get_parameter_no_params(&client).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_parameter_non_admin_database() -> Result<(), Error> {
+    let client = initialize::initialize().await?;
+
+    get_parameter::validate_get_parameter_non_admin(&client).await;
+    Ok(())
 }
 
 #[tokio::test]

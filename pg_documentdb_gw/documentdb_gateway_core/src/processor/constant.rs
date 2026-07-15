@@ -11,9 +11,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use bson::{rawdoc, RawArrayBuf, RawDocumentBuf};
+use bson::{rawdoc, RawArrayBuf, RawBson, RawDocumentBuf};
 
 use crate::{
+    bson::convert_to_bool,
     configuration::DynamicConfiguration,
     context::{ConnectionContext, RequestContext},
     error::{DocumentDBError, ErrorCode, Result},
@@ -90,6 +91,180 @@ pub fn process_get_rw_concern(request_context: &RequestContext<'_>) -> Result<Re
         "defaultWriteConcernSource": "implicit",
         "ok":OK_SUCCEEDED,
     })))
+}
+
+/// Command-envelope fields that drivers/mongosh attach to every request. These
+/// are not `getParameter` parameter names and must be ignored when collecting
+/// the requested parameters.
+fn is_generic_command_field(key: &str) -> bool {
+    key.starts_with('$')
+        || matches!(
+            key,
+            "lsid"
+                | "comment"
+                | "maxTimeMS"
+                | "apiVersion"
+                | "apiStrict"
+                | "apiDeprecationErrors"
+                | "readConcern"
+                | "writeConcern"
+                | "txnNumber"
+                | "autocommit"
+                | "startTransaction"
+                | "stmtId"
+                | "clusterTime"
+                | "signature"
+        )
+}
+
+/// Returns the value and mutability metadata for a parameter the gateway
+/// exposes via `getParameter`, or `None` if the parameter is not supported.
+///
+/// The returned tuple is `(value, settableAtRuntime, settableAtStartup)`.
+fn known_parameter(
+    name: &str,
+    dynamic_config: &Arc<dyn DynamicConfiguration>,
+) -> Option<(RawBson, bool, bool)> {
+    match name {
+        "featureCompatibilityVersion" => {
+            let version = dynamic_config.server_version();
+            let fcv = version.feature_compatibility_version();
+            Some((
+                RawBson::Document(rawdoc! { "version": fcv }),
+                false,
+                false,
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Every parameter name the gateway can report, used for the `*` /
+/// `allParameters` forms.
+const KNOWN_PARAMETER_NAMES: &[&str] = &["featureCompatibilityVersion"];
+
+fn append_parameter(
+    result: &mut RawDocumentBuf,
+    name: &str,
+    value: RawBson,
+    settable_at_runtime: bool,
+    settable_at_startup: bool,
+    show_details: bool,
+) {
+    if show_details {
+        result.append(
+            name,
+            rawdoc! {
+                "value": value,
+                "settableAtRuntime": settable_at_runtime,
+                "settableAtStartup": settable_at_startup,
+            },
+        );
+    } else {
+        result.append(name, value);
+    }
+}
+
+/// Handles the `getParameter` command natively in the gateway, without a
+/// database round-trip. Only the `admin` database may run it.
+pub fn process_get_parameter(
+    request_context: &RequestContext<'_>,
+    dynamic_config: &Arc<dyn DynamicConfiguration>,
+) -> Result<Response> {
+    let request = request_context.request();
+
+    let mut all_parameters = false;
+    let mut show_details = false;
+    let mut star = false;
+    let mut requested = Vec::new();
+
+    request.extract_fields(|k, v| {
+        match k {
+            "getParameter" => {
+                if v.as_str().is_some_and(|s| s == "*") {
+                    star = true;
+                } else if let Some(doc) = v.as_document() {
+                    for pair in doc {
+                        let (dk, dv) = pair?;
+                        match dk {
+                            "allParameters" => {
+                                all_parameters =
+                                    convert_to_bool(dv).ok_or_else(|| {
+                                        DocumentDBError::type_mismatch(
+                                            "allParameters should be a bool".to_owned(),
+                                        )
+                                    })?;
+                            }
+                            "showDetails" => {
+                                show_details =
+                                    convert_to_bool(dv).ok_or_else(|| {
+                                        DocumentDBError::type_mismatch(
+                                            "showDetails should be convertible to a bool"
+                                                .to_owned(),
+                                        )
+                                    })?;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            "allParameters" => {
+                all_parameters = convert_to_bool(v).ok_or_else(|| {
+                    DocumentDBError::type_mismatch("allParameters should be a bool".to_owned())
+                })?;
+            }
+            "showDetails" => {
+                show_details = convert_to_bool(v).ok_or_else(|| {
+                    DocumentDBError::type_mismatch(
+                        "showDetails should be convertible to a bool".to_owned(),
+                    )
+                })?;
+            }
+            other if is_generic_command_field(other) => {}
+            other => requested.push(other.to_owned()),
+        }
+        Ok(())
+    })?;
+
+    if request.db() != "admin" {
+        return Err(DocumentDBError::documentdb_error(
+            ErrorCode::Unauthorized,
+            "getParameter may only be run against the admin database.".to_owned(),
+        ));
+    }
+
+    let mut result = RawDocumentBuf::new();
+
+    if star || all_parameters {
+        for name in KNOWN_PARAMETER_NAMES {
+            if let Some((value, runtime, startup)) = known_parameter(name, dynamic_config) {
+                append_parameter(&mut result, name, value, runtime, startup, show_details);
+            }
+        }
+    } else if requested.is_empty() {
+        return Err(DocumentDBError::documentdb_error(
+            ErrorCode::FailedToParse,
+            "no parameters specified".to_owned(),
+        ));
+    } else {
+        for name in &requested {
+            match known_parameter(name, dynamic_config) {
+                Some((value, runtime, startup)) => {
+                    append_parameter(&mut result, name, value, runtime, startup, show_details);
+                }
+                None => {
+                    return Err(DocumentDBError::documentdb_error(
+                        ErrorCode::InvalidOptions,
+                        format!("no option found to get: {name}"),
+                    ));
+                }
+            }
+        }
+    }
+
+    result.append("ok", OK_SUCCEEDED);
+    Ok(Response::Raw(RawResponse::new(result)))
 }
 
 pub fn process_get_log() -> Response {

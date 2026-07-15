@@ -19,6 +19,7 @@ pub mod distinct;
 pub mod explain;
 pub mod find;
 pub mod find_and_modify;
+pub mod get_parameter;
 pub mod indexing;
 pub mod insert;
 pub mod killop;

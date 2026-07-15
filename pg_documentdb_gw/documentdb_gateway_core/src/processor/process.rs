@@ -236,12 +236,7 @@ pub async fn process_request(
                 .await
         }
         RequestType::GetParameter => {
-            data_management::process_get_parameter(
-                request_context,
-                connection_context,
-                pg_data_client,
-            )
-            .await
+            constant::process_get_parameter(request_context, &dynamic_config)
         }
         RequestType::KillCursors => {
             cursor::process_kill_cursors(request_context, connection_context, pg_data_client).await

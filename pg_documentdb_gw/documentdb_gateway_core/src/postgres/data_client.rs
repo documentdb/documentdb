@@ -278,15 +278,6 @@ pub trait PgDataClient: Send + Sync {
         connection_context: &ConnectionContext,
     ) -> Result<Response>;
 
-    async fn execute_get_parameter(
-        &self,
-        request_context: &RequestContext<'_>,
-        all: bool,
-        show_details: bool,
-        params: Vec<String>,
-        connection_context: &ConnectionContext,
-    ) -> Result<Response>;
-
     async fn execute_db_stats(
         &self,
         request_context: &RequestContext<'_>,

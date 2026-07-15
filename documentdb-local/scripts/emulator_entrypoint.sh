@@ -290,6 +290,31 @@ echo "Using username: $USERNAME"
 echo "Using owner: $OWNER"
 echo "Using data path: $DATA_PATH"
 
+# Reject usernames that use a gateway-reserved role prefix. The gateway blocks
+# these prefixes at authentication time (BlockedRolePrefixes in
+# SetupConfiguration.json), so creating such a user would produce a container
+# that reports ready but can never authenticate.
+GATEWAY_SETUP_CONFIG="$GATEWAY_HOME/pg_documentdb_gw/SetupConfiguration.json"
+if [ -f "$GATEWAY_SETUP_CONFIG" ]; then
+    mapfile -t blocked_role_prefixes < <(jq -r '.BlockedRolePrefixes[]?' "$GATEWAY_SETUP_CONFIG")
+    if [ "${#blocked_role_prefixes[@]}" -gt 0 ]; then
+        username_lower=$(printf '%s' "$USERNAME" | tr '[:upper:]' '[:lower:]')
+        for blocked_prefix in "${blocked_role_prefixes[@]}"; do
+            [ -z "$blocked_prefix" ] && continue
+            prefix_lower=$(printf '%s' "$blocked_prefix" | tr '[:upper:]' '[:lower:]')
+            case "$username_lower" in
+                "$prefix_lower"*)
+                    blocked_list=$(printf '%s, ' "${blocked_role_prefixes[@]}")
+                    blocked_list=${blocked_list%, }
+                    echo "Error: username '$USERNAME' uses reserved prefix '$blocked_prefix'." >&2
+                    echo "Choose a username that does not begin with any of: ${blocked_list}." >&2
+                    exit 1
+                    ;;
+            esac
+        done
+    fi
+fi
+
 if { [ -n "${CERT_PATH:-}" ] && [ -z "${KEY_FILE:-}" ]; } || \
    { [ -z "${CERT_PATH:-}" ] && [ -n "${KEY_FILE:-}" ]; }; then
     echo "Error: Both CERT_PATH and KEY_FILE must be set together, or neither should be set."

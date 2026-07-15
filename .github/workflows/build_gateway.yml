@@ -132,6 +132,18 @@ jobs:
 
         docker exec "$CONTAINER_NAME" mongosh "localhost:10260" -u docdb_admin -p 123456 --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --quiet --eval 'const count = db.getSiblingDB("gateway_smoke").image_smoke.countDocuments({ name: "documentdb-local-smoke", ok: true }); if (count !== 1) { print(`expected 1 document, found ${count}`); quit(1); }'
 
+        # Directly exercise getParameter. mongosh treats it as an optional discovery
+        # probe and ignores its failure, so CRUD alone cannot catch a broken handler
+        # (see issue #650). Assert it succeeds and returns the requested field.
+        docker exec "$CONTAINER_NAME" mongosh "localhost:10260" -u docdb_admin -p 123456 --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --quiet --eval 'const res = db.adminCommand({ getParameter: 1, featureCompatibilityVersion: 1 }); if (res.ok !== 1) { print(`getParameter failed: ${JSON.stringify(res)}`); quit(1); } if (!res.featureCompatibilityVersion || !res.featureCompatibilityVersion.version) { print(`missing featureCompatibilityVersion: ${JSON.stringify(res)}`); quit(1); }'
+
+        # Guard against the issue #650 regression: the gateway must not call the
+        # nonexistent documentdb_api.get_parameter backend function.
+        if docker logs "$CONTAINER_NAME" 2>&1 | grep -Fq "documentdb_api.get_parameter"; then
+          echo "Gateway logged a dangling documentdb_api.get_parameter call (issue #650 regression)" >&2
+          exit 1
+        fi
+
         dump_logs=false
     - name: Push ${{ matrix.arch }} Image
       if: github.event.inputs.push_images == 'true' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'

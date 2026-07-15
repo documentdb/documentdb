@@ -62,14 +62,25 @@ exec "$@"
 import json
 import sys
 args = sys.argv[1:]
+raw = False
 vars = {}
-while args and args[0] in ('--arg', '--argjson'):
-    flag, name, value, *args = args
-    vars[name] = json.loads(value) if flag == '--argjson' else value
+while args and args[0].startswith('-'):
+    if args[0] in ('--arg', '--argjson'):
+        flag, name, value, *args = args
+        vars[name] = json.loads(value) if flag == '--argjson' else value
+    elif args[0] in ('-r', '--raw-output'):
+        raw = True
+        args = args[1:]
+    else:
+        args = args[1:]
 expr, file_path = args
 with open(file_path, 'r', encoding='utf-8') as f:
     data = json.load(f)
 expr = expr.strip()
+if expr in ('.BlockedRolePrefixes[]', '.BlockedRolePrefixes[]?'):
+    for item in data.get('BlockedRolePrefixes', []):
+        print(item)
+    raise SystemExit(0)
 if expr.startswith('.GatewayListenPort = '):
     data['GatewayListenPort'] = int(expr.split('=', 1)[1].strip())
 elif expr.startswith('.PostgresPort = '):
@@ -224,12 +235,25 @@ json.dump(data, sys.stdout)
 import json
 import sys
 args = sys.argv[1:]
+raw = False
 vars = {}
-while args and args[0] in ('--arg', '--argjson'):
-    flag, name, value, *args = args
-    vars[name] = json.loads(value) if flag == '--argjson' else value
+while args and args[0].startswith('-'):
+    if args[0] in ('--arg', '--argjson'):
+        flag, name, value, *args = args
+        vars[name] = json.loads(value) if flag == '--argjson' else value
+    elif args[0] in ('-r', '--raw-output'):
+        raw = True
+        args = args[1:]
+    else:
+        args = args[1:]
 expr, file_path = args
 expr = expr.strip()
+if expr in ('.BlockedRolePrefixes[]', '.BlockedRolePrefixes[]?'):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    for item in data.get('BlockedRolePrefixes', []):
+        print(item)
+    raise SystemExit(0)
 if expr.startswith('.EnforceTls = '):
     sys.stderr.write('jq: simulated failure\\n')
     sys.exit(1)
@@ -531,6 +555,57 @@ json.dump(data, sys.stdout)
                 text,
                 msg=f"{js.name} should guard inserts with an existence check (#612)",
             )
+
+    def _set_blocked_role_prefixes(self, prefixes):
+        config_path = self.gateway_config_dir / "SetupConfiguration.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config["BlockedRolePrefixes"] = prefixes
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    def test_blocked_username_prefix_is_rejected(self):
+        # citus is the username in the issue #650 reproduction; documentdb is the
+        # prefix the default test config blocks. Either must fail fast at startup
+        # rather than letting the container report ready with an unusable user.
+        result = self._run_entrypoint(
+            "--password", "mypassword", extra_env={"USERNAME": "documentdb_user"}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "username 'documentdb_user' uses reserved prefix 'documentdb'",
+            result.stdout + result.stderr,
+        )
+
+    def test_blocked_username_prefix_is_case_insensitive(self):
+        result = self._run_entrypoint(
+            "--password", "mypassword", extra_env={"USERNAME": "DocumentDBAdmin"}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "uses reserved prefix 'documentdb'",
+            result.stdout + result.stderr,
+        )
+
+    def test_allowed_username_passes_validation(self):
+        result = self._run_entrypoint(
+            "--password", "mypassword", extra_env={"USERNAME": "docdb_admin"}
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn("reserved prefix", result.stdout + result.stderr)
+
+    def test_all_configured_blocked_prefixes_are_rejected(self):
+        prefixes = ["documentdb", "citus", "pg", "internal_role"]
+        self._set_blocked_role_prefixes(prefixes)
+        for prefix in prefixes:
+            username = f"{prefix}_service"
+            with self.subTest(username=username):
+                result = self._run_entrypoint(
+                    "--password", "mypassword", extra_env={"USERNAME": username}
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    f"uses reserved prefix '{prefix}'",
+                    result.stdout + result.stderr,
+                )
 
 
 class InitDataAttemptMarkerTests(unittest.TestCase):
