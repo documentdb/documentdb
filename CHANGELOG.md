@@ -9,6 +9,7 @@
 * Add feature-flagged single-pass RUM posting-tree vacuum that prunes emptied leaf pages inline during the bulk-delete TID cleanup walk instead of a separate pruning pass. Guarded by `enable_single_pass_posting_tree_vacuum`, disabled by default while pending stabilization. *[Perf]*
 * Fix backend crash when serializing a SQL array that contains a NULL element. *[Bugfix]*
 * Fix memory usage in tokio-postgres Framed/BytesMut crate *[Bugfix/Perf]*
+* Fix documentdb-local logging PostgreSQL error 42883 on every connection when using its bundled PostgreSQL: the bundled gateway calls `documentdb_api.get_parameter(...)` for the unsupported MongoDB `getParameter` command, but that function was never shipped in the OSS extension. Until the gateway stops dispatching the command, the emulator returns `CommandNotSupported` without exposing parameter values. *[Bugfix]* (#650)
 
 ### documentdb v0.114-0 (Unreleased) ###
 * Extend `enableNewNamespaceValidation` to block create/drop/rename/createIndex on reserved collections in `admin` and `local` databases, and complete the `config` reserved-collection list (added sharding-runtime names: `changelog`, `mongos`, `placementHistory`, `tags`, `transactions`, `locks`, `lockpings`, `migrations`, `migrationCoordinators`, `rangeDeletions`, `reshardingOperations`, `cache.collections`, `cache.databases`). *[Feature]*

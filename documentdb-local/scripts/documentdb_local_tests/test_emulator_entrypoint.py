@@ -144,6 +144,82 @@ json.dump(data, sys.stdout)
         ) as file:
             return json.load(file)
 
+    def _configure_postgres_stubs(self, psql_exit_code=0):
+        sql_capture = self.root / "psql-input.sql"
+        self._write_exec(
+            self.gateway_scripts / "start_oss_server.sh",
+            f"""#!/bin/sh
+touch "{self.data_dir / 'postmaster.pid'}" "{self.data_dir / 'pglog.log'}"
+echo oss-server-stub-started
+""",
+        )
+        self._write_exec(
+            self.bin_dir / "psql",
+            f"""#!/bin/sh
+cat > "{sql_capture}"
+exit {psql_exit_code}
+""",
+        )
+        return sql_capture
+
+    def test_get_parameter_stub_returns_command_not_supported(self):
+        sql_capture = self._configure_postgres_stubs()
+
+        result = self._run_entrypoint(extra_env={"START_POSTGRESQL": "true"})
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        sql = sql_capture.read_text(encoding="utf-8")
+        self.assertIn(
+            "to_regprocedure('documentdb_api.get_parameter(boolean,boolean,text[])') IS NULL",
+            sql,
+        )
+        self.assertIn(
+            "CREATE FUNCTION documentdb_api.get_parameter(boolean, boolean, text[])",
+            sql,
+        )
+        self.assertIn('"code": 115', sql)
+        self.assertIn('"codeName": "CommandNotSupported"', sql)
+        self.assertIn('"ok": 0.0', sql)
+        self.assertIn(
+            "documentdb-local temporary CommandNotSupported stub for issue #650",
+            sql,
+        )
+        self.assertNotIn("CREATE OR REPLACE FUNCTION", sql)
+        self.assertNotIn("featureCompatibilityVersion", sql)
+        self.assertNotIn("'7.0'", sql)
+        self.assertIn(
+            "Ensuring unsupported getParameter returns CommandNotSupported",
+            result.stdout,
+        )
+
+    def test_get_parameter_stub_install_failure_aborts_startup(self):
+        self._configure_postgres_stubs(psql_exit_code=1)
+
+        result = self._run_entrypoint(extra_env={"START_POSTGRESQL": "true"})
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "could not install the documentdb-local getParameter rejection stub",
+            result.stdout + result.stderr,
+        )
+        self.assertNotIn("Starting gateway in the background", result.stdout)
+
+    def test_get_parameter_stub_is_not_installed_in_external_postgres(self):
+        psql_called = self.root / "psql-called"
+        self._write_exec(
+            self.bin_dir / "psql",
+            f"""#!/bin/sh
+touch "{psql_called}"
+exit 1
+""",
+        )
+
+        result = self._run_entrypoint(extra_env={"START_POSTGRESQL": "false"})
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertFalse(psql_called.exists())
+        self.assertIn("Skipping PostgreSQL server start", result.stdout)
+
     def test_default_mode_sets_allowTLS_in_config(self):
         result = self._run_entrypoint("--password", "mypassword")
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
