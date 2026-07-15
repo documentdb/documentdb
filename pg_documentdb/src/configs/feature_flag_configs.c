@@ -325,8 +325,8 @@ bool UseFileBasedPersistedCursors = DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS;
 #define DEFAULT_CLEANUP_CURSOR_FILES true
 bool CleanupCursorFiles = DEFAULT_CLEANUP_CURSOR_FILES;
 
-/* Added in v111, Pending stabilization, enable in v115 */
-#define DEFAULT_FAIL_ON_GROUP_ID_DUPLICATE false
+/* Added in v111, enabled in v115, remove after v116 */
+#define DEFAULT_FAIL_ON_GROUP_ID_DUPLICATE true
 bool FailOnGroupIdDuplicate =
 	DEFAULT_FAIL_ON_GROUP_ID_DUPLICATE;
 
@@ -433,7 +433,7 @@ bool EnableOperatorVariablesInLookup =
  * SECTION: Collation feature flags
  */
 
-/* Added in v108, Pending stabilization, enable in v115 */
+/* Added in v108, Pending stabilization, enable in v124 */
 #define DEFAULT_SKIP_FAIL_ON_COLLATION false
 bool SkipFailOnCollation = DEFAULT_SKIP_FAIL_ON_COLLATION;
 
@@ -442,7 +442,7 @@ bool SkipFailOnCollation = DEFAULT_SKIP_FAIL_ON_COLLATION;
 bool EnableCollationWithNonUniqueOrderedIndexes =
 	DEFAULT_ENABLE_COLLATION_WITH_NON_UNIQUE_ORDERED_INDEXES;
 
-/* Added in v110, Pending stabilization, enable in v115 */
+/* Added in v110, Pending stabilization, enable in v118 */
 #define DEFAULT_ENABLE_COLLATION_WITH_NEW_GROUP_ACCUMULATORS false
 bool EnableCollationWithNewGroupAccumulators =
 	DEFAULT_ENABLE_COLLATION_WITH_NEW_GROUP_ACCUMULATORS;
