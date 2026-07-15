@@ -359,10 +359,6 @@ bool RemoveMatchNamespaceFilters = DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS;
 #define DEFAULT_ENABLE_TAILABLE_CURSOR_MAX_AWAIT_TIME true
 bool EnableTailableCursorMaxAwaitTime = DEFAULT_ENABLE_TAILABLE_CURSOR_MAX_AWAIT_TIME;
 
-/* Added in v111, enabled in v111, Remove after v113 */
-#define DEFAULT_MULTIPLE_POSITIONAL_OPERATORS_NOT_ALLOWED true
-bool MultiplePositionalNotAllowed = DEFAULT_MULTIPLE_POSITIONAL_OPERATORS_NOT_ALLOWED;
-
 /* Added in v111, enabled in v115, remove after v117 */
 #define DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG true
 bool FailOnNonEmptyGroupCountArg = DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG;
@@ -1217,14 +1213,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"When disabled, the field is omitted for those indexes."),
 		NULL, &EmitEnableOrderedIndexFalseInResponse,
 		DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.multipleDollarPositionalNotAllowed", newGucPrefix),
-		gettext_noop(
-			"Determines whether to throw error when multiple $ positional operators are provided in the same path e.g. 'a.b.$.c.$'"),
-		NULL, &MultiplePositionalNotAllowed,
-		DEFAULT_MULTIPLE_POSITIONAL_OPERATORS_NOT_ALLOWED,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

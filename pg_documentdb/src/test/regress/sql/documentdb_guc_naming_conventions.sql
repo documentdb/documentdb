@@ -169,7 +169,6 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.maxUserLimit'),
     ('documentdb.maxWildcardIndexKeySize'),
     ('documentdb.maxWriteBatchSize'),
-    ('documentdb.multipleDollarPositionalNotAllowed'),
     ('documentdb.removeMatchNamespaceFilters'),
     ('documentdb.repeatPurgeIndexesForTTLTask'),
     ('documentdb.rumFailOnLostPath'),
