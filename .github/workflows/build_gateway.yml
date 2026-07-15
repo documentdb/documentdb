@@ -132,6 +132,28 @@ jobs:
 
         docker exec "$CONTAINER_NAME" mongosh "localhost:10260" -u docdb_admin -p 123456 --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --quiet --eval 'const count = db.getSiblingDB("gateway_smoke").image_smoke.countDocuments({ name: "documentdb-local-smoke", ok: true }); if (count !== 1) { print(`expected 1 document, found ${count}`); quit(1); }'
 
+        # Backend-contract gate (issue #650). The smoke run above drives the
+        # gateway end to end, including the getParameter discovery probe mongosh
+        # issues on every connection. A gateway command whose backend SQL calls a
+        # function the shipped extension does not define surfaces as a PostgreSQL
+        # undefined_function error (SQLSTATE 42883) in the container logs -- but
+        # clients silently tolerate failed discovery probes, so the CRUD assertion
+        # above cannot catch it (this is exactly how issue #650 shipped). Fail the
+        # build if such an error is present. The 42883 match is anchored to the
+        # gateway/PostgreSQL "code="/"sub_status=" form so it cannot collide with a
+        # timestamp fraction or activity-id digit run; benign "database/relation ...
+        # does not exist" lines (different SQLSTATEs) do not match "function ...".
+        echo "Checking gateway logs for undefined backend-function errors..."
+        if ! smoke_logs=$(docker logs "$CONTAINER_NAME" 2>&1); then
+          echo "Failed to read container logs for the backend-contract gate." >&2
+          exit 1
+        fi
+        if printf '%s\n' "$smoke_logs" | grep -E "(code|sub_status)=42883|function .* does not exist"; then
+          echo "Found a PostgreSQL undefined_function error in the gateway logs (see matches above): a gateway command calls a backend function the shipped extension does not define (cf. issue #650)." >&2
+          exit 1
+        fi
+        echo "Backend-contract gate passed: no undefined-function errors in container logs."
+
         dump_logs=false
     - name: Push ${{ matrix.arch }} Image
       if: github.event.inputs.push_images == 'true' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
