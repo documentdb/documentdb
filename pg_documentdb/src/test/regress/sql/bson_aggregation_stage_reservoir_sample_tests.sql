@@ -65,7 +65,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- Plan: $sample + downstream $match (filter after sampling) - uses TABLESAMPLE path (filter is after $sample)
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$sample": { "size": 10 } }, { "$match": { "value": { "$gt": 100 } } } ] }');
 
--- Plan: $sample with size 0 (edge case)
+-- Plan: $sample with size 0 is rejected during planning (error 28747, must be positive)
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$sample": { "size": 0 } } ] }');
 
 -- Plan: $match on _id + $sample - verifies bson_dollar_range marker qual is stripped from IndexScan filter
@@ -96,7 +96,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- Execution: $sample on empty collection returns no rows
 SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "emptyCollection", "pipeline": [ { "$sample": { "size": 5 } } ] }');
 
--- $match + $sample with size 0 exercises the reservoir path returning no rows
+-- $match + $sample with size 0 is rejected (error 28747, must be positive)
 SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 0 } } ] }');
 
 -- Single document collection
@@ -244,14 +244,16 @@ RESET enable_seqscan;
 RESET documentdb.forceUseIndexIfAvailable;
 
 -- =============================================================================
--- ERROR: Sample size exceeds maximum reservoir capacity
+-- Oversized sample sizes fall back to order by random() (no error)
 -- =============================================================================
 
--- Should error when sample size exceeds MaxAllocSize / sizeof(HeapTuple)
-SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 200000000 } } ] }');
+-- A size above the reservoir cap is not routed to the reservoir; it falls back
+-- to order by random(), where a size >= population returns every matching document.
+SELECT count(*) AS fallback_count FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 200000000 } } ] }')) t;
 
--- Should error when sample size exceeds INT32_MAX (2 billion)
-SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 2200000000 } } ] }');
+-- Sample size beyond INT32_MAX is not routed to the reservoir; it falls back to
+-- order-by-random, where a size >= population returns every matching document.
+SELECT count(*) AS fallback_count FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 2200000000 } } ] }')) t;
 
 -- =============================================================================
 -- $lookup + $sample TESTS
@@ -551,7 +553,7 @@ RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
 -- HEAP-SKIP MODE: DEAD TUPLES, EMPTY POPULATION, AND SIZE BOUNDARIES
 -- Paths the other sections don't reach: dead index entries (deleted but not yet
 -- vacuumed) that the skip phase must not count, an empty match set, and sizes 0
--- and 1.
+-- (rejected) and 1.
 -- =============================================================================
 
 SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('reservoirdb','extraHS', FORMAT('{ "_id": %s, "a": %s }', g, g)::documentdb_core.bson, NULL) FROM generate_series(1, 60) g) ig;
@@ -586,7 +588,7 @@ FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregat
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "extraHS", "pipeline": [ { "$match": { "a": { "$gte": 100000 } } }, { "$sample": { "size": 5 } } ] }');
 SELECT count(*) AS cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "extraHS", "pipeline": [ { "$match": { "a": { "$gte": 100000 } } }, { "$sample": { "size": 5 } } ] }')) t;
 
--- Size 0: empty result.
+-- Size 0: rejected during planning (error 28747, must be positive).
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "extraHS", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sample": { "size": 0 } } ] }');
 SELECT count(*) AS cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "extraHS", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sample": { "size": 0 } } ] }')) t;
 

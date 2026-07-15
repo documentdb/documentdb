@@ -47,6 +47,7 @@
 #include <funcapi.h>
 
 #include "io/bson_core.h"
+#include "types/decimal128.h"
 #include "metadata/metadata_cache.h"
 #include "query/query_operator.h"
 #include "planner/documentdb_planner.h"
@@ -60,6 +61,7 @@
 #include "utils/version_utils.h"
 #include "aggregation/bson_query.h"
 #include "aggregation/bson_query_common.h"
+#include "customscan/bson_custom_query_scan.h"
 #include "metadata/index.h"
 
 #include "aggregation/bson_aggregation_pipeline_private.h"
@@ -327,6 +329,7 @@ static Query * HandleReplaceWith(const bson_value_t *existingValue, Query *query
 								 AggregationPipelineBuildContext *context);
 static Query * HandleSample(const bson_value_t *existingValue, Query *query,
 							AggregationPipelineBuildContext *context);
+static int64_t ParseSampleSize(const bson_value_t *sizeValue);
 static Query * HandleSkip(const bson_value_t *existingValue, Query *query,
 						  AggregationPipelineBuildContext *context);
 static Query * HandleSort(const bson_value_t *existingValue, Query *query,
@@ -9341,6 +9344,41 @@ AddQualifierForTailableQuery(Query *query, Query *baseQuery,
 
 
 /*
+ * Parses the numeric $sample size into an int64. Out-of-range magnitudes
+ * saturate to the int64 bounds; NaN coerces to zero.
+ */
+static int64_t
+ParseSampleSize(const bson_value_t *sizeValue)
+{
+	/* Quiet conversion saturates an out-of-range magnitude to +/-infinity instead of throwing. */
+	double sizeDouble = BsonValueAsDoubleQuiet(sizeValue);
+
+	if (isnan(sizeDouble))
+	{
+		/* NaN coerces to zero, which the caller rejects as non positive. */
+		return 0;
+	}
+
+	if (sizeDouble >= (double) PG_INT64_MAX)
+	{
+		/* Oversized: clamp to maximum int64. */
+		return PG_INT64_MAX;
+	}
+
+	if (sizeDouble <= (double) PG_INT64_MIN)
+	{
+		/* Undersized: clamp to minimum int64. */
+		return PG_INT64_MIN;
+	}
+
+	/* In-range: Decimal128 rounds half to even; other numerics truncate toward zero. */
+	return sizeValue->value_type == BSON_TYPE_DECIMAL128 ?
+		   GetBsonDecimal128AsInt64(sizeValue, ConversionRoundingMode_NearestEven) :
+		   BsonValueAsInt64(sizeValue);
+}
+
+
+/*
  * Processes the Sample stage for the aggregation pipeline.
  * If the sample is against the base RTE - injects the Sample TSM.
  * If it's on a downstream stage, injects an ORDER BY Random().
@@ -9366,6 +9404,15 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 		if (strcmp(bson_iter_key(&sampleIter), "size") == 0)
 		{
 			sizeValue = *bson_iter_value(&sampleIter);
+
+			/* Validate the size type inline so a non-numeric size takes
+			 * precedence over any later unrecognized option. */
+			if (!BsonValueIsNumber(&sizeValue))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28746),
+								errmsg(
+									"size argument to $sample must be a number")));
+			}
 		}
 		else
 		{
@@ -9380,20 +9427,16 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 						errmsg("The $sample stage must explicitly define a size value")));
 	}
 
-	if (!BsonValueIsNumber(&sizeValue))
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28746),
-						errmsg(
-							"The size parameter provided to $sample must be a valid numeric value")));
-	}
-
-	double sizeDouble = BsonValueAsDouble(&sizeValue);
-
-	if (sizeDouble < 0 || isnan(sizeDouble) || isinf(sizeDouble))
+	/*
+	 * Coerce the size to an int64, then require a strictly positive value; a
+	 * zero, NaN, or fractional value that rounds to zero is rejected.
+	 */
+	int64_t sampleSize = ParseSampleSize(&sizeValue);
+	if (sampleSize <= 0)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28747),
 						errmsg(
-							"The size parameter provided to $sample must be a valid numeric value")));
+							"size argument to $sample must be a positive integer")));
 	}
 
 	/* If the sample is against the base RTE - convert to a sample CTE */
@@ -9415,7 +9458,7 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 
 			Const *constVal = (Const *) sampleArg;
 			int64_t finalSize = DatumGetInt64(constVal->constvalue);
-			finalSize = Min(finalSize, sizeDouble);
+			finalSize = Min(finalSize, sampleSize);
 			constVal->constvalue = Int64GetDatum(finalSize);
 		}
 		else
@@ -9425,7 +9468,7 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 
 			Node *rowCountArg = (Node *) makeConst(INT8OID, -1, InvalidOid,
 												   sizeof(int64_t),
-												   Int64GetDatum(sizeDouble), false,
+												   Int64GetDatum(sampleSize), false,
 												   true);
 
 			tablesample_sys_rows->args = list_make1(rowCountArg);
@@ -9435,7 +9478,8 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 	}
 	else if (EnableDollarSampleReservoirScan && rte->rtekind == RTE_RELATION &&
 			 context->mongoCollection != NULL &&
-			 context->mongoCollection->shardKey == NULL)
+			 context->mongoCollection->shardKey == NULL &&
+			 sampleSize <= GetMaxReservoirSampleSize())
 	{
 		/*
 		 * When reservoir sampling is enabled, the target is a base relation,
@@ -9445,23 +9489,21 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 		 * uses PostgreSQL's built-in reservoir sampling algorithm.
 		 * Sharded collections are excluded for now.
 		 *
+		 * The "sampleSize <= GetMaxReservoirSampleSize()" guard above keeps
+		 * oversized requests off this path: the reservoir buffers K HeapTuple
+		 * copies in a palloc'd array, so K is capped by the palloc size limit.
+		 * Larger sizes fall through to the ORDER BY random() path below.
+		 *
 		 * TODO: Handle reservoir sampling for upper paths as well (e.g.,
 		 * $unwind followed by $sample should still use reservoir instead of
-		 * the order-by-random() fallback).
+		 * the ORDER BY random() fallback).
 		 */
-
-		if (sizeDouble >= (double) PG_INT64_MAX)
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28747),
-							errmsg(
-								"The size parameter provided to $sample must be a valid numeric value")));
-		}
 
 		pgbson_writer writer;
 		PgbsonWriterInit(&writer);
 		pgbson_writer rangeWriter;
 		PgbsonWriterStartDocument(&writer, "", 0, &rangeWriter);
-		PgbsonWriterAppendInt64(&rangeWriter, "sample", 6, (int64) sizeDouble);
+		PgbsonWriterAppendInt64(&rangeWriter, "sample", 6, sampleSize);
 		PgbsonWriterEndDocument(&writer, &rangeWriter);
 
 		Const *bsonConst = makeConst(BsonTypeId(), -1, InvalidOid, -1,
@@ -9523,7 +9565,7 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 	query->sortClause = sortlist;
 
 	query->limitCount = (Node *) makeConst(INT8OID, -1, InvalidOid, sizeof(int64_t),
-										   Int64GetDatum(sizeDouble), false, true);
+										   Int64GetDatum(sampleSize), false, true);
 
 	/* Push next stage to a new subquery (since we did a sort) */
 	context->requiresSubQuery = true;
