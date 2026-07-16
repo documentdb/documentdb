@@ -2902,12 +2902,6 @@ CreateMinOrMaxBounds(int32_t indexAttribute, const char *wildcardPath,
 							"$min index operator is only supported on the first field of a composite index")));
 	}
 
-	if (wildcardPath != NULL)
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-							"$min index operator is not supported on wildcard index fields")));
-	}
-
 	if (indexKey->value_type != BSON_TYPE_BINARY)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(

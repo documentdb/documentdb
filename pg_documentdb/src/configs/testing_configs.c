@@ -139,6 +139,16 @@ bool EnableExplainScanNamespaceName = DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME
 #define DEFAULT_INDEX_BUILD_FAILURE_POINT 0
 int IndexBuildFailurePoint = DEFAULT_INDEX_BUILD_FAILURE_POINT;
 
+/*
+ * When set, the file-based persisted cursor drain path walks the planned
+ * statement and reports whether the plan uses a parallel scan in the cursor
+ * continuation document. Used only by tests to assert that parallel plans are
+ * exercised without relying on EXPLAIN.
+ */
+#define DEFAULT_REPORT_PARALLEL_PLAN_IN_CURSOR_CONTINUATION false
+bool ReportParallelPlanInCursorContinuation =
+	DEFAULT_REPORT_PARALLEL_PLAN_IN_CURSOR_CONTINUATION;
+
 void
 InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 {
@@ -475,4 +485,14 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		PGC_USERSET,
 		GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE,
 		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.reportParallelPlanInCursorContinuation", newGucPrefix),
+		gettext_noop(
+			"Whether the file-based persisted cursor drain path reports if the "
+			"plan uses a parallel scan in the cursor continuation document. For "
+			"testing only."),
+		NULL, &ReportParallelPlanInCursorContinuation,
+		DEFAULT_REPORT_PARALLEL_PLAN_IN_CURSOR_CONTINUATION,
+		PGC_USERSET, GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE, NULL, NULL, NULL);
 }

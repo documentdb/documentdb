@@ -281,6 +281,19 @@ bool EnableDynamicPersistentCursorsWithStats =
 #define DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STARTUP_SCAN true
 bool EnableDynamicCursorFastStartupScan = DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STARTUP_SCAN;
 
+/* Added in v115, enabled in v115, remove after v117 */
+#define DEFAULT_ENABLE_DYNAMIC_CURSOR_PARALLEL_PLANS true
+bool EnableDynamicCursorParallelPlans = DEFAULT_ENABLE_DYNAMIC_CURSOR_PARALLEL_PLANS;
+
+/* Added in v116, enabled in v116, remove after v122 */
+#define DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP true
+bool EnableDynamicCursorMultiKeyBitmap = DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP;
+
+/* Added in v115, enabled in v115, remove after v117 */
+#define DEFAULT_ENABLE_SINGLE_RESULT_QUERY_PARALLEL_PLANS true
+bool EnableSingleResultQueryParallelPlans =
+	DEFAULT_ENABLE_SINGLE_RESULT_QUERY_PARALLEL_PLANS;
+
 /* Added in v116, enabled in v116, remove after v118 */
 #define DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING true
 bool EnableGroupByDynamicStreaming = DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING;
@@ -708,6 +721,34 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to enable fast startup scan for dynamic cursors."),
 		NULL, &EnableDynamicCursorFastStartupScan,
 		DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STARTUP_SCAN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_dynamic_cursor_parallel_plans", newGucPrefix),
+		gettext_noop(
+			"Whether or not to allow parallel plans for dynamic cursors."),
+		NULL, &EnableDynamicCursorParallelPlans,
+		DEFAULT_ENABLE_DYNAMIC_CURSOR_PARALLEL_PLANS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_dynamic_cursor_multikey_bitmap", newGucPrefix),
+		gettext_noop(
+			"Whether or not dynamic cursors force a bitmap scan for multikey "
+			"indexes. Ordered index scans on multikey indexes can re-emit a "
+			"document across cursor batches, so a bitmap scan is used to "
+			"deduplicate by heap tuple."),
+		NULL, &EnableDynamicCursorMultiKeyBitmap,
+		DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_single_result_query_parallel_plans", newGucPrefix),
+		gettext_noop(
+			"Whether or not to allow parallel plans for single-result queries "
+			"(e.g. count/distinct)."),
+		NULL, &EnableSingleResultQueryParallelPlans,
+		DEFAULT_ENABLE_SINGLE_RESULT_QUERY_PARALLEL_PLANS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
