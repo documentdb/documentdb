@@ -1944,7 +1944,7 @@ ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt *
 			if (EnableDynamicCursorFastStartupScan)
 			{
 				/* ensure that in this path, the plan follows what cursors do */
-				*cursorOptions |= CURSOR_OPT_FAST_PLAN;
+				*cursorOptions = GetDynamicCursorCursorOptions();
 			}
 		}
 	}

@@ -142,7 +142,8 @@ SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_wildcard_gener
  gin_bson_get_composite_path_wildcard_generated_terms 
 ------------------------------------------------------
  { "$" : { "$undefined" : true }, "t" : false }
-(1 row)
+ { "" : [  ], "t" : false }
+(2 rows)
 
 SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_wildcard_generated_terms('{ "a": { "c": { "d": 1 } }, "b": "foo" }', '[ "a" ]', 2600, true, 0);
  gin_bson_get_composite_path_wildcard_generated_terms 
@@ -250,7 +251,8 @@ SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_wildcard_gener
 ------------------------------------------------------
  { "a" : { "$undefined" : true }, "t" : false }
  { "b" : { "$undefined" : true }, "t" : false }
-(2 rows)
+ { "" : [  ], "t" : false }
+(3 rows)
 
 SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_wildcard_generated_terms('{ "a": { "c": { "d": 1 } }, "b": { "c": { "d": 1 } } }', '[ "" ]', 2600, true, 0);
  gin_bson_get_composite_path_wildcard_generated_terms 

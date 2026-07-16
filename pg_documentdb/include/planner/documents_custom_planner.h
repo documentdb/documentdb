@@ -12,4 +12,6 @@
 #define DOCUMENTS_CUSTOM_PLANNER_H
 
 PlannedStmt * TryCreatePointReadPlan(Query *query);
+
+int GetDynamicCursorCursorOptions(void);
 #endif

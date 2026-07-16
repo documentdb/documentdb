@@ -200,14 +200,13 @@ AddExtensionQueryScanForVectorQuery(PlannerInfo *root, RelOptInfo *rel,
 	rel->pathlist = AddCustomPathForVectorCore(root, rel->pathlist, rel, inputState,
 											   failIfNotFound);
 
-	if (rel->partial_pathlist != NIL)
-	{
-		failIfNotFound = false;
-		rel->partial_pathlist = AddCustomPathForVectorCore(root,
-														   rel->partial_pathlist, rel,
-														   inputState,
-														   failIfNotFound);
-	}
+	/*
+	 * The CustomQueryScan wrapper cannot run in a parallel worker, so a vector
+	 * search query cannot use a parallel plan. Drop any partial paths to prevent
+	 * the planner from building a gather/gather-merge over this scan (which would
+	 * either be costed with zero workers or fail to deserialize in a worker).
+	 */
+	rel->partial_pathlist = NIL;
 }
 
 
@@ -225,7 +224,14 @@ AddExtensionQueryScanForTextQuery(PlannerInfo *root, RelOptInfo *rel, RangeTblEn
 	inputState->queryTextData = *queryTextIndexData;
 	inputState->hasQueryTextData = true;
 	rel->pathlist = AddCustomPathCore(rel->pathlist, inputState);
-	rel->partial_pathlist = AddCustomPathCore(rel->partial_pathlist, inputState);
+
+	/*
+	 * The CustomQueryScan wrapper cannot run in a parallel worker, so a text
+	 * search query cannot use a parallel plan. Drop any partial paths to prevent
+	 * the planner from building a gather/gather-merge over this scan (which would
+	 * either be costed with zero workers or fail to deserialize in a worker).
+	 */
+	rel->partial_pathlist = NIL;
 }
 
 
@@ -266,8 +272,13 @@ AddCustomPathCore(List *pathList, InputQueryState *queryState)
 		path->startup_cost = inputPath->startup_cost;
 		path->total_cost = inputPath->total_cost;
 
-		/* For now the custom path is as parallel safe as its inner path */
-		path->parallel_safe = inputPath->parallel_safe;
+		/*
+		 * The CustomQueryScan ExtensibleNode cannot be serialized to a parallel
+		 * worker (its node read handler is intentionally unimplemented), so this
+		 * wrapper can never execute in a parallel plan. Mark it parallel-unsafe
+		 * regardless of the inner path.
+		 */
+		path->parallel_safe = false;
 
 		/* move the 'projection' from the path to the custom path. */
 		path->pathtarget = inputPath->pathtarget;
@@ -374,8 +385,13 @@ AddCustomPathForVectorCore(PlannerInfo *planner, List *pathList, RelOptInfo *rel
 	path->startup_cost = vectorSearchPath->startup_cost;
 	path->total_cost = vectorSearchPath->total_cost;
 
-	/* For now the custom path is as parallel safe as its inner path */
-	path->parallel_safe = vectorSearchPath->parallel_safe;
+	/*
+	 * The CustomQueryScan ExtensibleNode cannot be serialized to a parallel
+	 * worker (its node read handler is intentionally unimplemented), so this
+	 * wrapper can never execute in a parallel plan. Mark it parallel-unsafe
+	 * regardless of the inner path.
+	 */
+	path->parallel_safe = false;
 
 	/* move the 'projection' from the path to the custom path. */
 	path->pathtarget = vectorSearchPath->pathtarget;
