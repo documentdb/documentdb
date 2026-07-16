@@ -31,7 +31,6 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.disableExtendedRumExplainPlans'),
     ('documentdb.emitEnableOrderedIndexFalseInResponse'),
     ('documentdb.enableAddShardKeyOnlyOnPrimaryKeyFilters'),
-    ('documentdb.enableAddToSetAggregationRewrite'),
     ('documentdb.enableArrayFilterLogicalOperators'),
     ('documentdb.enableBackgroundWorker'),
     ('documentdb.enableBackgroundWorkerInitJobs'),
