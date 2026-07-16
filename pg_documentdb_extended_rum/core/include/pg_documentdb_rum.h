@@ -349,6 +349,9 @@ typedef signed char RumNullCategory;
 /*
  * Access macros for leaf-page entry tuples (see discussion in README)
  */
+#define RumForceEmptyPosting(itup) \
+	(RumSetNPosting((itup), 0), \
+	 ItemPointerSetBlockNumber(&(itup)->t_tid, InvalidBlockNumber))
 #define RumGetNPosting(itup) RumItemPointerGetOffsetNumber(&(itup)->t_tid)
 #define RumSetNPosting(itup, n) ItemPointerSetOffsetNumber(&(itup)->t_tid, n)
 #define RUM_TREE_POSTING ((OffsetNumber) 0xffff)
@@ -411,6 +414,7 @@ typedef signed char RumNullCategory;
 	 - MAXALIGN(sizeof(RumPageOpaqueData)))
 
 #define RumDataPageMaxOff(page) (RumPageGetOpaque(page)->dataPageMaxoff)
+#define RumDataPageIsEmpty(page) (RumDataPageMaxOff(page) < FirstOffsetNumber)
 #define RumDataPageReadFreeSpaceValue(page) (RumPageGetOpaque(page)->dataPageFreespace)
 
 #define RumMaxLeafDataItems \
