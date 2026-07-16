@@ -1491,6 +1491,7 @@ SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
 SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [
     { "$sort": { "x": 1 } },

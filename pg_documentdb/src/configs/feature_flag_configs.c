@@ -372,8 +372,8 @@ bool EnableSortGroupStage = DEFAULT_ENABLE_SORT_GROUP_STAGE;
 bool EnableProjectPushUpBeforeUnwindWithGroup =
 	DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP;
 
-/* Added in v113, Pending stabilization, enable in v115 */
-#define DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR_WITH_PREFIX false
+/* Added in v113, enabled in v115, remove after v118 */
+#define DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR_WITH_PREFIX true
 bool EnableSortPushToAccumulatorWithPrefix =
 	DEFAULT_ENABLE_SORT_PUSH_TO_ACCUMULATOR_WITH_PREFIX;
 

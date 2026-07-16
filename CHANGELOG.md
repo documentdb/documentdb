@@ -1,4 +1,5 @@
 ### documentdb v0.116-0 (Unreleased) ###
+* Enable pushing suffix sort keys into the accumulator in `$sortGroup` when group-by keys form a non-dotted prefix of the sort keys by default (`enableSortPushToAccumulatorWithPrefix`). *[Perf]*
 * Fix `$sample` size coercion and validation to be wire protocol compatible. *[Bugfix]*
 * Harden feature-flagged RUM empty entry-leaf page pruning (`documentdb_rum.prune_rum_empty_pages`): revalidate that the left/right siblings still bracket the target after re-locking (a concurrent left-sibling split could otherwise drop pages from the leaf chain), zero the retained high-key tuple's posting-tree pointer as intended, and acquire posting-tree root cleanup locks conditionally up front instead of blocking while holding sibling/parent/target locks. *[Bugfix]*
 * Stream `$group` aggregations under dynamic cursors when the group keys can be provided in order by an index (sorted GroupAggregate over an ordered index scan), instead of falling back to a persistent cursor. Guarded by `documentdb.enable_group_by_dynamic_streaming` feature flag, enabled by default while pending stabilization. *[Perf]*
