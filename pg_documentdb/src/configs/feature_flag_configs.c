@@ -347,10 +347,6 @@ bool EnableRumCursorDynamicIndexScans = DEFAULT_ENABLE_RUM_CURSOR_DYNAMIC_INDEX_
 bool EnableRumDynamicIndexScansSkipToTid =
 	DEFAULT_ENABLE_RUM_DYNAMIC_INDEX_SCANS_SKIP_TO_TID;
 
-/* Added in v110, enabled in v110, remove after v113 */
-#define DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE true
-bool EnableAddToSetAggregationRewrite = DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE;
-
 /* Added in v110, enabled in v110, unknown stabilization removal time */
 #define DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS true
 bool RemoveMatchNamespaceFilters = DEFAULT_REMOVE_MATCH_NAMESPACE_FILTERS;
@@ -1163,14 +1159,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to schedule index builds via background worker jobs."),
 		NULL, &IndexBuildsScheduledOnBgWorker,
 		DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableAddToSetAggregationRewrite", newGucPrefix),
-		gettext_noop(
-			"Whether to enable the new addToSet aggregation implementation that prevents crashes with the new delayed portal feature."),
-		NULL, &EnableAddToSetAggregationRewrite,
-		DEFAULT_ENABLE_ADD_TO_SET_AGGREGATION_REWRITE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
