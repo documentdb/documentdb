@@ -4711,9 +4711,14 @@ BuildSinglePathTermsForCompositeTerms(pgbson *bson,
 	context.traverseOptionsFunc = &GetCompositePathGenerateTraverseOption;
 	SetGenerateTermsContextFlags(&context);
 
-	/* Empty arrays make a path multi-key; only surfaced when the index tracks
-	* per-path multi-key status via opclass metadata (the "mkp" reloption). */
-	context.markEmptyArrayAsMultiKey = options->enableMetadataBasedTracking;
+	/* Empty arrays make a path multi-key. This is surfaced when the index tracks
+	 * per-path multi-key status via opclass metadata (the "mkp" reloption). For a
+	 * composite wildcard index we surface it in the default term-based mode as
+	 * well: a wildcard column can match any path, so an empty array anywhere makes
+	 * the wildcard path multi-key, and the index must report that status
+	 * consistently regardless of whether metadata-based tracking is enabled. */
+	context.markEmptyArrayAsMultiKey = options->enableMetadataBasedTracking ||
+									   options->wildcardPathIndex >= 0;
 
 	GenerateTermsForPath(bson, &context);
 
@@ -5377,8 +5382,21 @@ ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const char **index
 			}
 		}
 
+		/*
+		 * An empty query path is only valid when the index has a root wildcard
+		 * column (an empty index path that matches every field). In that case the
+		 * empty path routes to the wildcard column - this is how a full/ordered
+		 * scan qual (e.g. an orderByScan on the leading column) is expressed for a
+		 * root wildcard index. Any other empty path is malformed.
+		 */
+		bool isRootWildcardEmptyPath =
+			queryElement.pathLength == 0 &&
+			wildcardPathIndex >= 0 &&
+			wildcardPathIndex < numPaths &&
+			indexPathsLengths[wildcardPathIndex] == 0;
+
 		if (queryStrategy == BSON_INDEX_STRATEGY_INVALID ||
-			queryElement.pathLength == 0 ||
+			(queryElement.pathLength == 0 && !isRootWildcardEmptyPath) ||
 			queryElement.bsonValue.value_type == BSON_TYPE_EOD)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR), errmsg(

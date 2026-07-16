@@ -54,6 +54,8 @@ extern bool UseFileBasedPersistedCursors;
 extern bool EnableDebugQueryText;
 extern bool EnableDelayedHoldPortal;
 extern bool EnableDynamicCursorFastStartupScan;
+extern bool EnableDynamicCursorParallelPlans;
+extern bool EnableSingleResultQueryParallelPlans;
 
 
 /*
@@ -352,6 +354,11 @@ pgbson *
 DrainSingleResultQuery(Query *query)
 {
 	int cursorOptions = CURSOR_OPT_NO_SCROLL | CURSOR_OPT_BINARY;
+	if (EnableSingleResultQueryParallelPlans)
+	{
+		/* Allow the planner to consider parallel plans for the query. */
+		cursorOptions |= CURSOR_OPT_PARALLEL_OK;
+	}
 	MemoryContext currentContext = CurrentMemoryContext;
 
 	/* Deparse query text before planning since the planner may modify the query tree */
@@ -498,11 +505,16 @@ DrainStreamingQuery(HTAB *cursorMap, Query *query, int batchSize,
 }
 
 
-QueryCursorPlanResult *
-PlanDynamicQueryAndDetermineCursorType(Query *query, bool *isDynamicStreamable)
+bool
+PlanResultHasParallelPlan(QueryCursorPlanResult *planResult)
 {
-	/* Deparse query text before planning since the planner may modify the query tree */
-	char *sourceText = "";
+	return planResult->queryPlan->parallelModeNeeded;
+}
+
+
+int
+GetDynamicCursorCursorOptions(void)
+{
 	int cursorOptions = CURSOR_OPT_BINARY;
 	if (EnableDynamicCursorFastStartupScan)
 	{
@@ -512,6 +524,23 @@ PlanDynamicQueryAndDetermineCursorType(Query *query, bool *isDynamicStreamable)
 		cursorOptions |= CURSOR_OPT_FAST_PLAN;
 	}
 
+	if (EnableDynamicCursorParallelPlans)
+	{
+		/* Allow the planner to consider parallel plans for the cursor. */
+		cursorOptions |= CURSOR_OPT_PARALLEL_OK;
+	}
+
+	return cursorOptions;
+}
+
+
+QueryCursorPlanResult *
+PlanDynamicQueryAndDetermineCursorType(Query *query, bool *isDynamicStreamable)
+{
+	/* Deparse query text before planning since the planner may modify the query tree */
+	char *sourceText = "";
+
+	int cursorOptions = GetDynamicCursorCursorOptions();
 	if (EnableDebugQueryText)
 	{
 		bool pretty = false;

@@ -43,6 +43,7 @@ extern bool EnableDynamicCursors;
 extern bool EnableTailableCursorMaxAwaitTime;
 extern int DefaultTailableCursorMaxAwaitTimeMs;
 extern bool EnablePGPrngCursorId;
+extern bool ReportParallelPlanInCursorContinuation;
 
 /* --------------------------------------------------------- */
 /* Data types */
@@ -226,14 +227,16 @@ static pgbson * BuildPersistedContinuationDocument(const char *cursorName, int64
 												   cursorId, QueryKind queryKind,
 												   TimeSystemVariables *
 												   timeSystemVariables,
-												   int numIterations);
+												   int numIterations,
+												   bool hasParallelPlan);
 
 static pgbson * BuildPersistedFileContinuationDocument(const char *cursorName, int64_t
 													   cursorId, QueryKind queryKind,
 													   TimeSystemVariables *
 													   timeSystemVariables,
 													   int numIterations,
-													   bytea *continuationState);
+													   bytea *continuationState,
+													   bool hasParallelPlan);
 
 static Datum HandleRemoteUnshardedFirstPage(text *database, pgbson *querySpec,
 											int64_t cursorId, QueryData *queryData,
@@ -613,6 +616,7 @@ DrainLocalCursorGetMorePage(text *database, pgbson *cursorSpec,
 			}
 
 			int numIterations = 0;
+			bool hasParallelPlan = false;
 			getMoreInfo->cursorFileState = DrainPersistedFileCursor(
 				getMoreInfo->cursorName, getMoreInfo->queryData.batchSize,
 				&numIterations, accumulatedSize, arrayWriter,
@@ -623,13 +627,14 @@ DrainLocalCursorGetMorePage(text *database, pgbson *cursorSpec,
 				getMoreInfo->cursorName, getMoreInfo->cursorId,
 				getMoreInfo->queryKind,
 				&getMoreInfo->queryData.timeSystemVariables, numIterations,
-				getMoreInfo->cursorFileState);
+				getMoreInfo->cursorFileState, hasParallelPlan);
 			break;
 		}
 
 		case CursorKind_Persisted:
 		{
 			int numIterations = 0;
+			bool hasParallelPlan = false;
 			*queryFullyDrained = DrainPersistedCursor(
 				getMoreInfo->cursorName, getMoreInfo->queryData.batchSize,
 				&numIterations, accumulatedSize, arrayWriter);
@@ -637,7 +642,8 @@ DrainLocalCursorGetMorePage(text *database, pgbson *cursorSpec,
 							  BuildPersistedContinuationDocument(
 				getMoreInfo->cursorName, getMoreInfo->cursorId,
 				getMoreInfo->queryKind,
-				&getMoreInfo->queryData.timeSystemVariables, numIterations);
+				&getMoreInfo->queryData.timeSystemVariables, numIterations,
+				hasParallelPlan);
 			break;
 		}
 
@@ -1192,6 +1198,12 @@ HandlePersistentCursorCore(int64_t *cursorId, QueryCursorPlanResult *planResult,
 	 */
 	bool useHoldFileCursor = isHoldCursor && useFileBasedCursors;
 
+	bool hasParallelPlan = false;
+	if (ReportParallelPlanInCursorContinuation)
+	{
+		hasParallelPlan = PlanResultHasParallelPlan(planResult);
+	}
+
 	pgbson *continuationDoc = NULL;
 	if (*cursorId != 0)
 	{
@@ -1246,7 +1258,8 @@ HandlePersistentCursorCore(int64_t *cursorId, QueryCursorPlanResult *planResult,
 																	 &queryData->
 																	 timeSystemVariables,
 																	 numIterations,
-																	 cursorFileState);
+																	 cursorFileState,
+																	 hasParallelPlan);
 		}
 		else
 		{
@@ -1272,7 +1285,8 @@ HandlePersistentCursorCore(int64_t *cursorId, QueryCursorPlanResult *planResult,
 																 queryKind,
 																 &queryData->
 																 timeSystemVariables,
-																 numIterations);
+																 numIterations,
+																 hasParallelPlan);
 		}
 		else
 		{
@@ -1738,7 +1752,8 @@ BuildPersistedFileContinuationDocument(const char *cursorName, int64_t
 									   TimeSystemVariables *
 									   timeSystemVariables,
 									   int numIterations,
-									   bytea *continuationState)
+									   bytea *continuationState,
+									   bool hasParallelPlan)
 {
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
@@ -1766,6 +1781,11 @@ BuildPersistedFileContinuationDocument(const char *cursorName, int64_t
 		PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
 	}
 
+	if (hasParallelPlan)
+	{
+		PgbsonWriterAppendBool(&writer, "pp", 2, true);
+	}
+
 	return PgbsonWriterGetPgbson(&writer);
 }
 
@@ -1776,8 +1796,7 @@ BuildPersistedFileContinuationDocument(const char *cursorName, int64_t
 static pgbson *
 BuildPersistedContinuationDocument(const char *cursorName, int64_t cursorId, QueryKind
 								   queryKind, TimeSystemVariables *timeSystemVariables,
-								   int
-								   numIterations)
+								   int numIterations, bool hasParallelPlan)
 {
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
@@ -1796,6 +1815,11 @@ BuildPersistedContinuationDocument(const char *cursorName, int64_t cursorId, Que
 		BSON_TYPE_EOD)
 	{
 		PgbsonWriterAppendValue(&writer, "sn", 2, &timeSystemVariables->nowValue);
+	}
+
+	if (hasParallelPlan)
+	{
+		PgbsonWriterAppendBool(&writer, "pp", 2, true);
 	}
 
 	return PgbsonWriterGetPgbson(&writer);

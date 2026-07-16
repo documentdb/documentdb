@@ -217,6 +217,7 @@ extern bool EnableOrderByIdOnCostFunction;
 extern bool EnableMergeSortForInPrefix;
 extern bool EnableDynamicPersistentCursorsWithStats;
 extern bool EnableGroupByDynamicStreaming;
+extern bool EnableDynamicCursorMultiKeyBitmap;
 
 /* Declaration of extensibility paths for query processing (See extensible.h) */
 static const struct CustomPathMethods DynamicExtensionCursorScanMethods = {
@@ -529,6 +530,56 @@ GetIndexSupportsGetIndexKey(Oid relam, Oid opfamily)
 }
 
 
+/*
+ * Returns true when an ordered streaming index scan on the given index would be
+ * unsafe and the dynamic cursor must fall back to a bitmap scan instead.
+ *
+ * An ordered index scan yields one row per matching index entry, in index
+ * order, and does not de-duplicate row pointers. A multikey index has several
+ * entries per document (one per array element or per matched field on a wildcard
+ * index), and those entries can fall at different positions in the index
+ * ordering. An ordered scan therefore emits a document more than once whenever
+ * two or more of its entries qualify at different positions - for example an
+ * unbounded or range predicate over a multikey path, a leading-column equality
+ * with a multikey trailing column, or any predicate on a multikey wildcard
+ * index. The streaming continuation only remembers a single (key, row pointer)
+ * position, so it cannot suppress a document already returned at an earlier key.
+ * A bitmap scan collects distinct row pointers and is therefore correct.
+ *
+ * The ordered scan is only allowed when the index is provably non-multikey. The
+ * multikey status is read either from the fully tracked opclass metadata (the
+ * "mkp" reloption) or from the term-based multikey status the index records by
+ * default; both reliably report whether the index is multikey. When the index is
+ * multikey (or its multikey state cannot be read at all), the cursor must use a
+ * bitmap scan. Only indexes that support ordered operator scans (the composite
+ * opclass) reach this check, so a non-composite index is never forced to bitmap
+ * here.
+ *
+ * This safeguard can be disabled with the
+ * enable_dynamic_cursor_multikey_bitmap GUC, in which case ordered scans are
+ * allowed on multikey indexes (and may return duplicate documents).
+ */
+static bool
+MultiKeyIndexRequiresBitmapScan(IndexOptInfo *indexInfo)
+{
+	if (!EnableDynamicCursorMultiKeyBitmap)
+	{
+		return false;
+	}
+
+	CompositeOpClassMetadataInfo metadataInfo = { 0 };
+	CompositeOpClassMetadataReadResult readResult =
+		TryGetCompositeOpClassMetadataInfo(indexInfo->indexoid, AccessShareLock,
+										   &metadataInfo);
+
+	bool orderedScanIsSafe =
+		readResult != CompositeOpClassMetadataReadResult_None &&
+		!metadataInfo.isMultiKey;
+
+	return !orderedScanIsSafe;
+}
+
+
 static Path *
 UpdateAndClassifyPath(Path *inputPath, PlannerInfo *root, RelOptInfo *rel,
 					  uint64 collectionId, QueryScanType *scanType)
@@ -547,7 +598,8 @@ UpdateAndClassifyPath(Path *inputPath, PlannerInfo *root, RelOptInfo *rel,
 				*scanType = QueryScanType_PrimaryKeyScan;
 			}
 			else if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
-												 indexPath->indexinfo->opfamily[0]))
+												 indexPath->indexinfo->opfamily[0]) &&
+					 !MultiKeyIndexRequiresBitmapScan(indexPath->indexinfo))
 			{
 				/* Mark as supported indexscan */
 				*scanType = QueryScanType_SecondaryIndexScan;
@@ -584,7 +636,8 @@ UpdateAndClassifyPath(Path *inputPath, PlannerInfo *root, RelOptInfo *rel,
 				*scanType = QueryScanType_PrimaryKeyScan;
 			}
 			else if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
-												 indexPath->indexinfo->opfamily[0]))
+												 indexPath->indexinfo->opfamily[0]) &&
+					 !MultiKeyIndexRequiresBitmapScan(indexPath->indexinfo))
 			{
 				/* IndexOnlyScan is always an ordered scan - nothing to do here */
 				*scanType = QueryScanType_SecondaryIndexOnlyScan;
@@ -632,7 +685,8 @@ UpdateAndClassifyPath(Path *inputPath, PlannerInfo *root, RelOptInfo *rel,
 				else if (bitmapQualPath->pathtype == T_IndexOnlyScan)
 				{
 					if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
-													indexPath->indexinfo->opfamily[0]))
+													indexPath->indexinfo->opfamily[0]) &&
+						!MultiKeyIndexRequiresBitmapScan(indexPath->indexinfo))
 					{
 						/* IndexOnlyScan is always an ordered scan - nothing to do here */
 						*scanType = QueryScanType_SecondaryIndexOnlyScan;
@@ -647,7 +701,8 @@ UpdateAndClassifyPath(Path *inputPath, PlannerInfo *root, RelOptInfo *rel,
 				{
 					Assert(bitmapQualPath->pathtype == T_IndexScan);
 					if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
-													indexPath->indexinfo->opfamily[0]))
+													indexPath->indexinfo->opfamily[0]) &&
+						!MultiKeyIndexRequiresBitmapScan(indexPath->indexinfo))
 					{
 						*scanType = QueryScanType_SecondaryIndexScan;
 						AddOrderByRequiredClausesIfNecessary(indexPath, root, rel);
@@ -2497,6 +2552,22 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED), errmsg(
 										"Expected path to be either an index path or a bitmap heap path for continuation with index")));
 				}
+			}
+
+			/* An index that has become multikey (or whose multikey state is no
+			 * longer tracked) since the first page cannot be resumed as an
+			 * ordered stream: the ordered scan does not de-duplicate row
+			 * pointers, so a document with several matching entries would be
+			 * emitted more than once. The ordered and bitmap resume strategies
+			 * consume rows in different orders, so the cursor cannot switch
+			 * mid-stream. Kill the plan so the client restarts and re-classifies
+			 * this index as a bitmap scan.
+			 */
+			if (MultiKeyIndexRequiresBitmapScan(resumePath->indexinfo))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED),
+								errmsg(
+									"Cannot resume an ordered scan on an index that is no longer eligible for an ordered scan.")));
 			}
 
 			/* Here we need to add the operators to skip based on continuation */
