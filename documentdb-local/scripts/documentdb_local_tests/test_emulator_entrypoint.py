@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import tempfile
 import textwrap
@@ -8,6 +9,14 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ENTRYPOINT = REPO_ROOT / "documentdb-local" / "scripts" / "emulator_entrypoint.sh"
+GATEWAY_RBAC_UTILS = (
+    REPO_ROOT
+    / "pg_documentdb_gw"
+    / "documentdb_tests"
+    / "src"
+    / "utils"
+    / "rbac_utils.rs"
+)
 
 
 class EmulatorEntrypointTests(unittest.TestCase):
@@ -62,14 +71,44 @@ exec "$@"
 import json
 import sys
 args = sys.argv[1:]
+raw = False
 vars = {}
-while args and args[0] in ('--arg', '--argjson'):
-    flag, name, value, *args = args
-    vars[name] = json.loads(value) if flag == '--argjson' else value
+while args and args[0].startswith('-'):
+    if args[0] in ('--arg', '--argjson'):
+        flag, name, value, *args = args
+        vars[name] = json.loads(value) if flag == '--argjson' else value
+    elif args[0] in ('-r', '--raw-output'):
+        raw = True
+        args = args[1:]
+    else:
+        args = args[1:]
 expr, file_path = args
 with open(file_path, 'r', encoding='utf-8') as f:
     data = json.load(f)
 expr = expr.strip()
+if expr == '.BlockedRolePrefixes | type':
+    v = data.get('BlockedRolePrefixes')
+    if v is None:
+        print('null')
+    elif isinstance(v, bool):
+        print('boolean')
+    elif isinstance(v, list):
+        print('array')
+    elif isinstance(v, str):
+        print('string')
+    elif isinstance(v, (int, float)):
+        print('number')
+    else:
+        print('object')
+    raise SystemExit(0)
+if expr == 'all(.BlockedRolePrefixes[]; type == "string")':
+    arr = data.get('BlockedRolePrefixes') or []
+    ok = isinstance(arr, list) and all(isinstance(x, str) for x in arr)
+    raise SystemExit(0 if ok else 1)
+if expr in ('.BlockedRolePrefixes[]', '.BlockedRolePrefixes[]?'):
+    for item in data.get('BlockedRolePrefixes', []):
+        print(item)
+    raise SystemExit(0)
 if expr.startswith('.GatewayListenPort = '):
     data['GatewayListenPort'] = int(expr.split('=', 1)[1].strip())
 elif expr.startswith('.PostgresPort = '):
@@ -143,6 +182,82 @@ json.dump(data, sys.stdout)
             "r", encoding="utf-8"
         ) as file:
             return json.load(file)
+
+    def _configure_postgres_stubs(self, psql_exit_code=0):
+        sql_capture = self.root / "psql-input.sql"
+        self._write_exec(
+            self.gateway_scripts / "start_oss_server.sh",
+            f"""#!/bin/sh
+touch "{self.data_dir / 'postmaster.pid'}" "{self.data_dir / 'pglog.log'}"
+echo oss-server-stub-started
+""",
+        )
+        self._write_exec(
+            self.bin_dir / "psql",
+            f"""#!/bin/sh
+cat > "{sql_capture}"
+exit {psql_exit_code}
+""",
+        )
+        return sql_capture
+
+    def test_get_parameter_stub_returns_command_not_supported(self):
+        sql_capture = self._configure_postgres_stubs()
+
+        result = self._run_entrypoint(extra_env={"START_POSTGRESQL": "true"})
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        sql = sql_capture.read_text(encoding="utf-8")
+        self.assertIn(
+            "to_regprocedure('documentdb_api.get_parameter(boolean,boolean,text[])') IS NULL",
+            sql,
+        )
+        self.assertIn(
+            "CREATE FUNCTION documentdb_api.get_parameter(boolean, boolean, text[])",
+            sql,
+        )
+        self.assertIn('"code": 115', sql)
+        self.assertIn('"codeName": "CommandNotSupported"', sql)
+        self.assertIn('"ok": 0.0', sql)
+        self.assertIn(
+            "documentdb-local temporary CommandNotSupported stub for issue #650",
+            sql,
+        )
+        self.assertNotIn("CREATE OR REPLACE FUNCTION", sql)
+        self.assertNotIn("featureCompatibilityVersion", sql)
+        self.assertNotIn("'7.0'", sql)
+        self.assertIn(
+            "Ensuring unsupported getParameter returns CommandNotSupported",
+            result.stdout,
+        )
+
+    def test_get_parameter_stub_install_failure_aborts_startup(self):
+        self._configure_postgres_stubs(psql_exit_code=1)
+
+        result = self._run_entrypoint(extra_env={"START_POSTGRESQL": "true"})
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "could not install the documentdb-local getParameter rejection stub",
+            result.stdout + result.stderr,
+        )
+        self.assertNotIn("Starting gateway in the background", result.stdout)
+
+    def test_get_parameter_stub_is_not_installed_in_external_postgres(self):
+        psql_called = self.root / "psql-called"
+        self._write_exec(
+            self.bin_dir / "psql",
+            f"""#!/bin/sh
+touch "{psql_called}"
+exit 1
+""",
+        )
+
+        result = self._run_entrypoint(extra_env={"START_POSTGRESQL": "false"})
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertFalse(psql_called.exists())
+        self.assertIn("Skipping PostgreSQL server start", result.stdout)
 
     def test_default_mode_sets_allowTLS_in_config(self):
         result = self._run_entrypoint("--password", "mypassword")
@@ -224,12 +339,48 @@ json.dump(data, sys.stdout)
 import json
 import sys
 args = sys.argv[1:]
+raw = False
 vars = {}
-while args and args[0] in ('--arg', '--argjson'):
-    flag, name, value, *args = args
-    vars[name] = json.loads(value) if flag == '--argjson' else value
+while args and args[0].startswith('-'):
+    if args[0] in ('--arg', '--argjson'):
+        flag, name, value, *args = args
+        vars[name] = json.loads(value) if flag == '--argjson' else value
+    elif args[0] in ('-r', '--raw-output'):
+        raw = True
+        args = args[1:]
+    else:
+        args = args[1:]
 expr, file_path = args
 expr = expr.strip()
+if expr == '.BlockedRolePrefixes | type':
+    with open(file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    v = data.get('BlockedRolePrefixes')
+    if v is None:
+        print('null')
+    elif isinstance(v, bool):
+        print('boolean')
+    elif isinstance(v, list):
+        print('array')
+    elif isinstance(v, str):
+        print('string')
+    elif isinstance(v, (int, float)):
+        print('number')
+    else:
+        print('object')
+    raise SystemExit(0)
+if expr == 'all(.BlockedRolePrefixes[]; type == "string")':
+    with open(file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    arr = data.get('BlockedRolePrefixes') or []
+    ok = isinstance(arr, list) and all(isinstance(x, str) for x in arr)
+    raise SystemExit(0 if ok else 1)
+if expr in ('.BlockedRolePrefixes[]', '.BlockedRolePrefixes[]?'):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    for item in data.get('BlockedRolePrefixes', []):
+        print(item)
+    raise SystemExit(0)
 if expr.startswith('.EnforceTls = '):
     sys.stderr.write('jq: simulated failure\\n')
     sys.exit(1)
@@ -532,6 +683,187 @@ json.dump(data, sys.stdout)
                 msg=f"{js.name} should guard inserts with an existence check (#612)",
             )
 
+    def _set_blocked_role_prefixes(self, prefixes):
+        config_path = self.gateway_config_dir / "SetupConfiguration.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config["BlockedRolePrefixes"] = prefixes
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    def _gateway_reserved_role_names(self):
+        source = GATEWAY_RBAC_UTILS.read_text(encoding="utf-8")
+        match = re.search(
+            r"pub const RESERVED_ROLE_NAMES:.*?= &\[(.*?)\];",
+            source,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(
+            match,
+            "could not find the gateway RESERVED_ROLE_NAMES registry",
+        )
+        role_names = re.findall(r'"([^"]+)"', match.group(1))
+        self.assertTrue(role_names, "gateway reserved-role registry is empty")
+        return role_names
+
+    def test_blocked_username_prefix_is_rejected(self):
+        # citus is the username in the issue #650 reproduction; documentdb is the
+        # prefix the default test config blocks. Either must fail fast at startup
+        # rather than letting the container report ready with an unusable user.
+        result = self._run_entrypoint(
+            "--password", "mypassword", extra_env={"USERNAME": "documentdb_user"}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "username 'documentdb_user' uses reserved prefix 'documentdb'",
+            result.stdout + result.stderr,
+        )
+
+    def test_blocked_username_prefix_is_case_insensitive(self):
+        result = self._run_entrypoint(
+            "--password", "mypassword", extra_env={"USERNAME": "DocumentDBAdmin"}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "uses reserved prefix 'documentdb'",
+            result.stdout + result.stderr,
+        )
+
+    def test_allowed_username_passes_validation(self):
+        result = self._run_entrypoint(
+            "--password", "mypassword", extra_env={"USERNAME": "docdb_admin"}
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn("reserved prefix", result.stdout + result.stderr)
+
+    def test_all_configured_blocked_prefixes_are_rejected(self):
+        prefixes = ["documentdb", "citus", "pg", "internal_role"]
+        self._set_blocked_role_prefixes(prefixes)
+        for prefix in prefixes:
+            username = f"{prefix}_service"
+            with self.subTest(username=username):
+                result = self._run_entrypoint(
+                    "--password", "mypassword", extra_env={"USERNAME": username}
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    f"uses reserved prefix '{prefix}'",
+                    result.stdout + result.stderr,
+                )
+
+    def test_all_gateway_reserved_role_names_are_rejected(self):
+        # Registered internal roles remain reserved even when the independent
+        # BlockedRolePrefixes policy is empty.
+        self._set_blocked_role_prefixes([])
+        for username in self._gateway_reserved_role_names():
+            with self.subTest(username=username):
+                result = self._run_entrypoint(
+                    "--password", "mypassword", extra_env={"USERNAME": username}
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "is reserved for an internal DocumentDB role",
+                    result.stdout + result.stderr,
+                )
+
+    def test_empty_blocked_prefix_entry_fails_fast(self):
+        # The gateway's starts_with("") matches every username, so an empty
+        # BlockedRolePrefixes entry blocks all authentication. The entrypoint
+        # must fail fast rather than start a container whose user can never
+        # authenticate -- even for an otherwise-allowed username.
+        self._set_blocked_role_prefixes([""])
+        result = self._run_entrypoint(
+            "--password", "mypassword", extra_env={"USERNAME": "docdb_admin"}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("contains an empty entry", result.stdout + result.stderr)
+
+    def test_missing_gateway_config_fails_fast(self):
+        # Validation reads the gateway's own SetupConfiguration.json; if it is
+        # missing the check must not silently pass (which would re-open the
+        # false-success-startup bug), it must fail fast.
+        (self.gateway_config_dir / "SetupConfiguration.json").unlink()
+        result = self._run_entrypoint(
+            "--password", "mypassword", extra_env={"USERNAME": "docdb_admin"}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not found", result.stdout + result.stderr)
+
+    def test_unparseable_gateway_config_fails_fast(self):
+        config_path = self.gateway_config_dir / "SetupConfiguration.json"
+        config_path.write_text("{not valid json", encoding="utf-8")
+        result = self._run_entrypoint(
+            "--password", "mypassword", extra_env={"USERNAME": "docdb_admin"}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "failed to parse gateway configuration",
+            result.stdout + result.stderr,
+        )
+
+    def test_non_array_blocked_role_prefixes_fails_fast(self):
+        # A syntactically valid config whose BlockedRolePrefixes is not an array
+        # (the gateway requires an array of strings) must fail fast rather than
+        # be silently treated as "no prefixes", which would re-open the
+        # false-success-startup bug.
+        config_path = self.gateway_config_dir / "SetupConfiguration.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config["BlockedRolePrefixes"] = "documentdb"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        result = self._run_entrypoint(
+            "--password", "mypassword", extra_env={"USERNAME": "docdb_admin"}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must be a JSON array", result.stdout + result.stderr)
+
+    def _write_raw_config(self, mutate):
+        config_path = self.gateway_config_dir / "SetupConfiguration.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        mutate(config)
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    def test_missing_blocked_role_prefixes_key_fails_fast(self):
+        # The gateway requires BlockedRolePrefixes (non-defaulted Vec<String>), so
+        # an absent key is invalid; validate the same contract instead of silently
+        # skipping and letting the gateway fail later.
+        self._write_raw_config(lambda c: c.pop("BlockedRolePrefixes", None))
+        result = self._run_entrypoint(
+            "--password", "mypassword", extra_env={"USERNAME": "docdb_admin"}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must be a JSON array", result.stdout + result.stderr)
+
+    def test_null_blocked_role_prefixes_fails_fast(self):
+        self._write_raw_config(
+            lambda c: c.__setitem__("BlockedRolePrefixes", None)
+        )
+        result = self._run_entrypoint(
+            "--password", "mypassword", extra_env={"USERNAME": "docdb_admin"}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must be a JSON array", result.stdout + result.stderr)
+
+    def test_non_string_blocked_role_prefixes_element_fails_fast(self):
+        # An array with a non-string element is not a Vec<String> and the gateway
+        # would reject it; fail fast with a clear message.
+        self._write_raw_config(
+            lambda c: c.__setitem__("BlockedRolePrefixes", ["documentdb", 123])
+        )
+        result = self._run_entrypoint(
+            "--password", "mypassword", extra_env={"USERNAME": "docdb_admin"}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must contain only strings", result.stdout + result.stderr)
+
+    def test_empty_blocked_role_prefixes_allows_non_reserved_username(self):
+        # An empty array disables prefix blocking, but exact internal role names
+        # remain reserved. A non-reserved username that the default prefix policy
+        # would block must pass validation.
+        self._set_blocked_role_prefixes([])
+        result = self._run_entrypoint(
+            "--password", "mypassword", extra_env={"USERNAME": "documentdb_service"}
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn("reserved prefix", result.stdout + result.stderr)
+
 
 class InitDataAttemptMarkerTests(unittest.TestCase):
     """Exercises the real init_documentdb_data.sh --attempt-marker contract (#612).
@@ -682,6 +1014,155 @@ class InitDataAttemptMarkerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertFalse(marker.exists(), "no marker may be written when no scripts run")
         self.assertFalse(self.file_runs.exists(), "no user script should run")
+
+
+class ValidateUsernameScriptTests(unittest.TestCase):
+    """Direct tests for documentdb_validate_username.sh, invoked standalone with
+    a stubbed jq and a temp SetupConfiguration.json -- covering the reserved-name
+    and BlockedRolePrefixes logic without booting the whole entrypoint."""
+
+    VALIDATOR = (
+        REPO_ROOT / "documentdb-local" / "scripts" / "documentdb_validate_username.sh"
+    )
+    RESERVED_ROLES_FILE = (
+        REPO_ROOT / "documentdb-local" / "scripts" / "documentdb_reserved_roles.sh"
+    )
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        self.bin_dir = self.root / "bin"
+        self.bin_dir.mkdir()
+        jq = self.bin_dir / "jq"
+        jq.write_text(
+            """#!/usr/bin/env python3
+import json, sys
+rest = [a for a in sys.argv[1:] if not a.startswith('-')]
+expr, file_path = rest[0].strip(), rest[1]
+with open(file_path, encoding='utf-8') as f:
+    data = json.load(f)
+if expr == '.BlockedRolePrefixes | type':
+    v = data.get('BlockedRolePrefixes')
+    print('null' if v is None else 'array' if isinstance(v, list)
+          else 'string' if isinstance(v, str) else 'boolean' if isinstance(v, bool)
+          else 'number' if isinstance(v, (int, float)) else 'object')
+    raise SystemExit(0)
+if expr == 'all(.BlockedRolePrefixes[]; type == "string")':
+    arr = data.get('BlockedRolePrefixes') or []
+    raise SystemExit(0 if isinstance(arr, list) and all(isinstance(x, str) for x in arr) else 1)
+if expr in ('.BlockedRolePrefixes[]', '.BlockedRolePrefixes[]?'):
+    for item in data.get('BlockedRolePrefixes', []):
+        print(item)
+    raise SystemExit(0)
+raise SystemExit('Unsupported jq expression: ' + expr)
+""",
+            encoding="utf-8",
+        )
+        jq.chmod(0o755)
+        self.config = self.root / "SetupConfiguration.json"
+        self._write_prefixes(["documentdb", "citus", "pg", "internal_role"])
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _write_prefixes(self, prefixes):
+        self.config.write_text(
+            json.dumps({"BlockedRolePrefixes": prefixes}), encoding="utf-8"
+        )
+
+    def _run(self, username, config=None, gateway_home=None):
+        env = os.environ.copy()
+        env["PATH"] = f"{self.bin_dir}:{env['PATH']}"
+        args = ["bash", str(self.VALIDATOR), username]
+        if config is not None:
+            args.append(str(config))
+        if gateway_home is not None:
+            env["GATEWAY_HOME"] = str(gateway_home)
+        return subprocess.run(args, capture_output=True, text=True, env=env)
+
+    def _reserved_role_names(self):
+        # Source the file and read the array, so we get exactly its entries and
+        # not quoted strings that appear in comments.
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f'source "{self.RESERVED_ROLES_FILE}"; '
+                'printf "%s\\n" "${DOCUMENTDB_RESERVED_ROLE_NAMES[@]}"',
+            ],
+            capture_output=True,
+            text=True,
+        )
+        return [line for line in result.stdout.splitlines() if line]
+
+    def test_allowed_username_exits_zero(self):
+        result = self._run("docdb_admin", config=self.config)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+    def test_citus_username_is_rejected(self):
+        # The exact issue #650 reproduction.
+        result = self._run("citus", config=self.config)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("uses reserved prefix 'citus'", result.stdout + result.stderr)
+
+    def test_every_configured_prefix_is_rejected(self):
+        for prefix in ("documentdb", "citus", "pg", "internal_role"):
+            with self.subTest(prefix=prefix):
+                result = self._run(f"{prefix}_svc", config=self.config)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    f"uses reserved prefix '{prefix}'", result.stdout + result.stderr
+                )
+
+    def test_prefix_check_is_case_insensitive(self):
+        result = self._run("DOCUMENTDB_svc", config=self.config)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("uses reserved prefix 'documentdb'", result.stdout + result.stderr)
+
+    def test_every_reserved_role_name_is_rejected(self):
+        # Empty prefixes isolate the exact-name check, which sources the list
+        # from documentdb_reserved_roles.sh.
+        self._write_prefixes([])
+        names = self._reserved_role_names()
+        self.assertGreaterEqual(len(names), 11, "reserved-roles data file looks empty")
+        for name in names:
+            with self.subTest(role=name):
+                result = self._run(name, config=self.config)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "is reserved for an internal DocumentDB role",
+                    result.stdout + result.stderr,
+                )
+
+    def test_missing_config_is_rejected(self):
+        result = self._run("docdb_admin", config=self.root / "absent.json")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not found", result.stdout + result.stderr)
+
+    def test_non_array_prefixes_is_rejected(self):
+        self.config.write_text(
+            json.dumps({"BlockedRolePrefixes": "documentdb"}), encoding="utf-8"
+        )
+        result = self._run("docdb_admin", config=self.config)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must be a JSON array", result.stdout + result.stderr)
+
+    def test_empty_prefix_entry_is_rejected(self):
+        self._write_prefixes([""])
+        result = self._run("docdb_admin", config=self.config)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("contains an empty entry", result.stdout + result.stderr)
+
+    def test_config_path_defaults_to_gateway_home(self):
+        # With no config argument, the validator derives it from GATEWAY_HOME.
+        gw = self.root / "gw"
+        (gw / "pg_documentdb_gw").mkdir(parents=True)
+        (gw / "pg_documentdb_gw" / "SetupConfiguration.json").write_text(
+            json.dumps({"BlockedRolePrefixes": ["citus"]}), encoding="utf-8"
+        )
+        result = self._run("citus", gateway_home=gw)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("uses reserved prefix 'citus'", result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

@@ -290,6 +290,11 @@ echo "Using username: $USERNAME"
 echo "Using owner: $OWNER"
 echo "Using data path: $DATA_PATH"
 
+# Reject a username the gateway would refuse at authentication time (a reserved
+# role name or a BlockedRolePrefix) before starting anything, so the container
+# never reports ready with a user that can never authenticate.
+bash "$(dirname "${BASH_SOURCE[0]}")/documentdb_validate_username.sh" "$USERNAME" || exit 1
+
 if { [ -n "${CERT_PATH:-}" ] && [ -z "${KEY_FILE:-}" ]; } || \
    { [ -z "${CERT_PATH:-}" ] && [ -n "${KEY_FILE:-}" ]; }; then
     echo "Error: Both CERT_PATH and KEY_FILE must be set together, or neither should be set."
@@ -460,6 +465,11 @@ if [ "$START_POSTGRESQL" = "true" ]; then
         i=$((i + 1))
     done
     echo "PostgreSQL is running."
+
+    # Install the emulator-only getParameter rejection stub for the bundled
+    # PostgreSQL (issue #650). Extracted to a sibling script to keep this
+    # entrypoint lean; see that script for the full rationale.
+    bash "$(dirname "${BASH_SOURCE[0]}")/documentdb_install_getparameter_stub.sh" "$POSTGRESQL_PORT" || exit 1
 else
     echo "Skipping PostgreSQL server start."
 fi
