@@ -1022,3 +1022,372 @@ SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "abcd_null", "fi
 reset enable_seqscan;
 reset enable_indexscan;
 reset documentdb.enable_existential_null_array_match;
+
+-- ============================================================================
+-- Fixture Q: positional array-index null semantics on a wildcard ordered index.
+--
+-- Null-equality on a path whose component addresses an array position ($eq null,
+-- $in [null], and by complement $ne / $nin) must match an in-bounds null element
+-- OR a genuinely missing field, but must NOT match an out-of-bounds positional
+-- index or a scalar-blocked descent -- an index that addresses no element is not
+-- a missing field. A field name that is merely missing from a document element
+-- (e.g. av.2 where the element is a document lacking "2") still matches.
+--
+-- Because a null-anchored predicate keeps a heap recheck that re-applies the
+-- runtime matcher, the fix must hold identically on the index scan and the
+-- collection scan. The harness below compares the two result sets for every
+-- predicate (mismatch count must be 0) and prints the index-scan set as the
+-- golden value.
+--
+-- Document set (deterministic _id):
+--   1 av:[10,20,30]              scalar array, av.2 concrete, av.3/av.5 OOB
+--   2 av:[10,20,null]            av.2 in-bounds null
+--   3 av:[]                      empty array, every index OOB
+--   4 av:5                       scalar, any further path is missing
+--   5 av:null                    scalar null
+--   6 (av missing)               field absent entirely
+--   7 av:[{b:1},{b:null}]        array of documents (numeric index = missing field)
+--   8 av:[{b:1},{b:2}]           array of documents, no null
+--   9 av:[[1,null],[2,3]]        nested arrays
+--  10 av:[{b:null},{b:[10]}]     mixed: null-yielding + out-of-bounds element
+--  11 av:[{b:[10]},{b:null}]     same content, reversed element order
+--  12 av:[10,20,30,null]         av.3 in-bounds null
+-- ============================================================================
+SELECT documentdb_api_internal.create_indexes_non_concurrently('nrg_db', '{ "createIndexes": "arr_idx", "indexes": [ { "key": { "$**": 1 }, "name": "wc_1", "enableOrderedIndex": 1 } ] }', true);
+SELECT documentdb_api.insert_one('nrg_db', 'arr_idx', doc) FROM (VALUES
+ ('{ "_id": 1,  "av": [ 10, 20, 30 ] }'::documentdb_core.bson),
+ ('{ "_id": 2,  "av": [ 10, 20, null ] }'),
+ ('{ "_id": 3,  "av": [ ] }'),
+ ('{ "_id": 4,  "av": 5 }'),
+ ('{ "_id": 5,  "av": null }'),
+ ('{ "_id": 6,  "other": 1 }'),
+ ('{ "_id": 7,  "av": [ { "b": 1 }, { "b": null } ] }'),
+ ('{ "_id": 8,  "av": [ { "b": 1 }, { "b": 2 } ] }'),
+ ('{ "_id": 9,  "av": [ [ 1, null ], [ 2, 3 ] ] }'),
+ ('{ "_id": 10, "av": [ { "b": null }, { "b": [ 10 ] } ] }'),
+ ('{ "_id": 11, "av": [ { "b": [ 10 ] }, { "b": null } ] }'),
+ ('{ "_id": 12, "av": [ 10, 20, 30, null ] }')) v(doc);
+
+CREATE TEMP TABLE arr_idx_q(ord int, label text, filter text);
+INSERT INTO arr_idx_q VALUES
+ (1,  'av.2 : null',        '{ "av.2": null }'),
+ (2,  'av.2 : $in null',    '{ "av.2": { "$in": [ null ] } }'),
+ (3,  'av.2 : $ne null',    '{ "av.2": { "$ne": null } }'),
+ (4,  'av.2 : $nin null',   '{ "av.2": { "$nin": [ null ] } }'),
+ (5,  'av.3 : null',        '{ "av.3": null }'),
+ (6,  'av.5 : null',        '{ "av.5": null }'),
+ (7,  'av.0.b : null',      '{ "av.0.b": null }'),
+ (8,  'av.0.b : $ne null',  '{ "av.0.b": { "$ne": null } }'),
+ (9,  'av.b.5 : null',      '{ "av.b.5": null }'),
+ (10, 'av.0.1 : null',      '{ "av.0.1": null }');
+
+-- Index-scan == collection-scan for every predicate (mismatches must be 0); the
+-- printed idx set is the golden result and matches the documented semantics.
+DO $arr_idx$
+DECLARE q RECORD; idxr int[]; seqr int[]; fs text; ncons int := 0;
+BEGIN
+  FOR q IN SELECT ord, label, filter FROM arr_idx_q ORDER BY ord LOOP
+    fs := format('{ "find": "arr_idx", "filter": %s }', q.filter);
+    SET enable_seqscan = off; SET enable_indexscan = on; SET enable_bitmapscan = off;
+    EXECUTE 'SELECT array_agg((t.d->>''_id'')::int ORDER BY (t.d->>''_id'')::int) FROM (SELECT document AS d FROM bson_aggregation_find($1, $2)) t'
+      USING 'nrg_db', fs::documentdb_core.bson INTO idxr;
+    SET enable_seqscan = on; SET enable_indexscan = off;
+    EXECUTE 'SELECT array_agg((t.d->>''_id'')::int ORDER BY (t.d->>''_id'')::int) FROM (SELECT document AS d FROM bson_aggregation_find($1, $2)) t'
+      USING 'nrg_db', format('{ "find": "arr_idx", "filter": %s }', q.filter)::documentdb_core.bson INTO seqr;
+    idxr := COALESCE(idxr, '{}'); seqr := COALESCE(seqr, '{}');
+    IF idxr IS DISTINCT FROM seqr THEN ncons := ncons + 1; END IF;
+    RAISE NOTICE '% : idx=% : consistency=%',
+      rpad(q.label, 18), idxr::text,
+      CASE WHEN idxr IS DISTINCT FROM seqr THEN 'IDX!=SEQ' ELSE 'idx==seq' END;
+  END LOOP;
+  RAISE NOTICE 'index/collection-scan consistency mismatches: % (must be 0)', ncons;
+  RESET enable_seqscan; RESET enable_indexscan; RESET enable_bitmapscan;
+END $arr_idx$;
+
+-- Golden collection-scan result sets for the positional array-index null family.
+--   av.2 : null / $in    -> 2,4,5,6,7,8,10,11   (in-bounds null, missing, doc-missing-field)
+--   av.2 : $ne / $nin    -> 1,3,9,12            (concrete, empty array, array-of-array OOB)
+--   av.3 : null          -> 4,5,6,7,8,10,11,12  (12 has in-bounds null at av.3)
+--   av.5 : null          -> 4,5,6,7,8,10,11     (OOB for every array; doc elements missing "5")
+--   av.0.b : null        -> 4,5,6,7,8,10,11
+--   av.0.b : $ne null    -> 1,2,3,9,12
+--   av.b.5 : null        -> 4,5,6,7,8,10,11     (order-independent: 10 and 11 both match)
+--   av.0.1 : null        -> 4,5,6,7,8,9,10,11
+set enable_seqscan to on;
+set enable_indexscan to off;
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "arr_idx", "filter": { "av.2": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "arr_idx", "filter": { "av.2": { "$ne": null } }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "arr_idx", "filter": { "av.3": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "arr_idx", "filter": { "av.5": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "arr_idx", "filter": { "av.0.b": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "arr_idx", "filter": { "av.b.5": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "arr_idx", "filter": { "av.0.1": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+reset enable_seqscan;
+reset enable_indexscan;
+
+-- The enable_existential_null_array_match GUC (on by default) gates the array-index
+-- correction. With it off, an out-of-bounds positional index reverts to the legacy
+-- behavior of matching null: av.2 : null then additionally matches the empty array
+-- (_id 3) and the array-of-arrays element (_id 9) -- the two documents whose av.2 is
+-- out of bounds. (_id 1 / _id 12 keep av.2 = 30, an in-bounds concrete value, so they
+-- stay excluded.) Index scan and collection scan still agree.
+set documentdb.enable_existential_null_array_match to off;
+set enable_seqscan to off;
+set enable_indexscan to on;
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "arr_idx", "filter": { "av.2": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+set enable_indexscan to off;
+set enable_seqscan to on;
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "arr_idx", "filter": { "av.2": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+reset enable_seqscan;
+reset enable_indexscan;
+reset documentdb.enable_existential_null_array_match;
+
+-- ============================================================================
+-- Fixture R: null-equality is independent of the SHAPE of a path component
+-- addressing an array. A component may be a canonical index ("0"), a
+-- non-canonical / leading-zero form ("00", "007"), a digit-led non-index
+-- ("0abc"), a pure field name ("b", "xyz"), or negative ("-1"). None of these
+-- change the rule: over an array, null-equality matches a document element that
+-- carries the field as null OR is missing it, plus a genuinely missing path
+-- (scalar / absent), but never a scalar / nested-array / empty-array position
+-- that no document element resolves. The component's shape only determines WHICH
+-- field name is looked up inside document elements -- it does not turn an
+-- out-of-bounds / blocked positional lookup into a match. This holds regardless
+-- of skipBsonArrayTraverseOptimization (which only controls whether a non-digit
+-- component is additionally tried as a positional index).
+--
+-- Document set (deterministic _id):
+--   1 a:[10,20]           scalar array
+--   2 a:[{b:1}]           document element, field b concrete
+--   3 a:[{b:null}]        document element, field b null
+--   4 a:[{"0abc":null}]   document element, field "0abc" null
+--   5 a:[{x:1}]           document element, missing every probed field
+--   6 a:[]                empty array
+--   7 a:[[1,2]]           nested array element
+--   8 a:5                 scalar (any sub-path is a missing path)
+--   9 a:[10,null]         scalar array, in-bounds null at index 1
+-- ============================================================================
+SELECT documentdb_api.insert_one('nrg_db', 'tok_shape', doc) FROM (VALUES
+ ('{ "_id": 1, "a": [ 10, 20 ] }'::documentdb_core.bson),
+ ('{ "_id": 2, "a": [ { "b": 1 } ] }'),
+ ('{ "_id": 3, "a": [ { "b": null } ] }'),
+ ('{ "_id": 4, "a": [ { "0abc": null } ] }'),
+ ('{ "_id": 5, "a": [ { "x": 1 } ] }'),
+ ('{ "_id": 6, "a": [ ] }'),
+ ('{ "_id": 7, "a": [ [ 1, 2 ] ] }'),
+ ('{ "_id": 8, "a": 5 }'),
+ ('{ "_id": 9, "a": [ 10, null ] }')) v(doc);
+
+-- Golden collection-scan result sets, cross-checked against the documented
+-- wire-protocol-compatible semantics. Index-shaped, non-canonical, digit-led,
+-- field-name, and negative components all resolve identically (the only
+-- variation is which field name is probed inside document elements):
+--   a.0abc / a.xyz / a.0 / a.00 / a.007 / a.5 / a.-1 : null -> 2,3,4,5,8
+--   a.b : null                                             -> 3,4,5,8
+--     (differs only because _id 2's element carries b=1, a concrete value)
+--   a.1 : null                                             -> 2,3,4,5,8,9
+--     (adds _id 9, whose in-bounds index 1 is an explicit null)
+set enable_seqscan to on;
+set enable_indexscan to off;
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.0abc": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.xyz": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.0": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.00": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.007": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.5": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.-1": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.b": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.1": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+
+-- skipBsonArrayTraverseOptimization independence: with it ON, a non-digit
+-- component (a.b, a.xyz) is additionally attempted as a positional index, yet
+-- the result set is unchanged -- the positional attempt only ever declines to
+-- match; document-element field lookup still drives every match.
+set documentdb_core.skipBsonArrayTraverseOptimization to on;
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.b": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.xyz": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.0abc": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+reset documentdb_core.skipBsonArrayTraverseOptimization;
+
+-- null-equality vs $exists:false DIVERGE on an array position, and the divergence
+-- is the whole point of the fix. Over an array, { path: null } does NOT match a
+-- scalar / nested-array / empty-array position that no document element resolves,
+-- whereas { path: { $exists: false } } DOES (the field genuinely is absent there).
+-- Golden sets, cross-checked against the documented wire-protocol semantics:
+--   a.5 : null            -> 2,3,4,5,8              (only element-null / doc-missing / scalar-a)
+--   a.5 : $exists:false   -> 1,2,3,4,5,6,7,8,9      (index 5 absent everywhere -> ALL)
+--   a.5 : $exists:true    -> (none)
+--   a.0 : null            -> 2,3,4,5,8
+--   a.0 : $exists:false   -> 6,8                    (index 0 present wherever the array is non-empty)
+--   a.0 : $exists:true    -> 1,2,3,4,5,7,9
+--   a.b : null            -> 3,4,5,8
+--   a.b : $exists:false   -> 1,4,5,6,7,8,9          (adds scalar / nested / empty / "0abc"-only)
+--   a.b : $exists:true    -> 2,3
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.5": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.5": { "$exists": false } }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.5": { "$exists": true } }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.0": { "$exists": false } }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.0": { "$exists": true } }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.b": { "$exists": false } }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.b": { "$exists": true } }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+reset enable_seqscan;
+reset enable_indexscan;
+
+-- ============================================================================
+-- Fixture S: DEEP nested paths mixing positional indexes and field names
+-- (a.0.b.c, a.0.0.b.c, a.0.b.0.c, ...). This is the core regression class: an
+-- in-bounds positional index that descends into a nested array/document whose
+-- deeper continuation resolves to null MUST still match null-equality, while an
+-- out-of-bounds index at any level along the chain must NOT contribute a match.
+-- The distinction is depth-sensitive, so it exercises the ArrayIndexNotFound vs
+-- PathNotFound split across multiple traversal levels.
+--
+-- Document set (deterministic _id):
+--   1 a:[[{b:null}],[{b:5}]]   a.0 -> [{b:null}]; a.0.b.c null via null-first
+--   2 a:[[{b:5}],[{b:null}]]   reversed order; a.1 holds the null
+--   3 a:[[{b:5}],[{b:6}]]      no null; leaf .c missing under concrete b
+--   4 a:[[{c:5}]]              b missing at a.0 element (matches a.0.b.c, not a.1.*)
+--   5 a:[[{b:{c:null}}]]       explicit deep null at a.0.0.b.c
+--   6 a:[[{b:{c:5}}]]          deep concrete c (excluded from a.0.b.c)
+--   7 a:[10,20]                scalar array (a.0.b.c blocked positionally)
+--   8 a:[{b:[{c:null}]}]       a.0.b.0.c null through field-then-index
+--   9 a:[]                     empty array
+-- ============================================================================
+SELECT documentdb_api.insert_one('nrg_db', 'deep_idx', doc) FROM (VALUES
+ ('{ "_id": 1, "a": [ [ { "b": null } ], [ { "b": 5 } ] ] }'::documentdb_core.bson),
+ ('{ "_id": 2, "a": [ [ { "b": 5 } ], [ { "b": null } ] ] }'),
+ ('{ "_id": 3, "a": [ [ { "b": 5 } ], [ { "b": 6 } ] ] }'),
+ ('{ "_id": 4, "a": [ [ { "c": 5 } ] ] }'),
+ ('{ "_id": 5, "a": [ [ { "b": { "c": null } } ] ] }'),
+ ('{ "_id": 6, "a": [ [ { "b": { "c": 5 } } ] ] }'),
+ ('{ "_id": 7, "a": [ 10, 20 ] }'),
+ ('{ "_id": 8, "a": [ { "b": [ { "c": null } ] } ] }'),
+ ('{ "_id": 9, "a": [ ] }')) v(doc);
+
+-- Golden collection-scan result sets, cross-checked against the documented
+-- wire-protocol-compatible semantics. The result set is depth-sensitive:
+--   a.0.b.c   : null -> 1,2,3,4,5,8       (a.0 in bounds; deep null / missing leaf)
+--   a.1.b.c   : null -> 1,2,3,8           (a.1 OOB for single-element arrays 4,5,6)
+--   a.0.0.b.c : null -> 1,2,3,4,5,6,8     (extra level; 6's concrete c is deeper)
+--   a.0.b.0.c : null -> 1,2,3,4,5,6,8
+--   a.0.b     : null -> 1,4,8             (a.0.b null/missing at one array level)
+--   a.0.5.b   : null -> 1,2,3,4,5,6,8     (index 5 OOB at second level)
+set enable_seqscan to on;
+set enable_indexscan to off;
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "deep_idx", "filter": { "a.0.b.c": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "deep_idx", "filter": { "a.1.b.c": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "deep_idx", "filter": { "a.0.0.b.c": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "deep_idx", "filter": { "a.0.b.0.c": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "deep_idx", "filter": { "a.0.b": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "deep_idx", "filter": { "a.0.5.b": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+
+-- Order independence: _id 1 (null-first) and _id 2 (null-last) both match
+-- a.0.b.c-style deep null equally; complement ($ne) excludes them symmetrically.
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "deep_idx", "filter": { "a.0.b.c": { "$ne": null } }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "deep_idx", "filter": { "a.0.b.c": { "$in": [ null ] } }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
+reset enable_seqscan;
+reset enable_indexscan;
+
+-- ============================================================================
+-- Fixture T: index / collection-scan CONSISTENCY across every array-index null
+-- scenario in Fixtures Q-S at once (token shapes, positional in/out-of-bounds,
+-- deep nested index+field chains, digit-led non-index tokens, the null family
+-- and its negations, and null-vs-$exists). A null-anchored predicate on an
+-- array-index path keeps a heap recheck that re-applies the runtime matcher, so
+-- the fix must produce identical result sets whether a query is served by an
+-- index scan (recheck) or a collection scan. The harness forces each plan and
+-- compares the two result sets as an order-independent set; the mismatch count
+-- must be 0. Real index-term scans on the field-descent paths (a.b, a.b.c) are
+-- additionally exercised via explicit ordered indexes and a hint below.
+--
+-- Master document set (deterministic _id) spanning every shape:
+--   1 [10,20,30]           4 5(a:null) 6(missing) are scalar / absent
+--   7 [{b:1},{b:null}]     8 [{b:1},{b:2}]        9 [[1,null],[2,3]]
+--  10 [{b:null},{b:[10]}] 11 [{b:[10]},{b:null}] 12 [{c:1}]
+--  13 [[{b:null}],[{b:5}]] 14 [{"3b":null}]      15 [{"0abc":null}]
+-- ============================================================================
+SELECT documentdb_api_internal.create_indexes_non_concurrently('nrg_db', '{ "createIndexes": "consist", "indexes": [ { "key": { "$**": 1 }, "name": "wc", "enableOrderedIndex": 1 }, { "key": { "a.b": 1 }, "name": "ab", "enableOrderedIndex": 1 }, { "key": { "a.b.c": 1 }, "name": "abc", "enableOrderedIndex": 1 } ] }', true);
+SELECT documentdb_api.insert_one('nrg_db', 'consist', doc) FROM (VALUES
+ ('{ "_id": 1,  "a": [ 10, 20, 30 ] }'::documentdb_core.bson),
+ ('{ "_id": 2,  "a": [ 10, 20, null ] }'),
+ ('{ "_id": 3,  "a": [ ] }'),
+ ('{ "_id": 4,  "a": 5 }'),
+ ('{ "_id": 5,  "a": null }'),
+ ('{ "_id": 6,  "other": 1 }'),
+ ('{ "_id": 7,  "a": [ { "b": 1 }, { "b": null } ] }'),
+ ('{ "_id": 8,  "a": [ { "b": 1 }, { "b": 2 } ] }'),
+ ('{ "_id": 9,  "a": [ [ 1, null ], [ 2, 3 ] ] }'),
+ ('{ "_id": 10, "a": [ { "b": null }, { "b": [ 10 ] } ] }'),
+ ('{ "_id": 11, "a": [ { "b": [ 10 ] }, { "b": null } ] }'),
+ ('{ "_id": 12, "a": [ { "c": 1 } ] }'),
+ ('{ "_id": 13, "a": [ [ { "b": null } ], [ { "b": 5 } ] ] }'),
+ ('{ "_id": 14, "a": [ { "3b": null } ] }'),
+ ('{ "_id": 15, "a": [ { "0abc": null } ] }')) v(doc);
+
+CREATE TEMP TABLE consist_q(ord int, label text, filter text);
+INSERT INTO consist_q VALUES
+ (1,  'a.0abc : null',   '{ "a.0abc": null }'),
+ (2,  'a.b : null',      '{ "a.b": null }'),
+ (3,  'a.xyz : null',    '{ "a.xyz": null }'),
+ (4,  'a.00 : null',     '{ "a.00": null }'),
+ (5,  'a.5 : null',      '{ "a.5": null }'),
+ (6,  'a.-1 : null',     '{ "a.-1": null }'),
+ (7,  'a.2 : null',      '{ "a.2": null }'),
+ (8,  'a.3 : null',      '{ "a.3": null }'),
+ (9,  'a.0.b : null',    '{ "a.0.b": null }'),
+ (10, 'a.b.5 : null',    '{ "a.b.5": null }'),
+ (11, 'a.0.1 : null',    '{ "a.0.1": null }'),
+ (12, 'a.0.b.c : null',  '{ "a.0.b.c": null }'),
+ (13, 'a.1.b.c : null',  '{ "a.1.b.c": null }'),
+ (14, 'a.3b : null',     '{ "a.3b": null }'),
+ (15, 'a.9x : null',     '{ "a.9x": null }'),
+ (16, 'a.2 : $ne null',  '{ "a.2": { "$ne": null } }'),
+ (17, 'a.2 : $in null',  '{ "a.2": { "$in": [ null ] } }'),
+ (18, 'a.2 : $nin null', '{ "a.2": { "$nin": [ null ] } }'),
+ (19, 'a.b : $exists f', '{ "a.b": { "$exists": false } }'),
+ (20, 'a.b : $exists t', '{ "a.b": { "$exists": true } }'),
+ (21, 'a.2 : $exists f', '{ "a.2": { "$exists": false } }'),
+ (22, 'a.2 : $exists t', '{ "a.2": { "$exists": true } }'),
+ (23, 'a.5 : $exists f', '{ "a.5": { "$exists": false } }'),
+ (24, 'a.5 : $exists t', '{ "a.5": { "$exists": true } }');
+
+-- For each predicate: force an index scan, force a collection scan, compare the
+-- two result sets. Report the index-scan set and a per-predicate consistency
+-- flag; the total mismatch count must be 0.
+DO $consist$
+DECLARE q RECORD; idxr int[]; seqr int[]; fs text; ncons int := 0;
+BEGIN
+  FOR q IN SELECT ord, label, filter FROM consist_q ORDER BY ord LOOP
+    fs := format('{ "find": "consist", "filter": %s }', q.filter);
+    SET enable_seqscan = off; SET enable_indexscan = on; SET enable_bitmapscan = on;
+    EXECUTE 'SELECT array_agg((t.d->>''_id'')::int ORDER BY (t.d->>''_id'')::int) FROM (SELECT document AS d FROM bson_aggregation_find($1, $2)) t'
+      USING 'nrg_db', fs::documentdb_core.bson INTO idxr;
+    SET enable_seqscan = on; SET enable_indexscan = off; SET enable_bitmapscan = off;
+    EXECUTE 'SELECT array_agg((t.d->>''_id'')::int ORDER BY (t.d->>''_id'')::int) FROM (SELECT document AS d FROM bson_aggregation_find($1, $2)) t'
+      USING 'nrg_db', fs::documentdb_core.bson INTO seqr;
+    idxr := COALESCE(idxr, '{}'); seqr := COALESCE(seqr, '{}');
+    IF idxr IS DISTINCT FROM seqr THEN ncons := ncons + 1; END IF;
+    RAISE NOTICE '% : idx=% : consistency=%',
+      rpad(q.label, 16), idxr::text,
+      CASE WHEN idxr IS DISTINCT FROM seqr THEN 'IDX!=SEQ' ELSE 'idx==seq' END;
+  END LOOP;
+  RAISE NOTICE 'index/collection-scan consistency mismatches: % (must be 0)', ncons;
+  RESET enable_seqscan; RESET enable_indexscan; RESET enable_bitmapscan;
+END $consist$;
+
+-- REAL index-term scans: the field-descent paths a.b and a.b.c are served by
+-- explicit ordered indexes (hint), exercising the null / negation / $exists
+-- recheck through an actual Bitmap Index Scan rather than the _id_ fallback.
+-- The result sets must equal the collection-scan golden sets pinned above.
+--   a.b : null (hint ab)    -> 4,5,6,7,10,11,12,14,15
+--   a.b : $ne null (hint)   -> 1,2,3,8,9,13
+--   a.b : $in null (hint)   -> 4,5,6,7,10,11,12,14,15
+--   a.b.c : null (hint abc) -> 4,5,6,7,8,10,11,12,14,15
+set enable_seqscan to off;
+set enable_indexscan to on;
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "consist", "filter": { "a.b": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ab" }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "consist", "filter": { "a.b": { "$ne": null } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ab" }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "consist", "filter": { "a.b": { "$in": [ null ] } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ab" }');
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "consist", "filter": { "a.b.c": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "abc" }');
+reset enable_seqscan;
+reset enable_indexscan;

@@ -4484,6 +4484,28 @@ CompareSetTraverseResultForNulls(void *state, TraverseBsonResult traverseResult)
 			break;
 		}
 
+		case TraverseBsonResult_ArrayIndexNotFound:
+		{
+			/* An out-of-bounds / blocked positional array index is not a null match: e.g.
+			 * { "a.5": null } over { "a": [ 10, 20, 30 ] } should not match. Downgrade to a
+			 * Mismatch so it does not count as a missing path - but never clobber a PathNotFound
+			 * already latched by another array position, since null-equality is existential across
+			 * implicitly traversed positions (PathNotFound wins over Mismatch). This runs before the
+			 * array's document-element scan, so an element that genuinely lacks the field can still
+			 * re-establish PathNotFound and match. When the feature is disabled, retain the legacy
+			 * behavior of treating it as a missing path.
+			 */
+			if (!EnableExistentialNullArrayMatch)
+			{
+				validateState->compareResult = CompareResult_PathNotFound;
+			}
+			else if (validateState->compareResult != CompareResult_PathNotFound)
+			{
+				validateState->compareResult = CompareResult_Mismatch;
+			}
+			break;
+		}
+
 		default:
 		{
 			ereport(ERROR, (errmsg("Unexpected traverse result %d", traverseResult)));
@@ -4503,6 +4525,14 @@ CompareSetTraverseResult(void *state, TraverseBsonResult traverseResult)
 	{
 		case TraverseBsonResult_PathNotFound:
 		{
+			validateState->compareResult = CompareResult_PathNotFound;
+			break;
+		}
+
+		case TraverseBsonResult_ArrayIndexNotFound:
+		{
+			/* Non-null comparisons do not distinguish an out-of-bounds array index from a missing
+			 * path; treat it as PathNotFound, matching the pre-existing behavior. */
 			validateState->compareResult = CompareResult_PathNotFound;
 			break;
 		}
@@ -4662,11 +4692,13 @@ OrderBySetTraverseResult(void *state, TraverseBsonResult compareResult)
 {
 	TraverseOrderByValidateState *validateState =
 		(TraverseOrderByValidateState *) state;
-	if (compareResult == TraverseBsonResult_PathNotFound &&
+	if ((compareResult == TraverseBsonResult_PathNotFound ||
+		 compareResult == TraverseBsonResult_ArrayIndexNotFound) &&
 		validateState->nestedArrayCount > 0)
 	{
 		/* This is the path where we request a.b.c (which means we expect b to be an object or array)
-		 * but b is a primitive type. This gets compared as null.
+		 * but b is a primitive type. This gets compared as null. An out-of-bounds array index is
+		 * treated the same as a missing path here, preserving pre-existing order-by behavior.
 		 */
 		bson_value_t nullValue = { 0 };
 		nullValue.value_type = BSON_TYPE_NULL;
