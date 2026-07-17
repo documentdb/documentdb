@@ -35,6 +35,11 @@ typedef struct DollarRangeParams
 	bool isMaxIndexKey;
 	bson_value_t minOrMaxIndexKey;
 
+	/* Serialized deduplication state (row-pointer bitmap) carried across
+	 * dynamic cursor pages so an ordered scan can suppress documents already
+	 * returned on an earlier page. Present when value_type is BSON_TYPE_BINARY. */
+	bson_value_t dedupState;
+
 	/* Reservoir sampling: when true, the range signals the planner to wrap
 	 * scan paths with a reservoir sampling CustomScan. */
 	bool isSample;

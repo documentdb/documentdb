@@ -97,6 +97,10 @@ InitializeQueryDollarRange(const bson_value_t *filterValue,
 			rangeParams->isMaxIndexKey = true;
 			rangeParams->minOrMaxIndexKey = *bson_iter_value(&rangeIter);
 		}
+		else if (strcmp(key, "dedupState") == 0)
+		{
+			rangeParams->dedupState = *bson_iter_value(&rangeIter);
+		}
 		else if (strcmp(key, "sample") == 0)
 		{
 			rangeParams->isSample = true;
