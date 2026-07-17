@@ -88,6 +88,17 @@ NOTICE:  creating collection
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
+-- coll_id_d: equality / range predicates on a string `_id`.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_dist_db',
+  '{ "createIndexes": "coll_id_d",
+     "indexes": [{ "key": {"_id": 1}, "name": "idx_id_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
 \i sql/bson_collation_query_tests_dist_core.sql
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
 -- ======================================================================
@@ -541,6 +552,90 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
 psql:sql/bson_collation_query_tests_dist_core.sql:201: ERROR:  $graphLookup using 'from' on a sharded collection is currently unsupported
 END;
 -- ======================================================================
+-- SECTION: collation-aware query and count on a string _id (sharded)
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_id_d', '{ "_id": "cat", "n": 1 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_id_d', '{ "_id": "Cat", "n": 2 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_id_d', '{ "_id": "CAT", "n": 3 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_id_d', '{ "_id": "dog", "n": 4 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_id_d', '{ "_id": "Dog", "n": 5 }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_id_d', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- equality on a string _id under collation returns every case variant
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_find('coll_q_dist_db',
+    '{ "find": "coll_id_d", "filter": { "_id": "cat" }, "sort": { "n": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                    document                     
+---------------------------------------------------------------------
+ { "_id" : "cat", "n" : { "$numberInt" : "1" } }
+ { "_id" : "Cat", "n" : { "$numberInt" : "2" } }
+ { "_id" : "CAT", "n" : { "$numberInt" : "3" } }
+(3 rows)
+
+END;
+-- range on a string _id under collation
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_find('coll_q_dist_db',
+    '{ "find": "coll_id_d", "filter": { "_id": { "$gte": "cat" } }, "sort": { "n": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+                    document                     
+---------------------------------------------------------------------
+ { "_id" : "cat", "n" : { "$numberInt" : "1" } }
+ { "_id" : "Cat", "n" : { "$numberInt" : "2" } }
+ { "_id" : "CAT", "n" : { "$numberInt" : "3" } }
+ { "_id" : "dog", "n" : { "$numberInt" : "4" } }
+ { "_id" : "Dog", "n" : { "$numberInt" : "5" } }
+(5 rows)
+
+END;
+-- covered $count on a string _id under collation
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
+    '{ "aggregate": "coll_id_d", "pipeline": [ { "$match": { "_id": "cat" } }, { "$count": "c" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+             document             
+---------------------------------------------------------------------
+ { "c" : { "$numberInt" : "3" } }
+(1 row)
+
+END;
+-- ======================================================================
 -- CLEANUP
 -- ======================================================================
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_agg_d');
@@ -568,6 +663,12 @@ SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_graph_src_d');
 (1 row)
 
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_lookup_d');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_id_d');
  drop_collection 
 ---------------------------------------------------------------------
  t

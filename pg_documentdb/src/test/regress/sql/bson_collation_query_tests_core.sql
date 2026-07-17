@@ -1057,6 +1057,54 @@ SELECT documentdb_api.count_query('coll_q_db', '{"count":"coll_strings", "query"
 -- distinct with collation: unsupported
 SELECT documentdb_api.distinct_query('coll_q_db', '{"distinct":"coll_strings", "key":"a", "query":{}, "collation":{"locale":"en","strength":1}}');
 
+-- ==============================================================================
+-- SECTION 21: covered $count and a collation-aware index keyed on `_id`
+-- ==============================================================================
+-- These collections hold only scalar values so that, when the index variant runs
+-- them, the ordered collation-aware index stays single-key and can serve a
+-- covered $count via an index-only scan (see the explain variant for the plans).
+-- The results must be identical in the runtime (seq scan) and index modes.
+
+SET documentdb_core.enableCollation TO on;
+
+-- coll_ios: scalar `country` field, exercised by covered $count and range queries.
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 1, "country": "usa", "provider": "aws" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 2, "country": "USA", "provider": "Aws" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 3, "country": "Usa", "provider": "AWS" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 4, "country": "canada", "provider": "gcp" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 5, "country": "Canada", "provider": "GCP" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 6, "country": "brazil", "provider": "azure" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 7, "country": "BRAZIL", "provider": "Azure" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 8, "country": "mexico", "provider": "aws" }');
+
+-- Case-insensitive $count (strength 1) counts every case variant.
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_ios", "pipeline": [ { "$match": { "country": "USA" } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+-- Case-sensitive $count (strength 3) matches only the exact byte sequence.
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_ios", "pipeline": [ { "$match": { "country": "USA" } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 3 } }');
+-- Covered $count over a range predicate under collation.
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_ios", "pipeline": [ { "$match": { "country": { "$gte": "brazil", "$lt": "mexico" } } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+-- find ordered by _id (the trailing key of the compound index).
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_ios", "filter": { "country": "canada" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+-- Equality on the leading field plus the trailing _id key.
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_ios", "filter": { "country": "usa", "_id": 2 }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- coll_id_ios: scalar string `_id` values that collate equally but differ byte-wise.
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "cat", "v": 1 }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "Cat", "v": 2 }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "CAT", "v": 3 }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "dog", "v": 4 }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "Dog", "v": 5 }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "goat", "v": 6 }');
+
+-- Equality on _id under collation: strength 1 returns every case variant.
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_id_ios", "filter": { "_id": "cat" }, "sort": { "v": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+-- Equality on _id under collation: strength 3 returns only the exact _id.
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_id_ios", "filter": { "_id": "cat" }, "sort": { "v": 1 }, "collation": { "locale": "en", "strength": 3 } }');
+-- Covered $count on _id under collation.
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_id_ios", "pipeline": [ { "$match": { "_id": "dog" } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+-- Range on _id under collation.
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_id_ios", "filter": { "_id": { "$gte": "cat", "$lte": "dog" } }, "sort": { "v": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
 -- ======================================================================
 -- CLEANUP
 -- ======================================================================
@@ -1066,7 +1114,9 @@ SELECT documentdb_api.drop_collection('coll_q_db', 'coll_delete_sort');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_find_positional');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_graph_src');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_graph_target');
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_id_ios');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_in_empty');
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_ios');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_lookup_src');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_multi_collation');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_order_tests0');
