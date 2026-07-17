@@ -15,6 +15,11 @@ SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documen
 SET documentdb.next_collection_id TO 93000;
 SET documentdb.next_collection_index_id TO 93000;
 SET enable_seqscan TO off;
+-- This test exercises the multikey bitmap-fallback and plan-kill safeguards,
+-- which are opt-in via enable_dynamic_cursor_multikey_bitmap (default off). Turn
+-- it on so multikey wildcard indexes fall back to a de-duplicating bitmap scan
+-- instead of the default ordered dedup-carry-forward continuation.
+SET documentdb.enable_dynamic_cursor_multikey_bitmap TO on;
 ------------------------------------------------------------------------------
 -- Path A: scalar (non-multikey) wildcard root index. The wildcard-leading index
 -- is non-multikey, so the dynamic cursor takes the ordered Secondary Index Scan

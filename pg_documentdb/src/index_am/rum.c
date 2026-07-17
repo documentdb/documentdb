@@ -52,6 +52,7 @@ extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
 extern bool EnableIndexPathKeySummarization;
 extern bool EnableMergeSortForInPrefix;
+extern bool EnableDynamicCursorDedupTracking;
 
 bool RumHasMultiKeyPaths = false;
 
@@ -2447,7 +2448,7 @@ ResetReportedIndexCosts(void)
 
 
 Datum
-DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan)
+DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan, bytea **dedupState)
 {
 	if (!IsCompositeOpClass(scan->indexRelation))
 	{
@@ -2470,10 +2471,29 @@ DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan)
 		scan->indexRelation->rd_indam->ambeginscan == extension_documentdb_rumbeginscan;
 	if (isPathSummarizationScan || pathKeySummarizationForced)
 	{
-		return DirectFunctionCall1(getCurrentIndexKey, PointerGetDatum(scan));
+		/* When dedup tracking is disabled, do not request the dedup state from
+		 * the index: call without the out-pointer and report none, so no dedup
+		 * state is serialized into the continuation. */
+		if (!EnableDynamicCursorDedupTracking)
+		{
+			if (dedupState != NULL)
+			{
+				*dedupState = NULL;
+			}
+
+			return DirectFunctionCall1(getCurrentIndexKey, PointerGetDatum(scan));
+		}
+
+		return DirectFunctionCall2(getCurrentIndexKey, PointerGetDatum(scan),
+								   PointerGetDatum(dedupState));
 	}
 	else
 	{
+		if (dedupState != NULL)
+		{
+			*dedupState = NULL;
+		}
+
 		DocumentDBRumIndexState *state = scan->opaque;
 		return DirectFunctionCall1(getCurrentIndexKey, PointerGetDatum(state->innerScan));
 	}

@@ -20,6 +20,7 @@ test: bson_dynamic_cursor_streaming_persistent_tests rum_incomplete_split_tests 
 test: bson_dynamic_cursor_parallel_tests
 test: bson_dynamic_cursor_wildcard_root_tests
 test: bson_dynamic_cursor_multikey_bitmap_tests
+test: bson_dynamic_cursor_dedup_tests
 test: bson_group_by_dynamic_streaming_tests!PG16_OR_HIGHER!
 test: bson_aggregation_group_distinct_scan_tests!PG16_OR_HIGHER!
 test: bson_aggregation_group_first_distinct_scan_tests!PG16_OR_HIGHER!

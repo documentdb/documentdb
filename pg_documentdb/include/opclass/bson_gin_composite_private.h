@@ -93,6 +93,11 @@ typedef struct VariableIndexBounds
 	/* OPTIONAL: row level bounds that are applied to the query */
 	CompositeRowBounds *minBounds;
 
+	/* OPTIONAL: serialized deduplication state (row-pointer bitmap) carried
+	 * across dynamic cursor pages, as a BSON binary value. Present when
+	 * dedupState.value_type is BSON_TYPE_BINARY. */
+	bson_value_t dedupState;
+
 	/* Whether planning already handled reduced-correlated bound pruning. */
 	bool isReducedCorrelatedBoundsPlanApplied;
 } VariableIndexBounds;
@@ -179,6 +184,11 @@ typedef struct CompositeQueryMetaInfo
 	bool isOrderedScan;
 	bool hasArrayPaths;
 	const char *collation;
+
+	/* OPTIONAL: serialized deduplication state (row-pointer bitmap) supplied by
+	 * the continuation to restore an ordered scan's dedup tracker, as a BSON
+	 * binary value. Present when dedupState.value_type is BSON_TYPE_BINARY. */
+	bson_value_t dedupState;
 } CompositeQueryMetaInfo;
 
 typedef struct CompositeQueryRunData

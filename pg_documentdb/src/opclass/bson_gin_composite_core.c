@@ -3025,6 +3025,13 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 {
 	DollarRangeParams *params = ParseQueryDollarRange(queryElement);
 
+	/* Carry any serialized dedup state forward so an ordered scan can restore
+	 * the row-pointer bitmap from the continuation (independent of the bound). */
+	if (params->dedupState.value_type == BSON_TYPE_BINARY)
+	{
+		indexBounds->dedupState = params->dedupState;
+	}
+
 	if (params->isMergeSortInPrefixMarker)
 	{
 		/* The $in-prefix merge-sort marker is a planner-only signal that must be

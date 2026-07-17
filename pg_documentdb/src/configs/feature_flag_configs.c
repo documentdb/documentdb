@@ -295,9 +295,20 @@ bool EnableDynamicCursorFastStartupScan = DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STA
 #define DEFAULT_ENABLE_DYNAMIC_CURSOR_PARALLEL_PLANS true
 bool EnableDynamicCursorParallelPlans = DEFAULT_ENABLE_DYNAMIC_CURSOR_PARALLEL_PLANS;
 
-/* Added in v116, enabled in v116, remove after v122 */
-#define DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP true
+/* Ordered multikey scans deduplicate by carrying the dedup state forward in the
+ * continuation, so the bitmap-scan safeguard is opt-in (used mainly by tests). */
+
+/* Added in v116, Pending stabilization, enable in v120 */
+#define DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP false
 bool EnableDynamicCursorMultiKeyBitmap = DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP;
+
+/* Tracks deduplication state for ordered multikey index scans and carries it
+ * forward in the continuation so each document is returned at most once across
+ * cursor batches. Enabled by default; can be disabled as an escape hatch. */
+
+/* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_DYNAMIC_CURSOR_DEDUP_TRACKING true
+bool EnableDynamicCursorDedupTracking = DEFAULT_ENABLE_DYNAMIC_CURSOR_DEDUP_TRACKING;
 
 /* Added in v115, enabled in v115, remove after v117 */
 #define DEFAULT_ENABLE_SINGLE_RESULT_QUERY_PARALLEL_PLANS true
@@ -750,6 +761,18 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"deduplicate by heap tuple."),
 		NULL, &EnableDynamicCursorMultiKeyBitmap,
 		DEFAULT_ENABLE_DYNAMIC_CURSOR_MULTIKEY_BITMAP,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_dynamic_cursor_dedup_tracking", newGucPrefix),
+		gettext_noop(
+			"Whether dynamic cursors track deduplication state for ordered "
+			"multikey index scans and carry it forward in the continuation so "
+			"a document is returned at most once across cursor batches. When "
+			"disabled, ordered multikey scans do not track dedup state and may "
+			"re-emit a document across batches."),
+		NULL, &EnableDynamicCursorDedupTracking,
+		DEFAULT_ENABLE_DYNAMIC_CURSOR_DEDUP_TRACKING,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

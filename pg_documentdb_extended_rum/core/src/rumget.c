@@ -1871,16 +1871,28 @@ CheckAndAddDeduplicateState(RumScanOpaque so)
 		return;
 	}
 
-	Datum requiresDedup = FunctionCall4Coll(
+	bytea *serializedDedupState = NULL;
+	Datum requiresDedup = FunctionCall5Coll(
 		&so->rumstate.outerOrderingFn[entry->attnum - 1],
 		so->rumstate.supportCollation[entry->attnum - 1],
 		entry->queryKey,
 		PointerGetDatum(entry->extra_data),
 		UInt16GetDatum(RumIndexTransform_OrderedScanRequiresDedup),
-		UInt16GetDatum(entry->strategy));
+		UInt16GetDatum(entry->strategy),
+		PointerGetDatum(&serializedDedupState));
 	if (DatumGetBool(requiresDedup))
 	{
-		so->orderByScanData->orderByDedupState = RoaringStateFuncs.createState();
+		if (serializedDedupState != NULL)
+		{
+			/* Restore the dedup tracker carried across pages by the continuation
+			 * so already-returned documents are suppressed on this page. */
+			so->orderByScanData->orderByDedupState =
+				RoaringStateFuncs.deserializeState(serializedDedupState);
+		}
+		else
+		{
+			so->orderByScanData->orderByDedupState = RoaringStateFuncs.createState();
+		}
 	}
 }
 
@@ -4943,11 +4955,42 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 RMGR_PG_FUNCTION_DEF(documentdb_rum_get_current_index_key)
 {
 	IndexScanDesc scan = (IndexScanDesc) PG_GETARG_POINTER(0);
+	bytea **dedupStateOutput = (bytea **) (PG_NARGS() > 1 && !PG_ARGISNULL(1) ?
+										   PG_GETARG_POINTER(1) : NULL);
+
 	RumScanOpaque so = (RumScanOpaque) scan->opaque;
 	if (so->scanType != RumOrderedScan)
 	{
 		ereport(ERROR, (errmsg(
 							"documentdb_rum_get_current_index_key can only be called for ordered scans")));
+	}
+
+
+	if (dedupStateOutput != NULL)
+	{
+		if (so->orderByScanData->orderByDedupState != NULL)
+		{
+			/*
+			 * The current tuple (scan->xs_heaptid) is the boundary tuple that
+			 * was fetched but rejected by the batch/size limit and NOT emitted;
+			 * the continuation points at it so it is re-yielded on the next page.
+			 * It was already added to the dedup tracker while being fetched, so
+			 * remove it before serializing - otherwise the restored tracker would
+			 * suppress it on resume and the document would be dropped entirely.
+			 */
+			if (ItemPointerIsValid(&scan->xs_heaptid))
+			{
+				RoaringStateFuncs.removeItem(so->orderByScanData->orderByDedupState,
+											 &scan->xs_heaptid);
+			}
+
+			*dedupStateOutput = RoaringStateFuncs.serializeState(
+				so->orderByScanData->orderByDedupState);
+		}
+		else
+		{
+			*dedupStateOutput = NULL;
+		}
 	}
 
 	Page page = so->orderByScanData->orderByEntryPageCopy;
