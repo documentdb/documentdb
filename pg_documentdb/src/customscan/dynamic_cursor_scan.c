@@ -108,6 +108,9 @@ typedef struct DynamicCursorInputContinuation
 
 	/* The continuation state for the index scan */
 	bytea *indexContinuation;
+
+	/* The deduplication state for the index scan */
+	bytea *indexDedupState;
 } DynamicCursorInputContinuation;
 
 
@@ -129,6 +132,9 @@ typedef struct ParsedContinuationState
 	ScanDirection indexScanDirection;
 
 	Datum cursorDatums[INDEX_MAX_KEYS];
+
+	/* Deduplication state for index scans */
+	bytea *dedupState;
 } ParsedContinuationState;
 
 
@@ -157,6 +163,9 @@ typedef struct ExtensionCursorScanState
 
 	/* The continuation state for the index scan */
 	bytea *indexContinuation;
+
+	/* The continuation state for the index scan */
+	bytea *indexDedupState;
 
 	/* The core scan method to fetch tuples */
 	ExecScanAccessMtd execScanMethod;
@@ -555,9 +564,10 @@ GetIndexSupportsGetIndexKey(Oid relam, Oid opfamily)
  * opclass) reach this check, so a non-composite index is never forced to bitmap
  * here.
  *
- * This safeguard can be disabled with the
- * enable_dynamic_cursor_multikey_bitmap GUC, in which case ordered scans are
- * allowed on multikey indexes (and may return duplicate documents).
+ * This safeguard is opt-in via the enable_dynamic_cursor_multikey_bitmap GUC
+ * (default off). When it is off, ordered scans are allowed on multikey indexes
+ * and deduplicate across cursor pages by carrying their dedup state forward in
+ * the continuation token.
  */
 static bool
 MultiKeyIndexRequiresBitmapScan(IndexOptInfo *indexInfo)
@@ -1415,6 +1425,7 @@ ExtensionCursorScanCreateCustomScanState(CustomScan *cscan)
 	Uint64AsItemPointer(&scanState->userContinuationState,
 						continuation->itemPointerAsUint64);
 	scanState->indexContinuation = continuation->indexContinuation;
+	scanState->indexDedupState = continuation->indexDedupState;
 
 	/* Set the exec scan method */
 	switch (scanState->scanType)
@@ -1674,7 +1685,8 @@ ExtensionCursorScanNextWithIndexContinuation(CustomScanState *node)
 				rd_opfamily[0], &pathKeySummarizationForced);
 		}
 
-		Datum currentKey = DocumentDBRumGetCurrentIndexKey(scanDesc);
+		bytea **dedupBytes = NULL;
+		Datum currentKey = DocumentDBRumGetCurrentIndexKey(scanDesc, dedupBytes);
 		bytea *currentKeyBytes = DatumGetByteaP(currentKey);
 
 		const char *collation = NULL;
@@ -1809,6 +1821,12 @@ CopyNodeDynamicCursorContinuation(struct ExtensibleNode *target_node, const stru
 		newNode->indexContinuation = DatumGetByteaPCopy(PointerGetDatum(
 															newNode->indexContinuation));
 	}
+
+	if (newNode->indexDedupState)
+	{
+		newNode->indexDedupState = DatumGetByteaPCopy(PointerGetDatum(
+														  newNode->indexDedupState));
+	}
 }
 
 
@@ -1840,6 +1858,25 @@ OutDynamicCursorInputContinuation(StringInfo str, const struct ExtensibleNode *r
 	}
 	WRITE_STRING_FIELD_VALUE(continuation, targetStr);
 	pfree(targetStr);
+	targetStr = NULL;
+
+	if (node->indexDedupState != NULL)
+	{
+		PG_USED_FOR_ASSERTS_ONLY uint64_t targetLength;
+		int dataSize = VARSIZE_ANY_EXHDR(node->indexDedupState);
+		int requiredSize = dataSize * 2 + 1; /* each byte is represented by 2 hex chars, plus null terminator */
+		targetStr = (char *) palloc(requiredSize);
+		targetLength = hex_encode((char *) VARDATA_ANY(node->indexDedupState), dataSize,
+								  targetStr);
+		Assert(targetLength == (uint64_t) (requiredSize - 1));
+	}
+	else
+	{
+		targetStr = pstrdup("");
+	}
+	WRITE_STRING_FIELD_VALUE(indexDedupState, targetStr);
+	pfree(targetStr);
+	targetStr = NULL;
 }
 
 
@@ -1850,6 +1887,7 @@ static void
 ReadDynamicCursorInputContinuation(struct ExtensibleNode *node)
 {
 	const char *continuationHex = NULL;
+	const char *dedupStateHex = NULL;
 	const char *token;
 	int length;
 	DynamicCursorInputContinuation *local_node = (DynamicCursorInputContinuation *) node;
@@ -1860,6 +1898,7 @@ ReadDynamicCursorInputContinuation(struct ExtensibleNode *node)
 	READ_INT32_FIELD(scanType);
 	READ_UINT64_FIELD(itemPointerAsUint64);
 	READ_STRING_FIELD_VALUE(continuationHex);
+	READ_STRING_FIELD_VALUE(dedupStateHex);
 
 	if (continuationHex != NULL && strlen(continuationHex) > 0)
 	{
@@ -1876,6 +1915,23 @@ ReadDynamicCursorInputContinuation(struct ExtensibleNode *node)
 	else
 	{
 		local_node->indexContinuation = NULL;
+	}
+
+	if (dedupStateHex != NULL && strlen(dedupStateHex) > 0)
+	{
+		PG_USED_FOR_ASSERTS_ONLY uint64 written;
+		length = strlen(dedupStateHex) / 2;
+		bytea *buffer = (bytea *) palloc(length + VARHDRSZ);
+		SET_VARSIZE(buffer, length + VARHDRSZ);
+
+		char *writePtr = VARDATA(buffer);
+		written = hex_decode(dedupStateHex, length, writePtr);
+		Assert(written == (uint64) length);
+		local_node->indexDedupState = buffer;
+	}
+	else
+	{
+		local_node->indexDedupState = NULL;
 	}
 }
 
@@ -2022,7 +2078,8 @@ WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
 			const char *indexName = get_rel_name(indexOid);
 			PgbsonWriterAppendUtf8(writer, "idx", 3, indexName);
 
-			Datum currentKey = DocumentDBRumGetCurrentIndexKey(scanDesc);
+			bytea *dedupState = NULL;
+			Datum currentKey = DocumentDBRumGetCurrentIndexKey(scanDesc, &dedupState);
 			bytea *buffer = DatumGetByteaP(currentKey);
 			bson_value_t bufferBinary = { 0 };
 			bufferBinary.value_type = BSON_TYPE_BINARY;
@@ -2030,6 +2087,19 @@ WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
 			bufferBinary.value.v_binary.data = (uint8_t *) VARDATA_ANY(buffer);
 			bufferBinary.value.v_binary.data_len = VARSIZE_ANY_EXHDR(buffer);
 			PgbsonWriterAppendValue(writer, "sik", 3, &bufferBinary);
+
+			/* See if there's a dedup state to serialize */
+			if (dedupState != NULL)
+			{
+				bson_value_t dedupBufferBinary = { 0 };
+				dedupBufferBinary.value_type = BSON_TYPE_BINARY;
+				dedupBufferBinary.value.v_binary.subtype = 0;
+				dedupBufferBinary.value.v_binary.data = (uint8_t *) VARDATA_ANY(
+					dedupState);
+				dedupBufferBinary.value.v_binary.data_len = VARSIZE_ANY_EXHDR(dedupState);
+				PgbsonWriterAppendValue(writer, "sds", 3, &dedupBufferBinary);
+			}
+
 			break;
 		}
 
@@ -2072,6 +2142,7 @@ ParseContinuationDocument(pgbson *continuation, ParsedContinuationState *state)
 	bson_iter_t reader;
 	bson_value_t pkContinuation = { 0 };
 	bson_value_t secondaryIndexContinuation = { 0 };
+	bson_value_t secondaryIndexDedupState = { 0 };
 	state->indexScanDirection = ForwardScanDirection;
 	PgbsonInitIterator(continuation, &reader);
 
@@ -2184,6 +2255,11 @@ ParseContinuationDocument(pgbson *continuation, ParsedContinuationState *state)
 				{
 					secondaryIndexContinuation = *bson_iter_value(&reader);
 				}
+				else if (strcmp(fieldName, "sds") == 0)
+				{
+					/* This is optional, so we don't error if it's not present */
+					secondaryIndexDedupState = *bson_iter_value(&reader);
+				}
 
 				continue;
 			}
@@ -2261,6 +2337,19 @@ ParseContinuationDocument(pgbson *continuation, ParsedContinuationState *state)
 				   secondaryIndexContinuation.value.v_binary.data_len);
 			Datum currentKey = PointerGetDatum(buffer);
 			state->cursorDatums[0] = currentKey;
+			if (secondaryIndexDedupState.value_type == BSON_TYPE_BINARY)
+			{
+				bytea *dedupBuffer = palloc(
+					secondaryIndexDedupState.value.v_binary.data_len +
+					VARHDRSZ);
+				SET_VARSIZE(dedupBuffer,
+							secondaryIndexDedupState.value.v_binary.data_len +
+							VARHDRSZ);
+				memcpy(VARDATA(dedupBuffer), secondaryIndexDedupState.value.v_binary.data,
+					   secondaryIndexDedupState.value.v_binary.data_len);
+				state->dedupState = dedupBuffer;
+			}
+
 			break;
 		}
 
@@ -2484,6 +2573,7 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 			inputContinuation->itemPointerAsUint64 = ItemPointerToUint64(
 				&state->userContinuationState);
 			inputContinuation->indexContinuation = DatumGetByteaP(state->cursorDatums[0]);
+			inputContinuation->indexDedupState = state->dedupState;
 			if (state->tableOid != inputContinuation->queryTableId)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED),
@@ -2785,6 +2875,20 @@ AddContinuationQualsToIndexPath(PlannerInfo *root, RelOptInfo *rel, IndexPath *r
 	bufferValue.value.v_binary.data = (uint8_t *) continuationBuffer;
 	bufferValue.value.v_binary.data_len = VARSIZE_ANY(continuationBuffer);
 	PgbsonWriterAppendValue(&childWriter, "minIndexOp", 10, &bufferValue);
+
+	/* When the continuation carried a serialized dedup state, embed it so the
+	 * ordered scan can restore its dedup tracker and suppress documents already
+	 * returned on earlier pages. */
+	if (state->dedupState != NULL)
+	{
+		bson_value_t dedupValue = { 0 };
+		dedupValue.value_type = BSON_TYPE_BINARY;
+		dedupValue.value.v_binary.subtype = 0;
+		dedupValue.value.v_binary.data = (uint8_t *) state->dedupState;
+		dedupValue.value.v_binary.data_len = VARSIZE_ANY(state->dedupState);
+		PgbsonWriterAppendValue(&childWriter, "dedupState", 10, &dedupValue);
+	}
+
 	PgbsonWriterEndDocument(&writer, &childWriter);
 	pgbson *minIndexKeySpec = PgbsonWriterGetPgbson(&writer);
 
