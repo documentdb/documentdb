@@ -763,3 +763,83 @@ $cmd$);
 WITH r1 AS (SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
     '{ "filter": { "a": { "$in": [ 2, 9 ] }, "c": { "$gt": 15 } } }'
 )) SELECT COUNT(*) FROM r1;
+
+-- ===== Forced ordered scan on a root wildcard index with a simple filter =====
+-- A root wildcard ("$**") index forced into an ordered scan by the low
+-- max_non_ordered_term_scan_threshold. A simple single-path filter should
+-- push down to the wildcard root index.
+SELECT COUNT(documentdb_api.insert_one('ordered_saop_scan_test', 'ordered_saop_wildcard_root_coll',
+    bson_build_document('_id', i, 'a', i, 'b', i * 2, 'c', i * 3))) FROM generate_series(1, 100) i;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ordered_saop_scan_test',
+    '{ "createIndexes": "ordered_saop_wildcard_root_coll", "indexes": [ { "key": { "$**": 1 }, "name": "wc_1", "enableOrderedIndex": true } ] }'::bson, TRUE);
+
+set enable_seqscan to off;
+
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "a": { "$in": [ 5, 16, 42, 77 ] } } }'::bson);
+$cmd$);
+
+SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+    '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "a": { "$in": [ 5, 16, 42, 77 ] } } }'::bson);
+
+-- Same $in semantics on field "b" (b = i * 2).
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "b": { "$in": [ 10, 32, 84, 154 ] } } }'::bson);
+$cmd$);
+
+SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+    '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "b": { "$in": [ 10, 32, 84, 154 ] } } }'::bson);
+
+-- Same $in semantics on field "c" (c = i * 3).
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "c": { "$in": [ 15, 48, 126, 231 ] } } }'::bson);
+$cmd$);
+
+SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+    '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "c": { "$in": [ 15, 48, 126, 231 ] } } }'::bson);
+
+-- Multiple filters against the wildcard index: a single ordered walk can only
+-- drive one wildcard path, so the index bounds consider one path and the
+-- remaining filter is applied via runtime recheck. { a: $in [5,16,42,77] }
+-- yields a=5,16,42,77 (b=10,32,84,154); the b > 20 recheck keeps a=16,42,77.
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "a": { "$in": [ 5, 16, 42, 77 ] }, "b": { "$gt": 20 } } }'::bson);
+$cmd$);
+
+SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+    '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "a": { "$in": [ 5, 16, 42, 77 ] }, "b": { "$gt": 20 } } }'::bson);
+
+-- Multiple bounds on the SAME wildcard path form a range that is pushed into
+-- the single ordered walk (lower and upper bound combined), so no runtime
+-- recheck is needed for the range. { a: { $gt: 3, $lt: 6 } } yields a=4,5.
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "a": { "$gt": 3, "$lt": 6 } } }'::bson);
+$cmd$);
+
+SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+    '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "a": { "$gt": 3, "$lt": 6 } } }'::bson);
+
+-- $in combined with a range bound on the SAME wildcard path: the $in discrete
+-- bounds are constrained by the > 6 lower bound within the single walk.
+-- { a: { $in: [1,4,5,9], $gt: 6 } } keeps only a=9.
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "a": { "$in": [ 1, 4, 5, 9 ], "$gt": 6 } } }'::bson);
+$cmd$);
+
+SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+    '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "a": { "$in": [ 1, 4, 5, 9 ], "$gt": 6 } } }'::bson);
+
+reset enable_seqscan;
