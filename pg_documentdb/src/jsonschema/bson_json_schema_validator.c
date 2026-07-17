@@ -187,6 +187,24 @@ ValidateBsonValueCommon(const bson_value_t *value, const SchemaNode *node)
 			return false;
 		}
 	}
+	if (flags & CommonValidationTypes_Enum)
+	{
+		bool found = false;
+		bson_iter_t enumIter;
+		BsonValueInitIterator(node->validations.common->enumValues, &enumIter);
+		while (bson_iter_next(&enumIter))
+		{
+			if (BsonValueEquals(value, bson_iter_value(&enumIter)))
+			{
+				found = true;
+				break;
+			}
+		}
+		if (!found)
+		{
+			return false;
+		}
+	}
 	if (flags & CommonValidationTypes_OneOf)
 	{
 		int matchCount = 0;

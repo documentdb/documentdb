@@ -40,6 +40,7 @@ static void ParseBsonType(const bson_value_t *value, SchemaNode *node);
 static void ParseEncryptMetadata(const bson_value_t *value, SchemaNode *node);
 static void ParseEncrypt(const bson_value_t *value, SchemaNode *node);
 
+static void ParseEnum(const bson_value_t *value, SchemaNode *node);
 static void ParseOneOf(const bson_value_t *value, SchemaNode *node);
 
 static void ParseItems(const bson_value_t *value, SchemaNode *node);
@@ -195,6 +196,10 @@ BuildSchemaTreeCoreOnNode(bson_iter_t *schemaIter, SchemaNode *node)
 			}
 
 			/* No validation needed for description field */
+		}
+		else if (strcmp(key, "enum") == 0)
+		{
+			ParseEnum(value, node);
 		}
 		else if (strcmp(key, "oneOf") == 0)
 		{
@@ -756,6 +761,53 @@ ParseEncryptMetadata(const bson_value_t *value, SchemaNode *node)
 								key)));
 		}
 	}
+}
+
+
+/*
+ * ParseEnum function reads the schema value for the "enum" keyword.
+ * The value must be a non-empty array of literals. Each element is copied
+ * into a single BSON array stored on the Node's common validations section.
+ */
+static void
+ParseEnum(const bson_value_t *value, SchemaNode *node)
+{
+	if (value->value_type != BSON_TYPE_ARRAY)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
+						errmsg(
+							"$jsonSchema keyword 'enum' must be an array")));
+	}
+
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	pgbson_array_writer arrayWriter;
+	PgbsonWriterStartArray(&writer, "", 0, &arrayWriter);
+
+	bson_iter_t iter;
+	BsonValueInitIterator(value, &iter);
+	int elementCount = 0;
+	while (bson_iter_next(&iter))
+	{
+		PgbsonArrayWriterWriteValue(&arrayWriter, bson_iter_value(&iter));
+		elementCount++;
+	}
+
+	if (elementCount == 0)
+	{
+		PgbsonWriterFree(&writer);
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+						errmsg(
+							"$jsonSchema keyword 'enum' cannot be an empty array")));
+	}
+
+	PgbsonWriterEndArray(&writer, &arrayWriter);
+	node->validations.common->enumValues =
+		(bson_value_t *) palloc0(sizeof(bson_value_t));
+	PgbsonArrayWriterCopyDataToBsonValue(&arrayWriter,
+										 node->validations.common->enumValues);
+	PgbsonWriterFree(&writer);
+	node->validationFlags.common |= CommonValidationTypes_Enum;
 }
 
 

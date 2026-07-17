@@ -138,6 +138,9 @@ typedef struct ValidationsCommon
 	BsonTypeFlags jsonTypes;
 	BsonTypeFlags bsonTypes;
 
+	/* Array of allowed values for the 'enum' keyword. */
+	bson_value_t *enumValues;
+
 	/* Linked list of sub-schemas for the 'oneOf' keyword. */
 	SchemaKeywordNode *oneOfNodes;
 } ValidationsCommon;
