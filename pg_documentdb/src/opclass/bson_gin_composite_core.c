@@ -939,6 +939,41 @@ TrimSecondaryVariableBounds(VariableIndexBounds *variableBounds,
 
 
 void
+PickVariableBoundsForWildcardOrderedScan(VariableIndexBounds *variableBounds,
+										 CompositeQueryRunData *runData)
+{
+	/*
+	 * For ordered scan, we can only evaluate one wildcard path - since we can only
+	 * do a single walk per tree.
+	 * Trim the others and push to the runtime.
+	 */
+	ListCell *cell;
+	foreach(cell, variableBounds->variableBoundsList)
+	{
+		CompositeIndexBoundsSet *set = (CompositeIndexBoundsSet *) lfirst(cell);
+		if (set->wildcardPath == NULL)
+		{
+			continue;
+		}
+
+		if (runData->wildcardPath == NULL)
+		{
+			runData->wildcardPath = set->wildcardPath;
+			continue;
+		}
+
+		if (strcmp(runData->wildcardPath, set->wildcardPath) != 0)
+		{
+			runData->metaInfo->requiresRuntimeRecheck = true;
+			variableBounds->variableBoundsList = foreach_delete_current(
+				variableBounds->variableBoundsList, cell);
+			continue;
+		}
+	}
+}
+
+
+void
 PickVariableBoundsForOrderedScan(VariableIndexBounds *variableBounds,
 								 CompositeQueryRunData *runData)
 {

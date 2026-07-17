@@ -1028,9 +1028,10 @@ OptimizeVariableBoundsForOrderedScans(CompositeQueryRunData *runData,
 	{
 		/* Even if there's no array paths, we have to redo the check for
 		* ordered scans since there may be keys for other index paths */
-		PickVariableBoundsForOrderedScan(variableBounds, runData);
+		PickVariableBoundsForWildcardOrderedScan(variableBounds, runData);
 	}
-	else if (hasArrayPaths)
+
+	if (hasArrayPaths)
 	{
 		PickVariableBoundsForOrderedScan(variableBounds, runData);
 	}
@@ -1959,12 +1960,38 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, SerializedCompositeTermPair *te
 
 		if (isWildCardMatch)
 		{
-			/* For equality scenarios, ensure that the paths match too */
+			/* The value matches. For a wildcard term the equality is a true
+			 * match only when the stored path also matches the queried path.
+			 * Index terms are ordered by (path, value), so when the value ties
+			 * the path is the tiebreaker: a smaller path sorts before the bound
+			 * (keep searching forward) while a larger path sorts after it (stop
+			 * for an ascending scan). Route the path comparison through the same
+			 * boundary helpers used for value ordering so the scan advances
+			 * correctly instead of returning a raw boolean. */
 			InitializeBsonIndexTermIfNeeded(termPair);
-			return strcmp(termPair->term.element.path,
-						  bounds->lowerBound.indexTermValue.element.path) == 0 &&
-				   termPair->term.element.pathLength ==
-				   bounds->lowerBound.indexTermValue.element.pathLength;
+			StringView termPath = {
+				.length = termPair->term.element.pathLength,
+				.string = termPair->term.element.path
+			};
+			StringView boundPath = {
+				.length = bounds->lowerBound.indexTermValue.element.pathLength,
+				.string = bounds->lowerBound.indexTermValue.element.path
+			};
+			int32_t pathCompare = CompareStringView(&termPath, &boundPath);
+			if (pathCompare < 0)
+			{
+				return SetBoundaryStoppingValueLessThan(hasEqualityPrefix,
+														termPair->serializedTerm,
+														isBackwardScan,
+														allowSkipScanBoundaries);
+			}
+			else if (pathCompare > 0)
+			{
+				return SetBoundaryStoppingValueGreaterThan(hasEqualityPrefix,
+														   termPair->serializedTerm,
+														   isBackwardScan,
+														   allowSkipScanBoundaries);
+			}
 		}
 
 		return 0;
