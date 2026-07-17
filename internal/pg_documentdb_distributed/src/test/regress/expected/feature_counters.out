@@ -1191,3 +1191,57 @@ SELECT documentdb_api.drop_database('feature_counter_hs_db');
  
 (1 row)
 
+-- Update many noop feature flags
+SELECT documentdb_api.insert('db', '{"insert":"updateMany", "documents":[
+    { "_id" : 1, "a": 1, "b": "noChange", "c": 1 },
+    { "_id" : 2, "a": 1, "b": "noChange", "c": 2 },
+    { "_id" : 3, "a": 1, "b": "noChange", "c": 3 },
+    { "_id" : 4, "a": 1, "b": "noChange", "c": 4 },
+    { "_id" : 5, "a": 1, "b": "noChange", "c": 5 },
+    { "_id" : 6, "a": 1, "b": "noChange", "c": 6 },
+    { "_id" : 7, "a": 1, "b": "noChange", "c": 7 },
+    { "_id" : 8, "a": 1, "b": "noChange", "c": 8 },
+    { "_id" : 9, "a": 1, "b": "noChange", "c": 9 },
+    { "_id" : 10, "a": 1, "b": "noChange", "c": 10 },
+    { "_id" : 11, "a": 1, "b": "noChange", "c": 11 },
+    { "_id" : 12, "a": 1, "b": "noChange", "c": 12 },
+    { "_id" : 13, "a": 1, "b": "noChange", "c": 13 },
+    { "_id" : 14, "a": 1, "b": "noChange", "c": 14 },
+    { "_id" : 15, "a": 1, "b": "noChange", "c": 15 }
+]}');
+NOTICE:  creating collection
+                                         insert                                          
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""15"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "updateMany", "updates":[{"q": {"_id": {"$lte": 10}},"u":{"$set":{"b": "noChange" }},"multi":true}]}');
+                                                               update                                                                
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""10"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "updateMany", "updates":[{"q": {"_id": {"$lte": 11}},"u":{"$set":{"b": "noChange" }},"multi":true}]}');
+                                                               update                                                                
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""11"" } }",t)
+(1 row)
+
+SELECT documentdb_api.update('db', '{"update": "updateMany", "updates":[{"q": {"_id": {"$lte": 11}},"u":{"$set":{"b": "change" }},"multi":true}]}');
+                                                                update                                                                
+---------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""11"" }, ""n"" : { ""$numberInt"" : ""11"" } }",t)
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                                                                            get_feature_counter_pretty                                                                                                                             
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_insert" : 1}, {"command_insert_100" : 1}, {"command_update" : 3}, {"command_updatemany_100_noop" : 1}, {"command_updatemany_10_noop" : 1}, {"command_update_one" : 3}, {"query_operator_lte" : 3}, {"update_many" : 3}, {"update_operator_set" : 3}]}
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'updateMany');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
