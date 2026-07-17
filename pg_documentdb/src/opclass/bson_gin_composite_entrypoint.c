@@ -2683,14 +2683,6 @@ gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
 				*outDedupState = NULL;
 			}
 
-			/* When dedup tracking is disabled, ordered multikey scans do not
-			 * build or restore a dedup tracker (no state is carried in the
-			 * continuation), so report that dedup is not required. */
-			if (!EnableDynamicCursorDedupTracking)
-			{
-				PG_RETURN_BOOL(false);
-			}
-
 			/* Get Extra_data first */
 			CompositeQueryRunData *runData = (CompositeQueryRunData *) PG_GETARG_POINTER(
 				1);
@@ -2726,8 +2718,12 @@ gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
 
 			/* When the continuation carried a serialized dedup state, hand it
 			 * back so the ordered scan can restore its dedup tracker. The binary
-			 * payload is itself a complete varlena (bytea), so copy it verbatim. */
-			if (outDedupState != NULL &&
+			 * payload is itself a complete varlena (bytea), so copy it verbatim.
+			 * When dedup tracking is disabled we still dedup within a page (so
+			 * batch sizing is honored), but we do not carry state across pages,
+			 * so skip the restore and let the tracker start empty each page. */
+			if (EnableDynamicCursorDedupTracking &&
+				outDedupState != NULL &&
 				runData->metaInfo->dedupState.value_type == BSON_TYPE_BINARY)
 			{
 				uint32_t len = runData->metaInfo->dedupState.value.v_binary.data_len;

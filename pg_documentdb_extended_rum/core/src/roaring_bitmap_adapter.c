@@ -16,6 +16,7 @@
 #include <storage/itemptr.h>
 #include "roaring_bitmaps/roaring.h"
 #include "roaring_bitmap_adapter.h"
+#include "pg_documentdb_rum.h"
 #include "pg_documentdb_rum_dedup.h"
 
 
@@ -101,9 +102,22 @@ SerializeRoaringBitmapState(void *state)
 		return NULL;
 	}
 
-	roaring64_bitmap_run_optimize(bitmapState->bitmap);
-	roaring64_bitmap_shrink_to_fit(bitmapState->bitmap);
 	size_t serializedSize = roaring64_bitmap_portable_size_in_bytes(bitmapState->bitmap);
+
+	/*
+	 * run-optimize/shrink-to-fit cost time proportional to the bitmap
+	 * cardinality on every serialize (i.e. every page of an ordered dedup
+	 * scan), so only pay for them once the bitmap is large enough for the
+	 * space savings to be worthwhile. The threshold is configurable via
+	 * <prefix>.dedup_serialize_optimize_threshold_bytes (0 => always).
+	 */
+	if (serializedSize > (size_t) RumDedupSerializeOptimizeThresholdBytes)
+	{
+		roaring64_bitmap_run_optimize(bitmapState->bitmap);
+		roaring64_bitmap_shrink_to_fit(bitmapState->bitmap);
+		serializedSize = roaring64_bitmap_portable_size_in_bytes(bitmapState->bitmap);
+	}
+
 	bytea *result = (bytea *) palloc(VARHDRSZ + serializedSize);
 	size_t serializedBytes = roaring64_bitmap_portable_serialize(bitmapState->bitmap,
 																 (void *) VARDATA(
