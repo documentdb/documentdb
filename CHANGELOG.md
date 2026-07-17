@@ -6,6 +6,7 @@
 * Push safe indexed `$elemMatch` conditions into reduced-correlated composite scans and prune cross-element bounds during planning, aligning index costing with execution. Guarded by `documentdb.enable_composite_reduced_correlated_bounds_planning`. *[Bugfix/Perf]*
 * Reject parallel arrays on metadata-backed composite indexes by default for compatible compound-index semantics. Guarded by `documentdb.enable_failure_on_parallel_index_arrays_for_metadata_tracking`. *[Bugfix]*
 * Fix per-path multikey metadata so an array ancestor marks every indexed descendant, including fields absent from the document. *[Bugfix]*
+* Support the `enum` keyword in `$jsonSchema` validators, requiring a value to equal one of the listed allowed values, both at the top level and for individual properties. *[Feature]*
 * Support the `oneOf` keyword in `$jsonSchema` validators, matching the documented semantics where a value must validate against exactly one of the listed subschemas, both at the top level and for individual properties. *[Feature]*
 
 ### documentdb v0.115-0 (Unreleased) ###
