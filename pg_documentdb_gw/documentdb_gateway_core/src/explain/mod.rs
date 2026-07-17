@@ -1439,8 +1439,8 @@ fn query_planner(
                 doc.append("sampleRowsSkipped", smallest_from_i64(sample_rows_skipped));
             }
 
-            if let Some(sample_heap_skips) = plan.sample_heap_skips {
-                doc.append("sampleHeapSkips", smallest_from_i64(sample_heap_skips));
+            if let Some(sample_heap_fetches) = plan.sample_heap_fetches {
+                doc.append("sampleHeapFetches", smallest_from_i64(sample_heap_fetches));
             }
 
             if let Some(startup_cost) = plan.startup_cost {
