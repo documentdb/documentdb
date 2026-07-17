@@ -194,6 +194,17 @@ PGDLLEXPORT bool RumEnablePageFillFactor =
 #define RUM_DEFAULT_ENABLE_BTREE_LOCK_ORDER true
 PGDLLEXPORT bool RumEnableBtreeLockOrder = RUM_DEFAULT_ENABLE_BTREE_LOCK_ORDER;
 
+/* roaring_bitmap_adapter.c
+ * Minimum serialized size (in bytes) of the dedup bitmap before
+ * run-optimize/shrink-to-fit are applied prior to serialization. These
+ * optimizations cost O(cardinality) per serialize, so for small bitmaps the
+ * cost outweighs the space savings; only pay it once the bitmap is large. */
+
+/* SystemConfig */
+#define RUM_DEFAULT_DEDUP_SERIALIZE_OPTIMIZE_THRESHOLD_BYTES (1024 * 1024)
+PGDLLEXPORT int RumDedupSerializeOptimizeThresholdBytes =
+	RUM_DEFAULT_DEDUP_SERIALIZE_OPTIMIZE_THRESHOLD_BYTES;
+
 PGDLLEXPORT rum_format_log_hook rum_unredacted_log_emit_hook = NULL;
 
 
@@ -529,6 +540,18 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&RumDefaultPageFillFactor,
 		RUM_DEFAULT_FILL_FACTOR, 10, 100,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.dedup_serialize_optimize_threshold_bytes", documentDBRumGucPrefix),
+		"Minimum serialized size (in bytes) of the array-dedup bitmap before "
+		"run-optimize/shrink-to-fit are applied prior to serialization.",
+		"These optimizations cost time proportional to the bitmap cardinality on "
+		"every page of an ordered dedup scan, so they are skipped until the "
+		"serialized bitmap exceeds this threshold. Set to 0 to always optimize.",
+		&RumDedupSerializeOptimizeThresholdBytes,
+		RUM_DEFAULT_DEDUP_SERIALIZE_OPTIMIZE_THRESHOLD_BYTES, 0, INT_MAX,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 }

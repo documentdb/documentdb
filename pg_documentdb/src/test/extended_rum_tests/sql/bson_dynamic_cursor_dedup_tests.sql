@@ -369,6 +369,24 @@ FROM find_cursor_first_page(
     commandSpec => '{ "find": "heavy", "filter": { "a": { "$gte": 1 } }, "hint": "a_1", "batchSize": 9 }',
     cursorId => 96231);
 
+------------------------------------------------------------------------------
+-- Regression: with enable_dynamic_cursor_dedup_tracking off the ordered scan
+-- carries no dedup state across pages (checked above), but it must STILL
+-- de-duplicate WITHIN a single page so the requested batch size is honored.
+-- The "heavy" collection has only 60 documents but 1860 ordered index entries;
+-- a single large-batch page must therefore return the 60 distinct documents,
+-- not one emission per index entry. A regression that disabled within-page
+-- dedup would inflate the page to 1860 duplicate emissions (and, for larger
+-- documents, terminate early on the response size cap well below the requested
+-- batch size).
+------------------------------------------------------------------------------
+SET documentdb.enable_dynamic_cursor_dedup_tracking TO off;
+SELECT dedup_drain_ids('dedup_db', 'heavy', '{ "a": { "$gte": 1 } }', 'a_1', 5000, 96240);
+SELECT count(*) AS emissions_first_page, count(DISTINCT id) AS distinct_ids
+FROM dedup_drained_ids;
+
+SET documentdb.enable_dynamic_cursor_dedup_tracking TO on;
+
 SELECT documentdb_api.drop_collection('dedup_db', 'single');
 SELECT documentdb_api.drop_collection('dedup_db', 'heavy');
 SELECT documentdb_api.drop_collection('dedup_db', 'composite');

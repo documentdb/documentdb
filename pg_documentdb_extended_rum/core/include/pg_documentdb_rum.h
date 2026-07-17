@@ -1156,6 +1156,7 @@ extern PGDLLIMPORT bool RumEnableBtreeLockOrder;
 extern PGDLLIMPORT bool EnableCustomXlogRmgr;
 extern PGDLLIMPORT bool EnableRumCompareFunctionFmgr;
 extern PGDLLIMPORT bool RumEnableEntryPageStep;
+extern PGDLLIMPORT int RumDedupSerializeOptimizeThresholdBytes;
 
 /* Gucs used by tests */
 extern PGDLLIMPORT bool RumForceOrderedIndexScan;
