@@ -259,6 +259,8 @@ void TrimSecondaryVariableBounds(VariableIndexBounds *variableBounds,
 								 bool enableMetadataBasedTracking);
 void PickVariableBoundsForOrderedScan(VariableIndexBounds *variableBounds,
 									  CompositeQueryRunData *runData);
+void PickVariableBoundsForWildcardOrderedScan(VariableIndexBounds *variableBounds,
+											  CompositeQueryRunData *runData);
 void PopulateTermMetadataForTruncation(IndexTermCreateMetadata *metadata, const
 									   IndexTermCreateMetadata *baseMetadata,
 									   CompositeQueryRunData *runData,
