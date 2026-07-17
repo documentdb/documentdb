@@ -8,6 +8,13 @@ CREATE OR REPLACE FUNCTION documentdb_test_helpers.gin_bson_get_composite_path_g
     RETURNS SETOF documentdb_core.bson LANGUAGE C IMMUTABLE PARALLEL SAFE STRICT AS '$libdir/pg_documentdb',
 $$gin_bson_get_composite_path_generated_terms$$;
 
+CREATE SCHEMA IF NOT EXISTS composite_terms_metadata;
+CREATE FUNCTION composite_terms_metadata.gin_bson_get_composite_path_generated_terms(
+    documentdb_core.bson, text, int4, bool, p_wildcardIndex int4 = -1,
+    p_reduced_correlated bool = false, p_enable_global_term_metadata bool = false)
+    RETURNS SETOF documentdb_core.bson LANGUAGE C IMMUTABLE PARALLEL SAFE STRICT AS '$libdir/pg_documentdb',
+$$gin_bson_get_composite_path_generated_terms$$;
+
 -- test scenarios of term generation for composite path
 SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "a": 1, "b": 2 }', '[ "a", "b" ]', 2000, false);
 SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "a": [ 1, 2, 3 ], "b": 2 }', '[ "a", "b" ]', 2000, false);
@@ -17,6 +24,14 @@ SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_term
 -- test when one doesn't exist
 SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "b": [ true, false ] }', '[ "a", "b" ]', 2000, false);
 SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "a": [ 1, 2, 3 ] }', '[ "a", "b" ]', 2000, false);
+
+-- a is a shared array ancestor, so every indexed descendant is multi-key even
+-- when a.z is absent. The term blob metadata notice includes the overall
+-- multi-key bit and all three path bits: 0b1111 = 15.
+SELECT * FROM composite_terms_metadata.gin_bson_get_composite_path_generated_terms(
+    '{ "a": [ { "x": 1, "y": 2 } ] }',
+    '[ "a.x", "a.y", "a.z" ]',
+    2000, true, -1, false, true);
 
 -- test when one gets truncated (a has 29 letters, truncation limit is 50 /2 so 25 per path)
 SELECT * FROM documentdb_test_helpers.gin_bson_get_composite_path_generated_terms('{ "a": "aaaaaaaaaaaaaaaaaaaaaaaaaaaa", "b": 1 }', '[ "a", "b" ]', 50, true);

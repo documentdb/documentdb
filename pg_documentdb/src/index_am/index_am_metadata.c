@@ -24,8 +24,8 @@
 
 
 /*
- * Reads composite-index opclass metadata for telemetry. Returns Full with *info
- * fully populated when the metadata blob is available, Partial with only
+ * Reads composite-index opclass metadata. Returns Full with *info fully
+ * populated when the metadata blob is available, Partial with only
  * info->isMultiKey set as a fallback, or None if neither can be read.
  */
 CompositeOpClassMetadataReadResult
@@ -72,6 +72,7 @@ TryGetCompositeOpClassMetadataInfo(Oid indexOid, LOCKMODE lockmode,
 
 			info->rawBlob = blob;
 			info->isMultiKey = isMultiKey;
+			info->multiKeyPathBitMask = multiKeyPathBitmask;
 			info->multiKeyPathCount = pg_popcount32(multiKeyPathBitmask);
 			info->hasCorrelatedReducedTerms = hasCorrelatedReducedTerms;
 			info->hasTruncation = hasTruncation;

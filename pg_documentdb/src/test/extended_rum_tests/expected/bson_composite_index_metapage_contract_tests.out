@@ -14,6 +14,7 @@ SET documentdb.next_collection_index_id TO 14000;
 --               reflected only in the global truncated bit 35)
 --   bit42-63  - unused
 set documentdb.enableIndexMetadataGlobalTracking to on;
+set documentdb.enable_failure_on_parallel_index_arrays_for_metadata_tracking to off;
 -- Helper: return only the opclass-metadata blob (decimal + hex) for the metapage of
 -- the named index. Reading just the blob keeps the validation focused on the contract
 -- bits and independent of incidental page-layout counters.
@@ -415,6 +416,29 @@ SELECT documentdb_api_internal.composite_metapage_blob('mpc_db', 'c_ancestor', '
  {"pendingHeapTuples": 17179869191, "pendingHeapTuplesHex": "0x400000007"}
 (1 row)
 
+-- Every indexed descendant of a shared array ancestor must be multi-key, even
+-- when one leaf is absent. For (a.x, a.y, a.z), the array at "a" marks all
+-- three path bits although z is missing from every array element.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('mpc_db', '{ "createIndexes": "c_ancestor_missing_leaf", "indexes": [ { "key": { "a.x": 1, "a.y": 1, "a.z": 1 }, "name": "ax_ay_az_1", "enableOrderedIndex": 1 } ] }');
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('mpc_db', 'c_ancestor_missing_leaf', '{ "_id": 1, "a": [ { "x": 1, "y": 2 }, { "x": 5, "y": 6 } ] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Expected: bit34 | bit0 | bit1 | bit2 | bit3 -> 0x40000000f
+SELECT documentdb_api_internal.composite_metapage_blob('mpc_db', 'c_ancestor_missing_leaf', 'ax_ay_az_1');
+                          composite_metapage_blob                          
+----------------------------------------------------------------------------
+ {"pendingHeapTuples": 17179869199, "pendingHeapTuplesHex": "0x40000000f"}
+(1 row)
+
 -- Ancestor array affecting only the first deep path: index on a.b.c and an
 -- independent scalar path x; array at "a" marks only path 0 (a.b.c) multi-key.
 -- Expected: bit0 | bit1 -> 0x3.
@@ -453,4 +477,5 @@ SELECT documentdb_api_internal.composite_metapage_blob('mpc_db', 'c_combined', '
  {"pendingHeapTuples": 171798691843, "pendingHeapTuplesHex": "0x2800000003"}
 (1 row)
 
+reset documentdb.enable_failure_on_parallel_index_arrays_for_metadata_tracking;
 DROP FUNCTION documentdb_api_internal.composite_metapage_blob(text, text, text);

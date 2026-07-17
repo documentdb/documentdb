@@ -749,6 +749,30 @@ MergeSingleVariableBounds(List *boundsList, const char **wildcardPath,
 }
 
 
+static IndexMultiKeyStatus
+GetPathMultiKeyStatus(bool hasArrayPaths, uint32_t multiKeyBitMask, int32_t attr,
+					  bool enableMetadataBasedTracking)
+{
+	Assert(attr >= 0 && attr < INDEX_MAX_KEYS);
+	if (!enableMetadataBasedTracking)
+	{
+		return IndexMultiKeyStatus_Unknown;
+	}
+
+	if (!hasArrayPaths)
+	{
+		return IndexMultiKeyStatus_HasNoArrays;
+	}
+
+	if (multiKeyBitMask == 0 || (multiKeyBitMask & (UINT32_C(1) << attr)) != 0)
+	{
+		return IndexMultiKeyStatus_HasArrays;
+	}
+
+	return IndexMultiKeyStatus_HasNoArrays;
+}
+
+
 /*
  * For composite indexes with reduced correlated terms, trims secondary variable
  * bounds within each dotted-prefix group. Paths sharing the same top-level prefix
@@ -762,7 +786,10 @@ MergeSingleVariableBounds(List *boundsList, const char **wildcardPath,
 void
 TrimSecondaryVariableBounds(VariableIndexBounds *variableBounds,
 							CompositeQueryRunData *runData,
-							const char *indexPaths[INDEX_MAX_KEYS])
+							const char *indexPaths[INDEX_MAX_KEYS],
+							bool hasArrayPaths,
+							uint32_t multiKeyBitMask,
+							bool enableMetadataBasedTracking)
 {
 	int32_t numPaths = runData->metaInfo->numIndexPaths;
 
@@ -798,14 +825,18 @@ TrimSecondaryVariableBounds(VariableIndexBounds *variableBounds,
 	ListCell *cell;
 	foreach(cell, variableBounds->variableBoundsList)
 	{
-		/*
-		 * TODO: when we start tracking per index column multi-key status we can just apply this for multi-key columns.
-		 * e.g: if there is an index { foo.a: 1, foo.b: 1, bar.a: 1, bar.b: 1 }, where only foo is multi-key, we should be able to push all filters for bar to the index.
-		 */
 		CompositeIndexBoundsSet *set = (CompositeIndexBoundsSet *) lfirst(cell);
 		int32_t attr = set->indexAttribute;
 
 		if (attr < 0 || attr >= numPaths)
+		{
+			continue;
+		}
+
+		/* Unknown is treated as multikey to preserve legacy behavior*/
+		IndexMultiKeyStatus pathMultiKeyState = GetPathMultiKeyStatus(
+			hasArrayPaths, multiKeyBitMask, attr, enableMetadataBasedTracking);
+		if (pathMultiKeyState == IndexMultiKeyStatus_HasNoArrays)
 		{
 			continue;
 		}
@@ -849,8 +880,8 @@ TrimSecondaryVariableBounds(VariableIndexBounds *variableBounds,
 	}
 
 	/*
-	 * Trim variable bounds for dotted paths whose attribute is not the
-	 * group leader for its prefix. Non-dotted paths are never trimmed.
+	 * Trim variable bounds for dotted paths whose attribute is not the lowest
+	 * queried column for its prefix. Non-dotted paths are never trimmed.
 	 */
 	foreach(cell, variableBounds->variableBoundsList)
 	{
@@ -859,6 +890,13 @@ TrimSecondaryVariableBounds(VariableIndexBounds *variableBounds,
 
 		/* We skip the first attribute of the index (0) because we always can push the first attribute's bounds to the index. */
 		if (attr <= 0 || attr >= numPaths)
+		{
+			continue;
+		}
+
+		IndexMultiKeyStatus pathMultiKeyState = GetPathMultiKeyStatus(
+			hasArrayPaths, multiKeyBitMask, attr, enableMetadataBasedTracking);
+		if (pathMultiKeyState == IndexMultiKeyStatus_HasNoArrays)
 		{
 			continue;
 		}
@@ -3041,6 +3079,19 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 					else if (strcmp(key, "isTopLevel") == 0)
 					{
 						isTopLevelPath = BsonValueAsBool(value);
+					}
+					else if (strcmp(key, "hasMultiSegmentSubpath") == 0)
+					{
+						/* This is only used in the planner. Validate the type and ignore it. */
+						(void) BsonValueAsBool(value);
+					}
+					else if (strcmp(key,
+									ReducedCorrelatedBoundsPlanAppliedKey) == 0)
+					{
+						bool isPlanApplied = BsonValueAsBool(value);
+						indexBounds->isReducedCorrelatedBoundsPlanApplied =
+							indexBounds->isReducedCorrelatedBoundsPlanApplied ||
+							isPlanApplied;
 					}
 					else
 					{

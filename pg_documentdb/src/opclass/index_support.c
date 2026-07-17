@@ -43,6 +43,7 @@
 #include "geospatial/bson_geospatial_geonear.h"
 #include "planner/mongo_query_operator.h"
 #include "opclass/bson_index_support.h"
+#include "opclass/bson_gin_composite_private.h"
 #include "opclass/bson_gin_index_mgmt.h"
 #include "opclass/bson_gin_composite_scan.h"
 #include "opclass/bson_text_gin.h"
@@ -140,6 +141,17 @@ typedef struct IndexElemMatchPathState
 	 */
 	bool isTopLevel;
 
+	/* Whether or not the subpath relative to the $elemMatch root
+	 * has multiple segments.
+	 * e.g., if the query is "a": { "$elemMatch": { "b.c" : 5 } }
+	 * then the root path is "a" and the subpath is "b.c". Since the
+	 * subpath "b.c" has multiple segments, hasMultiSegmentSubpath would be true.
+	 * If the query is "a.b": { "$elemMatch": { "c" : 5 } }
+	 * then the root path is "a.b" and the subpath is "c". Since the
+	 * subpath "c" has only one segment, hasMultiSegmentSubpath would be false.
+	 */
+	bool hasMultiSegmentSubpath;
+
 	/* A list of IndexElemMatchSingleOp for this path */
 	List *singleOps;
 } IndexElemMatchPathState;
@@ -169,6 +181,24 @@ typedef struct FieldCoverageState
 	IndexPath *indexPath;
 	bool hasUncoveredField;
 } FieldCoverageState;
+
+/*
+ * Planner state for one derived composite-index qual.
+ *
+ * For items: {$elemMatch: {x: 1, y: 2}}, the derived items.x and items.y
+ * quals have the same owner and may both remain.
+ * For independent items.x and items.y predicates, each qual has a
+ * different owner, so the secondary qual is trimmed.
+ */
+typedef struct ReducedCorrelatedQualInfo
+{
+	IndexClause *ownerClause;
+	RestrictInfo *derivedRestrictInfo;
+	StringView pathPrefix;
+	int32_t columnNumber;
+	bool isElemMatchQual;
+	bool hasMultiSegmentSubpath;
+} ReducedCorrelatedQualInfo;
 
 /* Per-$in metadata used to expand a $in (@*=) filter on an equality-prefix column of a composite index into one point-equality (@=) clause per value */
 typedef struct InPrefixOpInfo
@@ -226,6 +256,29 @@ typedef struct MergeSortInPrefixPlan
 	int numChildren;
 } MergeSortInPrefixPlan;
 
+/*
+ * State tracking for the lowest column bound in a composite index.
+ */
+typedef struct LowestColumnBoundState
+{
+	/* Original predicate that produced the bound on this column. */
+	IndexClause *ownerClause;
+
+	/*
+	 * Whether multiple original predicates constrain this column. For index
+	 * (a.x, a.y, a.z), this query gives a.x two $elemMatch owners:
+	 *
+	 *   {$and: [
+	 *     {a: {$elemMatch: {x: 1, y: 2}}},
+	 *     {a: {$elemMatch: {x: 3, z: 4}}}
+	 *   ]}
+	 *
+	 */
+	bool hasMultipleOwners;
+
+	bool hasMultiSegmentSubpath;
+} LowestColumnBoundState;
+
 extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
@@ -238,6 +291,8 @@ extern bool EnableDynamicCursors;
 extern bool EnableDistinctIndexPushdown;
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool EnablePerPathMultiKeySortPushdown;
+extern bool EnableCompositeReducedCorrelatedPrefixTrim;
+extern bool EnableCompositeReducedCorrelatedBoundsPlanning;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -267,6 +322,9 @@ static bool IsMatchingPathForQueryOperator(RelOptInfo *rel, Path *path,
 										   ReplaceExtensionFunctionContext *context,
 										   MatchIndexPath matchIndexPath,
 										   void *matchContext);
+static RestrictInfo * MarkReducedCorrelatedIndexQualPlanned(RestrictInfo *indexQual);
+static void PruneReducedCorrelatedIndexQuals(IndexPath *indexPath, bytea *indexOptions,
+											 uint32_t multiKeyPathBitMask);
 static Expr * ProcessFullScanForOrderBy(SupportRequestIndexCondition *req, List *args);
 static Expr * ProcessDistinctExistsForIndex(SupportRequestIndexCondition *req,
 											List *args);
@@ -5364,6 +5422,44 @@ ElemMatchIndexOpStrategyClassify(DollarRangeParams *params,
 }
 
 
+static bool
+TryGetElemMatchHasMultiSegmentSubpath(const DollarRangeParams *params,
+									  bool *hasMultiSegmentSubpath)
+{
+	Assert(params);
+	Assert(hasMultiSegmentSubpath);
+	*hasMultiSegmentSubpath = false;
+
+	if (!params->isElemMatch || params->elemMatchValue.value_type != BSON_TYPE_ARRAY)
+	{
+		return false;
+	}
+
+	bson_iter_t elemMatchIter;
+	BsonValueInitIterator(&params->elemMatchValue, &elemMatchIter);
+
+	/*
+	 * Path-level metadata is repeated on every operation in elemMatchIndexOp, so
+	 * reading the first operation is sufficient.
+	 *
+	 * TODO: Store elemMatchIndexOp as a document with path-level metadata and a
+	 * separate operations array, rather than repeating metadata per operation.
+	 */
+	bson_iter_t fieldIter;
+	if (!bson_iter_find_descendant(
+			&elemMatchIter,
+			"0.hasMultiSegmentSubpath",
+			&fieldIter
+			))
+	{
+		return false;
+	}
+
+	*hasMultiSegmentSubpath = BsonValueAsBool(bson_iter_value(&fieldIter));
+	return true;
+}
+
+
 static int32_t
 UpdateEqualityPrefixesAndGetSortOrder(const char *queryPath, bytea *opClassOptions,
 									  OpExpr *expr, bool isPartialFilterExpr,
@@ -5485,6 +5581,401 @@ ProcessCompositePartialFilter(List *indexPredicate, bytea *opClassOptions,
 }
 
 
+/* Marks a retained $elemMatch qual so execution trusts planner-side RCT pruning. */
+static RestrictInfo *
+MarkReducedCorrelatedIndexQualPlanned(RestrictInfo *indexQual)
+{
+	OpExpr *opExpr = (OpExpr *) indexQual->clause;
+	Const *queryConst = (Const *) lsecond(opExpr->args);
+	pgbson *query = DatumGetPgBson(queryConst->constvalue);
+	pgbsonelement queryElement;
+	const char *collation =
+		PgbsonToSinglePgbsonElementWithCollation(query, &queryElement);
+
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	pgbson_writer valueWriter;
+	PgbsonWriterStartDocument(&writer, queryElement.path, queryElement.pathLength,
+							  &valueWriter);
+
+	bson_iter_t valueIter;
+	BsonValueInitIterator(&queryElement.bsonValue, &valueIter);
+	while (bson_iter_next(&valueIter))
+	{
+		const char *key = bson_iter_key(&valueIter);
+		if (strcmp(key, ReducedCorrelatedBoundsPlanAppliedKey) == 0)
+		{
+			continue;
+		}
+
+		const bson_value_t *value = bson_iter_value(&valueIter);
+		if (strcmp(key, "elemMatchIndexOp") == 0)
+		{
+			if (value->value_type != BSON_TYPE_ARRAY)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg(
+									"$elemMatch index operator must contain an array")));
+			}
+
+			pgbson_array_writer arrayWriter;
+			PgbsonWriterStartArray(&valueWriter, key, strlen(key), &arrayWriter);
+
+			bson_iter_t elemMatchIter;
+			BsonValueInitIterator(value, &elemMatchIter);
+			while (bson_iter_next(&elemMatchIter))
+			{
+				const bson_value_t *operation = bson_iter_value(&elemMatchIter);
+				if (operation->value_type != BSON_TYPE_DOCUMENT)
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+									errmsg(
+										"$elemMatch index operation must be a document")));
+				}
+
+				pgbson_writer operationWriter;
+				PgbsonArrayWriterStartDocument(&arrayWriter, &operationWriter);
+
+				bson_iter_t operationIter;
+				BsonValueInitIterator(operation, &operationIter);
+				while (bson_iter_next(&operationIter))
+				{
+					const char *operationKey = bson_iter_key(&operationIter);
+					if (strcmp(operationKey,
+							   ReducedCorrelatedBoundsPlanAppliedKey) == 0)
+					{
+						continue;
+					}
+
+					PgbsonWriterAppendValue(&operationWriter, operationKey,
+											strlen(operationKey),
+											bson_iter_value(&operationIter));
+				}
+
+				bool isPlanApplied = true;
+				PgbsonWriterAppendBool(&operationWriter,
+									   ReducedCorrelatedBoundsPlanAppliedKey,
+									   strlen(
+										   ReducedCorrelatedBoundsPlanAppliedKey),
+									   isPlanApplied);
+				PgbsonArrayWriterEndDocument(&arrayWriter, &operationWriter);
+			}
+
+			PgbsonWriterEndArray(&valueWriter, &arrayWriter);
+			continue;
+		}
+
+		PgbsonWriterAppendValue(&valueWriter, key, strlen(key),
+								value);
+	}
+	PgbsonWriterEndDocument(&writer, &valueWriter);
+	if (collation != NULL)
+	{
+		PgbsonWriterAppendUtf8(&writer, "collation", 9, collation);
+	}
+
+	RestrictInfo *indexQualCopy = copyObject(indexQual);
+	OpExpr *opExprCopy = castNode(OpExpr, indexQualCopy->clause);
+	Const *queryConstCopy = castNode(Const, lsecond(opExprCopy->args));
+
+	queryConstCopy->constvalue = PointerGetDatum(PgbsonWriterGetPgbson(&writer));
+	return indexQualCopy;
+}
+
+
+/*
+ * Reduced-correlated index terms pair values from one array element. For an
+ * index on (items.x, items.y), one $elemMatch on items may retain both bounds
+ * because x and y must match the same element. Independent predicates on
+ * items.x and items.y may match different elements,
+ * so only the lower index column may remain as an index bound.
+ *
+ * Group derived quals by dotted prefix and retain secondary bounds only when
+ * they and the lowest index column come from the same $elemMatch whose element
+ * scope directly covers both paths. Deeper descendants may cross another array
+ * boundary and are therefore pruned.
+ *
+ * Only paths marked multikey participate. A shared array ancestor marks every
+ * indexed descendant multikey even when its leaf is missing; for example, an
+ * array at "a" marks "a.x" multikey. Independent leaf arrays at "a.b" and
+ * "a.c" do not mark "a.x", but they also do not produce reduced correlation at
+ * prefix "a".
+ *
+ * Prune before costing so selectivity reflects the bounds the scan executes.
+ */
+static void
+PruneReducedCorrelatedIndexQuals(IndexPath *indexPath, bytea *indexOptions,
+								 uint32_t multiKeyPathBitMask)
+{
+	HTAB *mapPrefixToLowestColumn = CreatePgbsonElementHashSet();
+	LowestColumnBoundState lowestBoundStateByColumn[INDEX_MAX_KEYS] = { 0 };
+
+	List *qualInfos = NIL;
+	ListCell *clauseCell;
+	foreach(clauseCell, indexPath->indexclauses)
+	{
+		IndexClause *owner = (IndexClause *) lfirst(clauseCell);
+
+		ListCell *qualCell;
+		foreach(qualCell, owner->indexquals)
+		{
+			/* The index quals are derived from the original restrict info during query planning.
+			 * e.g., if the original restrict info was "a: $elemMatch {x: 1, y: 2}", then
+			 * the derived restrict info represents the individual quals for "a.x = 1" and "a.y = 2".
+			 */
+			RestrictInfo *derivedRestrictInfo =
+				(RestrictInfo *) lfirst(qualCell);
+			if (!IsA(derivedRestrictInfo->clause, OpExpr))
+			{
+				continue;
+			}
+
+			/* Query path here would be a.x, for example. */
+			const char *queryPath = NULL;
+			bson_value_t optionalQueryValue = { 0 };
+			if (!PopulateQueryPathAndValueFromOpExpr(
+					(OpExpr *) derivedRestrictInfo->clause,
+					&queryPath, &optionalQueryValue) ||
+				queryPath == NULL)
+			{
+				continue;
+			}
+
+			OpExpr *indexOpExpr = (OpExpr *) derivedRestrictInfo->clause;
+			DollarRangeParams rangeParams = { 0 };
+			if (indexOpExpr->opno == BsonRangeMatchOperatorOid() &&
+				TryGetRangeParamsForRangeArgs(indexOpExpr->args, &rangeParams) &&
+				(rangeParams.isFullScan ||
+				 rangeParams.isSample ||
+				 rangeParams.isMinIndexKey ||
+				 rangeParams.isMaxIndexKey))
+			{
+				/* Ignore full-scan quals. They don't constrain the scan, so they
+				 * must not become the lowest column for a reduced-correlated prefix.
+				 * Otherwise, real filter bounds could be pruned. */
+				continue;
+			}
+
+			int8_t sortDirectionIgnore = 0;
+			int32_t columnNumber = GetCompositeOpClassColumnNumber(
+				queryPath, indexOptions, &sortDirectionIgnore);
+			if (columnNumber < 0)
+			{
+				/* If this query path isn't indexed, skip it (it'll be handled on recheck anyway). */
+				continue;
+			}
+
+			uint32_t pathMultiKeyMask = UINT32_C(1) << columnNumber;
+			bool pathIsMultiKey = (multiKeyPathBitMask & pathMultiKeyMask) != 0;
+			if (!pathIsMultiKey)
+			{
+				continue;
+			}
+
+			StringView queryPathView = CreateStringViewFromString(queryPath);
+			StringView pathPrefix = StringViewFindPrefix(&queryPathView, '.');
+
+			if (pathPrefix.length == 0)
+			{
+				continue;
+			}
+
+			bool hasMultiSegmentSubpath = false;
+			bool foundSubpathMetadata = TryGetElemMatchHasMultiSegmentSubpath(
+				&rangeParams,
+				&hasMultiSegmentSubpath);
+
+			ReducedCorrelatedQualInfo *qualInfo =
+				palloc0(sizeof(ReducedCorrelatedQualInfo));
+			qualInfo->ownerClause = owner;
+			qualInfo->derivedRestrictInfo = derivedRestrictInfo;
+			qualInfo->pathPrefix = pathPrefix;
+			qualInfo->columnNumber = columnNumber;
+			qualInfo->isElemMatchQual = rangeParams.isElemMatch;
+
+			/* The current metadata can identify multikey index paths, but not their exact array ancestor,
+			 * for now, we take a conservative approach when it comes to handling deeper subpaths, even if
+			 * their intermediate paths happen to be scalar.
+			 *
+			 * e.g.,
+			 * {"a":
+			 *      {"$elemMatch":
+			 *          {"b.c":1, "b.d":2}
+			 *      }
+			 * }
+			 *
+			 * against
+			 * {"a": [{
+			 *          "b": [
+			 *                  {"c": 1, "d": 0},
+			 *                  {"c": 0, "d": 2}
+			 *               ]
+			 *       }]
+			 * }
+			 *
+			 * In this case, we must trim the secondary bound because if we don't, then
+			 * we will look for an exact element (1, 2) which is incorrect here. However, if
+			 * b is not an array, then we should push the bounds. We don't do this right now because
+			 * we don't have the metadata to determine whether "b" is an array or not, so we conservatively trim the secondary bound.
+			 */
+			qualInfo->hasMultiSegmentSubpath = !foundSubpathMetadata ||
+											   hasMultiSegmentSubpath;
+			qualInfos = lappend(qualInfos, qualInfo);
+
+			pgbsonelement key = { 0 };
+			key.path = qualInfo->pathPrefix.string;
+			key.pathLength = qualInfo->pathPrefix.length;
+
+			bool found = false;
+			pgbsonelement *entry = hash_search(mapPrefixToLowestColumn, &key, HASH_ENTER,
+											   &found);
+			if (!found || qualInfo->columnNumber < entry->bsonValue.value.v_int32)
+			{
+				/* Update the map if the prefix was either not found, or the current
+				 * column number is lower than the one already stored. */
+				entry->bsonValue.value_type = BSON_TYPE_INT32;
+				entry->bsonValue.value.v_int32 = qualInfo->columnNumber;
+				LowestColumnBoundState *lowestBoundState =
+					&lowestBoundStateByColumn[qualInfo->columnNumber];
+				lowestBoundState->ownerClause = qualInfo->ownerClause;
+				lowestBoundState->hasMultiSegmentSubpath =
+					qualInfo->hasMultiSegmentSubpath;
+				lowestBoundState->hasMultipleOwners = false;
+			}
+			else if (qualInfo->columnNumber == entry->bsonValue.value.v_int32 &&
+					 lowestBoundStateByColumn[qualInfo->columnNumber].ownerClause !=
+					 qualInfo->ownerClause)
+			{
+				/* Multiple original predicates constrain this prefix's lowest index column. */
+				lowestBoundStateByColumn[qualInfo->columnNumber].hasMultipleOwners = true;
+			}
+		}
+	}
+
+	if (qualInfos == NIL)
+	{
+		hash_destroy(mapPrefixToLowestColumn);
+		return;
+	}
+
+	List *newIndexClauses = NIL;
+	bool indexPathChanged = false;
+	ListCell *nextQualInfoCell = list_head(qualInfos);
+	foreach(clauseCell, indexPath->indexclauses)
+	{
+		IndexClause *ownerClause = (IndexClause *) lfirst(clauseCell);
+		List *retainedIndexQuals = NIL;
+		bool clauseChanged = false;
+		bool clausePruned = false;
+
+		ListCell *qualCell;
+		foreach(qualCell, ownerClause->indexquals)
+		{
+			RestrictInfo *derivedRestrictInfo =
+				(RestrictInfo *) lfirst(qualCell);
+			ReducedCorrelatedQualInfo *qualInfo = NULL;
+
+			/* qualInfos contains only RCT-relevant quals in the same order as this traversal. Leave
+			 * cursor unchanged for unrelated quals. */
+			if (nextQualInfoCell != NULL)
+			{
+				ReducedCorrelatedQualInfo *qualInfoCandidate =
+					(ReducedCorrelatedQualInfo *) lfirst(nextQualInfoCell);
+
+				if (qualInfoCandidate->derivedRestrictInfo == derivedRestrictInfo)
+				{
+					qualInfo = qualInfoCandidate;
+					nextQualInfoCell = lnext(qualInfos, nextQualInfoCell);
+				}
+			}
+
+			if (qualInfo != NULL)
+			{
+				pgbsonelement key = { 0 };
+				key.path = qualInfo->pathPrefix.string;
+				key.pathLength = qualInfo->pathPrefix.length;
+
+				bool found = false;
+				pgbsonelement *entry = hash_search(mapPrefixToLowestColumn, &key,
+												   HASH_FIND,
+												   &found);
+				Assert(found);
+
+				int32_t lowestColumn = entry->bsonValue.value.v_int32;
+
+				LowestColumnBoundState *lowestBoundState =
+					&lowestBoundStateByColumn[lowestColumn];
+
+				bool isLowestColumn = qualInfo->columnNumber == lowestColumn;
+				bool isBoundInSameElemMatchScopeAsLowestColumn =
+					!lowestBoundState->hasMultipleOwners &&
+					lowestBoundState->ownerClause == qualInfo->ownerClause &&
+					!lowestBoundState->hasMultiSegmentSubpath &&
+					!qualInfo->hasMultiSegmentSubpath &&
+					qualInfo->isElemMatchQual;
+
+				bool shouldTrim = !(isLowestColumn ||
+									isBoundInSameElemMatchScopeAsLowestColumn);
+				if (shouldTrim)
+				{
+					clauseChanged = true;
+					clausePruned = true;
+					continue;
+				}
+
+				if (isBoundInSameElemMatchScopeAsLowestColumn)
+				{
+					derivedRestrictInfo = MarkReducedCorrelatedIndexQualPlanned(
+						derivedRestrictInfo);
+
+					clauseChanged = true;
+				}
+			}
+
+			retainedIndexQuals = lappend(retainedIndexQuals,
+										 derivedRestrictInfo);
+		}
+
+		indexPathChanged = indexPathChanged || clauseChanged;
+		if (!clauseChanged)
+		{
+			list_free(retainedIndexQuals);
+			newIndexClauses = lappend(newIndexClauses, ownerClause);
+		}
+		else if (retainedIndexQuals != NIL)
+		{
+			/*
+			 * Index paths can share IndexClause nodes. Copy the node before
+			 * replacing its derived quals.
+			 */
+			IndexClause *clauseCopy = palloc(sizeof(IndexClause));
+			memcpy(clauseCopy, ownerClause, sizeof(IndexClause));
+			clauseCopy->indexquals = retainedIndexQuals;
+			clauseCopy->lossy = ownerClause->lossy || clausePruned;
+			newIndexClauses = lappend(newIndexClauses, clauseCopy);
+		}
+	}
+
+	Assert(nextQualInfoCell == NULL);
+	hash_destroy(mapPrefixToLowestColumn);
+	list_free_deep(qualInfos);
+
+	if (indexPathChanged)
+	{
+		if (newIndexClauses == NIL || list_length(newIndexClauses) == 0)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg("All index clauses were pruned.")));
+		}
+		indexPath->indexclauses = newIndexClauses;
+	}
+	else
+	{
+		list_free(newIndexClauses);
+	}
+}
+
+
 bool
 TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerInfo *root,
 								   bool *canSupportIndexOnlyScan)
@@ -5492,9 +5983,15 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 	ListCell *cell;
 	bool firstFilterColumnFound = false;
 	bool indexCanOrder = false;
-	uint32_t multiKeyBitMask = 0;
-	bool isMultiKeyIndex = CompositeIndexOptInfoIsMultiKey(indexPath->indexinfo,
-														   &multiKeyBitMask);
+	CompositeOpClassMetadataInfo indexMetadata = { 0 };
+	CompositeOpClassMetadataReadResult metadataResult =
+		TryGetCompositeOpClassMetadataInfo(indexPath->indexinfo->indexoid, NoLock,
+										   &indexMetadata);
+	bool isMultiKeyIndex =
+		metadataResult != CompositeOpClassMetadataReadResult_None &&
+		indexMetadata.isMultiKey;
+	bool hasPerPathMetadata =
+		metadataResult == CompositeOpClassMetadataReadResult_Full;
 	bool indexSupportsOrderByDesc = GetIndexSupportsBackwardsScan(
 		indexPath->indexinfo->relam, &indexCanOrder);
 
@@ -5508,6 +6005,15 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 
 	bytea *indexOptions = indexPath->indexinfo->opclassoptions != NULL ?
 						  indexPath->indexinfo->opclassoptions[0] : NULL;
+	if (EnableCompositeReducedCorrelatedBoundsPlanning &&
+		EnableCompositeReducedCorrelatedPrefixTrim &&
+		hasPerPathMetadata &&
+		indexMetadata.hasCorrelatedReducedTerms)
+	{
+		PruneReducedCorrelatedIndexQuals(indexPath, indexOptions,
+										 indexMetadata.multiKeyPathBitMask);
+	}
+
 	int32_t pathSortOrders[INDEX_MAX_KEYS] = { 0 };
 	bool equalityPrefixes[INDEX_MAX_KEYS] = { false };
 	bool nonEqualityPrefixes[INDEX_MAX_KEYS] = { false };
@@ -5613,7 +6119,7 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 		ProcessOrderByStatements(
 			root, indexPath, minOrderByColumn,
 			maxOrderByColumn, isMultiKeyIndex,
-			multiKeyBitMask,
+			indexMetadata.multiKeyPathBitMask,
 			queryOrderPaths, equalityPrefixes,
 			nonEqualityPrefixes,
 			pathSortOrders);
@@ -7889,7 +8395,7 @@ WalkExprAndAddSupportedElemMatchExprs(List *clauses, bytea *options,
 	{
 		Node *elemMatchExpr = (Node *) lfirst(elemMatchCell);
 
-		if (IsA(elemMatchCell, BoolExpr))
+		if (IsA(elemMatchExpr, BoolExpr))
 		{
 			BoolExpr *boolExpr = (BoolExpr *) elemMatchExpr;
 			if (boolExpr->boolop != AND_EXPR)
@@ -7934,7 +8440,27 @@ WalkExprAndAddSupportedElemMatchExprs(List *clauses, bytea *options,
 			pathState = palloc0(sizeof(IndexElemMatchPathState));
 			pathState->indexPath = queryElement.path;
 			pathState->indexPathLength = queryElement.pathLength;
-			pathState->isTopLevel = strcmp(topLevelPath, queryElement.path) == 0;
+
+			/* e.g., a: $elemMatch {b.c: 1}.
+			 * topLevelPath = a, queryElement.path = a.b.c, suffix = .b.c
+			 */
+			StringView queryPathView = CreateStringViewFromStringWithLength(
+				queryElement.path, queryElement.pathLength);
+			StringView topLevelPathView = CreateStringViewFromString(topLevelPath);
+			Assert(StringViewStartsWithStringView(&queryPathView, &topLevelPathView));
+
+			StringView relativePathView = StringViewSubstring(
+				&queryPathView, topLevelPathView.length);
+
+			pathState->isTopLevel = relativePathView.length == 0;
+			if (!pathState->isTopLevel)
+			{
+				Assert(StringViewStartsWith(&relativePathView, '.'));
+				relativePathView = StringViewSubstring(&relativePathView, 1);
+				pathState->hasMultiSegmentSubpath = StringViewContains(&relativePathView,
+																	   '.');
+			}
+
 			elemMatchState->pathStates = lappend(elemMatchState->pathStates, pathState);
 		}
 
@@ -8026,6 +8552,11 @@ ProcessElemMatchOperator(bytea *options, Datum queryValue, const
 			PgbsonWriterAppendInt32(&qualWriter, "op", 2, singleOp->op);
 			PgbsonWriterAppendValue(&qualWriter, "value", 5, &singleOp->value);
 			PgbsonWriterAppendBool(&qualWriter, "isTopLevel", 10, pathState->isTopLevel);
+			if (EnableCompositeReducedCorrelatedBoundsPlanning)
+			{
+				PgbsonWriterAppendBool(&qualWriter, "hasMultiSegmentSubpath", 22,
+									   pathState->hasMultiSegmentSubpath);
+			}
 			PgbsonArrayWriterEndDocument(&arrayWriter, &qualWriter);
 		}
 

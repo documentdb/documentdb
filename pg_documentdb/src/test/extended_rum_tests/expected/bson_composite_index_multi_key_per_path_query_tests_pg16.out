@@ -11,6 +11,9 @@ set documentdb.enableCompositeIndexPlanner to on;
 -- eventually decide order-by pushdown based on whether the *sort* path itself is
 -- multi-key, rather than on a single index-wide multi-key flag.
 set documentdb.enableIndexMetadataGlobalTracking to on;
+-- This suite intentionally exercises independent multi-key paths. Parallel-array
+-- rejection is covered by dedicated tests.
+set documentdb.enable_failure_on_parallel_index_arrays_for_metadata_tracking to off;
 set documentdb.enableExtendedExplainPlans to on;
 -- Suppress per-index cost details so explain output is stable across runs.
 set documentdb.enableExplainScanIndexCosts to off;
@@ -46,7 +49,7 @@ set enable_bitmapscan to off;
 -- pushdown, independent of multi-key state.
 -- ============================================================================
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkpq_db', '{ "createIndexes": "mkpq_coll", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_query_tests.sql:52: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_query_tests.sql:56: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -156,7 +159,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 -- multi-key. This is the case the per-path multi-key metadata is meant to preserve,
 -- distinguishing it from the multi-key sort column in Case A2.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkpq_db', '{ "createIndexes": "mkpq_coll_a3", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_query_tests.sql:92: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_query_tests.sql:96: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -304,7 +307,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 -- is pushed into the index bounds.)
 -- ============================================================================
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkpq_db', '{ "createIndexes": "mkpq_events", "indexes": [ { "key": { "contacts.ref_id": 1, "logged_at": 1 }, "name": "idx_ref_id_logged_at", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_query_tests.sql:157: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_query_tests.sql:161: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -373,7 +376,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 -- plus the "c" range -- is still pushed into the index bounds.)
 -- ============================================================================
 SELECT documentdb_api_internal.create_indexes_non_concurrently('mkpq_db', '{ "createIndexes": "mkpq_abc", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "a_b_c_1", "enableOrderedIndex": 1 } ] }');
-psql:sql/bson_composite_index_multi_key_per_path_query_tests.sql:189: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_query_tests.sql:193: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -436,7 +439,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 -- they use, isolating the effect of per-path tracking.
 -- ============================================================================
 SELECT documentdb_api.insert_one('mkpq_db', 'mkpq_two_idx', '{ "_id": 1, "a": [ 1, 2 ], "b": 10, "c": 100 }');
-psql:sql/bson_composite_index_multi_key_per_path_query_tests.sql:215: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_query_tests.sql:219: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -607,7 +610,7 @@ DELETE FROM documentdb_api_catalog.documentdb_index_queue;
 -- per-path metadata opclass option. "a" is multi-key (arrays); "b" is scalar.
 set documentdb.enableIndexMetadataGlobalTracking to off;
 SELECT documentdb_api.create_collection('mkpq_db', 'mkpq_reindex');
-psql:sql/bson_composite_index_multi_key_per_path_query_tests.sql:300: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_query_tests.sql:304: NOTICE:  creating collection
  create_collection 
 -------------------
  t
@@ -758,7 +761,7 @@ set documentdb.enableCompositeUniqueHash to on;
 -- the per-path metadata opclass option. "a" is multi-key (arrays); "b" is scalar.
 set documentdb.enableIndexMetadataGlobalTracking to off;
 SELECT documentdb_api.create_collection('mkpq_db', 'mkpq_uniq_reindex');
-psql:sql/bson_composite_index_multi_key_per_path_query_tests.sql:379: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_query_tests.sql:383: NOTICE:  creating collection
  create_collection 
 -------------------
  t
@@ -926,7 +929,7 @@ set documentdb.forceIndexOnlyScanIfAvailable to on;
 -- All indexed paths are scalar, so the opclass metadata records the index as
 -- non-multi-key and index-only scans are allowed.
 SELECT documentdb_api.create_collection('mkpq_db', 'mkpq_ios');
-psql:sql/bson_composite_index_multi_key_per_path_query_tests.sql:479: NOTICE:  creating collection
+psql:sql/bson_composite_index_multi_key_per_path_query_tests.sql:483: NOTICE:  creating collection
  create_collection 
 -------------------
  t

@@ -9,6 +9,9 @@ set documentdb.enableCompositeIndexPlanner to on;
 -- decide whether multiple bounds on a path may be merged based on whether that
 -- *specific path* is multi-key, rather than on a single index-wide multi-key flag.
 set documentdb.enableIndexMetadataGlobalTracking to on;
+-- This suite intentionally exercises independent multi-key paths. Parallel-array
+-- rejection is covered by dedicated tests.
+set documentdb.enable_failure_on_parallel_index_arrays_for_metadata_tracking to off;
 -- Respect the per-path multi-key bitmask when deciding order-by pushdown for the
 -- ORDER BY cases below. This defaults to on; it is pinned explicitly so the order-by
 -- plan shapes (Cases 2b, 5b) are deterministic regardless of the default.

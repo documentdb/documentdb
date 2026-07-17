@@ -5,7 +5,7 @@ SET documentdb.next_collection_index_id TO 25704000;
 
 -- helper for term generation
 CREATE SCHEMA parallel_arrays_tests;
-CREATE FUNCTION parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(documentdb_core.bson, text, int4, bool, p_wildcardIndex int4 = -1, p_reduced_correlated bool = TRUE)
+CREATE FUNCTION parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(documentdb_core.bson, text, int4, bool, p_wildcardIndex int4 = -1, p_reduced_correlated bool = TRUE, p_global_metadata bool = FALSE)
     RETURNS SETOF documentdb_core.bson LANGUAGE C IMMUTABLE PARALLEL SAFE STRICT AS '$libdir/pg_documentdb',
 $$gin_bson_get_composite_path_generated_terms$$;
 
@@ -101,7 +101,20 @@ SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
 RESET documentdb.enableFailureOnParallelIndexArrays;
 
 ------------------------------------------------------------
--- Section 3: Insert with parallel arrays and composite index (flag OFF)
+-- Section 3: Metadata-backed indexes reject parallel arrays by default
+------------------------------------------------------------
+
+-- The term generator uses the same metadata-backed index options.
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "a": [1, 2], "b": [3, 4] }', '[ "a", "b" ]', 2000, false, -1, true, true);
+
+SET documentdb.enable_failure_on_parallel_index_arrays_for_metadata_tracking TO off;
+SELECT * FROM parallel_arrays_tests.gin_bson_get_composite_path_generated_terms(
+    '{ "a": [1, 2], "b": [3, 4] }', '[ "a", "b" ]', 2000, false, -1, true, true);
+RESET documentdb.enable_failure_on_parallel_index_arrays_for_metadata_tracking;
+
+------------------------------------------------------------
+-- Section 4: Insert with parallel arrays and composite index (flag OFF)
 -- Inserts should succeed when flag is off (default).
 ------------------------------------------------------------
 SELECT documentdb_api_internal.create_indexes_non_concurrently('parr_db',
@@ -121,7 +134,7 @@ SELECT documentdb_api.insert_one('parr_db', 'coll_noerr', '{ "_id": 4, "a": 1, "
 SELECT document FROM documentdb_api.collection('parr_db', 'coll_noerr') ORDER BY object_id;
 
 ------------------------------------------------------------
--- Section 4: Insert with parallel arrays and composite index (flag ON)
+-- Section 5: Insert with parallel arrays and composite index (flag ON)
 -- Inserts with parallel arrays should fail.
 ------------------------------------------------------------
 SET documentdb.enableFailureOnParallelIndexArrays TO on;
@@ -139,7 +152,7 @@ SELECT documentdb_api.insert_one('parr_db', 'coll_err', '{ "_id": 2, "a": [1, 2,
 SELECT document FROM documentdb_api.collection('parr_db', 'coll_err') ORDER BY object_id;
 
 ------------------------------------------------------------
--- Section 5: Insert with nested composite index and parallel arrays (flag ON)
+-- Section 6: Insert with nested composite index and parallel arrays (flag ON)
 ------------------------------------------------------------
 SELECT documentdb_api_internal.create_indexes_non_concurrently('parr_db',
     '{ "createIndexes": "coll_nested", "indexes": [{ "key": { "x.y": 1, "p.q": 1 }, "name": "xy_pq_idx", "enableOrderedIndex": 1 }] }');
@@ -151,7 +164,7 @@ SELECT documentdb_api.insert_one('parr_db', 'coll_nested', '{ "_id": 1, "x": { "
 SELECT document FROM documentdb_api.collection('parr_db', 'coll_nested') ORDER BY object_id;
 
 ------------------------------------------------------------
--- Section 6: Insert correlated arrays with flag ON - should succeed
+-- Section 7: Insert correlated arrays with flag ON - should succeed
 -- Correlated arrays under common parent use the correlated term path.
 ------------------------------------------------------------
 SELECT documentdb_api_internal.create_indexes_non_concurrently('parr_db',
