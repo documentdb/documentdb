@@ -3968,3 +3968,236 @@ SELECT documentdb_api.drop_collection('coll_q_db','coll_merge_dst');
  t
 (1 row)
 
+-- ======================================================================
+-- SECTION: collation-aware index usage on `_id` and compound keys
+-- ======================================================================
+-- Exercises a collation-aware ordered index on `_id` and a compound
+-- {country, _id} index. These collections hold only scalar values, so the
+-- ordered index answers the equality/range predicates directly and a covered
+-- $count reads from the same index. seqscan is off (top of file) and bitmap
+-- scans are disabled here, so the plans are plain Index Scans.
+SET enable_bitmapscan TO off;
+-- coll_ios: scalar `country` values with a compound {country, _id} collation index.
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 1, "country": "usa", "provider": "aws" }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 2, "country": "USA", "provider": "Aws" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 3, "country": "Usa", "provider": "AWS" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 4, "country": "canada", "provider": "gcp" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 5, "country": "Canada", "provider": "GCP" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 6, "country": "brazil", "provider": "azure" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 7, "country": "BRAZIL", "provider": "Azure" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 8, "country": "mexico", "provider": "aws" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "coll_ios",
+     "indexes": [{ "key": {"country": 1, "_id": 1}, "name": "idx_country_id_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- coll_id_ios: scalar string `_id` values with a collation-aware index keyed on `_id`.
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "cat", "v": 1 }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "Cat", "v": 2 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "CAT", "v": 3 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "dog", "v": 4 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "Dog", "v": 5 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "goat", "v": 6 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "coll_id_ios",
+     "indexes": [{ "key": {"_id": 1}, "name": "idx_id_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Covered $count on the leading `country` field uses the compound collation index.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_ios", "pipeline": [ { "$match": { "country": "USA" } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                               run_explain_and_trim                                               
+------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_repath_and_build('n'::text, documentdb_api_internal.bsoncount(1))
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: coll_q_db.coll_ios
+         indexName: idx_country_id_en_s1
+         indexKey: {"country": 1,"_id": 1}
+         isMultiKey: false
+         indexBounds: ["country": ["USA", "USA"], "_id": (MinKey, MaxKey)]
+         ->  Index Scan using idx_country_id_en_s1 on documentdb_data.documents_8816 collection
+               Index Cond: (collection.document @= '{ "country" : "USA", "collation" : "en-u-ks-level1" }'::bson)
+(10 rows)
+
+-- Covered $count over a range predicate under collation.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_ios", "pipeline": [ { "$match": { "country": { "$gte": "brazil", "$lt": "mexico" } } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                                 run_explain_and_trim                                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_repath_and_build('n'::text, documentdb_api_internal.bsoncount(1))
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: coll_q_db.coll_ios
+         indexName: idx_country_id_en_s1
+         indexKey: {"country": 1,"_id": 1}
+         isMultiKey: false
+         indexBounds: ["country": ["brazil", "mexico"), "_id": (MinKey, MaxKey)]
+         ->  Index Scan using idx_country_id_en_s1 on documentdb_data.documents_8816 collection
+               Index Cond: ((collection.document @>= '{ "country" : "brazil", "collation" : "en-u-ks-level1" }'::bson) AND (collection.document @< '{ "country" : "mexico", "collation" : "en-u-ks-level1" }'::bson))
+(10 rows)
+
+-- A strength-3 predicate cannot use the strength-1 index; it falls back to _id_
+-- with the collation applied as a Filter.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_ios", "pipeline": [ { "$match": { "country": "USA" } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 3 } }')
+$cmd$);
+                                             run_explain_and_trim                                             
+--------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_repath_and_build('n'::text, documentdb_api_internal.bsoncount(1))
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: coll_q_db.coll_ios
+         indexName: _id_
+         ->  Index Scan using _id_ on documentdb_data.documents_8816 collection
+               Index Cond: (collection.shard_key_value = '8816'::bigint)
+               Filter: (collection.document @= '{ "country" : "USA", "collation" : "en-u-ks-level3" }'::bson)
+(8 rows)
+
+-- Equality on the leading `country` plus the trailing `_id` key.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_ios", "filter": { "country": "usa", "_id": 2 }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                                                 run_explain_and_trim                                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documentdb_data.documents_8816 collection
+   Output: document
+   Index Cond: ((collection.shard_key_value = '8816'::bigint) AND (collection.object_id = '{ "" : { "$numberInt" : "2" } }'::bson))
+   Filter: ((collection.document #= '{ "country" : "usa", "collation" : "en-u-ks-level1" }'::bsonquery) AND (collection.document #= '{ "_id" : { "$numberInt" : "2" }, "collation" : "en-u-ks-level1" }'::bsonquery))
+(4 rows)
+
+-- Covered $count served by the collation-aware index keyed on `_id`.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_id_ios", "pipeline": [ { "$match": { "_id": "dog" } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                             run_explain_and_trim                                             
+--------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_repath_and_build('n'::text, documentdb_api_internal.bsoncount(1))
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: coll_q_db.coll_id_ios
+         indexName: idx_id_en_s1
+         indexKey: {"_id": 1}
+         isMultiKey: false
+         indexBounds: ["_id": ["dog", "dog"]]
+         ->  Index Scan using idx_id_en_s1 on documentdb_data.documents_8817 collection
+               Index Cond: (collection.document @= '{ "_id" : "dog", "collation" : "en-u-ks-level1" }'::bson)
+(10 rows)
+
+-- find on `_id` under collation uses the collation-aware _id index (the byte-wise
+-- _id_ index cannot answer a collation predicate).
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_id_ios", "filter": { "_id": "cat" }, "sort": { "v": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                                                      run_explain_and_trim                                                                       
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "v" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         Output: document, documentdb_api_internal.bson_orderby(document, '{ "v" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         namespaceName: coll_q_db.coll_id_ios
+         indexName: idx_id_en_s1
+         indexKey: {"_id": 1}
+         isMultiKey: false
+         indexBounds: ["_id": ["cat", "cat"]]
+         ->  Index Scan using idx_id_en_s1 on documentdb_data.documents_8817 collection
+               Output: document
+               Index Cond: (collection.document @= '{ "_id" : "cat", "collation" : "en-u-ks-level1" }'::bson)
+(13 rows)
+
+RESET enable_bitmapscan;
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_ios');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_id_ios');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
