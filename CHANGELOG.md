@@ -1,4 +1,5 @@
 ### documentdb v0.116-0 (Unreleased) ###
+* Rename the `$sample` EXPLAIN metric `Sample Heap Skips` to `Sample Heap Fetches`. *[Refactor]*
 * Enable pushing suffix sort keys into the accumulator in `$sortGroup` when group-by keys form a non-dotted prefix of the sort keys by default (`enableSortPushToAccumulatorWithPrefix`). *[Perf]*
 * Fix `$sample` size coercion and validation to be wire protocol compatible. *[Bugfix]*
 * Harden feature-flagged RUM empty entry-leaf page pruning (`documentdb_rum.prune_rum_empty_pages`): revalidate that the left/right siblings still bracket the target after re-locking (a concurrent left-sibling split could otherwise drop pages from the leaf chain), zero the retained high-key tuple's posting-tree pointer as intended, and acquire posting-tree root cleanup locks conditionally up front instead of blocking while holding sibling/parent/target locks. *[Bugfix]*

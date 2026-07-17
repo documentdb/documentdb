@@ -164,7 +164,7 @@
           "type": "number",
           "description": "The number of matching rows passed over without entering the reservoir during heap skip sampling. Only present under executionStats verbosity when the plan uses heap skip sampling."
         },
-        "sampleHeapSkips": {
+        "sampleHeapFetches": {
           "type": "number",
           "description": "The number of skipped rows that still required a heap read (page not all-visible or a lossy index match); the rest were counted from the visibility map. Only present under executionStats verbosity when the plan uses heap skip sampling."
         },

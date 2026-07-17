@@ -194,7 +194,7 @@ SELECT count(*) FROM (
 -- The counts are run dependent, so run_explain_and_trim masks them; filter to the reservoir lines.
 SET documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
 SELECT l FROM documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "value": { "$gte": 50, "$lte": 150 } } }, { "$sample": { "size": 3 } } ], "cursor": {} }') $$) AS l
-WHERE l ~ 'Sample (Reservoir Method|Rows Skipped|Heap Skips)';
+WHERE l ~ 'Sample (Reservoir Method|Rows Skipped|Heap Fetches)';
 RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
 
 -- Compound index on "category" + "value"
