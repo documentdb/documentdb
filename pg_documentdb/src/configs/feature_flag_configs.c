@@ -140,6 +140,11 @@ bool EnableCompositeUniqueHash = DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH;
 #define DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS false
 bool EnableFailureOnParallelIndexArrays = DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS;
 
+/* Added on v116, enabled on v116, remove after v119 */
+#define DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS_FOR_METADATA_TRACKING true
+bool EnableFailureOnParallelIndexArraysForMetadataTracking =
+	DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS_FOR_METADATA_TRACKING;
+
 /* Added in v114, Pending stabilization, enable in v120 */
 #define DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT false
 bool EnableIndexOnlyScanForFindProject = DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT;
@@ -158,6 +163,11 @@ bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath =
 #define DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_PREFIX_TRIM true
 bool EnableCompositeReducedCorrelatedPrefixTrim =
 	DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_PREFIX_TRIM;
+
+/* Added in v116, Pending stabilization, enable in v121 */
+#define DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_BOUNDS_PLANNING false
+bool EnableCompositeReducedCorrelatedBoundsPlanning =
+	DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_BOUNDS_PLANNING;
 
 /* Added in v115, Pending stabilization, enable in v121 */
 #define DEFAULT_ENABLE_INDEX_METADATA_GLOBAL_TRACKING false
@@ -1080,6 +1090,16 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
+		psprintf(
+			"%s.enable_failure_on_parallel_index_arrays_for_metadata_tracking",
+			newGucPrefix),
+		gettext_noop(
+			"Whether metadata-backed composite indexes reject parallel arrays."),
+		NULL, &EnableFailureOnParallelIndexArraysForMetadataTracking,
+		DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS_FOR_METADATA_TRACKING,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
 		psprintf("%s.enableIndexOnlyScanForFindProject", newGucPrefix),
 		gettext_noop(
 			"Whether or not to enable index only scan for find with project operations."),
@@ -1101,6 +1121,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable prefix-group-aware trimming of secondary variable bounds for reduced correlated composite indexes."),
 		NULL, &EnableCompositeReducedCorrelatedPrefixTrim,
 		DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_PREFIX_TRIM,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_composite_reduced_correlated_bounds_planning", newGucPrefix),
+		gettext_noop(
+			"Whether to prune reduced-correlated composite index quals during planning when per-path multi-key metadata is available."),
+		NULL, &EnableCompositeReducedCorrelatedBoundsPlanning,
+		DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_BOUNDS_PLANNING,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

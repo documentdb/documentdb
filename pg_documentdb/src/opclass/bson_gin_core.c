@@ -1083,10 +1083,14 @@ GetPathDataDefault(void *state, int index)
 }
 
 
+/*
+ * A non-composite index stores its generated terms in one GinEntryPathData entry
+ * at slot 0. For an index on a.b, visiting array a returns Recurse because a.b may
+ * occur below it. That recursive match therefore belongs to slot 0. */
 static bool
-IsRecursivePathMatch(void *state, int index)
+IsNonCompositeRecursivePathMatch(void *state, int index)
 {
-	return false;
+	return index == 0;
 }
 
 
@@ -1176,7 +1180,7 @@ GenerateTerms(pgbson *bson, GenerateTermsContext *context, GinEntryPathData *pat
 {
 	context->pathDataState = pathData;
 	context->getPathDataFunc = GetPathDataDefault;
-	context->isRecursivePathMatch = IsRecursivePathMatch;
+	context->isRecursivePathMatch = IsNonCompositeRecursivePathMatch;
 	context->currentRecursivePathIndex = GetCurrentRecursivePaths;
 	context->maxPaths = 1;
 
@@ -1409,10 +1413,32 @@ GenerateArrayPath(bson_iter_t *bsonIter, const char *pathToInsert,
 
 
 static void
-NotifyHasArrayAncestors(GenerateTermsContext *context, int pathIndex)
+NotifyHasArrayAncestors(GenerateTermsContext *context, int pathIndex,
+						IndexTraverseOption option)
 {
-	context->getPathDataFunc(context->pathDataState,
-							 pathIndex)->hasArrayAncestors = true;
+	if ((option & IndexTraverse_Match) != 0)
+	{
+		/* For an exact match, pathIndex already identifies the corresponding GinEntryPathData
+		 * entry. For example, current path a.b matches an index on a.b. */
+		context->getPathDataFunc(context->pathDataState,
+								 pathIndex)->hasArrayAncestors = true;
+	}
+
+	if ((option & IndexTraverse_Recurse) != 0)
+	{
+		/* The current array can be an ancestor of multiple indexed paths. Ask the
+		 * configured callback which path-data entries match recursively, then mark
+		 * each one. For index paths a.x, a.y, and b.z, visiting array a marks the
+		 * entries for a.x and a.y, but not b.z. */
+		for (int i = 0; i < context->maxPaths; i++)
+		{
+			if (context->isRecursivePathMatch(context->pathDataState, i))
+			{
+				context->getPathDataFunc(context->pathDataState,
+										 i)->hasArrayAncestors = true;
+			}
+		}
+	}
 }
 
 
@@ -1507,7 +1533,7 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 			if (inArrayContext || BSON_ITER_HOLDS_ARRAY(bsonIter))
 			{
 				/* Mark the path as having array ancestors leading to the index path */
-				NotifyHasArrayAncestors(context, pathIndex);
+				NotifyHasArrayAncestors(context, pathIndex, option);
 			}
 
 			if (EnableSkipDottedFieldIndexTerms && !isArrayTerm &&
@@ -1632,7 +1658,7 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 			 option == IndexTraverse_MatchAndRecurse))
 		{
 			/* Mark the path as having array ancestors leading to the index path */
-			NotifyHasArrayAncestors(context, pathIndex);
+			NotifyHasArrayAncestors(context, pathIndex, option);
 		}
 
 		/*
@@ -1675,7 +1701,7 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 				option == IndexTraverse_MatchAndRecurse)
 			{
 				/* Mark the path as having array ancestors leading to the index path */
-				NotifyHasArrayAncestors(context, pathIndex);
+				NotifyHasArrayAncestors(context, pathIndex, option);
 			}
 
 			bool isPathMatchedRecursively = option == IndexTraverse_MatchAndRecurse;

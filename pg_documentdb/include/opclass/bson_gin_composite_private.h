@@ -12,7 +12,10 @@
  #define BSON_GIN_COMPOSITE_PRIVATE_H
 
  #include "io/bson_core.h"
- #include "opclass/bson_gin_index_mgmt.h"
+ #include "opclass/bson_gin_index_term.h"
+
+/* Internal marker shared by the planner and composite $elemMatch bounds parser. */
+#define ReducedCorrelatedBoundsPlanAppliedKey "rctBoundsPlanApplied"
 
 typedef struct CompositeSingleBound
 {
@@ -89,6 +92,9 @@ typedef struct VariableIndexBounds
 
 	/* OPTIONAL: row level bounds that are applied to the query */
 	CompositeRowBounds *minBounds;
+
+	/* Whether planning already handled reduced-correlated bound pruning. */
+	bool isReducedCorrelatedBoundsPlanApplied;
 } VariableIndexBounds;
 
 /* A processed set of index bounds for a given path
@@ -247,7 +253,10 @@ List * MergeWildCardSingleVariableBounds(List *variableBounds);
 
 void TrimSecondaryVariableBounds(VariableIndexBounds *variableBounds,
 								 CompositeQueryRunData *runData,
-								 const char *indexPaths[INDEX_MAX_KEYS]);
+								 const char *indexPaths[INDEX_MAX_KEYS],
+								 bool hasArrayPaths,
+								 uint32_t multiKeyBitMask,
+								 bool enableMetadataBasedTracking);
 void PickVariableBoundsForOrderedScan(VariableIndexBounds *variableBounds,
 									  CompositeQueryRunData *runData);
 void PopulateTermMetadataForTruncation(IndexTermCreateMetadata *metadata, const

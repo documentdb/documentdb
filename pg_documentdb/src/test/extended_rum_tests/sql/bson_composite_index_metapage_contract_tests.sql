@@ -16,6 +16,7 @@ SET documentdb.next_collection_index_id TO 14000;
 --               reflected only in the global truncated bit 35)
 --   bit42-63  - unused
 set documentdb.enableIndexMetadataGlobalTracking to on;
+set documentdb.enable_failure_on_parallel_index_arrays_for_metadata_tracking to off;
 
 -- Helper: return only the opclass-metadata blob (decimal + hex) for the metapage of
 -- the named index. Reading just the blob keeps the validation focused on the contract
@@ -188,6 +189,14 @@ SELECT documentdb_api.insert_one('mpc_db', 'c_ancestor', '{ "_id": 1, "a": [ { "
 -- Expected: bit34 | bit0 | bit1 | bit2 -> 0x400000007
 SELECT documentdb_api_internal.composite_metapage_blob('mpc_db', 'c_ancestor', 'abc_abd_1');
 
+-- Every indexed descendant of a shared array ancestor must be multi-key, even
+-- when one leaf is absent. For (a.x, a.y, a.z), the array at "a" marks all
+-- three path bits although z is missing from every array element.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('mpc_db', '{ "createIndexes": "c_ancestor_missing_leaf", "indexes": [ { "key": { "a.x": 1, "a.y": 1, "a.z": 1 }, "name": "ax_ay_az_1", "enableOrderedIndex": 1 } ] }');
+SELECT documentdb_api.insert_one('mpc_db', 'c_ancestor_missing_leaf', '{ "_id": 1, "a": [ { "x": 1, "y": 2 }, { "x": 5, "y": 6 } ] }');
+-- Expected: bit34 | bit0 | bit1 | bit2 | bit3 -> 0x40000000f
+SELECT documentdb_api_internal.composite_metapage_blob('mpc_db', 'c_ancestor_missing_leaf', 'ax_ay_az_1');
+
 -- Ancestor array affecting only the first deep path: index on a.b.c and an
 -- independent scalar path x; array at "a" marks only path 0 (a.b.c) multi-key.
 -- Expected: bit0 | bit1 -> 0x3.
@@ -206,4 +215,5 @@ SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PA
 -- Expected (unchanged after VACUUM): bit0 | bit1 | bit35 | bit37 -> 0x2800000003
 SELECT documentdb_api_internal.composite_metapage_blob('mpc_db', 'c_combined', 'a_b_1');
 
+reset documentdb.enable_failure_on_parallel_index_arrays_for_metadata_tracking;
 DROP FUNCTION documentdb_api_internal.composite_metapage_blob(text, text, text);
