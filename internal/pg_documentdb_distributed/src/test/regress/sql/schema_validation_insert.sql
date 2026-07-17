@@ -222,11 +222,98 @@ SELECT shard_key_value, object_id, document from documentdb_api.collection('sche
 SELECT * FROM aggregate_cursor_first_page('schema_validation_insertion', '{ "aggregate": "col_source", "pipeline": [ { "$match": { "_id": "1" }}, {"$out" : "col_out_tar" } ], "cursor": { "batchSize": 1 } }', 4294967294);
 SELECT shard_key_value, object_id, document from documentdb_api.collection('schema_validation_insertion','col_out_tar') ORDER BY shard_key_value, object_id;
 
+---------------------------------------------enum keyword------------------------------------------------------
+-- Suppress the forwarded "creating collection" NOTICE (timing-sensitive in a distributed setup).
+SET client_min_messages TO WARNING;
+SELECT documentdb_api.create_collection_view('schema_validation_insertion', '{ "create": "col_enum", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"status": {"enum": ["active", "inactive", "pending"]}, "score": {"enum": [1, 2, 3, null]}, "tags": {"enum": [["a"], ["a", "b"]]}}}}}');
+RESET client_min_messages;
+-- string in enum -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum", "documents":[{"_id":"1", "status":"active"}]}');
+-- string not in enum -> fail
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum", "documents":[{"_id":"2", "status":"unknown"}]}');
+-- int in enum -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum", "documents":[{"_id":"3", "score":2}]}');
+-- null in enum -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum", "documents":[{"_id":"4", "score":null}]}');
+-- int not in enum -> fail
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum", "documents":[{"_id":"5", "score":42}]}');
+-- array deep equality match -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum", "documents":[{"_id":"6", "tags":["a", "b"]}]}');
+-- array deep equality miss -> fail
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum", "documents":[{"_id":"7", "tags":["c"]}]}');
+-- field absent -> enum on missing field is not enforced, succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum", "documents":[{"_id":"8"}]}');
+SELECT shard_key_value, object_id, document from documentdb_api.collection('schema_validation_insertion','col_enum') ORDER BY shard_key_value, object_id;
+
+---------------------------------------------enum: numeric cross-type equality----------------------------------
+-- enum [1,2,3]: numeric values compare equal across int/double/long/decimal representations
+SET client_min_messages TO WARNING;
+SELECT documentdb_api.create_collection_view('schema_validation_insertion', '{ "create": "col_enum_num", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"score": {"enum": [1, 2, 3]}}}}}');
+RESET client_min_messages;
+-- int 2 -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum_num", "documents":[{"_id":"1", "score":2}]}');
+-- double 2.0 (cross-type) -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum_num", "documents":[{"_id":"2", "score":{"$numberDouble":"2.0"}}]}');
+-- long 2 (cross-type) -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum_num", "documents":[{"_id":"3", "score":{"$numberLong":"2"}}]}');
+-- decimal 2 (cross-type) -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum_num", "documents":[{"_id":"4", "score":{"$numberDecimal":"2"}}]}');
+-- double 2.5 (not in enum) -> fail
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum_num", "documents":[{"_id":"5", "score":{"$numberDouble":"2.5"}}]}');
+SELECT shard_key_value, object_id, document from documentdb_api.collection('schema_validation_insertion','col_enum_num') ORDER BY shard_key_value, object_id;
+
+---------------------------------------------enum: mixed-type deep equality-------------------------------------
+-- enum with scalar, null, sub-document and array members
+SET client_min_messages TO WARNING;
+SELECT documentdb_api.create_collection_view('schema_validation_insertion', '{ "create": "col_enum_mix", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"v": {"enum": [1, "two", true, null, {"x": 1}, [1, 2]]}}}}}');
+RESET client_min_messages;
+-- bool true -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum_mix", "documents":[{"_id":"1", "v":true}]}');
+-- bool false (not in enum) -> fail
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum_mix", "documents":[{"_id":"2", "v":false}]}');
+-- sub-document deep equality match -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum_mix", "documents":[{"_id":"3", "v":{"x":1}}]}');
+-- sub-document deep equality miss -> fail
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum_mix", "documents":[{"_id":"4", "v":{"x":2}}]}');
+-- array deep equality match -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum_mix", "documents":[{"_id":"5", "v":[1, 2]}]}');
+-- string match -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum_mix", "documents":[{"_id":"6", "v":"two"}]}');
+-- explicit null (null in enum) -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum_mix", "documents":[{"_id":"7", "v":null}]}');
+SELECT shard_key_value, object_id, document from documentdb_api.collection('schema_validation_insertion','col_enum_mix') ORDER BY shard_key_value, object_id;
+
+---------------------------------------------enum combined with bsonType---------------------------------------
+-- both bsonType and enum constraints must be satisfied
+SET client_min_messages TO WARNING;
+SELECT documentdb_api.create_collection_view('schema_validation_insertion', '{ "create": "col_enum_type", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"v": {"bsonType": "int", "enum": [1, 2, 3]}}}}}');
+RESET client_min_messages;
+-- int 2: both satisfied -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum_type", "documents":[{"_id":"1", "v":2}]}');
+-- double 2.0: enum cross-type matches but bsonType int fails -> fail
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum_type", "documents":[{"_id":"2", "v":{"$numberDouble":"2.0"}}]}');
+-- int 5: bsonType ok but not in enum -> fail
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum_type", "documents":[{"_id":"3", "v":5}]}');
+SELECT shard_key_value, object_id, document from documentdb_api.collection('schema_validation_insertion','col_enum_type') ORDER BY shard_key_value, object_id;
+
+---------------------------------------------enum on a nested property-----------------------------------------
+-- enum applied to a property inside a nested object
+SET client_min_messages TO WARNING;
+SELECT documentdb_api.create_collection_view('schema_validation_insertion', '{ "create": "col_enum_nested", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"a": {"bsonType": "object", "properties": {"b": {"enum": ["x", "y"]}}}}}}}');
+RESET client_min_messages;
+-- nested a.b in enum -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum_nested", "documents":[{"_id":"1", "a":{"b":"x"}}]}');
+-- nested a.b not in enum -> fail
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_enum_nested", "documents":[{"_id":"2", "a":{"b":"z"}}]}');
+SELECT shard_key_value, object_id, document from documentdb_api.collection('schema_validation_insertion','col_enum_nested') ORDER BY shard_key_value, object_id;
+
 ---------------------------------------------oneOf keyword------------------------------------------------------
 -- Top-level oneOf with two disjoint sub-schemas; a document must match exactly one.
 -- A: object with required "a" of type int
 -- B: object with required "b" of type string
+SET client_min_messages TO WARNING;
 SELECT documentdb_api.create_collection_view('schema_validation_insertion', '{ "create": "col_oneof", "validator": {"$jsonSchema": {"oneOf": [ {"bsonType": "object", "required": ["a"], "properties": {"a": {"bsonType": "int"}}}, {"bsonType": "object", "required": ["b"], "properties": {"b": {"bsonType": "string"}}} ]}}}');
+RESET client_min_messages;
 -- matches only sub-schema A -> succeed
 SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_oneof", "documents":[{"_id":"1", "a":1}]}');
 -- matches only sub-schema B -> succeed
@@ -241,7 +328,9 @@ SELECT shard_key_value, object_id, document from documentdb_api.collection('sche
 
 -- Field-level oneOf: property "v" must match exactly one of {int, string}.
 -- This exercises the property-recursion validation path, which is distinct from the top-level oneOf path above.
+SET client_min_messages TO WARNING;
 SELECT documentdb_api.create_collection_view('schema_validation_insertion', '{ "create": "col_oneof_field", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"v": {"oneOf": [ {"bsonType": "int"}, {"bsonType": "string"} ]}}}}}');
+RESET client_min_messages;
 -- v is int -> matches only the int sub-schema -> succeed
 SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_oneof_field", "documents":[{"_id":"1", "v":1}]}');
 -- v is string -> matches only the string sub-schema -> succeed
@@ -256,7 +345,9 @@ SELECT shard_key_value, object_id, document from documentdb_api.collection('sche
 
 -- oneOf combined with a sibling keyword (properties) at the same level; both constraints must hold (AND).
 -- oneOf requires exactly one of {has "a", has "b"}; the sibling properties requires "n" to be int when present.
+SET client_min_messages TO WARNING;
 SELECT documentdb_api.create_collection_view('schema_validation_insertion', '{ "create": "col_oneof_and", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"n": {"bsonType": "int"}}, "oneOf": [ {"required": ["a"]}, {"required": ["b"]} ]}}}');
+RESET client_min_messages;
 -- sibling properties holds (n is int) AND oneOf holds (only "a") -> succeed
 SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_oneof_and", "documents":[{"_id":"1", "n":1, "a":1}]}');
 -- oneOf holds (only "a") but sibling properties fails (n is string) -> fail

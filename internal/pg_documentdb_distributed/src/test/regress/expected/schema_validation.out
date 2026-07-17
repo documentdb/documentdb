@@ -201,9 +201,39 @@ SELECT bson_dollar_project(cursorpage, '{"cursor.firstBatch.info": 0, "cursor.fi
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "schema_validation.$cmd.ListCollections", "firstBatch" : [ { "name" : "col7", "type" : "collection", "options" : { "validator" : { "$jsonSchema" : { "bsonType" : "object", "properties" : { "a" : { "bsonType" : "int", "description" : "This is field a" } } } }, "validationLevel" : "strict", "validationAction" : "error" } } ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
 (1 row)
 
+-- Suppress the "creating collection" NOTICE: in a distributed setup it is emitted
+-- on the metadata coordinator and forwarded back, so its delivery is timing-sensitive.
+SET client_min_messages TO WARNING;
+-- enum: scalar values
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_enum1", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"status": {"enum": ["active", "inactive", "pending"]}}}}}');
+         create_collection_view         
+---------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- enum: mixed types including null, document, array
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_enum2", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"v": {"enum": [1, "two", true, null, {"x": 1}, [1, 2]]}}}}}');
+         create_collection_view         
+---------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- enum at top level (whole document must equal one of these)
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_enum3", "validator": {"$jsonSchema": {"enum": [{"a": 1}, {"a": 2}]}}}');
+         create_collection_view         
+---------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- enum invalid: not an array
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_enum_bad1", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"v": {"enum": "active"}}}}}');
+ERROR:  $jsonSchema keyword 'enum' must be an array
+-- enum invalid: empty array
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_enum_bad2", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"v": {"enum": []}}}}}');
+ERROR:  $jsonSchema keyword 'enum' cannot be an empty array
+   
 -- oneOf: two disjoint sub-schemas
 SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_oneof1", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"v": {"oneOf": [{"bsonType": "int"}, {"bsonType": "string"}]}}}}}');
-NOTICE:  creating collection
          create_collection_view         
 ---------------------------------------------------------------------
  { "ok" : { "$numberDouble" : "1.0" } }
@@ -211,7 +241,6 @@ NOTICE:  creating collection
 
 -- oneOf: nested properties / required
 SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_oneof2", "validator": {"$jsonSchema": {"oneOf": [{"bsonType": "object", "required": ["a"]}, {"bsonType": "object", "required": ["b"]}]}}}');
-NOTICE:  creating collection
          create_collection_view         
 ---------------------------------------------------------------------
  { "ok" : { "$numberDouble" : "1.0" } }
@@ -226,4 +255,5 @@ ERROR:  $jsonSchema keyword 'oneOf' cannot be an empty array
 -- oneOf invalid: element is not an object
 SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_oneof_bad3", "validator": {"$jsonSchema": {"oneOf": [{"bsonType": "int"}, "string"]}}}');
 ERROR:  $jsonSchema keyword 'oneOf' requires that each element of the array is an object, but found a string
+RESET client_min_messages;
    
