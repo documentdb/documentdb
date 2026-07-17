@@ -117,7 +117,7 @@ typedef struct ReservoirSampleState
 	 * needed a heap read. The rest were served from the visibility map.
 	 */
 	int64 sampleRowsSkipped;
-	int64 sampleHeapSkips;
+	int64 sampleHeapFetches;
 
 	int numCollected;
 	int returnIndex;
@@ -394,7 +394,7 @@ ReservoirSampleCreateScanState(CustomScan *cscan)
 	state->tupleReservoir = NULL;
 	state->vmBuffer = InvalidBuffer;
 	state->sampleRowsSkipped = 0;
-	state->sampleHeapSkips = 0;
+	state->sampleHeapFetches = 0;
 	state->numCollected = 0;
 	state->returnIndex = 0;
 	state->scanStarted = false;
@@ -546,7 +546,7 @@ TrySkipHeapEntry(ReservoirSampleState *state, Snapshot snapshot, bool *isVisible
 	 * must not count. btree never sets xs_recheck. We're on the skip path, so
 	 * this skip required a heap read.
 	 */
-	state->sampleHeapSkips++;
+	state->sampleHeapFetches++;
 
 	/* ss_ScanTupleSlot is always allocated by ExecInitIndexScan when the child
 	 * index scan is initialized, and index_fetch_heap fills it only when it
@@ -848,8 +848,10 @@ ReservoirSampleExplain(CustomScanState *node, List *ancestors, ExplainState *es)
 	{
 		ExplainPropertyInteger("Sample Rows Skipped", NULL,
 							   state->sampleRowsSkipped, es);
-		ExplainPropertyInteger("Sample Heap Skips", NULL,
-							   state->sampleHeapSkips, es);
+
+		/* Heap reads incurred while skipping; excludes sampled row fetches. */
+		ExplainPropertyInteger("Sample Heap Fetches", NULL,
+							   state->sampleHeapFetches, es);
 	}
 }
 
