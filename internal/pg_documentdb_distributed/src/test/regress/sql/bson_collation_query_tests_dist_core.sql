@@ -202,6 +202,44 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
 END;
 
 -- ======================================================================
+-- SECTION: collation-aware query and count on a string _id (sharded)
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_id_d', '{ "_id": "cat", "n": 1 }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_id_d', '{ "_id": "Cat", "n": 2 }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_id_d', '{ "_id": "CAT", "n": 3 }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_id_d', '{ "_id": "dog", "n": 4 }');
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_id_d', '{ "_id": "Dog", "n": 5 }');
+
+SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_id_d', '{ "_id": "hashed" }', false);
+
+-- equality on a string _id under collation returns every case variant
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_find('coll_q_dist_db',
+    '{ "find": "coll_id_d", "filter": { "_id": "cat" }, "sort": { "n": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+END;
+
+-- range on a string _id under collation
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_find('coll_q_dist_db',
+    '{ "find": "coll_id_d", "filter": { "_id": { "$gte": "cat" } }, "sort": { "n": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+END;
+
+-- covered $count on a string _id under collation
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
+    '{ "aggregate": "coll_id_d", "pipeline": [ { "$match": { "_id": "cat" } }, { "$count": "c" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+END;
+
+-- ======================================================================
 -- CLEANUP
 -- ======================================================================
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_agg_d');
@@ -209,5 +247,6 @@ SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_delete_d');
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_graph_dst_d');
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_graph_src_d');
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_lookup_d');
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_id_d');
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_qm_d');
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'single_field_d');

@@ -78,6 +78,19 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
      "indexes": [{ "key": {"a": 1}, "name": "idx_a_en_s1",
                    "collation": {"locale": "en", "strength": 1} }] }', TRUE);
 
+-- Section 21 coll_ios: compound index with `_id` as the trailing key, so a
+-- covered $count on the leading `country` field can use an index-only scan.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "coll_ios",
+     "indexes": [{ "key": {"country": 1, "_id": 1}, "name": "idx_country_id_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
+-- Section 21 coll_id_ios: collation-aware ordered index keyed on `_id`.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "coll_id_ios",
+     "indexes": [{ "key": {"_id": 1}, "name": "idx_id_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
 -- ======================================================================
 -- Source the core body so all queries run against indexed collections.
 -- ======================================================================

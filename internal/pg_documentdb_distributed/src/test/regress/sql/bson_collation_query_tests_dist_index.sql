@@ -56,4 +56,10 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_dist_db',
      "indexes": [{ "key": {"a": 1}, "name": "idx_a_en_s1",
                    "collation": {"locale": "en", "strength": 1} }] }', TRUE);
 
+-- coll_id_d: equality / range predicates on a string `_id`.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_dist_db',
+  '{ "createIndexes": "coll_id_d",
+     "indexes": [{ "key": {"_id": 1}, "name": "idx_id_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
 \i sql/bson_collation_query_tests_dist_core.sql

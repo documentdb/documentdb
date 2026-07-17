@@ -1036,3 +1036,76 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
 SELECT documentdb_api.drop_collection('coll_q_db','coll_merge_src');
 SELECT documentdb_api.drop_collection('coll_q_db','coll_merge_dst');
+
+-- ======================================================================
+-- SECTION: collation-aware index usage on `_id` and compound keys
+-- ======================================================================
+-- Exercises a collation-aware ordered index on `_id` and a compound
+-- {country, _id} index. These collections hold only scalar values, so the
+-- ordered index answers the equality/range predicates directly and a covered
+-- $count reads from the same index. seqscan is off (top of file) and bitmap
+-- scans are disabled here, so the plans are plain Index Scans.
+SET enable_bitmapscan TO off;
+
+-- coll_ios: scalar `country` values with a compound {country, _id} collation index.
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 1, "country": "usa", "provider": "aws" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 2, "country": "USA", "provider": "Aws" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 3, "country": "Usa", "provider": "AWS" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 4, "country": "canada", "provider": "gcp" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 5, "country": "Canada", "provider": "GCP" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 6, "country": "brazil", "provider": "azure" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 7, "country": "BRAZIL", "provider": "Azure" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 8, "country": "mexico", "provider": "aws" }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "coll_ios",
+     "indexes": [{ "key": {"country": 1, "_id": 1}, "name": "idx_country_id_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
+-- coll_id_ios: scalar string `_id` values with a collation-aware index keyed on `_id`.
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "cat", "v": 1 }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "Cat", "v": 2 }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "CAT", "v": 3 }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "dog", "v": 4 }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "Dog", "v": 5 }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "goat", "v": 6 }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "coll_id_ios",
+     "indexes": [{ "key": {"_id": 1}, "name": "idx_id_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
+-- Covered $count on the leading `country` field uses the compound collation index.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_ios", "pipeline": [ { "$match": { "country": "USA" } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- Covered $count over a range predicate under collation.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_ios", "pipeline": [ { "$match": { "country": { "$gte": "brazil", "$lt": "mexico" } } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- A strength-3 predicate cannot use the strength-1 index; it falls back to _id_
+-- with the collation applied as a Filter.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_ios", "pipeline": [ { "$match": { "country": "USA" } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 3 } }')
+$cmd$);
+
+-- Equality on the leading `country` plus the trailing `_id` key.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_ios", "filter": { "country": "usa", "_id": 2 }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- Covered $count served by the collation-aware index keyed on `_id`.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_id_ios", "pipeline": [ { "$match": { "_id": "dog" } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+-- find on `_id` under collation uses the collation-aware _id index (the byte-wise
+-- _id_ index cannot answer a collation predicate).
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_id_ios", "filter": { "_id": "cat" }, "sort": { "v": 1 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+
+RESET enable_bitmapscan;
+
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_ios');
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_id_ios');
