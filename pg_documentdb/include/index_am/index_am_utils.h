@@ -23,6 +23,7 @@ typedef struct CompositeOpClassMetadataInfo
 {
 	uint64 rawBlob;
 	bool isMultiKey;
+	uint32_t multiKeyPathBitMask;
 	int multiKeyPathCount;
 	bool hasCorrelatedReducedTerms;
 	bool hasTruncation;
@@ -107,8 +108,8 @@ bool GetCompositeOpClassWithProps(Relation indexRelation,
 								  PGFunction *getOpclassMetadata);
 
 /*
- * Reads composite-index opclass metadata for telemetry. Returns Full with *info
- * fully populated when the metadata blob is available, Partial with only
+ * Reads composite-index opclass metadata. Returns Full with *info fully
+ * populated when the metadata blob is available, Partial with only
  * info->isMultiKey set as a fallback, or None if neither can be read.
  */
 CompositeOpClassMetadataReadResult TryGetCompositeOpClassMetadataInfo(Oid indexOid,

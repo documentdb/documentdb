@@ -3,11 +3,13 @@
 * Fix `$sample` size coercion and validation to be wire protocol compatible. *[Bugfix]*
 * Harden feature-flagged RUM empty entry-leaf page pruning (`documentdb_rum.prune_rum_empty_pages`): revalidate that the left/right siblings still bracket the target after re-locking (a concurrent left-sibling split could otherwise drop pages from the leaf chain), zero the retained high-key tuple's posting-tree pointer as intended, and acquire posting-tree root cleanup locks conditionally up front instead of blocking while holding sibling/parent/target locks. *[Bugfix]*
 * Stream `$group` aggregations under dynamic cursors when the group keys can be provided in order by an index (sorted GroupAggregate over an ordered index scan), instead of falling back to a persistent cursor. Guarded by `documentdb.enable_group_by_dynamic_streaming` feature flag, enabled by default while pending stabilization. *[Perf]*
+* Push safe indexed `$elemMatch` conditions into reduced-correlated composite scans and prune cross-element bounds during planning, aligning index costing with execution. Guarded by `documentdb.enable_composite_reduced_correlated_bounds_planning`. *[Bugfix/Perf]*
+* Reject parallel arrays on metadata-backed composite indexes by default for compatible compound-index semantics. Guarded by `documentdb.enable_failure_on_parallel_index_arrays_for_metadata_tracking`. *[Bugfix]*
+* Fix per-path multikey metadata so an array ancestor marks every indexed descendant, including fields absent from the document. *[Bugfix]*
 * Support the `oneOf` keyword in `$jsonSchema` validators, matching the documented semantics where a value must validate against exactly one of the listed subschemas, both at the top level and for individual properties. *[Feature]*
 
 ### documentdb v0.115-0 (Unreleased) ###
-* Fix `$min` and `$ma* Fix `$sample` size coercion and validation to be wire protocol compatible. *[Bugfix]*
-x` accumulators to skip null and missing values when non-null values are present, only returning null when all values are null or missing. Guarded by `enable_min_max_skip_null_values`, enabled by default. *[Bugfix]*
+* Fix `$min` and `$max` accumulators to skip null and missing values when non-null values are present, only returning null when all values are null or missing. Guarded by `enable_min_max_skip_null_values`, enabled by default. *[Bugfix]*
 * Optimize `$sample` over an Index Scan by avoiding heap reads for rows the reservoir discards (visible rows are counted via the visibility map). Applies to Index Scans without runtime filters over btree or regular RUM indexes. *[Perf]*
 * Fix `$exists` argument coercion so falsy non-boolean values (`null`, `undefined`, `0`) are treated as `$exists: false` and truthy non-boolean values as `$exists: true`, matching the documented truthiness semantics. Previously `$exists: null` behaved like `$exists: true`. *[Bugfix]*
 * Fix `$size` returning wrong results when applied to a field path nested inside `$elemMatch`. *[Bugfix]*

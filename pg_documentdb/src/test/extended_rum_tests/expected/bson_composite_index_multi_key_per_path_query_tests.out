@@ -9,6 +9,9 @@ set documentdb.enableCompositeIndexPlanner to on;
 -- eventually decide order-by pushdown based on whether the *sort* path itself is
 -- multi-key, rather than on a single index-wide multi-key flag.
 set documentdb.enableIndexMetadataGlobalTracking to on;
+-- This suite intentionally exercises independent multi-key paths. Parallel-array
+-- rejection is covered by dedicated tests.
+set documentdb.enable_failure_on_parallel_index_arrays_for_metadata_tracking to off;
 set documentdb.enableExtendedExplainPlans to on;
 -- Suppress per-index cost details so explain output is stable across runs.
 set documentdb.enableExplainScanIndexCosts to off;

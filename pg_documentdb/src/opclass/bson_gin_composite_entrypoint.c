@@ -208,6 +208,7 @@ extern bool EnableOrderedCompositeOperatorScan;
 extern bool EnableComparableTerms;
 extern bool EnablePartialMatchHasRecheck;
 extern bool EnableFailureOnParallelIndexArrays;
+extern bool EnableFailureOnParallelIndexArraysForMetadataTracking;
 
 static void ValidateCompositePathSpec(const char *prefix);
 static Size FillCompositePathSpec(const char *prefix, void *buffer);
@@ -1057,10 +1058,17 @@ OptimizeVariableBoundsForQuery(CompositeQueryRunData *runData,
 	}
 	else
 	{
-		if (isCorrelatedReducedScan && options->enableCompositeReducedCorrelatedTerms)
+		if (isCorrelatedReducedScan &&
+			options->enableCompositeReducedCorrelatedTerms &&
+			!variableBounds->isReducedCorrelatedBoundsPlanApplied)
 		{
-			/* In a reduced scan, we can't filter on any paths that's not the first path */
-			TrimSecondaryVariableBounds(variableBounds, runData, indexPaths);
+			Assert(hasArrayPaths);
+
+			/* Unplanned or cached pre-RCT scans retain the legacy fallback. */
+			TrimSecondaryVariableBounds(variableBounds, runData, indexPaths,
+										hasArrayPaths,
+										multiKeyBitMask,
+										options->enableMetadataBasedTracking);
 		}
 
 		if (!hasArrayPaths || options->enableMetadataBasedTracking)
@@ -4869,9 +4877,19 @@ GenerateCompositedTerms(GinEntrySet *entrySet,
 }
 
 
+inline static bool
+ShouldFailOnParallelIndexArrays(const BsonGinCompositePathOptions *options)
+{
+	return EnableFailureOnParallelIndexArrays ||
+		   (options->enableMetadataBasedTracking &&
+			EnableFailureOnParallelIndexArraysForMetadataTracking);
+}
+
+
 static uint32_t
 PreprocessMergedTermSet(MergedTermSet *mergedSet, GinEntrySet *entrySet,
-						uint32_t pathCount, GinEntryPathData *pathData)
+						uint32_t pathCount, GinEntryPathData *pathData,
+						bool failOnParallelIndexArrays)
 {
 	uint32_t currentTotalTermCount = 1;
 	for (int i = 0; i < (int) pathCount; i++)
@@ -4885,7 +4903,7 @@ PreprocessMergedTermSet(MergedTermSet *mergedSet, GinEntrySet *entrySet,
 			if (mergedSet->numTerms[i] > 1)
 			{
 				ReportFeatureUsage(FEATURE_INDEX_PARALLEL_ARRAYS_INDEXED);
-				if (EnableFailureOnParallelIndexArrays)
+				if (failOnParallelIndexArrays)
 				{
 					ereport(ERROR, (
 								errcode(ERRCODE_DOCUMENTDB_CANNOTINDEXPARALLELARRAYS),
@@ -4976,6 +4994,7 @@ GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
 		list_length(correlatedTerms) > 0)
 	{
 		ListCell *cell;
+		bool failOnParallelIndexArrays = ShouldFailOnParallelIndexArrays(options);
 
 		/* First pass, calculate num terms */
 		uint32_t computedTermCount = 0;
@@ -4983,7 +5002,8 @@ GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
 		{
 			MergedTermSet *mergedSet = (MergedTermSet *) lfirst(cell);
 			uint32_t termCount = PreprocessMergedTermSet(mergedSet, entrySet, pathCount,
-														 termState.pathData);
+														 termState.pathData,
+														 failOnParallelIndexArrays);
 			computedTermCount += termCount;
 		}
 
@@ -5039,6 +5059,7 @@ GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
 	else
 	{
 		bool hasMultipleTerms = false;
+		bool failOnParallelIndexArrays = ShouldFailOnParallelIndexArrays(options);
 		for (uint32_t i = 0; i < pathCount; i++)
 		{
 			if (entrySet[i].index > 1)
@@ -5046,7 +5067,7 @@ GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
 				if (hasMultipleTerms)
 				{
 					ReportFeatureUsage(FEATURE_INDEX_PARALLEL_ARRAYS_INDEXED);
-					if (EnableFailureOnParallelIndexArrays)
+					if (failOnParallelIndexArrays)
 					{
 						ereport(ERROR, (
 									errcode(ERRCODE_DOCUMENTDB_CANNOTINDEXPARALLELARRAYS),
@@ -5219,6 +5240,7 @@ GenerateCompositeExtractQueryUniqueEqual(pgbson *bson,
 		bool *partialMatchInner = palloc(sizeof(bool) * 1);
 		indexEntries = palloc(sizeof(Datum) * 1);
 		Pointer *extraDataInner = palloc(sizeof(Pointer) * 1);
+		bool failOnParallelIndexArrays = ShouldFailOnParallelIndexArrays(options);
 
 		/* First pass, calculate num terms */
 		uint32_t finalEntryCapacity = 0;
@@ -5226,7 +5248,8 @@ GenerateCompositeExtractQueryUniqueEqual(pgbson *bson,
 		{
 			MergedTermSet *mergedSet = (MergedTermSet *) lfirst(cell);
 			uint32_t termCount = PreprocessMergedTermSet(mergedSet, entrySet, pathCount,
-														 termState.pathData);
+														 termState.pathData,
+														 failOnParallelIndexArrays);
 			finalEntryCapacity += termCount;
 		}
 
