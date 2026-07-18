@@ -2696,10 +2696,9 @@ AddMultiBoundaryForDollarNotIn(int32_t indexAttribute, const char *wildcardPath,
 																 wildcardPath);
 
 	/*
-	 * TODO: For $nin generate a single [MinKey, MaxKey] bound and do a binary
-	 * search of the query elements for equality during the index check function. That
-	 * turns the scan into NumElements walks from MinKey to MaxKey instead of one
-	 * bound per element.
+	 * TODO: Generate a single [MinKey, MaxKey] bound with one AND-ed $ne recheck
+	 * per element instead of one bound per element. That would let non-multi-key
+	 * paths avoid the runtime recheck (enabling index-only scan). Follow-up.
 	 */
 	int index = 0;
 	while (bson_iter_next(&arrayIter))
@@ -2729,9 +2728,15 @@ AddMultiBoundaryForDollarNotIn(int32_t indexAttribute, const char *wildcardPath,
 		}
 		else
 		{
+			/*
+			 * Per-element bounds are OR-combined at scan time, so "(not a) OR
+			 * (not b)" would match every row. Passing IndexMultiKeyStatus_Unknown
+			 * forces the $ne runtime recheck on every bound (skipped only for
+			 * HasNoArrays), which enforces the AND-of-not-equals $nin semantics.
+			 */
 			SetBoundsForNotEqual(&element.bsonValue,
 								 &set->bounds[index],
-								 pathMultiKeyState);
+								 IndexMultiKeyStatus_Unknown);
 			index++;
 		}
 	}
