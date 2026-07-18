@@ -30,12 +30,20 @@
 	 strcmp((roleName), ApiRootRole) == 0 || \
 	 strcmp((roleName), ApiUserAdminRole) == 0)
 
+/*
+ * Baseline RBAC group role names.
+ */
+#define API_RBAC_BASELINE_READ_ROLE "documentdb_rbac_baseline_read_role"
+#define API_RBAC_BASELINE_WRITE_ROLE "documentdb_rbac_baseline_write_role"
+
 /* Macro to check if a role is an internal custom rbac role */
 #define IS_CUSTOM_RBAC_ROLE(roleName) \
 	(strcmp((roleName), ApiCollectionFindRole) == 0 || \
 	 strcmp((roleName), ApiCollectionInsertRole) == 0 || \
 	 strcmp((roleName), ApiCollectionUpdateRole) == 0 || \
-	 strcmp((roleName), ApiCollectionRemoveRole) == 0)
+	 strcmp((roleName), ApiCollectionRemoveRole) == 0 || \
+	 strcmp((roleName), API_RBAC_BASELINE_READ_ROLE) == 0 || \
+	 strcmp((roleName), API_RBAC_BASELINE_WRITE_ROLE) == 0)
 
 /* Macro to check if a role name matches a native built-in role */
 #define IS_NATIVE_BUILTIN_ROLE(roleName) \
