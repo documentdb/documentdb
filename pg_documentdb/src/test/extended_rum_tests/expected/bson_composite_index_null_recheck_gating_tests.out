@@ -169,16 +169,9 @@ SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "per_path", "fil
 
 -- $nin [5, null] (excludes null) => a.c neither 5 nor null/missing (none here).
 SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "per_path", "filter": { "a.c": { "$nin": [ 5, null ] } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ab_ac_1" }');
-              document              
-------------------------------------
- { "_id" : { "$numberInt" : "1" } }
- { "_id" : { "$numberInt" : "2" } }
- { "_id" : { "$numberInt" : "3" } }
- { "_id" : { "$numberInt" : "4" } }
- { "_id" : { "$numberInt" : "5" } }
- { "_id" : { "$numberInt" : "6" } }
- { "_id" : { "$numberInt" : "7" } }
-(7 rows)
+ document 
+----------
+(0 rows)
 
 -- $gte null / $lte null => null + missing on a.c (_id 1, 7).
 SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "per_path", "filter": { "a.c": { "$gte": null } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ab_ac_1" }');
@@ -550,10 +543,8 @@ SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "scalar", "filte
 ------------------------------------
  { "_id" : { "$numberInt" : "1" } }
  { "_id" : { "$numberInt" : "2" } }
- { "_id" : { "$numberInt" : "3" } }
- { "_id" : { "$numberInt" : "4" } }
  { "_id" : { "$numberInt" : "5" } }
-(5 rows)
+(3 rows)
 
 -- ----------------------------------------------------------------------------
 -- Fixture D: legacy (mkp=false) index with an empty array present. The empty
@@ -638,8 +629,89 @@ SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "legacy", "filte
  { "_id" : { "$numberInt" : "2" } }
 (2 rows)
 
--- ----------------------------------------------------------------------------
--- Fixture E: count() parity for a leading-equality + trailing-null predicate on
+-- $ne null / $nin over the empty-array-bearing a.b path. a.b is reported
+-- non-multi-key (empty array untracked in legacy mode), but $ne / $nin always
+-- force the runtime recheck (AddMultiBoundaryForDollarNotIn passes
+-- IndexMultiKeyStatus_Unknown), so the empty array (_id 3) -- which is NOT null --
+-- is correctly KEPT while literal null (_id 1) and missing (_id 2) are excluded.
+-- $ne null => a.b present and not null: empty array (_id 3) + scalar 5 (_id 4).
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "legacy", "filter": { "a.b": { "$ne": null } }, "hint": "ab_ac_1" }') $cmd$);
+                                 run_explain_and_trim                                 
+--------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: nrg_db.legacy
+   indexName: ab_ac_1
+   indexKey: {"a.b": 1,"a.c": 1}
+   isMultiKey: false
+   indexBounds: ["a.b": [MinKey, MaxKey], "a.c": (MinKey, MaxKey)]
+   innerScanLoops: 3 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
+   ->  Index Scan using ab_ac_1 on documents_43504 collection (actual rows=2 loops=1)
+         Index Cond: (document @!= '{ "a.b" : null }'::bson)
+         Rows Removed by Index Recheck: 2
+(12 rows)
+
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "legacy", "filter": { "a.b": { "$ne": null } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ab_ac_1" }');
+              document              
+------------------------------------
+ { "_id" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "4" } }
+(2 rows)
+
+-- $nin [5, null] => exclude scalar 5 (_id 4) and null/missing (_id 1, 2); keep the
+-- empty array (_id 3).
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "legacy", "filter": { "a.b": { "$nin": [ 5, null ] } }, "hint": "ab_ac_1" }') $cmd$);
+                                                 run_explain_and_trim                                                  
+-----------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: nrg_db.legacy
+   indexName: ab_ac_1
+   indexKey: {"a.b": 1,"a.c": 1}
+   isMultiKey: false
+   indexBounds: ["a.b": [MinKey, MaxKey], "a.c": (MinKey, MaxKey)], ["a.b": [MinKey, MaxKey], "a.c": (MinKey, MaxKey)]
+   innerScanLoops: 4 loops
+   scanType: regular
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3), (isInequality: true, estimatedEntryCount: 4)]
+   ->  Index Scan using ab_ac_1 on documents_43504 collection (actual rows=1 loops=1)
+         Index Cond: (document @!*= '{ "a.b" : [ { "$numberInt" : "5" }, null ] }'::bson)
+         Rows Removed by Index Recheck: 3
+(12 rows)
+
+SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "legacy", "filter": { "a.b": { "$nin": [ 5, null ] } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "hint": "ab_ac_1" }');
+              document              
+------------------------------------
+ { "_id" : { "$numberInt" : "3" } }
+(1 row)
+
+-- Independent oracle: the $ne null / $nin results above must equal the
+-- collection-scan results for the same predicates (mismatch count must be 0).
+DO $legacy_cons$
+DECLARE r RECORD; idxres text; seqres text; fs text; nmis int := 0;
+BEGIN
+  FOR r IN SELECT unnest(ARRAY[
+      '{ "a.b": { "$ne": null } }',
+      '{ "a.b": { "$nin": [ 5, null ] } }']) AS filter LOOP
+    fs := '{ "find": "legacy", "filter": ' || r.filter || ', "projection": { "_id": 1 } }';
+    SET enable_seqscan = off; SET enable_indexscan = on;
+    EXECUTE 'SELECT array_agg(t.d::text ORDER BY t.d::text) FROM (SELECT document AS d FROM bson_aggregation_find($1, $2)) t'
+      USING 'nrg_db', fs::documentdb_core.bson INTO idxres;
+    SET enable_seqscan = on; SET enable_indexscan = off;
+    EXECUTE 'SELECT array_agg(t.d::text ORDER BY t.d::text) FROM (SELECT document AS d FROM bson_aggregation_find($1, $2)) t'
+      USING 'nrg_db', fs::documentdb_core.bson INTO seqres;
+    IF idxres IS DISTINCT FROM seqres THEN
+      nmis := nmis + 1;
+      RAISE NOTICE 'MISMATCH [%]: idx=% seq=%', r.filter, idxres, seqres;
+    END IF;
+  END LOOP;
+  RAISE NOTICE 'legacy empty-array index/collection-scan mismatches: %', nmis;
+END $legacy_cons$;
+NOTICE:  legacy empty-array index/collection-scan mismatches: 0
+RESET enable_seqscan;
+RESET enable_indexscan;
+set enable_seqscan to off;
 -- a TOP-LEVEL composite key, across three index states -- no index (collection
 -- scan), a single-field index on the equality prefix, and an mkp=true composite
 -- index on the full key. The trailing field spans the four "absent-ish" shapes:
