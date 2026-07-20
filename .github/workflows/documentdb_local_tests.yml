@@ -25,4 +25,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Run documentdb-local Python unit tests
-        run: python3 -m unittest discover -s documentdb-local/scripts/documentdb_local_tests -p 'test_emulator_entrypoint.py'
+        # Single discovery run so a newly added test_*.py module is picked up
+        # automatically (no per-file YAML edit needed). test_image.py self-skips
+        # when DOCUMENTDB_LOCAL_IMAGE is unset, so it is a no-op here.
+        run: python3 -m unittest discover -s documentdb-local/scripts/documentdb_local_tests -p 'test_*.py' -v
