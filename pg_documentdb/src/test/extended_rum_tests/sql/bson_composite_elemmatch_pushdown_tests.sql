@@ -1,0 +1,313 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+
+SET documentdb.next_collection_id TO 30000;
+SET documentdb.next_collection_index_id TO 30000;
+
+SET documentdb.enableCompositeIndexPlanner TO on;
+SET documentdb.enableIndexMetadataGlobalTracking TO on;
+SET documentdb.enableCompositeReducedCorrelatedTermsOnCommonSubPath TO on;
+SET documentdb.enable_composite_reduced_correlated_bounds_planning TO on;
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.enableExplainScanIndexCosts TO off;
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+
+-- ============================================================================
+-- Unit-style plan tests for the individual composite-index capabilities that a
+-- larger $elemMatch + range + order-by workload depends on. Each section below
+-- isolates ONE behavior (an ordered order-by pushdown, a reduced-correlated
+-- string bound, or an order-by-blocking case-insensitive regex) with the smallest
+-- query that exercises it. The case-insensitive $regex sections (4, 5, 6) are each
+-- paired with an $eq companion (7, 8) that swaps only the regex for an equality, to
+-- validate that equality lowers/pushes down and the regex is the sole blocker.
+-- Field names and values are neutral. All queries carry
+-- a "hint" so the index choice is deterministic.
+--
+-- Data shape:
+--   * arr  is an ARRAY of { k, v } sub-documents  -> arr.k / arr.v are MULTI-KEY.
+--   * s    is a scalar integer used as the range / order-by trailing key.
+-- ============================================================================
+
+-- Two ordered composite indexes over the multi-key array path.
+--   idx_arr_k_s  : [ arr.k, { s: -1 } ]            (mkp)
+--   idx_arr_kv_s : [ arr.k, arr.v, { s: -1 } ]     (rct + mkp)
+-- Plus a CASE-INSENSITIVE (collation strength: 1) ordered composite index over the
+-- same key shape. Under strength 1 the collation folds case, so a case-insensitive
+-- /i $regex anchored to a literal (e.g. /^(k1)$/i) is semantically an equality on
+-- THIS index. It is the lowering target referenced by sections 5 and 6 below.
+--   idx_arr_kv_s_ci : [ arr.k, arr.v, { s: -1 } ]  (mkp, collation strength: 1)
+SELECT documentdb_api_internal.create_indexes_non_concurrently('unit_db',
+    '{ "createIndexes": "coll", "indexes": [ { "key": { "arr.k": 1, "s": -1 }, "name": "idx_arr_k_s", "enableOrderedIndex": 1 } ] }', TRUE);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('unit_db',
+    '{ "createIndexes": "coll", "indexes": [ { "key": { "arr.k": 1, "arr.v": 1, "s": -1 }, "name": "idx_arr_kv_s", "enableOrderedIndex": 1 } ] }', TRUE);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('unit_db',
+    '{ "createIndexes": "coll", "indexes": [ { "key": { "arr.k": 1, "arr.v": 1, "s": -1 }, "name": "idx_arr_kv_s_ci", "enableOrderedIndex": 1, "collation": { "locale": "en", "strength": 1 } } ] }', TRUE);
+
+-- Seed data (small + deterministic). Some documents carry two array elements so
+-- an $and of two $elemMatch can intersect them on the same document.
+SELECT documentdb_api.insert_one('unit_db', 'coll', '{ "_id": 1, "arr": [ { "k": "k1", "v": "v1" } ], "s": 10 }');
+SELECT documentdb_api.insert_one('unit_db', 'coll', '{ "_id": 2, "arr": [ { "k": "k1", "v": "v1" }, { "k": "k2", "v": "v2" } ], "s": 20 }');
+SELECT documentdb_api.insert_one('unit_db', 'coll', '{ "_id": 3, "arr": [ { "k": "k2", "v": "v2" } ], "s": 30 }');
+SELECT documentdb_api.insert_one('unit_db', 'coll', '{ "_id": 4, "arr": [ { "k": "k1", "v": "vX" } ], "s": 40 }');
+SELECT documentdb_api.insert_one('unit_db', 'coll', '{ "_id": 5, "arr": [ { "k": "k3", "v": "v3" } ], "s": 50 }');
+SELECT documentdb_api.insert_one('unit_db', 'coll', '{ "_id": 6, "arr": [ { "k": "k1", "v": "v1" }, { "k": "k2", "v": "v2" } ], "s": 60 }');
+SELECT documentdb_api.insert_one('unit_db', 'coll', '{ "_id": 7, "arr": [ { "k": "k2", "v": "v9" } ], "s": 70 }');
+SELECT documentdb_api.insert_one('unit_db', 'coll', '{ "_id": 8, "arr": [ { "k": "k1", "v": "v1" } ], "s": 80 }');
+
+-- VACUUM (ANALYZE) the collection heap we created (scoped, not a global bare
+-- ANALYZE) so the visibility map is populated alongside fresh statistics,
+-- keeping the index-only-scan vs. bitmap-heap-scan plan choice stable across
+-- PostgreSQL versions.
+VACUUM (ANALYZE) documentdb_data.documents_30001;
+
+-- ============================================================================
+-- 1. Multi-key equality + sort suffix SHOULD push the order-by into the scan.
+--    A plain equality on a multi-key path (arr.k) pins the leading column, so a
+--    sort on the trailing ordered key (s) is served by the index order: expect an
+--    ordered Index Scan with "Order By" pushed and NO separate Sort node.
+-- ============================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('unit_db',
+        '{ "find": "coll", "filter": { "arr.k": "k1" }, "sort": { "s": -1 }, "hint": "idx_arr_k_s" }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('unit_db',
+    '{ "find": "coll", "filter": { "arr.k": "k1" }, "sort": { "s": -1 }, "hint": "idx_arr_k_s" }');
+
+-- ============================================================================
+-- 2. Single $elemMatch (equality k + v) + sort suffix. The equality on both
+--    correlated columns pins arr.k = ["k1","k1"] and arr.v = ["v1","v1"] as
+--    equality bounds on idx_arr_kv_s (scanType: ordered). NOTE the contrast with
+--    section 1: the $elemMatch form does NOT push the trailing s order-by into
+--    the scan. Section 1 (direct dotted-path equality) emits an "Order By" and no
+--    Sort; here, even though the bounds are equality and the scan is ordered, an
+--    explicit Sort is still added and there is no "Order By" pushdown.
+--    TODO: the s order-by SHOULD push down here. Both correlated columns are
+--    equality-pinned to a single array element, so the trailing ordered key (s)
+--    is served by the index order exactly as in section 1; the explicit Sort is
+--    an unnecessary regression for the $elemMatch form and should be eliminated.
+-- ============================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('unit_db',
+        '{ "find": "coll", "filter": { "arr": { "$elemMatch": { "k": "k1", "v": "v1" } } }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('unit_db',
+    '{ "find": "coll", "filter": { "arr": { "$elemMatch": { "k": "k1", "v": "v1" } } }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }');
+
+-- ============================================================================
+-- 3. Two $elemMatch in an $and over idx_arr_kv_s. Both branches' k values become
+--    arr.k bounds (two ranges: ["k1","k1"] and ["k2","k2"]). arr.v is left at
+--    (MinKey, MaxKey) and BOTH $elemMatch are re-applied as recheck Filters;
+--    scanType is regular and an explicit Sort is added. Correctness: only _id 2
+--    and _id 6 carry both { k1, v1 } and { k2, v2 } (actual rows=2).
+--    TODO: arr.v SHOULD be bounded here. Each $elemMatch correlates its k with its
+--    v on the SAME array element (k1<->v1, k2<->v2), so the composite bounds should
+--    be the per-element pairs ["k1","k1"]/["v1","v1"] and ["k2","k2"]/["v2","v2"]
+--    rather than dropping arr.v to the fully-unbounded (MinKey, MaxKey). Root cause:
+--    the reduced-correlated bounds plan is NOT applied to this $and-of-two-$elemMatch
+--    intersection -- note the arr.k Index Cond here lacks the "rctBoundsPlanApplied"
+--    marker that the single-$elemMatch scenarios (2, 4, 5) carry, even though
+--    EnableCompositeReducedCorrelatedBoundsPlanning is on and both paths are mkp.
+--    Leaving arr.v unbounded forces every k1/k2 index entry to be heap-rechecked;
+--    the correlated v bound should be pushed into the scan.
+-- ============================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('unit_db',
+        '{ "find": "coll", "filter": { "$and": [ { "arr": { "$elemMatch": { "k": "k1", "v": "v1" } } }, { "arr": { "$elemMatch": { "k": "k2", "v": "v2" } } } ] }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('unit_db',
+    '{ "find": "coll", "filter": { "$and": [ { "arr": { "$elemMatch": { "k": "k1", "v": "v1" } } }, { "arr": { "$elemMatch": { "k": "k2", "v": "v2" } } } ] }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }');
+
+-- ============================================================================
+-- 4. Reduced-correlated bounds, CORRECT case: a single $elemMatch whose leading
+--    column (arr.k) is an EQUALITY and whose trailing column (arr.v) is a $regex.
+--    arr.k = ["k1","k1"] and arr.v is kept bounded to the string range ["", { })
+--    (a regex only matches strings) rather than dropping to (MinKey, MaxKey).
+--    scanType is regular with an explicit Sort (the trailing regex on arr.v means
+--    the s order-by is not served by the index order).
+-- ============================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('unit_db',
+        '{ "find": "coll", "filter": { "arr": { "$elemMatch": { "k": "k1", "v": { "$regularExpression": { "pattern": "^(v1)$", "options": "i" } } } } }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('unit_db',
+    '{ "find": "coll", "filter": { "arr": { "$elemMatch": { "k": "k1", "v": { "$regularExpression": { "pattern": "^(v1)$", "options": "i" } } } } }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }');
+
+-- ============================================================================
+-- 5. Both correlated columns are case-insensitive $regex. A /i $regex cannot lower
+--    to an equality bound, so arr.k widens to the all-strings range ["", { }).
+--    arr.v is likewise KEPT at the string range ["", { }) -- it is NOT collapsed
+--    to (MinKey, MaxKey); the reduced-correlated string bound is preserved for a
+--    single $elemMatch. scanType is regular and an explicit Sort is required (once
+--    the leading column is a range rather than an equality the s order-by can no
+--    longer be served by the index order).
+--    TODO: this SHOULD be lowered onto the case-insensitive index idx_arr_kv_s_ci
+--    (collation strength: 1). Under a case-folding collation the anchored /i regex
+--    /^(k1)$/i (and /^(v1)$/i) is exactly an equality, so on idx_arr_kv_s_ci both
+--    arr.k and arr.v become point-equality bounds ["k1","k1"] / ["v1","v1"] and the
+--    trailing s order-by is served by the index order -- the ordered fast path, same
+--    as the $eq companion in section 7. The planner should recognize the anchored
+--    /i regex as a collation-equality and route it to idx_arr_kv_s_ci instead of
+--    widening to the all-strings range on the case-sensitive idx_arr_kv_s.
+-- ============================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('unit_db',
+        '{ "find": "coll", "filter": { "arr": { "$elemMatch": { "k": { "$regularExpression": { "pattern": "^(k1)$", "options": "i" } }, "v": { "$regularExpression": { "pattern": "^(v1)$", "options": "i" } } } } }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('unit_db',
+    '{ "find": "coll", "filter": { "arr": { "$elemMatch": { "k": { "$regularExpression": { "pattern": "^(k1)$", "options": "i" } }, "v": { "$regularExpression": { "pattern": "^(v1)$", "options": "i" } } } } }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }');
+
+-- ============================================================================
+-- 6. Case-insensitive $regex does NOT lower to an equality bound: the leading
+--    column (arr.k) widens to the all-strings range ["", { }). Because the
+--    leading column is then a RANGE (not an equality), the trailing s order-by
+--    can no longer be served by the index order, so an explicit Sort is required.
+--    This is the blocker that keeps case-insensitive $regex queries off the
+--    ordered fast path. Contrast with section 1 (equality -> ordered pushdown).
+--    TODO: this SHOULD be lowered onto the case-insensitive index idx_arr_kv_s_ci
+--    (collation strength: 1), whose leading arr.k column folds case. There the
+--    anchored /^(k1)$/i regex is a collation-equality arr.k = ["k1","k1"], so the s
+--    order-by is served by the index order (ordered Order By pushdown, no Sort) --
+--    exactly like the $eq companion in section 8. The planner should route an
+--    anchored /i regex to the case-insensitive index rather than widening to the
+--    all-strings range on the case-sensitive idx_arr_k_s.
+-- ============================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('unit_db',
+        '{ "find": "coll", "filter": { "arr.k": { "$regularExpression": { "pattern": "^(k1)$", "options": "i" } } }, "sort": { "s": -1 }, "hint": "idx_arr_k_s" }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('unit_db',
+    '{ "find": "coll", "filter": { "arr.k": { "$regularExpression": { "pattern": "^(k1)$", "options": "i" } } }, "sort": { "s": -1 }, "hint": "idx_arr_k_s" }');
+
+-- ============================================================================
+-- 7. EQUALITY companion to sections 4 & 5 (idx_arr_kv_s $elemMatch): swap the /i
+--    $regex on k and v for a plain $eq. This isolates that the /i $regex -- not the
+--    $elemMatch shape -- is what blocks the equality bound. With $eq both correlated
+--    columns lower to point-equality bounds arr.k = ["k1","k1"] AND arr.v =
+--    ["v1","v1"] (each Index Cond carries "rctBoundsPlanApplied": true), instead of
+--    the widened ranges the regex produced: section 4 kept arr.v at the string range
+--    ["", { }) and section 5 widened BOTH arr.k and arr.v to ["", { }). So swapping
+--    /i $regex -> $eq is purely a bounds-tightening change.
+--    NOTE: the trailing s order-by still does NOT push down for the $elemMatch form
+--    even with full equality -- an explicit Sort remains (scanType: ordered). That
+--    is the separate, independent defect tracked in section 2's TODO, NOT a regex
+--    effect; the regex swap changes ONLY the bounds, never the order-by pushdown.
+-- ============================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('unit_db',
+        '{ "find": "coll", "filter": { "arr": { "$elemMatch": { "k": "k1", "v": "v1" } } }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('unit_db',
+    '{ "find": "coll", "filter": { "arr": { "$elemMatch": { "k": "k1", "v": "v1" } } }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }');
+
+-- ============================================================================
+-- 8. EQUALITY companion to section 6 (idx_arr_k_s direct dotted-path): swap the /i
+--    $regex on arr.k for a plain $eq. Here the /i $regex is the ONLY reason the
+--    order-by did not push: with $eq the leading column is a point equality
+--    (arr.k = ["k1","k1"]), so the trailing s order-by IS served by the index order
+--    -- expect an ordered Index Scan with "Order By" pushed and NO Sort node, the
+--    exact opposite of section 6. This is the clean case where lowering the regex to
+--    an equality fully restores the ordered fast path.
+-- ============================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('unit_db',
+        '{ "find": "coll", "filter": { "arr.k": "k1" }, "sort": { "s": -1 }, "hint": "idx_arr_k_s" }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('unit_db',
+    '{ "find": "coll", "filter": { "arr.k": "k1" }, "sort": { "s": -1 }, "hint": "idx_arr_k_s" }');
+
+-- ============================================================================
+-- FORCE ORDERED INDEX SCAN + CORRECTNESS VALIDATION
+-- Re-run every scenario above with documentdb_rum.forceRumOrderedIndexScan = on.
+-- This forces the extended-RUM access method onto its ordered (streaming) index
+-- scan path even where the natural plan chose a regular or bitmap index scan, so
+-- the ordered-scan code path is exercised directly. For each scenario the forced
+-- EXPLAIN shows the resulting plan (note where scanType flips from regular to
+-- ordered) and the query result is printed; each forced result MUST match the
+-- corresponding non-forced scenario's result above, validating that the ordered
+-- scan path returns identical rows.
+-- ============================================================================
+SET documentdb_rum.forceRumOrderedIndexScan TO on;
+
+-- Scenario 1 (forced ordered): plan + result must match section 1 above.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('unit_db',
+        '{ "find": "coll", "filter": { "arr.k": "k1" }, "sort": { "s": -1 }, "hint": "idx_arr_k_s" }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('unit_db',
+    '{ "find": "coll", "filter": { "arr.k": "k1" }, "sort": { "s": -1 }, "hint": "idx_arr_k_s" }');
+
+-- Scenario 2 (forced ordered): plan + result must match section 2 above.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('unit_db',
+        '{ "find": "coll", "filter": { "arr": { "$elemMatch": { "k": "k1", "v": "v1" } } }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('unit_db',
+    '{ "find": "coll", "filter": { "arr": { "$elemMatch": { "k": "k1", "v": "v1" } } }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }');
+
+-- Scenario 3 (forced ordered): plan + result must match section 3 above.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('unit_db',
+        '{ "find": "coll", "filter": { "$and": [ { "arr": { "$elemMatch": { "k": "k1", "v": "v1" } } }, { "arr": { "$elemMatch": { "k": "k2", "v": "v2" } } } ] }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('unit_db',
+    '{ "find": "coll", "filter": { "$and": [ { "arr": { "$elemMatch": { "k": "k1", "v": "v1" } } }, { "arr": { "$elemMatch": { "k": "k2", "v": "v2" } } } ] }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }');
+
+-- Scenario 4 (forced ordered): plan + result must match section 4 above.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('unit_db',
+        '{ "find": "coll", "filter": { "arr": { "$elemMatch": { "k": "k1", "v": { "$regularExpression": { "pattern": "^(v1)$", "options": "i" } } } } }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('unit_db',
+    '{ "find": "coll", "filter": { "arr": { "$elemMatch": { "k": "k1", "v": { "$regularExpression": { "pattern": "^(v1)$", "options": "i" } } } } }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }');
+
+-- Scenario 5 (forced ordered): plan + result must match section 5 above.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('unit_db',
+        '{ "find": "coll", "filter": { "arr": { "$elemMatch": { "k": { "$regularExpression": { "pattern": "^(k1)$", "options": "i" } }, "v": { "$regularExpression": { "pattern": "^(v1)$", "options": "i" } } } } }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('unit_db',
+    '{ "find": "coll", "filter": { "arr": { "$elemMatch": { "k": { "$regularExpression": { "pattern": "^(k1)$", "options": "i" } }, "v": { "$regularExpression": { "pattern": "^(v1)$", "options": "i" } } } } }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }');
+
+-- Scenario 6 (forced ordered): plan + result must match section 6 above.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('unit_db',
+        '{ "find": "coll", "filter": { "arr.k": { "$regularExpression": { "pattern": "^(k1)$", "options": "i" } } }, "sort": { "s": -1 }, "hint": "idx_arr_k_s" }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('unit_db',
+    '{ "find": "coll", "filter": { "arr.k": { "$regularExpression": { "pattern": "^(k1)$", "options": "i" } } }, "sort": { "s": -1 }, "hint": "idx_arr_k_s" }');
+
+-- Scenario 7 (forced ordered): plan + result must match section 7 above.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('unit_db',
+        '{ "find": "coll", "filter": { "arr": { "$elemMatch": { "k": "k1", "v": "v1" } } }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('unit_db',
+    '{ "find": "coll", "filter": { "arr": { "$elemMatch": { "k": "k1", "v": "v1" } } }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }');
+
+-- Scenario 8 (forced ordered): plan + result must match section 8 above.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('unit_db',
+        '{ "find": "coll", "filter": { "arr.k": "k1" }, "sort": { "s": -1 }, "hint": "idx_arr_k_s" }')
+$cmd$);
+SELECT document FROM bson_aggregation_find('unit_db',
+    '{ "find": "coll", "filter": { "arr.k": "k1" }, "sort": { "s": -1 }, "hint": "idx_arr_k_s" }');
+
+RESET documentdb_rum.forceRumOrderedIndexScan;
