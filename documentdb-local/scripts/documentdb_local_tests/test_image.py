@@ -42,14 +42,28 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 import secrets
 import shutil
 import string
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 import uuid
+
+# The shared backend-contract detector lives alongside this file. Make it
+# importable regardless of how the suite is launched: `unittest discover -s
+# <dir>` puts <dir> on sys.path, but a dotted
+# `-m unittest documentdb_local_tests.test_image` run does not.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import backend_contract  # noqa: E402
+import catalog_contract  # noqa: E402
+
+# The gateway QueryCatalog source path and the parser floor are single-sourced
+# from catalog_contract so this image test and the unit tests cannot disagree.
+QUERY_CATALOG_RS = catalog_contract.QUERY_CATALOG_RS
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +110,11 @@ def _docker(*args: str, check: bool = True, capture: bool = True,
         ["docker", *args],
         check=check,
         text=True,
+        # Decode leniently: container logs can carry invalid UTF-8, and the
+        # runner/dev-machine locale must not turn a benign byte into a decode
+        # error that fails the backend-contract gate (or breaks on cp1252).
+        encoding="utf-8",
+        errors="replace",
         capture_output=capture,
         timeout=timeout,
     )
@@ -227,6 +246,77 @@ def _last_nonempty_line(text: str) -> str:
     return ""
 
 
+def _combined_logs(proc: subprocess.CompletedProcess) -> str:
+    """Join a `docker logs` process's stdout and stderr with a newline. The
+    explicit separator prevents a dangling (newline-less) final stdout line from
+    gluing onto the first stderr line (which could hide or fabricate a match)."""
+    return proc.stdout + "\n" + proc.stderr
+
+
+def _container_pg_socket_port(container: str) -> str:
+    """Return the single in-container PostgreSQL port from its unix socket.
+
+    The emulator runs exactly one PostgreSQL cluster on a non-default port
+    (default 9712) whose socket lives at `/var/run/postgresql/.s.PGSQL.<port>`.
+    We require exactly one socket: zero means PostgreSQL is not up, and more than
+    one would make introspection ambiguous (the contract could be satisfied by
+    the wrong cluster). Both are errors with a clear message."""
+    res = _docker(
+        "exec", container, "sh", "-c",
+        "ls /var/run/postgresql/.s.PGSQL.* 2>/dev/null",
+        check=False, timeout=15,
+    )
+    ports = sorted(set(re.findall(r"\.s\.PGSQL\.(\d+)", res.stdout)))
+    if not ports:
+        raise RuntimeError(
+            "could not find a PostgreSQL unix socket "
+            "(/var/run/postgresql/.s.PGSQL.*) in the container; "
+            f"stdout={res.stdout!r} stderr={res.stderr!r}"
+        )
+    if len(ports) > 1:
+        raise RuntimeError(
+            "expected exactly one PostgreSQL cluster in the container but found "
+            f"sockets for ports {ports}; backend introspection is ambiguous."
+        )
+    return ports[0]
+
+
+def _existing_documentdb_functions(container: str) -> set[str]:
+    """Return the `schema.function` names present in the documentdb backend
+    schemas (documentdb_api, documentdb_api_internal, documentdb_api_catalog,
+    documentdb_core) of the container's `postgres` database.
+
+    Connects as the container's OS user (a superuser via peer auth) over the
+    single local socket -- the same path the emulator's own setup uses. The SQL
+    is passed as a single argv element (no shell), so its quoting is literal."""
+    sql = (
+        "SELECT n.nspname || '.' || p.proname "
+        "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+        "WHERE n.nspname IN ('documentdb_api', 'documentdb_api_internal', "
+        "'documentdb_api_catalog', 'documentdb_core')"
+    )
+    port = _container_pg_socket_port(container)
+    res = _docker(
+        "exec", container, "psql", "-p", port, "-d", "postgres",
+        "-tAqc", sql, check=False, timeout=30,
+    )
+    if res.returncode != 0:
+        raise RuntimeError(
+            f"psql introspection on port {port} failed: rc={res.returncode} "
+            f"stderr={res.stderr.strip()!r}"
+        )
+    functions = {
+        line.strip() for line in res.stdout.splitlines() if line.strip()
+    }
+    if not functions:
+        raise RuntimeError(
+            "no documentdb backend functions found on the PostgreSQL socket "
+            f"(port {port}) -- the extension may not be installed in the "
+            "'postgres' database."
+        )
+    return functions
+
+
 # ---------------------------------------------------------------------------
 # Base classes
 # ---------------------------------------------------------------------------
@@ -260,10 +350,14 @@ class _ContainerTestBase(unittest.TestCase):
         cls.container = None
         cls.password = _random_password()
 
-        # Sanity check the image is locally available.
+        # This body runs only when DOCUMENTDB_LOCAL_IMAGE is set (the class-level
+        # @_SKIP_UNLESS_IMAGE decorator skips otherwise), i.e. we are in the CI
+        # gate that this suite exists to enforce. So an unavailable or unbootable
+        # image is a hard ERROR, not a SkipTest -- a silent skip here would let a
+        # broken image pass green, the exact silent-no-op #650 is about.
         result = _docker("image", "inspect", cls.image, check=False)
         if result.returncode != 0:
-            raise unittest.SkipTest(
+            raise RuntimeError(
                 f"Image not available locally: {cls.image}\n"
                 f"docker image inspect stderr:\n{result.stderr}"
             )
@@ -277,12 +371,12 @@ class _ContainerTestBase(unittest.TestCase):
                 entrypoint_flags=flags,
             )
             _wait_for_ready(cls.container)
-        except Exception as exc:
+        except Exception:
             _cleanup_container(cls.container)
             cls.container = None
-            raise unittest.SkipTest(
-                f"setUpClass failed for {cls.__name__}: {exc}"
-            ) from exc
+            # Re-raise the original failure (do NOT downgrade to SkipTest): an
+            # image that will not boot must fail the gate.
+            raise
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -328,7 +422,7 @@ class DefaultContainerTests(_ContainerTestBase):
 
     def test_readiness_log_is_present(self):
         logs = _docker("logs", self.container)
-        combined = logs.stdout + logs.stderr
+        combined = logs.stdout + "\n" + logs.stderr
         self.assertIn(
             READY_LOG, combined,
             "readiness log not found in container logs (last 40 lines):\n"
@@ -410,16 +504,218 @@ class DefaultContainerTests(_ContainerTestBase):
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
         )
 
-    def test_container_still_running_after_workload(self):
-        """The entrypoint must not exit after a client connection. Run
-        this last so it sees the post-ping state."""
-        result = _docker("inspect", "-f", "{{.State.Running}}", self.container)
+    def test_no_undefined_backend_function_errors_in_logs(self):
+        """Backend-contract guard for issue #650.
+
+        A gateway command whose backend SQL references a function, column,
+        schema or callable of the wrong kind that the shipped extension does not
+        define surfaces as a PostgreSQL undefined_function (42883),
+        undefined_column (42703), wrong_object_type (42809), invalid_schema_name
+        (3F000), syntax_error (42601) or invalid_catalog_name (3D000) error in
+        the container logs -- but clients silently tolerate failed discovery
+        probes (e.g. mongosh's getParameter on connect), so a green ping/CRUD
+        assertion cannot catch it. That is exactly how #650 shipped. Drive one
+        connection to force the discovery handshake, then scan the logs with the
+        shared, ANSI-aware detector.
+
+        The scanned window is cumulative: `docker logs` returns the whole boot
+        history plus every prior test's traffic in this class (they share one
+        container). That is intentional -- benign failures (e.g. the
+        wrong-password test) log an EMPTY sub_status, so they neither trip this
+        deny-list scan nor the strict unexpected-SQLSTATE scan below."""
+        ping = self._mongosh("db.runCommand({ping: 1}).ok")
         self.assertEqual(
-            result.stdout.strip(), "true",
-            "container exited after workload; entrypoint likely returned "
-            "early or a managed process crashed.\n"
-            f"State inspect: {result.stdout!r}",
+            ping.returncode, 0,
+            "mongosh ping failed while priming the backend-contract check\n"
+            f"stdout:\n{ping.stdout}\nstderr:\n{ping.stderr}",
         )
+
+        # Let any teardown-path server logging (e.g. endSessions) land before the
+        # snapshot so a late error line is not raced past the capture.
+        time.sleep(2)
+        logs = _docker("logs", self.container)
+        combined = _combined_logs(logs)
+        offending = backend_contract.find_backend_contract_errors(combined)
+        self.assertEqual(
+            offending, [],
+            "gateway logged PostgreSQL backend-contract error(s) (undefined_"
+            "function/undefined_column/wrong_object_type/invalid_schema_name/"
+            "syntax_error/invalid_catalog_name): the gateway's hard-coded SQL "
+            "references a function, column, schema or callable kind the shipped "
+            "extension does not define, or runs a malformed static statement "
+            "(cf. issue #650). Offending lines:\n" + "\n".join(offending),
+        )
+
+    def test_no_unexpected_backend_sqlstates_in_logs(self):
+        """Strict backend-contract net (issue #650, manager's hybrid mode).
+
+        Beyond the narrow deny-list above, assert the logs carry NO non-empty
+        `sub_status` SQLSTATE outside that class at all. Evidence: a green
+        documentdb-local workload emits only EMPTY sub_status on its benign
+        failure paths (a wrong-password SCRAM attempt is a Gateway-kind error
+        whose `as_db_error()` is None, so the field renders empty; retried
+        transients log a different field). So any non-empty unexpected SQLSTATE
+        is a new backend-error class worth surfacing before it silently becomes
+        the next #650.
+
+        Kept as a SEPARATE method from the deny-list scan so, if a future
+        workload legitimately introduces a benign non-empty code, this can be
+        triaged (and the code added to the deny-list or an allow-list) without
+        masking the hard gate. Shares the cumulative-log-window property noted
+        above."""
+        time.sleep(2)
+        logs = _docker("logs", self.container)
+        combined = _combined_logs(logs)
+        unexpected = backend_contract.find_unexpected_sqlstates(combined)
+        self.assertEqual(
+            unexpected, [],
+            "gateway logged non-empty sub_status SQLSTATE(s) outside the gated "
+            "deny-list; a green documentdb-local workload emits none (benign "
+            f"failures log an empty sub_status). Unexpected codes: {unexpected}",
+        )
+
+    def test_no_unparseable_sub_status_values_in_logs(self):
+        """Value-format guard for the backend-contract gate (issue #650).
+
+        The deny-list and strict scans both key off the 5-char SQLSTATE shape, so
+        a `sub_status` value logged in a DIFFERENT shape (a bit-packed integer, a
+        doubled-quote, a JSON reformat) leaves both scans silently blind -- a
+        green-but-dead risk. Assert the cumulative logs carry no such value.
+
+        Kept SEPARATE from the channel-alive canary below so its signal is not
+        lost if the canary's count-delta assertion fails first, and separate from
+        the strict scan so a value-shape regression is triaged independently from
+        a new-SQLSTATE regression. Shares the cumulative-log-window property."""
+        time.sleep(2)
+        logs = _docker("logs", self.container)
+        combined = _combined_logs(logs)
+        unparseable = backend_contract.find_unparseable_sub_status_values(combined)
+        self.assertEqual(
+            unparseable, [],
+            "gateway logged a `sub_status` value the gate cannot parse as a "
+            "SQLSTATE (e.g. a bit-packed integer or reformatted field); the "
+            "deny-list and strict scans are blind to such values, a green-but-"
+            f"dead risk (cf. issue #650). Offending values: {unparseable}",
+        )
+
+    def test_all_backend_catalog_functions_exist_in_image(self):
+        """Active backend-contract coverage for issue #650.
+
+        The log scan above only catches backend-contract errors for commands
+        the smoke actually exercises. Assert instead that EVERY backend routine
+        the gateway's QueryCatalog calls exists in the shipped extension -- so a
+        function used only by an unexercised command (compact, collStats,
+        dbStats, ...) cannot go missing silently, the generalised #650 class.
+        The required set is the statically-parsed calls plus the enumerated
+        explain aggregation family (bson_aggregation_{find,pipeline,count,
+        distinct}), minus routines with no OSS definition (authenticate_token),
+        which the gateway builds by a runtime-templated name.
+
+        This is a name-existence check (schema.proname), not a signature/arity
+        or prokind match: a routine shipped with the wrong overload (e.g.
+        get_parameter(bson) vs (bool,bool,text[])) or the wrong kind for a CALL
+        proc surfaces as SQLSTATE 42883/42809 and is caught by the log scan
+        above, not here."""
+        # query_catalog.rs ships in the same repo tree as this test, so a missing
+        # file is a hard error (path logic / source layout broke), not a skip --
+        # a silent skip would disable the active gate, the #650 failure mode.
+        if not QUERY_CATALOG_RS.is_file():
+            self.fail(f"gateway QueryCatalog source not found: {QUERY_CATALOG_RS}")
+        referenced = catalog_contract.required_backend_functions(
+            QUERY_CATALOG_RS.read_text(encoding="utf-8")
+        )
+        self.assertGreaterEqual(
+            len(referenced), catalog_contract.MIN_EXPECTED_BACKEND_FUNCTIONS,
+            f"parsed only {len(referenced)} catalog routines; the parser or "
+            "query_catalog.rs layout may have changed",
+        )
+        # _existing_documentdb_functions raises with a clear message if the
+        # extension is absent or the cluster is unreachable, so an empty result
+        # cannot reach here -- no separate emptiness assertion is needed.
+        existing = _existing_documentdb_functions(self.container)
+        missing = sorted(referenced - existing)
+        self.assertEqual(
+            missing, [],
+            "backend routines the gateway QueryCatalog calls but which are "
+            f"ABSENT from the shipped image (cf. issue #650): {missing}",
+        )
+
+    def test_zz_gateway_failure_log_channel_is_alive(self):
+        """Positive control for the backend-contract log gate (issue #650).
+
+        The gate scans for a `sub_status=` field. If a tracing field rename or a
+        switch to JSON logging changed that shape, the deny-list and strict
+        scans would silently pass forever (green-but-dead). Guard against it:
+        deliberately drive one FAILED request (a wrong-password auth, a
+        Gateway-kind error) and assert a NEW `sub_status=` line then appears.
+
+        The count-delta (new line vs. before) matters because an alphabetically
+        earlier test already deposited a `sub_status=` line in this shared
+        container -- a plain "field present" check could pass even if failure
+        logging died mid-run. Both snapshots are taken after a `sleep 2` so an
+        in-flight line from an earlier test cannot land between them and satisfy
+        the delta on its own. A wrong-password failure logs an EMPTY sub_status,
+        so this canary cannot trip the deny-list/strict/unparseable scans
+        regardless of order (hence the `zz` name that runs it last). The value
+        SHAPE is checked separately by
+        test_no_unparseable_sub_status_values_in_logs."""
+        # Quiesce first so the `before` count does not absorb a still-arriving
+        # line from a prior test (which would let the delta pass spuriously).
+        time.sleep(2)
+        before = backend_contract.count_sub_status_fields(
+            _combined_logs(_docker("logs", self.container))
+        )
+        rejected = self._mongosh(
+            "db.runCommand({ping: 1})", password=self.password + "-canary-wrong",
+        )
+        self.assertNotEqual(
+            rejected.returncode, 0,
+            "wrong-password attempt unexpectedly succeeded while priming the "
+            "log-channel canary",
+        )
+        time.sleep(2)
+        after = backend_contract.count_sub_status_fields(
+            _combined_logs(_docker("logs", self.container))
+        )
+        self.assertGreater(
+            after, before,
+            "the canary's own failed request produced no NEW `sub_status=` line "
+            "-- the failure-log channel the backend-contract gate relies on may "
+            "have been renamed or switched to a different format (or the runner "
+            "rotated the container log between snapshots), which would leave the "
+            "gate green-but-dead (cf. issue #650).",
+        )
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        """Post-workload liveness re-check, then cleanup. Done here (rather than
+        as a `test_*` method) so it runs unconditionally AFTER every test in the
+        class regardless of unittest's alphabetical method order -- the entrypoint
+        must not have exited after all the client connections. State is captured
+        before cleanup so the container is always removed even if the assertion
+        fails."""
+        inspect = None
+        if cls.container:
+            inspect = _docker(
+                "inspect", "-f", "{{.State.Running}}", cls.container, check=False,
+            )
+        _cleanup_container(cls.container)
+        cls.container = None
+        if inspect is None:
+            return
+        if inspect.returncode != 0:
+            # A daemon/inspect failure must not be misreported as a crashed
+            # entrypoint -- raise a distinct error so triage is not misdirected.
+            raise RuntimeError(
+                "docker inspect failed during post-workload liveness check: "
+                f"rc={inspect.returncode} stderr={inspect.stderr.strip()!r}"
+            )
+        if inspect.stdout.strip() != "true":
+            raise AssertionError(
+                "container exited after workload; entrypoint likely returned "
+                "early or a managed process crashed. "
+                f"State.Running={inspect.stdout.strip()!r}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -712,15 +1008,23 @@ print('init-data marker placed');
                 ],
             )
             _wait_for_ready(cls.container)
-        except Exception as exc:
-            _cleanup_container(cls.container)
-            cls.container = None
-            if cls.init_dir:
-                shutil.rmtree(cls.init_dir, ignore_errors=True)
-                cls.init_dir = None
-            raise unittest.SkipTest(
-                f"setUpClass failed for {cls.__name__}: {exc}"
-            ) from exc
+        except Exception:
+            # Ensure the init dir is always removed even if _cleanup_container
+            # itself raises (e.g. the docker daemon vanished, so `docker rm` times
+            # out) -- otherwise the mkdtemp dir leaks (tearDownClass does not run
+            # when setUpClass errors) and the secondary error masks the original
+            # boot failure.
+            try:
+                _cleanup_container(cls.container)
+            finally:
+                cls.container = None
+                if cls.init_dir:
+                    shutil.rmtree(cls.init_dir, ignore_errors=True)
+                    cls.init_dir = None
+            # Re-raise the original failure (do NOT downgrade to SkipTest): an
+            # image that wedges only under --init-data-path must fail the gate,
+            # not silently skip -- the silent-no-op mode issue #650 is about.
+            raise
 
     @classmethod
     def tearDownClass(cls) -> None:
