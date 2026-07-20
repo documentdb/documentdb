@@ -1192,9 +1192,7 @@ reset documentdb.enable_existential_null_array_match;
 -- (scalar / absent), but never a scalar / nested-array / empty-array position
 -- that no document element resolves. The component's shape only determines WHICH
 -- field name is looked up inside document elements -- it does not turn an
--- out-of-bounds / blocked positional lookup into a match. This holds regardless
--- of skipBsonArrayTraverseOptimization (which only controls whether a non-digit
--- component is additionally tried as a positional index).
+-- out-of-bounds / blocked positional lookup into a match.
 --
 -- Document set (deterministic _id):
 --   1 a:[10,20]           scalar array
@@ -1238,16 +1236,6 @@ SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "fi
 SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.-1": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
 SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.b": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
 SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.1": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
-
--- skipBsonArrayTraverseOptimization independence: with it ON, a non-digit
--- component (a.b, a.xyz) is additionally attempted as a positional index, yet
--- the result set is unchanged -- the positional attempt only ever declines to
--- match; document-element field lookup still drives every match.
-set documentdb_core.skipBsonArrayTraverseOptimization to on;
-SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.b": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
-SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.xyz": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
-SELECT document FROM bson_aggregation_find('nrg_db', '{ "find": "tok_shape", "filter": { "a.0abc": null }, "projection": { "_id": 1 }, "sort": { "_id": 1 } }');
-reset documentdb_core.skipBsonArrayTraverseOptimization;
 
 -- null-equality vs $exists:false DIVERGE on an array position, and the divergence
 -- is the whole point of the fix. Over an array, { path: null } does NOT match a

@@ -204,7 +204,6 @@ PG_FUNCTION_INFO_V1(gin_bson_composite_rum_config);
 extern bool RumHasMultiKeyPaths;
 extern int MaxWildcardIndexKeySize;
 extern int MaxNonOrderedTermScanThreshold;
-extern bool EnableOrderedCompositeOperatorScan;
 extern bool EnableComparableTerms;
 extern bool EnablePartialMatchHasRecheck;
 extern bool EnableFailureOnParallelIndexArrays;
@@ -704,7 +703,6 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	 */
 	Datum *entries;
 	if (supportsOrderedOperatorScans &&
-		EnableOrderedCompositeOperatorScan &&
 		MaxNonOrderedTermScanThreshold > 0 &&
 		totalPathTerms > MaxNonOrderedTermScanThreshold)
 	{

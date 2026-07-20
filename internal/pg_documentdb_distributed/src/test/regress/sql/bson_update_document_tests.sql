@@ -149,15 +149,9 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[1],[2],3]
 -- same element pushed to set
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "set": [ "abc" ] }', '{ "": { "$addToSet" : {"set": "abc" }, "$set": { "x": true } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
 
--- $addToSet with empty $each and $set - test duplicate field fix
-SET documentdb.enableDuplicateFieldFix TO off;
+-- $addToSet with empty $each and $set - no duplicate fields
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "arr": [], "x": 0}', '{ "": {"$addToSet":{"arr":{"$each":[]}}, "$set":{"x":1}} }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "arr": [], "x": 0}', '{ "": {"$pullAll":{"arr": [] }, "$set":{"x":1}} }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
-
-SET documentdb.enableDuplicateFieldFix TO on;
-SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "arr": [], "x": 0}', '{ "": {"$addToSet":{"arr":{"$each":[]}}, "$set":{"x":1}} }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
-SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "arr": [], "x": 0}', '{ "": {"$pullAll":{"arr": [] }, "$set":{"x":1}} }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
-RESET documentdb.enableDuplicateFieldFix;
 
 -- update scenario negative tests: $inc
 SELECT documentdb_api_internal.update_bson_document('{"_id": 5, "a": [1,2] }', '{ "": { "$inc": { "a": 30 } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);

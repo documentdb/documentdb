@@ -37,7 +37,6 @@
 /* Forward declaration */
 /* --------------------------------------------------------- */
 
-extern bool SkipBsonArrayTraverseOptimization;
 
 PGDLLEXPORT const StringView IdFieldStringView = { .string = "_id", .length = 3 };
 
@@ -1052,8 +1051,7 @@ TraverseBsonCore(bson_iter_t *documentIterator, const StringView *traversePath,
 		 * array, and must not narrow it to canonical integers -- doing so would make an out-of-bounds
 		 * index over a scalar array incorrectly match { path: null }.
 		 */
-		if (SkipBsonArrayTraverseOptimization ||
-			(remainingPath.string[0] >= '0' && remainingPath.string[0] <= '9'))
+		if (remainingPath.string[0] >= '0' && remainingPath.string[0] <= '9')
 		{
 			bson_iter_recurse(documentIterator, &nestedIterator);
 			hasPathNotFound = TraverseBsonCore(&nestedIterator,

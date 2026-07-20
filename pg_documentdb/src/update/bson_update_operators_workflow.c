@@ -241,8 +241,6 @@ NotifyPositionalMatchIndex_HookType notify_positional_match_index_hook = NULL;
 RemoveLastMatchedIndex_HookType remove_last_matched_index_hook = NULL;
 EndPositionalUpdate_HookType end_positional_update_hook = NULL;
 
-extern bool EnableDuplicateFieldFix;
-
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -921,14 +919,11 @@ UpdateWriterGetArrayWriter(UpdateOperatorWriter *writer)
 	{
 		PgbsonElementWriterStartArray(writer->writer, &writer->updateArrayWriter.writer);
 		writer->updateArrayWriter.isValid = true;
-		writer->updateArrayWriter.modifyType = MODIFY_TYPE_NOCHANGE;
-		if (EnableDuplicateFieldFix)
-		{
-			/* Set the modify type to MODIFY_TYPE_OPERATOR_WRITTEN since we've already
-			 * opened the array writer. This prevents the field from being rewritten.
-			 * The handler can subsequently update this to MODIFY_TYPE_CHANGED if modifications occur. */
-			writer->updateArrayWriter.modifyType = MODIFY_TYPE_OPERATOR_WRITTEN;
-		}
+
+		/* Set the modify type to MODIFY_TYPE_OPERATOR_WRITTEN since we've already
+		 * opened the array writer. This prevents the field from being rewritten.
+		 * The handler can subsequently update this to MODIFY_TYPE_CHANGED if modifications occur. */
+		writer->updateArrayWriter.modifyType = MODIFY_TYPE_OPERATOR_WRITTEN;
 	}
 
 	return &writer->updateArrayWriter;

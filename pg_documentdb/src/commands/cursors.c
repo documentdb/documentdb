@@ -52,7 +52,6 @@ extern int32_t MaxWorkerCursorSize;
 extern bool EnablePrimaryKeyCursorScan;
 extern bool UseFileBasedPersistedCursors;
 extern bool EnableDebugQueryText;
-extern bool EnableDelayedHoldPortal;
 extern bool EnableDynamicCursorFastStartupScan;
 extern bool EnableDynamicCursorParallelPlans;
 extern bool EnableSingleResultQueryParallelPlans;
@@ -817,7 +816,7 @@ CreateAndDrainPersistedQuery(const char *cursorName, QueryCursorPlanResult *resu
 	queryPortal->visible = true;
 	queryPortal->cursorOptions = cursorOptions;
 
-	if (!closeCursor && (!EnableDelayedHoldPortal || !isHoldCursor))
+	if (!closeCursor && !isHoldCursor)
 	{
 		/* Since this could be holdable, copy the query plan to the portal context
 		 * Note that this is cleared anyway when we call HoldPortal (portal->stmts is
@@ -852,11 +851,6 @@ CreateAndDrainPersistedQuery(const char *cursorName, QueryCursorPlanResult *resu
 		queryPortal->cleanup = CleanupPortalState;
 	}
 
-	if (!closeCursor && isHoldCursor && !EnableDelayedHoldPortal)
-	{
-		HoldPortal(queryPortal);
-	}
-
 	if (SPI_connect() != SPI_OK_CONNECT)
 	{
 		ereport(ERROR, (errmsg("could not connect to SPI manager")));
@@ -873,7 +867,7 @@ CreateAndDrainPersistedQuery(const char *cursorName, QueryCursorPlanResult *resu
 																  &currentAccumulatedSize,
 																  currentContext);
 
-	if (EnableDelayedHoldPortal && !closeCursor && isHoldCursor &&
+	if (!closeCursor && isHoldCursor &&
 		reason != TerminationReason_CursorCompletion)
 	{
 		/* There's more to this cursor and needs continuation, hold the portal */
@@ -1603,15 +1597,6 @@ HoldPortal(Portal portal)
 	 */
 	portal->cursorOptions = portal->cursorOptions | CURSOR_OPT_SCROLL;
 	PortalCreateHoldStore(portal);
-
-	/* Since we only serialize any results we haven't already collected in the
-	 * first batch, we tell the Persist logic to not rewind and redo the entire
-	 * query results. The way this is done is by removing SCROLL.
-	 */
-	if (!EnableDelayedHoldPortal)
-	{
-		portal->cursorOptions = portal->cursorOptions & ~CURSOR_OPT_SCROLL;
-	}
 
 	PersistHoldablePortal(portal);
 

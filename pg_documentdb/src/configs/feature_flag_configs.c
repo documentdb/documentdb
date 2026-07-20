@@ -128,13 +128,6 @@ bool EnableOrderByIdOnCostFunction = DEFAULT_ENABLE_ORDER_BY_ID_ON_COST;
 #define DEFAULT_ENABLE_VALUE_ONLY_INDEX_TERMS true
 bool EnableValueOnlyIndexTerms = DEFAULT_ENABLE_VALUE_ONLY_INDEX_TERMS;
 
-/* Added in v109, enabled in v109, remove after v114 */
-#define DEFAULT_USE_NEW_UNIQUE_HASH_EQUALITY_FUNCTION true
-bool UseNewUniqueHashEqualityFunction = DEFAULT_USE_NEW_UNIQUE_HASH_EQUALITY_FUNCTION;
-
-/* Added in v109, enabled in v109, remove after v114 */
-#define DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH true
-bool EnableCompositeUniqueHash = DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH;
 
 /* Added in v114, Pending stabilization, enable in v120 */
 #define DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS false
@@ -207,14 +200,6 @@ bool SkipLegacyIdIndexStatsCheck = DEFAULT_SKIP_LEGACY_ID_INDEX_STATS_CHECK;
 bool EnablePlannerStatisticsNewCollections =
 	DEFAULT_ENABLE_PLANNER_STATISTICS_NEW_COLLECTIONS;
 
-/* Added in v111, enabled in v111, remove after v114 */
-#define DEFAULT_ENABLE_ORDERED_COMPOSITE_OPERATOR_SCAN true
-bool EnableOrderedCompositeOperatorScan = DEFAULT_ENABLE_ORDERED_COMPOSITE_OPERATOR_SCAN;
-
-/* Added in v111, enabled in v111, remove after v114 */
-#define DEFAULT_ENABLE_REGEX_PREFIX_INDEX_BOUNDS true
-bool EnableRegexPrefixIndexBounds = DEFAULT_ENABLE_REGEX_PREFIX_INDEX_BOUNDS;
-
 /* Added in v111, Pending stabilization */
 #define DEFAULT_ENABLE_EXTENDED_INDEXES false
 bool EnableExtendedIndexes = DEFAULT_ENABLE_EXTENDED_INDEXES;
@@ -278,7 +263,7 @@ bool EnableMinMaxSkipNullValues = DEFAULT_ENABLE_MIN_MAX_SKIP_NULL_VALUES;
 bool EnableDeleteOnePlanCacheOptimization =
 	DEFAULT_ENABLE_DELETE_ONE_PLAN_CACHE_OPTIMIZATION;
 
-/* Added in v113, pending stabilization, enable in v116 */
+/* Added in v113, pending stabilization, enable in v119 */
 #define DEFAULT_ENABLE_DYNAMIC_CURSORS false
 bool EnableDynamicCursors = DEFAULT_ENABLE_DYNAMIC_CURSORS;
 
@@ -368,10 +353,6 @@ bool FailOnGroupIdDuplicate =
 #define DEFAULT_ENABLE_PULL_NESTED_ARRAY_EQ_FIX true
 bool EnablePullNestedArrayEqFix = DEFAULT_ENABLE_PULL_NESTED_ARRAY_EQ_FIX;
 
-/* Added in v108, enabled in v109, remove after v114 */
-#define DEFAULT_ENABLE_DELAYED_HOLD_PORTAL true
-bool EnableDelayedHoldPortal = DEFAULT_ENABLE_DELAYED_HOLD_PORTAL;
-
 /* Added in v114, enabled in v114, remove after v120 */
 #define DEFAULT_ENABLE_RUM_CURSOR_DYNAMIC_INDEX_SCANS true
 bool EnableRumCursorDynamicIndexScans = DEFAULT_ENABLE_RUM_CURSOR_DYNAMIC_INDEX_SCANS;
@@ -410,10 +391,6 @@ bool EnableSortPushToAccumulatorWithPrefix =
 /* Added in v116, Pending stabilization, enable in v121 */
 #define DEFAULT_ENABLE_MERGE_SORT_FOR_IN_PREFIX false
 bool EnableMergeSortForInPrefix = DEFAULT_ENABLE_MERGE_SORT_FOR_IN_PREFIX;
-
-/* Added in v112, enabled in v112, remove after v114 */
-#define DEFAULT_ENABLE_DUPLICATE_FIELD_FIX true
-bool EnableDuplicateFieldFix = DEFAULT_ENABLE_DUPLICATE_FIELD_FIX;
 
 /* Added in v114, enabled in v114, remove after v117 */
 #define DEFAULT_ENABLE_STRICT_ADDTOSET_MODIFIER_VALIDATION true
@@ -510,11 +487,6 @@ bool EnableNonBlockingUniqueIndexBuild =
 #define DEFAULT_ENABLE_COMPACT_VACUUM_FULL false
 bool EnableCompactVacuumFull = DEFAULT_ENABLE_COMPACT_VACUUM_FULL;
 
-/* Added in v112, enabled in v112, remove after v114 */
-#define DEFAULT_ENABLE_ONLY_COLLECTION_CACHE_INVALIDATE_ON_COLLECTION_CHANGES true
-bool EnableOnlyCollectionCacheInvalidateOnCollectionChanges =
-	DEFAULT_ENABLE_ONLY_COLLECTION_CACHE_INVALIDATE_ON_COLLECTION_CHANGES;
-
 /* Added on v112, enabled on v115, remove after v118 */
 #define DEFAULT_ENABLE_NEW_NAMESPACE_VALIDATION true
 bool EnableNewNamespaceValidation =
@@ -568,7 +540,7 @@ bool IndexBuildsScheduledOnBgWorker = DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER
 bool CreateTTLIndexAsCompositeByDefault = DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE;
 
 
-/* Added in v113, Pending stabilization, enable in v116 */
+/* Added in v113, Pending stabilization, enable in v117 */
 #define DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK false
 bool EnableDeadIndexEntryMarkingByTTLTask =
 	DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK;
@@ -975,13 +947,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enableDelayedHoldPortal", newGucPrefix),
-		gettext_noop(
-			"Whether to delay holding the portal until we know there is more data to be fetched."),
-		NULL, &EnableDelayedHoldPortal, DEFAULT_ENABLE_DELAYED_HOLD_PORTAL,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enableUsersAdminDBCheck", newGucPrefix),
 		gettext_noop(
 			"Enables db admin requirement for user CRUD APIs through the data plane."),
@@ -1089,22 +1054,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.useNewUniqueHashEqualityFunction", newGucPrefix),
-		gettext_noop(
-			"Whether to enable new unique hash equality implementation."),
-		NULL, &UseNewUniqueHashEqualityFunction,
-		DEFAULT_USE_NEW_UNIQUE_HASH_EQUALITY_FUNCTION,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableCompositeUniqueHash", newGucPrefix),
-		gettext_noop(
-			"Whether to enable new unique hash equality implementation."),
-		NULL, &EnableCompositeUniqueHash,
-		DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enableFailureOnParallelIndexArrays", newGucPrefix),
 		gettext_noop(
 			"Whether to fail when parallel arrays are indexed in composite indexes."),
@@ -1194,23 +1143,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		DEFAULT_ENABLE_COMPOSITE_SHARD_DOCUMENT_TERMS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableOrderedCompositeOperatorScan", newGucPrefix),
-		gettext_noop(
-			"Whether to enable using the single ordered scalar array operator scan for ordered indexes"
-			" which has skip-scan support enabled inherently."),
-		NULL, &EnableOrderedCompositeOperatorScan,
-		DEFAULT_ENABLE_ORDERED_COMPOSITE_OPERATOR_SCAN,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableRegexPrefixIndexBounds", newGucPrefix),
-		gettext_noop(
-			"Whether to enable the optimized regex prefix index bounds."),
-		NULL, &EnableRegexPrefixIndexBounds,
-		DEFAULT_ENABLE_REGEX_PREFIX_INDEX_BOUNDS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enableExtendedIndexes", newGucPrefix),
@@ -1354,15 +1286,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enableOnlyCollectionCacheInvalidateOnCollectionChanges",
-				 newGucPrefix),
-		gettext_noop(
-			"Whether to only invalidate collection cache on collection changes instead of invalidating entire database cache."),
-		NULL, &EnableOnlyCollectionCacheInvalidateOnCollectionChanges,
-		DEFAULT_ENABLE_ONLY_COLLECTION_CACHE_INVALIDATE_ON_COLLECTION_CHANGES,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enableRumCursorDynamicIndexScans", newGucPrefix),
 		gettext_noop(
 			"Whether to enable dynamic index scans for RUM cursors."),
@@ -1376,14 +1299,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable skipping to TID for dynamic index scans for RUM cursors."),
 		NULL, &EnableRumDynamicIndexScansSkipToTid,
 		DEFAULT_ENABLE_RUM_DYNAMIC_INDEX_SCANS_SKIP_TO_TID,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableDuplicateFieldFix", newGucPrefix),
-		gettext_noop(
-			"Whether to enable fix for duplicate fields in addToSet."),
-		NULL, &EnableDuplicateFieldFix,
-		DEFAULT_ENABLE_DUPLICATE_FIELD_FIX,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

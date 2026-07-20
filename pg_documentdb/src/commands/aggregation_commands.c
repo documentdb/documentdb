@@ -38,7 +38,6 @@
 
 
 extern bool UseFileBasedPersistedCursors;
-extern bool EnableDelayedHoldPortal;
 extern bool EnableDynamicCursors;
 extern bool EnableTailableCursorMaxAwaitTime;
 extern int DefaultTailableCursorMaxAwaitTimeMs;
@@ -1209,12 +1208,11 @@ HandlePersistentCursorCore(int64_t *cursorId, QueryCursorPlanResult *planResult,
 	{
 		cursorIdForBackendCursor = *cursorId;
 	}
-	else if (!EnableDelayedHoldPortal || useHoldFileCursor)
+	else if (useHoldFileCursor)
 	{
 		/*
-		 * Non-delayed hold portal eagerly assigns the client cursor id. Same
-		 * for file-based cursor which needs its file named after that id so killCursors
-		 * can find it.
+		 * File-based cursors need the client cursor id assigned eagerly so the
+		 * file can be named after that id and killCursors can find it.
 		 */
 		*cursorId = GenerateCursorId(*cursorId);
 		cursorIdForBackendCursor = *cursorId;
