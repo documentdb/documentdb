@@ -99,6 +99,10 @@ bool DisableExtendedRumExplainPlans = DEFAULT_DISABLE_EXTENDED_RUM_EXPLAIN_PLANS
 bool EnableDataTableWithoutCreationTime =
 	DEFAULT_ENABLE_DATA_TABLES_WITHOUT_CREATION_TIME;
 
+/* Left behind for long term testing of old (pre-composite-hash) unique indexes */
+#define DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH true
+bool EnableCompositeUniqueHash = DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH;
+
 #define DEFAULT_RUM_FAIL_ON_LOST_PATH false
 bool RumFailOnLostPath = DEFAULT_RUM_FAIL_ON_LOST_PATH;
 
@@ -401,6 +405,15 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 			"Create data table without creation_time column."),
 		NULL, &EnableDataTableWithoutCreationTime,
 		DEFAULT_ENABLE_DATA_TABLES_WITHOUT_CREATION_TIME,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableCompositeUniqueHash", newGucPrefix),
+		gettext_noop(
+			"Whether to enable new unique hash equality implementation. "
+			"Left behind for long term testing of old (pre-composite-hash) unique indexes."),
+		NULL, &EnableCompositeUniqueHash,
+		DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

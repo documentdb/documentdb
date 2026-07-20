@@ -18,8 +18,7 @@ INSERT INTO documentdb_core_guc_naming_baseline (name) VALUES
     ('documentdb_core.bsonUseEJson'),
     ('documentdb_core.enableBsonSelectivityFromBtreeStats'),
     ('documentdb_core.enableCollation'),
-    ('documentdb_core.enableWriteDocumentsInRepath'),
-    ('documentdb_core.skipBsonArrayTraverseOptimization');
+    ('documentdb_core.enableWriteDocumentsInRepath');
 -- Non-conforming GUCs that are not grandfathered by the baseline.
 SELECT
     NOT EXISTS (

@@ -225,13 +225,8 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3]}', 
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[1],[2],[3]]}', '{ "": { "$addToSet" : {"a.0.5": 7 } } }', '{}', NULL, NULL, NULL) as update_bson_document;
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[1],[2],3]}', '{ "": { "$addToSet" : {"a.2.5": 7 } } }', '{}', NULL, NULL, NULL);
 
--- $addToSet with empty $each and $set - test duplicate field fix
-SET documentdb.enableDuplicateFieldFix TO off;
+-- $addToSet with empty $each and $set - no duplicate fields
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "arr": [], "x": 0}', '{ "": {"$addToSet":{"arr":{"$each":[]}}, "$set":{"x":1}} }', '{}', NULL, NULL, NULL) as update_bson_document;
-
-SET documentdb.enableDuplicateFieldFix TO on;
-SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "arr": [], "x": 0}', '{ "": {"$addToSet":{"arr":{"$each":[]}}, "$set":{"x":1}} }', '{}', NULL, NULL, NULL) as update_bson_document;
-RESET documentdb.enableDuplicateFieldFix;
 
 -- $addToSet with $each must reject $position/$slice/$sort ($push-only modifiers are invalid here)
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": [1,2]}', '{ "": { "$addToSet": { "key": { "$each": [3,4], "$position": 1 } } } }', '{}', NULL, NULL, NULL) as update_bson_document;

@@ -408,7 +408,6 @@ SELECT * FROM pg_ls_dir('pg_documentdb_cursor_files') f WHERE f LIKE '%429496728
 -- killCursors (delete_cursors) and the cursor file name.
 -- ===========================================================================
 set documentdb.useFileBasedPersistedCursors to on;
-set documentdb.enableDelayedHoldPortal to on;
 
 -- Case 1: caller supplies an explicit cursor id. The on-disk file is named
 -- after that id, so killCursors keyed by the same id unlinks the file.

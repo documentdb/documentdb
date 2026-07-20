@@ -30,11 +30,6 @@ bool BsonTextUseJsonRepresentation = DEFAULT_BSON_TEXT_USE_JSON_REPRESENTATION;
 bool EnableCollation = DEFAULT_ENABLE_COLLATION;
 
 /* FeatureFlag */
-/* Added in v110, Pending stabilization, enable in v116 */
-#define DEFAULT_SKIP_BSON_ARRAY_TRAVERSE_OPTIMIZATION false
-bool SkipBsonArrayTraverseOptimization = DEFAULT_SKIP_BSON_ARRAY_TRAVERSE_OPTIMIZATION;
-
-/* FeatureFlag */
 /* Added in v114, Pending stabilization, enable in v116 */
 #define DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH false
 bool EnableWriteDocumentsInRepath = DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH;
@@ -64,14 +59,6 @@ InitDocumentDBCoreConfigurations(const char *prefix)
 			"Determines whether collation is supported."),
 		NULL, &EnableCollation,
 		DEFAULT_ENABLE_COLLATION,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.skipBsonArrayTraverseOptimization", prefix),
-		gettext_noop(
-			"Determines whether to skip the optimization for traversing arrays in bson documents."),
-		NULL, &SkipBsonArrayTraverseOptimization,
-		DEFAULT_SKIP_BSON_ARRAY_TRAVERSE_OPTIMIZATION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

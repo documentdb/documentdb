@@ -45,7 +45,6 @@
  #include "utils/string_view.h"
  #include "utils/utf8_utils.h"
 
-extern bool EnableRegexPrefixIndexBounds;
 extern bool EnableCompositeReducedCorrelatedPrefixTrim;
 extern bool EnablePerPathMultiKeySortPushdown;
 
@@ -2301,8 +2300,7 @@ GetBoundsForRegex(const char *regexString, const char *regexOptions,
 		regexString) : CreateStringViewFromString("");
 
 	/* We can only optimize if we have no options and the regex starts with ^ */
-	if (!EnableRegexPrefixIndexBounds ||
-		!HasValidRegexOptions(regexOptions) ||
+	if (!HasValidRegexOptions(regexOptions) ||
 		!StringViewStartsWith(&strView, '^'))
 	{
 		/* Set the bounds to be all strings since we can't optimize based on the regex expression */

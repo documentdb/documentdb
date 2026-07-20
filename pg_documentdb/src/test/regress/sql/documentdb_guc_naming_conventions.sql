@@ -54,7 +54,6 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.enableDataTableWithoutCreationTime'),
     ('documentdb.enableDeadIndexEntryMarkingByTTLTask'),
     ('documentdb.enableDebugQueryText'),
-    ('documentdb.enableDelayedHoldPortal'),
     ('documentdb.enableDeleteOnePlanCacheOptimization'),
     ('documentdb.enableDistinctCustomScan'),
     ('documentdb.enableDistinctIndexPushdown'),
@@ -62,7 +61,6 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.enableDollarSampleHeapSkipReservoirScan'),
     ('documentdb.enableDollarSampleReservoirScan'),
     ('documentdb.enableDottedValueTextIndexTerms'),
-    ('documentdb.enableDuplicateFieldFix'),
     ('documentdb.enableDynamicCursorFastStartupScan'),
     ('documentdb.enableDynamicCursors'),
     ('documentdb.enableDynamicPersistentCursorsWithStats'),
@@ -88,11 +86,9 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.enableNewWithExprAccumulators'),
     ('documentdb.enableNonBlockingUniqueIndexBuild'),
     ('documentdb.enableObjectIdFuncExprConversion'),
-    ('documentdb.enableOnlyCollectionCacheInvalidateOnCollectionChanges'),
     ('documentdb.EnableOperatorVariablesInLookup'),
     ('documentdb.enableOrderByIdOnCostFunction'),
     ('documentdb.enableOrderByIndexTerm'),
-    ('documentdb.enableOrderedCompositeOperatorScan'),
     ('documentdb.enablePartialMatchHasRecheck'),
     ('documentdb.enablePerCollectionPlannerStatistics'),
     ('documentdb.enablePerPathMultiKeySortPushdown'),
@@ -103,7 +99,6 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.enablePrimaryKeyCursorScan'),
     ('documentdb.enableProjectPushUpBeforeUnwindWithGroup'),
     ('documentdb.enableRbacCompliantSchemas'),
-    ('documentdb.enableRegexPrefixIndexBounds'),
     ('documentdb.enableRoleCrud'),
     ('documentdb.enableRolesAdminDBCheck'),
     ('documentdb.enableRumCursorDynamicIndexScans'),
@@ -187,7 +182,6 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.useFileBasedPersistedCursors'),
     ('documentdb.useIndexHintsForTTLTask'),
     ('documentdb.useLocalExecutionShardQueries'),
-    ('documentdb.useNewUniqueHashEqualityFunction'),
     ('documentdb.vectorPreFilterIterativeScanMode');
 
 -- Non-conforming GUCs that are not grandfathered by the baseline.
