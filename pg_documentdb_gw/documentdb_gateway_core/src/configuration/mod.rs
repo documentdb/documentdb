@@ -19,7 +19,7 @@ use dyn_clone::{clone_trait_object, DynClone};
 pub use dynamic::{ClusterVersion, DynamicConfiguration};
 pub use pg_configuration::PgConfiguration;
 pub use setup::{env_keys, DocumentDBSetupConfiguration};
-pub use version::Version;
+pub use version::{Version, DEFAULT_MAX_WIRE_VERSION, DEFAULT_SERVER_VERSION};
 
 use crate::telemetry::TelemetrySettings;
 
