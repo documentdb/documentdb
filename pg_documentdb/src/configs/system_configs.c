@@ -136,6 +136,18 @@ bool ThrowDeadlockOnCrud = DEFAULT_THROW_DEADLOCK_ON_CRUD;
 #define DEFAULT_LOCALHOST_CONN_STR "host=localhost"
 char *LocalhostConnectionString = DEFAULT_LOCALHOST_CONN_STR;
 
+/*
+ * MongoDB server version reported by the gateway in buildInfo.
+ */
+#define DEFAULT_SERVER_VERSION "7.0.0"
+char *ServerVersion = DEFAULT_SERVER_VERSION;
+
+/*
+ * maxWireVersion reported by the gateway in hello / isMaster.
+ */
+#define DEFAULT_MAX_WIRE_VERSION 21
+int MaxWireVersion = DEFAULT_MAX_WIRE_VERSION;
+
 /* Currently timeout max at 3 hours */
 #define DEFAULT_MAX_CUSTOM_COMMAND_TIMEOUT (3600 * 3 * 1000)
 int MaxCustomCommandTimeout = DEFAULT_MAX_CUSTOM_COMMAND_TIMEOUT;
@@ -224,6 +236,78 @@ static struct config_enum_entry rum_load_options[4] = {
 	{ NULL, 0, false }
 };
 
+/*
+ * Format: major.minor[.patch[.build]], this is a strict pattern since the gateway parses it.
+ */
+static bool
+IsValidServerVersionString(const char *val)
+{
+	const char *p = val;
+	int components = 0;
+
+	if (val == NULL || *val == '\0')
+	{
+		return false;
+	}
+
+	for (;;)
+	{
+		const char *start = p;
+
+		if (*p == '\0' || *p == '.')
+		{
+			return false;
+		}
+
+		while (*p >= '0' && *p <= '9')
+		{
+			p++;
+		}
+
+		if (p == start)
+		{
+			return false;
+		}
+
+		components++;
+		if (components > 4)
+		{
+			return false;
+		}
+
+		if (*p == '\0')
+		{
+			return components >= 2;
+		}
+
+		if (*p != '.')
+		{
+			return false;
+		}
+
+		p++;
+	}
+}
+
+
+static bool
+CheckServerVersion(char **newval, void **extra, GucSource source)
+{
+	(void) extra;
+	(void) source;
+
+	if (IsValidServerVersionString(*newval))
+	{
+		return true;
+	}
+
+	GUC_check_errdetail(
+		"must be a dotted numeric version with 2 to 4 "
+		"components (e.g. 7.0, 8.0.4, 8.0.4.1)");
+	return false;
+}
+
+
 void
 InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 {
@@ -235,6 +319,21 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 					 "a libpq connection."),
 		NULL, &LocalhostConnectionString, DEFAULT_LOCALHOST_CONN_STR,
 		PGC_SUSET, 0, NULL, NULL, NULL);
+
+	DefineCustomStringVariable(
+		psprintf("%s.server_version", newGucPrefix),
+		gettext_noop(
+			"MongoDB version string reported by the gateway in buildInfo "
+			"(version / versionArray). Format: major.minor[.patch[.build]]."),
+		NULL, &ServerVersion, DEFAULT_SERVER_VERSION,
+		PGC_USERSET, 0, CheckServerVersion, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.max_wire_version", newGucPrefix),
+		gettext_noop(
+			"maxWireVersion reported by the gateway in hello / isMaster."),
+		NULL, &MaxWireVersion, DEFAULT_MAX_WIRE_VERSION, 1, INT_MAX,
+		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enable_create_collection_on_insert", prefix),

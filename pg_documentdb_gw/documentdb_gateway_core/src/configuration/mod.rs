@@ -16,7 +16,10 @@ pub use certs::{CertInputType, CertificateOptions};
 pub use dynamic::{ClusterVersion, DynamicConfiguration};
 pub use pg_configuration::PgConfiguration;
 pub use setup::{env_keys, DocumentDBSetupConfiguration};
-pub use version::Version;
+pub use version::{
+    version_array_from_str, version_bson_array_from_str, DEFAULT_MAX_WIRE_VERSION,
+    DEFAULT_SERVER_VERSION,
+};
 
 use dyn_clone::{clone_trait_object, DynClone};
 use std::fmt::Debug;

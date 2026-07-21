@@ -12,7 +12,8 @@ use bson::RawBson;
 
 use crate::{
     configuration::{
-        Version, SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS, SOCKET_CONNECTION_IDLE_TIMEOUT_KEY,
+        DEFAULT_MAX_WIRE_VERSION, DEFAULT_SERVER_VERSION,
+        SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS, SOCKET_CONNECTION_IDLE_TIMEOUT_KEY,
     },
     postgres::conn_mgmt,
 };
@@ -146,11 +147,13 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
         )
     }
 
-    fn server_version(&self) -> Version {
-        self.get_str("serverVersion")
-            .as_deref()
-            .and_then(Version::parse)
-            .unwrap_or(Version::Seven)
+    fn server_version(&self) -> String {
+        self.get_str("server_version")
+            .unwrap_or_else(|| DEFAULT_SERVER_VERSION.to_owned())
+    }
+
+    fn max_wire_version(&self) -> i32 {
+        self.get_i32("max_wire_version", DEFAULT_MAX_WIRE_VERSION)
     }
 
     fn enable_stateless_cursor_timeout(&self) -> bool {

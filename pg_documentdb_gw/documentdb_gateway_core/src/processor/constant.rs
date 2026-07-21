@@ -14,7 +14,7 @@ use std::{
 use bson::{rawdoc, RawArrayBuf, RawDocumentBuf};
 
 use crate::{
-    configuration::DynamicConfiguration,
+    configuration::{version_bson_array_from_str, DynamicConfiguration},
     context::{ConnectionContext, RequestContext},
     error::{DocumentDBError, ErrorCode, Result},
     protocol::{self, OK_SUCCEEDED},
@@ -38,7 +38,7 @@ pub fn process_build_info(dynamic_config: &Arc<dyn DynamicConfiguration>) -> Res
     let version = dynamic_config.server_version();
     Response::Raw(RawResponse::new(rawdoc! {
         "version": version.as_str(),
-        "versionArray": version.as_bson_array(),
+        "versionArray": version_bson_array_from_str(&version),
         "bits": 64,
         "maxBsonObjectSize": protocol::MAX_BSON_OBJECT_SIZE,
         "ok":OK_SUCCEEDED,

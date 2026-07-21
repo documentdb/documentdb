@@ -1,0 +1,77 @@
+SHOW documentdb.server_version;
+ documentdb.server_version 
+---------------------------
+ 7.0.0
+(1 row)
+
+SHOW documentdb.max_wire_version;
+ documentdb.max_wire_version 
+-----------------------------
+ 21
+(1 row)
+
+SET documentdb.server_version TO '8.0';
+SHOW documentdb.server_version;
+ documentdb.server_version 
+---------------------------
+ 8.0
+(1 row)
+
+SHOW documentdb.max_wire_version;
+ documentdb.max_wire_version 
+-----------------------------
+ 21
+(1 row)
+
+SET documentdb.server_version TO '8.0.4';
+SHOW documentdb.server_version;
+ documentdb.server_version 
+---------------------------
+ 8.0.4
+(1 row)
+
+SET documentdb.max_wire_version TO 25;
+SHOW documentdb.max_wire_version;
+ documentdb.max_wire_version 
+-----------------------------
+ 25
+(1 row)
+
+SET documentdb.server_version TO '4.2';
+SHOW documentdb.server_version;
+ documentdb.server_version 
+---------------------------
+ 4.2
+(1 row)
+
+RESET documentdb.server_version;
+RESET documentdb.max_wire_version;
+SHOW documentdb.server_version;
+ documentdb.server_version 
+---------------------------
+ 7.0.0
+(1 row)
+
+SHOW documentdb.max_wire_version;
+ documentdb.max_wire_version 
+-----------------------------
+ 21
+(1 row)
+
+-- Invalid server_version / out-of-range max_wire_version are rejected.
+SET documentdb.server_version TO '';
+ERROR:  invalid value for parameter "documentdb.server_version": ""
+DETAIL:  must be a dotted numeric version with 2 to 4 components (e.g. 7.0, 8.0.4, 8.0.4.1)
+SET documentdb.server_version TO 'not-a-version';
+ERROR:  invalid value for parameter "documentdb.server_version": "not-a-version"
+DETAIL:  must be a dotted numeric version with 2 to 4 components (e.g. 7.0, 8.0.4, 8.0.4.1)
+SET documentdb.server_version TO '8';
+ERROR:  invalid value for parameter "documentdb.server_version": "8"
+DETAIL:  must be a dotted numeric version with 2 to 4 components (e.g. 7.0, 8.0.4, 8.0.4.1)
+SET documentdb.server_version TO '8.0.4.1.2';
+ERROR:  invalid value for parameter "documentdb.server_version": "8.0.4.1.2"
+DETAIL:  must be a dotted numeric version with 2 to 4 components (e.g. 7.0, 8.0.4, 8.0.4.1)
+SET documentdb.max_wire_version TO -1;
+ERROR:  -1 is outside the valid range for parameter "documentdb.max_wire_version" (1 .. 2147483647)
+SET documentdb.max_wire_version TO 0;
+ERROR:  0 is outside the valid range for parameter "documentdb.max_wire_version" (1 .. 2147483647)
