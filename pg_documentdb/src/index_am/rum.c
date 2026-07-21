@@ -824,19 +824,24 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 }
 
 
-/* Check if the index supports index-only scans based on the index rel am. */
+/*
+ * Whether the index's access method / opclass structurally supports index-only
+ * scans (AM support, composite non-wildcard opclass). Multi-key gating is done by
+ * the caller from the shared opclass metadata. Truncated terms also block
+ * index-only scan; when skipTruncationCheck is true the caller has already
+ * accounted for truncation from the tracked metadata, so it is not re-read here.
+ */
 bool
-CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath)
+CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath, bool skipTruncationCheck)
 {
 	PGFunction getMultiKeyStatusFunc = NULL;
 	GetTruncationStatusFunc getTruncationStatusFunc = NULL;
-	PGFunction getOpclassMetadataFunc = NULL;
 
 	bool supports = GetIndexAmSupportsIndexOnlyScan(indexPath->indexinfo->relam,
 													indexPath->indexinfo->opfamily[0],
 													&getMultiKeyStatusFunc,
 													&getTruncationStatusFunc,
-													&getOpclassMetadataFunc);
+													NULL);
 
 	if (!supports || getMultiKeyStatusFunc == NULL || getTruncationStatusFunc == NULL)
 	{
@@ -870,36 +875,25 @@ CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath)
 		return false;
 	}
 
-	bool multiKeyStatus = false;
-	bool hasTruncatedTerms = false;
-	Relation indexRelation = index_open(indexPath->indexinfo->indexoid, NoLock);
+	/*
+	 * Multi-key gating and (when the opclass metadata is tracked) the truncation
+	 * status are supplied by the caller from the shared metadata read. Only when
+	 * the caller has no tracked metadata do we read the truncation status here.
+	 * Truncated terms are never full fidelity, so they always block index only scan.
+	 */
+	if (!skipTruncationCheck)
+	{
+		Relation indexRelation = index_open(indexPath->indexinfo->indexoid, NoLock);
+		bool hasTruncatedTerms = getTruncationStatusFunc(indexRelation);
+		index_close(indexRelation, NoLock);
 
-	if (compositeOptions->enableMetadataBasedTracking && getOpclassMetadataFunc != NULL)
-	{
-		uint32_t multiKeyPerPathStatus = 0;
-		uint32_t truncatedPerPathStatus = 0;
-		bool hasReducedCorrelatedTerms = false;
-		uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
-													  getOpclassMetadataFunc,
-													  PointerGetDatum(indexRelation)));
-		DecodeCompositeOpClassQueryMetadata(options, opclassMetadata, &multiKeyStatus,
-											&multiKeyPerPathStatus,
-											&hasReducedCorrelatedTerms,
-											&hasTruncatedTerms,
-											&truncatedPerPathStatus);
-	}
-	else
-	{
-		multiKeyStatus = DatumGetBool(DirectFunctionCall1(getMultiKeyStatusFunc,
-														  PointerGetDatum(
-															  indexRelation)));
-		hasTruncatedTerms = getTruncationStatusFunc(indexRelation);
+		if (hasTruncatedTerms)
+		{
+			return false;
+		}
 	}
 
-	index_close(indexRelation, NoLock);
-
-	/* can only support index only scan if the index is not multikey and there are no truncated terms. */
-	return !multiKeyStatus && !hasTruncatedTerms;
+	return true;
 }
 
 
