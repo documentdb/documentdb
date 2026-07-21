@@ -24,8 +24,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      - name: Install Python test dependencies
+        run: python3 -m pip install pyyaml
+
       - name: Run documentdb-local Python unit tests
         # Single discovery run so a newly added test_*.py module is picked up
         # automatically (no per-file YAML edit needed). test_image.py self-skips
         # when DOCUMENTDB_LOCAL_IMAGE is unset, so it is a no-op here.
         run: python3 -m unittest discover -s documentdb-local/scripts/documentdb_local_tests -p 'test_*.py' -v
+
+      - name: Run internal CI trigger contract tests
+        run: python3 -m unittest discover -s .github/workflows/tests -p 'test_internal_ci_trigger.py'
