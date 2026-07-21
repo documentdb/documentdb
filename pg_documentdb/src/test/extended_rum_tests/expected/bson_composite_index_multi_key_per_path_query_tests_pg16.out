@@ -1081,8 +1081,9 @@ SELECT documentdb_api.insert_one('mkpq_db', 'mkpq_ios', '{ "_id": 7, "country": 
 -- multi-key state and not on heap visibility.
 SELECT format('VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_%s', :'mkpq_ios_cid') \gexec
 VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_13108
--- Covered $count on the now-multi-key index: NOT an Index Only Scan (regular Index
--- Scan), because the opclass metadata now marks the index multi-key.
+-- Covered $count on the now-multi-key index: still an Index Only Scan, because the
+-- filtered/covered path "country" is not multi-key (only "city" is). Per-path
+-- multi-key tracking gates index-only eligibility per column, not index-wide.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('mkpq_db', '{ "aggregate" : "mkpq_ios", "pipeline" : [{ "$match" : { "country": { "$eq": "USA" } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
                                                run_explain_and_trim                                                
 -------------------------------------------------------------------------------------------------------------------
@@ -1099,8 +1100,9 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          innerScanLoops: 5 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
-         ->  Index Scan using country_city_1 on documentdb_data.documents_13108 collection (actual rows=4 loops=1)
+         ->  Index Only Scan using country_city_1 on documentdb_data.documents_13108 collection (actual rows=4 loops=1)
                Index Cond: (collection.document @= '{ "country" : "USA" }'::bson)
-(15 rows)
+               Heap Fetches: xxx
+(16 rows)
 
 reset documentdb.forceIndexOnlyScanIfAvailable;

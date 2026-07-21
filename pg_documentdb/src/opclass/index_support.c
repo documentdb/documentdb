@@ -173,6 +173,26 @@ typedef struct ProjectionVarQueryState
 	Index scanRti;
 } ProjectionVarQueryState;
 
+/*
+ * Explicit multi-key state of a composite index, threaded through the index-only
+ * scan eligibility checks. Mirrors the IndexMultiKeyStatus model used by composite
+ * bound generation: each layer derives a per-column IndexMultiKeyStatus from this
+ * and errs towards "not index-only" unless a column is provably non-multi-key.
+ */
+typedef struct IndexOnlyScanMultiKeyState
+{
+	/* Whether any column of the index is multi-key (from the index metadata). */
+	bool isMultiKeyIndex;
+
+	/* Per-column multi-key bits (bit i set => column i is multi-key). Only
+	 * meaningful when isPerPathMultiKeyTracked is true. */
+	uint32 multiKeyPathBitMask;
+
+	/* Whether the index tracks per-path multi-key state (mkp=true) and the planner
+	 * is allowed to use it. When false, only isMultiKeyIndex is known. */
+	bool isPerPathMultiKeyTracked;
+} IndexOnlyScanMultiKeyState;
+
 /* State tracking field coverage for index-only scans */
 typedef struct FieldCoverageState
 {
@@ -180,6 +200,9 @@ typedef struct FieldCoverageState
 	Index expectedRti;
 	IndexPath *indexPath;
 	bool hasUncoveredField;
+
+	/* Multi-key state of indexPath, used to gate multi-key columns out of coverage. */
+	const IndexOnlyScanMultiKeyState *multiKeyState;
 } FieldCoverageState;
 
 /*
@@ -391,7 +414,9 @@ static bool TryUseAlternateIndexForPrimaryKeyLookup(PlannerInfo *root, RelOptInf
 													MatchIndexPath matchIndexPath);
 static void PrimaryKeyLookupUnableToFindIndex(void);
 static bool IndexClauseIsValidForIndexOnlyScan(const IndexClause *clause,
-											   bytea *indexOptions);
+											   bytea *indexOptions,
+											   const IndexOnlyScanMultiKeyState *
+											   multiKeyState);
 static OpExpr * CreateMergeSortInPrefixMarkerOpExpr(Expr *documentExpr);
 static List * RemoveMergeSortInPrefixMarkerClauses(List *indexClauses,
 												   bool *removedMarker);
@@ -1930,16 +1955,100 @@ ProjectionReferencesDocumentVarOrQuery(Expr *node, void *state)
 
 
 static inline bool
-IndexStrategySupportsIndexOnlyScan(BsonIndexStrategy indexStrategy)
+IndexStrategySupportsIndexOnlyScan(BsonIndexStrategy indexStrategy,
+								   bool isPerPathMultiKeyTracked)
 {
-	return !IsNegationStrategy(indexStrategy) &&
-		   indexStrategy != BSON_INDEX_STRATEGY_INVALID &&
-		   indexStrategy != BSON_INDEX_STRATEGY_DOLLAR_GEOINTERSECTS &&
-		   indexStrategy != BSON_INDEX_STRATEGY_DOLLAR_GEOWITHIN &&
-		   indexStrategy != BSON_INDEX_STRATEGY_DOLLAR_TEXT &&
-		   indexStrategy != BSON_INDEX_STRATEGY_DOLLAR_ELEMMATCH &&
-		   indexStrategy != BSON_INDEX_STRATEGY_DOLLAR_TYPE &&
-		   indexStrategy != BSON_INDEX_STRATEGY_DOLLAR_SIZE;
+	switch (indexStrategy)
+	{
+		/* Common happy-path operators covered by index terms and eligible for
+		 * index-only scan. */
+		case BSON_INDEX_STRATEGY_DOLLAR_EQUAL:
+		case BSON_INDEX_STRATEGY_DOLLAR_GREATER:
+		case BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL:
+		case BSON_INDEX_STRATEGY_DOLLAR_LESS:
+		case BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL:
+		case BSON_INDEX_STRATEGY_DOLLAR_IN:
+		case BSON_INDEX_STRATEGY_DOLLAR_EXISTS:
+		{
+			return true;
+		}
+
+		/* $ne is eligible only on per-path-tracked indexes, where the per-column
+		 * gate rejects multi-key columns. Other negations ($nin, $not >/>=/</<=)
+		 * always force a runtime (heap) recheck and are rejected by the default
+		 * branch below. */
+		case BSON_INDEX_STRATEGY_DOLLAR_NOT_EQUAL:
+		{
+			return isPerPathMultiKeyTracked;
+		}
+
+		/* Non-negation operators that aren't covered by index terms. */
+		case BSON_INDEX_STRATEGY_INVALID:
+		case BSON_INDEX_STRATEGY_DOLLAR_GEOINTERSECTS:
+		case BSON_INDEX_STRATEGY_DOLLAR_GEOWITHIN:
+		case BSON_INDEX_STRATEGY_DOLLAR_TEXT:
+		case BSON_INDEX_STRATEGY_DOLLAR_ELEMMATCH:
+		case BSON_INDEX_STRATEGY_DOLLAR_TYPE:
+		case BSON_INDEX_STRATEGY_DOLLAR_SIZE:
+		{
+			return false;
+		}
+
+		default:
+		{
+			/* Remaining strategies are index-only eligible, except negations,
+			 * which always force a runtime recheck. */
+			return !IsNegationStrategy(indexStrategy);
+		}
+	}
+}
+
+
+/*
+ * Per-column multi-key status for index-only-scan eligibility, using the
+ * tri-state IndexMultiKeyStatus. Returns HasNoArrays only when the column is
+ * full-fidelity (safe for index-only); every other case (path not in index,
+ * multi-key column, or multi-key index without per-path bits) returns a
+ * non-HasNoArrays value so callers err towards not-index-only.
+ *
+ * multiKeyState is trustworthy by construction: IsCompositeIndexOnlyScanCandidate
+ * only populates it from a read (Full/Partial) metadata, where isMultiKeyIndex is
+ * an exact whole-index signal (false => no column is multi-key).
+ */
+static inline IndexMultiKeyStatus
+GetIndexColumnMultiKeyStatus(const IndexOnlyScanMultiKeyState *multiKeyState,
+							 int32_t columnNumber)
+{
+	/* Path not covered by the index. */
+	if (columnNumber < 0 || columnNumber >= INDEX_MAX_KEYS)
+	{
+		return IndexMultiKeyStatus_Unknown;
+	}
+
+	/* No column has arrays -> every covered column is full fidelity. */
+	if (!multiKeyState->isMultiKeyIndex)
+	{
+		return IndexMultiKeyStatus_HasNoArrays;
+	}
+
+	/*
+	 * The index has at least one multi-key column. Without per-path tracking, or
+	 * without a per-path breakdown (mask == 0), we don't know which column, so
+	 * every column is conservatively multi-key.
+	 */
+	if (!multiKeyState->isPerPathMultiKeyTracked ||
+		multiKeyState->multiKeyPathBitMask == 0)
+	{
+		return IndexMultiKeyStatus_HasArrays;
+	}
+
+	/* Per-path tracked with a breakdown: the column's bit tells us exactly. */
+	if ((multiKeyState->multiKeyPathBitMask & (UINT32_C(1) << columnNumber)) != 0)
+	{
+		return IndexMultiKeyStatus_HasArrays;
+	}
+
+	return IndexMultiKeyStatus_HasNoArrays;
 }
 
 
@@ -1993,7 +2102,8 @@ IsBsonValueArgumentValidForIndexOnlyScan(const bson_value_t *bsonValue)
 
 static bool
 CheckOpArgIsValidForIndexOnlyScan(Const *arg, bytea *indexOptions, BsonIndexStrategy
-								  indexStrategy)
+								  indexStrategy,
+								  const IndexOnlyScanMultiKeyState *multiKeyState)
 {
 	if (indexOptions == NULL)
 	{
@@ -2006,22 +2116,48 @@ CheckOpArgIsValidForIndexOnlyScan(Const *arg, bytea *indexOptions, BsonIndexStra
 																			  queryValue),
 																		  &queryElement);
 
-	if (indexStrategy == BSON_INDEX_STRATEGY_DOLLAR_IN)
-	{
-		bson_iter_t iter;
-		BsonValueInitIterator(&queryElement.bsonValue, &iter);
-		while (bson_iter_next(&iter))
-		{
-			const bson_value_t *arrayValue = bson_iter_value(&iter);
-			if (!IsBsonValueArgumentValidForIndexOnlyScan(arrayValue))
-			{
-				return false;
-			}
-		}
-	}
-	else if (!IsBsonValueArgumentValidForIndexOnlyScan(&queryElement.bsonValue))
+	/*
+	 * The referenced column must be provably full fidelity (HasNoArrays) to be
+	 * served index-only -- a multi-key column, or a filter on a path not in the
+	 * index, is not. This gate is self-contained: it uses isMultiKeyIndex, so it
+	 * does not rely on any earlier layer having rejected multi-key indexes.
+	 */
+	int8_t sortDirectionIgnored = 0;
+	int32_t columnNumber = GetCompositeOpClassColumnNumber(queryElement.path,
+														   indexOptions,
+														   &sortDirectionIgnored);
+	if (GetIndexColumnMultiKeyStatus(multiKeyState, columnNumber) !=
+		IndexMultiKeyStatus_HasNoArrays)
 	{
 		return false;
+	}
+
+	if (!multiKeyState->isPerPathMultiKeyTracked)
+	{
+		/*
+		 * Without per-path tracking, an empty-array indexed value is not recorded
+		 * as multi-key, so null / empty-array arguments still need a runtime
+		 * recheck. (With tracking, an empty array marks the column multi-key and is
+		 * already caught by the gate above. $ne / $nin are rejected earlier by
+		 * IndexStrategySupportsIndexOnlyScan when untracked.)
+		 */
+		if (indexStrategy == BSON_INDEX_STRATEGY_DOLLAR_IN)
+		{
+			bson_iter_t iter;
+			BsonValueInitIterator(&queryElement.bsonValue, &iter);
+			while (bson_iter_next(&iter))
+			{
+				const bson_value_t *arrayValue = bson_iter_value(&iter);
+				if (!IsBsonValueArgumentValidForIndexOnlyScan(arrayValue))
+				{
+					return false;
+				}
+			}
+		}
+		else if (!IsBsonValueArgumentValidForIndexOnlyScan(&queryElement.bsonValue))
+		{
+			return false;
+		}
 	}
 
 	return ValidateIndexForQualifierElement(indexOptions, &queryElement, queryCollation,
@@ -2031,7 +2167,8 @@ CheckOpArgIsValidForIndexOnlyScan(Const *arg, bytea *indexOptions, BsonIndexStra
 
 static bool
 ExprIsValidForIndexOnlyScan(Expr *expr, bytea *indexOptions, bool *isShardKeyExpr,
-							int64 *shardKeyValue)
+							int64 *shardKeyValue,
+							const IndexOnlyScanMultiKeyState *multiKeyState)
 {
 	check_stack_depth();
 	CHECK_FOR_INTERRUPTS();
@@ -2086,7 +2223,7 @@ ExprIsValidForIndexOnlyScan(Expr *expr, bytea *indexOptions, bool *isShardKeyExp
 				{
 					return CheckOpArgIsValidForIndexOnlyScan(
 						(Const *) secondArg, indexOptions,
-						BSON_INDEX_STRATEGY_DOLLAR_RANGE);
+						BSON_INDEX_STRATEGY_DOLLAR_RANGE, multiKeyState);
 				}
 
 				return false;
@@ -2101,19 +2238,21 @@ ExprIsValidForIndexOnlyScan(Expr *expr, bytea *indexOptions, bool *isShardKeyExp
 			return isOpExprShardKeyResult;
 		}
 
-		if (!IndexStrategySupportsIndexOnlyScan(operator->indexStrategy))
-		{
-			return false;
-		}
-
 		Expr *secondArg = lsecond(args);
 		if (!IsA(secondArg, Const))
 		{
 			return false;
 		}
 
+		if (!IndexStrategySupportsIndexOnlyScan(operator->indexStrategy,
+												multiKeyState->isPerPathMultiKeyTracked))
+		{
+			return false;
+		}
+
 		return CheckOpArgIsValidForIndexOnlyScan((Const *) secondArg, indexOptions,
-												 operator->indexStrategy);
+												 operator->indexStrategy,
+												 multiKeyState);
 	}
 	else if (IsA(expr, BoolExpr))
 	{
@@ -2125,7 +2264,7 @@ ExprIsValidForIndexOnlyScan(Expr *expr, bytea *indexOptions, bool *isShardKeyExp
 			Expr *boolArg = (Expr *) lfirst(boolArgs);
 			bool isShardKeyExprInner = false;
 			if (!ExprIsValidForIndexOnlyScan(boolArg, indexOptions, &isShardKeyExprInner,
-											 shardKeyValue))
+											 shardKeyValue, multiKeyState))
 			{
 				return false;
 			}
@@ -2144,7 +2283,8 @@ ExprIsValidForIndexOnlyScan(Expr *expr, bytea *indexOptions, bool *isShardKeyExp
 
 
 static bool
-IndexClauseIsValidForIndexOnlyScan(const IndexClause *clause, bytea *indexOptions)
+IndexClauseIsValidForIndexOnlyScan(const IndexClause *clause, bytea *indexOptions,
+								   const IndexOnlyScanMultiKeyState *multiKeyState)
 {
 	if (clause->lossy)
 	{
@@ -2163,7 +2303,7 @@ IndexClauseIsValidForIndexOnlyScan(const IndexClause *clause, bytea *indexOption
 	/* We ignore if it is a shard key expression or not as for rum indexes a shard key value opExpr will never be valid to be pushed down. */
 	bool isShardKeyExpr = false;
 	return ExprIsValidForIndexOnlyScan(rinfo->clause, indexOptions, &isShardKeyExpr,
-									   NULL);
+									   NULL, multiKeyState);
 }
 
 
@@ -2171,7 +2311,8 @@ static bool
 IndexRestrictInfoSupportIndexOnlyScan(const RestrictInfo *rinfo,
 									  bytea *indexOptions,
 									  const RestrictInfo **shardKeyRestrictInfo,
-									  int64 *shardKeyValue)
+									  int64 *shardKeyValue,
+									  const IndexOnlyScanMultiKeyState *multiKeyState)
 {
 	if (indexOptions == NULL)
 	{
@@ -2181,7 +2322,8 @@ IndexRestrictInfoSupportIndexOnlyScan(const RestrictInfo *rinfo,
 	bool isShardKeyExpr = false;
 	bool supportsIndexOnlyScan = ExprIsValidForIndexOnlyScan(rinfo->clause, indexOptions,
 															 &isShardKeyExpr,
-															 shardKeyValue);
+															 shardKeyValue,
+															 multiKeyState);
 	if (isShardKeyExpr && shardKeyRestrictInfo != NULL)
 	{
 		*shardKeyRestrictInfo = rinfo;
@@ -2194,7 +2336,8 @@ IndexRestrictInfoSupportIndexOnlyScan(const RestrictInfo *rinfo,
 static bool
 IndexRestrictInfosSupportIndexOnlyScan(IndexPath *indexPath,
 									   RelOptInfo *rel,
-									   ReplaceExtensionFunctionContext *replaceContext)
+									   ReplaceExtensionFunctionContext *replaceContext,
+									   const IndexOnlyScanMultiKeyState *multiKeyState)
 {
 	bytea *indexOptions = indexPath->indexinfo->opclassoptions != NULL ?
 						  indexPath->indexinfo->opclassoptions[0] : NULL;
@@ -2212,7 +2355,8 @@ IndexRestrictInfosSupportIndexOnlyScan(IndexPath *indexPath,
 
 		/* at the planner layer these are trimmed out so we shouldn't see them for index only scan here. */
 		if (!IndexRestrictInfoSupportIndexOnlyScan(baseRestrictInfo, indexOptions,
-												   &shardKeyRestrictInfo, NULL))
+												   &shardKeyRestrictInfo, NULL,
+												   multiKeyState))
 		{
 			return false;
 		}
@@ -2236,7 +2380,8 @@ IndexRestrictInfosSupportIndexOnlyScan(IndexPath *indexPath,
 static bool
 IndexClausesSupportIndexOnlyScan(IndexPath *indexPath,
 								 RelOptInfo *rel,
-								 ReplaceExtensionFunctionContext *replaceContext)
+								 ReplaceExtensionFunctionContext *replaceContext,
+								 const IndexOnlyScanMultiKeyState *multiKeyState)
 {
 	bytea *indexOptions = indexPath->indexinfo->opclassoptions != NULL ?
 						  indexPath->indexinfo->opclassoptions[0] : NULL;
@@ -2250,7 +2395,7 @@ IndexClausesSupportIndexOnlyScan(IndexPath *indexPath,
 	{
 		IndexClause *clause = (IndexClause *) lfirst(clauseCell);
 
-		if (!IndexClauseIsValidForIndexOnlyScan(clause, indexOptions))
+		if (!IndexClauseIsValidForIndexOnlyScan(clause, indexOptions, multiKeyState))
 		{
 			return false;
 		}
@@ -2265,7 +2410,8 @@ IndexClausesSupportIndexOnlyScan(IndexPath *indexPath,
 
 		/* at the planner layer these are trimmed out so we shouldn't see them for index only scan here. */
 		if (!IndexRestrictInfoSupportIndexOnlyScan(baseRestrictInfo, indexOptions,
-												   &shardKeyRestrictInfo, NULL))
+												   &shardKeyRestrictInfo, NULL,
+												   multiKeyState))
 		{
 			return false;
 		}
@@ -2370,7 +2516,8 @@ TryExtractFieldPathFromConst(Expr *expr)
 
 
 static bool
-IsFieldPathCoveredByIndex(const char *fieldPath, IndexPath *indexPath)
+IsFieldPathCoveredByIndex(const char *fieldPath, IndexPath *indexPath,
+						  const IndexOnlyScanMultiKeyState *multiKeyState)
 {
 	int8_t sortDirectionIgnored = 0;
 	int32_t colNum = GetCompositeOpClassColumnNumber(
@@ -2378,7 +2525,10 @@ IsFieldPathCoveredByIndex(const char *fieldPath, IndexPath *indexPath)
 		indexPath->indexinfo->opclassoptions[0], /*[0] because there's only one column indexed (Document)*/
 		&sortDirectionIgnored);
 
-	return colNum >= 0;
+	/* Covered only when the column is in the index AND provably non-multi-key: a
+	 * multi-key column is lossy and a target reading it cannot be index-only. */
+	return GetIndexColumnMultiKeyStatus(multiKeyState, colNum) ==
+		   IndexMultiKeyStatus_HasNoArrays;
 }
 
 
@@ -2413,7 +2563,8 @@ TryExtractSortPathFromConst(Expr *expr)
 
 
 static bool
-IsProjectionCoveredByIndex(Expr *expr, IndexPath *indexPath)
+IsProjectionCoveredByIndex(Expr *expr, IndexPath *indexPath,
+						   const IndexOnlyScanMultiKeyState *multiKeyState)
 {
 	pgbson *projectBson = TryExtractPgbsonFromConst(expr);
 	if (projectBson == NULL)
@@ -2464,7 +2615,7 @@ IsProjectionCoveredByIndex(Expr *expr, IndexPath *indexPath)
 
 		hasInclusion = true;
 
-		if (!IsFieldPathCoveredByIndex(fieldPath, indexPath))
+		if (!IsFieldPathCoveredByIndex(fieldPath, indexPath, multiKeyState))
 		{
 			return false;
 		}
@@ -2477,7 +2628,8 @@ IsProjectionCoveredByIndex(Expr *expr, IndexPath *indexPath)
 		return false;
 	}
 
-	if (isIdProjectedByDefault && !IsFieldPathCoveredByIndex("_id", indexPath))
+	if (isIdProjectedByDefault && !IsFieldPathCoveredByIndex("_id", indexPath,
+															 multiKeyState))
 	{
 		return false;
 	}
@@ -2606,7 +2758,8 @@ CheckFieldCoverage(Node *node, void *context)
 
 		if (sawDocumentVar && fieldPath != NULL)
 		{
-			if (!IsFieldPathCoveredByIndex(fieldPath, state->indexPath))
+			if (!IsFieldPathCoveredByIndex(fieldPath, state->indexPath,
+										   state->multiKeyState))
 			{
 				/* Field path is not in this index so we can't do index-only. */
 				state->hasUncoveredField = true;
@@ -2664,7 +2817,7 @@ CheckFieldCoverage(Node *node, void *context)
 				{
 					/* all our bson_dollar_project variants take the projection as the second argument. */
 					bool isProjectionCoveredByIndex = IsProjectionCoveredByIndex(
-						secondArg, state->indexPath);
+						secondArg, state->indexPath, state->multiKeyState);
 					state->hasUncoveredField = !isProjectionCoveredByIndex;
 					return state->hasUncoveredField;
 				}
@@ -2690,7 +2843,8 @@ CheckFieldCoverage(Node *node, void *context)
 				}
 
 				if (fieldPath == NULL || !IsFieldPathCoveredByIndex(fieldPath,
-																	state->indexPath))
+																	state->indexPath,
+																	state->multiKeyState))
 				{
 					/* Path is not in this index so we can't do index-only. */
 					state->hasUncoveredField = true;
@@ -2724,13 +2878,15 @@ CheckFieldCoverage(Node *node, void *context)
  * If any target contains a field reference outside those covered shapes, the function returns false.
  */
 static bool
-AreAllTargetsCoveredByIndex(PlannerInfo *root, IndexPath *indexPath)
+AreAllTargetsCoveredByIndex(PlannerInfo *root, IndexPath *indexPath,
+							const IndexOnlyScanMultiKeyState *multiKeyState)
 {
 	FieldCoverageState state = {
 		.hasUncoveredField = false,
 		.indexPath = indexPath,
 		.expectedRti = indexPath->path.parent->relid,
-		.root = root
+		.root = root,
+		.multiKeyState = multiKeyState
 	};
 
 	ListCell *cell;
@@ -2799,6 +2955,60 @@ IsQueryEligibleForIndexOnlyScan(PlannerInfo *root, Index scanRti, bool *hasDocum
 	}
 
 	return true;
+}
+
+
+/*
+ * Applies the index-only-scan multi-key + truncation gate using already-read
+ * composite opclass metadata, and returns whether the index is still a viable
+ * index-only-scan candidate (subject to the caller's clause/coverage checks).
+ *
+ * Outputs the index's multi-key state for the caller's per-column gating. A
+ * multi-key index is only a candidate when per-path tracked; otherwise the whole
+ * index must be non-multi-key. When the metadata is tracked (Full) the truncation
+ * status is taken from it; otherwise CompositeIndexSupportsIndexOnlyScan reads it.
+ *
+ * metadata->isMultiKey is trustworthy only when the metadata was actually read
+ * (Full or Partial): in both cases a false value means no column is multi-key (the
+ * global multi-key bit is set whenever any per-path bit is). A None result means
+ * the multi-key status is unknown, so we cannot safely do an index-only scan and
+ * the multiKeyState is left unpopulated.
+ */
+static bool
+IsCompositeIndexOnlyScanCandidate(const IndexPath *indexPath,
+								  const CompositeOpClassMetadataInfo *metadata,
+								  CompositeOpClassMetadataReadResult metadataResult,
+								  IndexOnlyScanMultiKeyState *multiKeyState)
+{
+	/* Without a metadata read the multi-key status is unknown -- err safe. */
+	if (metadataResult == CompositeOpClassMetadataReadResult_None)
+	{
+		return false;
+	}
+
+	bool hasPerPathMetadata = metadataResult == CompositeOpClassMetadataReadResult_Full;
+
+	multiKeyState->isMultiKeyIndex = metadata->isMultiKey;
+	multiKeyState->multiKeyPathBitMask = metadata->multiKeyPathBitMask;
+	multiKeyState->isPerPathMultiKeyTracked = hasPerPathMetadata &&
+											  EnablePerPathMultiKeySortPushdown;
+
+	/* A multi-key index is only a candidate when per-path tracking gates each
+	 * referenced column; otherwise the whole index must be non-multi-key. */
+	if (multiKeyState->isMultiKeyIndex && !multiKeyState->isPerPathMultiKeyTracked)
+	{
+		return false;
+	}
+
+	/* Truncated terms are never full fidelity and block index only scan. When the
+	 * metadata is tracked we already know it; otherwise let the structural check
+	 * read it. */
+	if (hasPerPathMetadata && metadata->hasTruncation)
+	{
+		return false;
+	}
+
+	return CompositeIndexSupportsIndexOnlyScan(indexPath, hasPerPathMetadata);
 }
 
 
@@ -2918,17 +3128,25 @@ ConsiderIndexOnlyScan(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 				continue;
 			}
 
-			if (!CompositeIndexSupportsIndexOnlyScan(indexPath))
+			IndexOnlyScanMultiKeyState multiKeyState = { 0 };
+			CompositeOpClassMetadataInfo indexMetadata = { 0 };
+			CompositeOpClassMetadataReadResult metadataResult =
+				TryGetCompositeOpClassMetadataInfo(indexPath->indexinfo->indexoid,
+												   NoLock, &indexMetadata);
+			if (!IsCompositeIndexOnlyScanCandidate(indexPath, &indexMetadata,
+												   metadataResult,
+												   &multiKeyState))
 			{
 				continue;
 			}
 
-			if (!IndexClausesSupportIndexOnlyScan(indexPath, rel, context))
+			if (!IndexClausesSupportIndexOnlyScan(indexPath, rel, context,
+												  &multiKeyState))
 			{
 				continue;
 			}
 
-			if (!AreAllTargetsCoveredByIndex(root, indexPath))
+			if (!AreAllTargetsCoveredByIndex(root, indexPath, &multiKeyState))
 			{
 				continue;
 			}
@@ -4614,11 +4832,21 @@ MergeSortInPrefixChildrenSupportIndexOnly(PlannerInfo *root, RelOptInfo *rel,
 	}
 
 	IndexOptInfo *indexInfo = childPath->indexinfo;
-	return indexInfo->nkeycolumns >= 1 &&
-		   IsOrderBySupportedOnOpClass(indexInfo->relam, indexInfo->opfamily[0]) &&
-		   CompositeIndexSupportsIndexOnlyScan(childPath) &&
-		   IndexRestrictInfosSupportIndexOnlyScan(childPath, rel, context) &&
-		   AreAllTargetsCoveredByIndex(root, childPath);
+	if (indexInfo->nkeycolumns < 1 ||
+		!IsOrderBySupportedOnOpClass(indexInfo->relam, indexInfo->opfamily[0]))
+	{
+		return false;
+	}
+
+	IndexOnlyScanMultiKeyState multiKeyState = { 0 };
+	CompositeOpClassMetadataInfo indexMetadata = { 0 };
+	CompositeOpClassMetadataReadResult metadataResult =
+		TryGetCompositeOpClassMetadataInfo(indexInfo->indexoid, NoLock, &indexMetadata);
+	return IsCompositeIndexOnlyScanCandidate(childPath, &indexMetadata,
+											 metadataResult, &multiKeyState) &&
+		   IndexRestrictInfosSupportIndexOnlyScan(childPath, rel, context,
+												  &multiKeyState) &&
+		   AreAllTargetsCoveredByIndex(root, childPath, &multiKeyState);
 }
 
 
@@ -5995,13 +6223,19 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 	bool indexSupportsOrderByDesc = GetIndexSupportsBackwardsScan(
 		indexPath->indexinfo->relam, &indexCanOrder);
 
+	IndexOnlyScanMultiKeyState multiKeyState = { 0 };
 	bool indexOnlyScanPossible = enable_indexonlyscan &&
 								 indexPath->path.pathtype != T_IndexOnlyScan &&
 								 IsQueryEligibleForIndexOnlyScan(root,
 																 indexPath->path.parent->
-																 relid, NULL) &&
-								 AreAllTargetsCoveredByIndex(root, indexPath) &&
-								 CompositeIndexSupportsIndexOnlyScan(indexPath);
+																 relid, NULL);
+	if (indexOnlyScanPossible)
+	{
+		indexOnlyScanPossible =
+			IsCompositeIndexOnlyScanCandidate(indexPath, &indexMetadata, metadataResult,
+											  &multiKeyState) &&
+			AreAllTargetsCoveredByIndex(root, indexPath, &multiKeyState);
+	}
 
 	bytea *indexOptions = indexPath->indexinfo->opclassoptions != NULL ?
 						  indexPath->indexinfo->opclassoptions[0] : NULL;
@@ -6034,7 +6268,8 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 		IndexClause *clause = (IndexClause *) lfirst(cell);
 
 		if (indexOnlyScanPossible && !IndexClauseIsValidForIndexOnlyScan(clause,
-																		 indexOptions))
+																		 indexOptions,
+																		 &multiKeyState))
 		{
 			indexOnlyScanPossible = false;
 		}
@@ -6161,7 +6396,8 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 			RestrictInfo *baseRestrictInfo = (RestrictInfo *) lfirst(rinfoCell);
 
 			if (indexOnlyScanPossible && !IndexRestrictInfoSupportIndexOnlyScan(
-					baseRestrictInfo, indexOptions, &shardKeyExpr, &shardKeyValue))
+					baseRestrictInfo, indexOptions, &shardKeyExpr, &shardKeyValue,
+					&multiKeyState))
 			{
 				indexOnlyScanPossible = false;
 				break;
