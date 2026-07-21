@@ -4,6 +4,7 @@ import re
 import subprocess
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -1163,6 +1164,99 @@ raise SystemExit('Unsupported jq expression: ' + expr)
         result = self._run("citus", gateway_home=gw)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("uses reserved prefix 'citus'", result.stdout + result.stderr)
+
+
+class GatewayPackageImageContractTests(unittest.TestCase):
+    def test_clean_install_image_copies_entrypoint_script_dependencies(self):
+        scripts_dir = REPO_ROOT / "documentdb-local" / "scripts"
+        dockerfile = (
+            REPO_ROOT
+            / "packaging"
+            / "gateway"
+            / "test"
+            / "Dockerfile_deb_gateway_test"
+        ).read_text(encoding="utf-8")
+        copied_scripts = set(
+            re.findall(
+                r"^COPY documentdb-local/scripts/(\S+) ",
+                dockerfile,
+                re.MULTILINE,
+            )
+        )
+
+        required_scripts = {ENTRYPOINT.name}
+        pending_scripts = [ENTRYPOINT.name]
+        while pending_scripts:
+            script_name = pending_scripts.pop()
+            script_path = scripts_dir / script_name
+            self.assertTrue(script_path.is_file(), f"missing script: {script_path}")
+            script = script_path.read_text(encoding="utf-8")
+            for dependency in re.findall(r"\b([a-z][a-z0-9_-]*\.sh)\b", script):
+                if (scripts_dir / dependency).is_file() and dependency not in required_scripts:
+                    required_scripts.add(dependency)
+                    pending_scripts.append(dependency)
+
+        self.assertEqual(set(), required_scripts - copied_scripts)
+
+
+class GatewayPackageReadinessTests(unittest.TestCase):
+    WAITER = (
+        REPO_ROOT
+        / "packaging"
+        / "test_packages"
+        / "test-gateway-install-entrypoint.sh"
+    )
+
+    def _run_waiter(self, entrypoint, ready_timeout_seconds, shutdown_timeout_seconds):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            entrypoint_path = root / "entrypoint.sh"
+            entrypoint_path.write_text(entrypoint, encoding="utf-8")
+            entrypoint_path.chmod(0o755)
+            log_path = root / "entrypoint.log"
+            command = """
+source "$1"
+"$2" > "$3" 2>&1 &
+entrypoint_pid=$!
+wait_for_gateway_ready "$entrypoint_pid" "$3" "$4" "$5"
+"""
+            return subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    command,
+                    "_",
+                    str(self.WAITER),
+                    str(entrypoint_path),
+                    str(log_path),
+                    str(ready_timeout_seconds),
+                    str(shutdown_timeout_seconds),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+    def test_waiter_reports_entrypoint_exit(self):
+        result = self._run_waiter("#!/bin/bash\nexit 42\n", 5, 1)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "Gateway entrypoint exited with status 42 before becoming ready.",
+            result.stderr,
+        )
+
+    def test_waiter_force_terminates_hung_entrypoint(self):
+        started_at = time.monotonic()
+        result = self._run_waiter(
+            "#!/bin/bash\ntrap '' TERM\nwhile :; do :; done\n",
+            0,
+            1,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertLess(time.monotonic() - started_at, 5)
+        self.assertIn("Gateway did not become ready within 0 seconds.", result.stderr)
 
 
 if __name__ == "__main__":
