@@ -1,3 +1,6 @@
+### documentdb v0.117-0 (Unreleased) ###
+* Default the RUM index library (`documentdb.rum_library_load_option`) to `require_documentdb_extended_rum` on all supported PostgreSQL versions, instead of only on PG 18+. The option can still be set to `none` to opt out. *[Refactor]*
+
 ### documentdb v0.116-0 (Unreleased) ###
 * Rename the `$sample` EXPLAIN metric `Sample Heap Skips` to `Sample Heap Fetches`. *[Refactor]*
 * Enable pushing suffix sort keys into the accumulator in `$sortGroup` when group-by keys form a non-dotted prefix of the sort keys by default (`enableSortPushToAccumulatorWithPrefix`). *[Perf]*
