@@ -2728,13 +2728,14 @@ AddMultiBoundaryForDollarNotIn(int32_t indexAttribute, const char *wildcardPath,
 		{
 			/*
 			 * Per-element bounds are OR-combined at scan time, so "(not a) OR
-			 * (not b)" would match every row. Passing IndexMultiKeyStatus_Unknown
-			 * forces the $ne runtime recheck on every bound (skipped only for
-			 * HasNoArrays), which enforces the AND-of-not-equals $nin semantics.
+			 * (not b)" would match every row. We force a $ne runtime recheck on
+			 * every bound, which enforces the AND-of-not-equals $nin semantics.
 			 */
 			SetBoundsForNotEqual(&element.bsonValue,
 								 &set->bounds[index],
-								 IndexMultiKeyStatus_Unknown);
+								 pathMultiKeyState);
+
+			set->bounds[index].requiresRuntimeRecheck = true;
 			index++;
 		}
 	}
