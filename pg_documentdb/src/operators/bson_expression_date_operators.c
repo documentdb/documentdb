@@ -6336,6 +6336,40 @@ CheckIfRequiredPartsArePresent(DollarDateFromPartsBsonValue *dateFromParts,
 			*isInputValid = false;
 			return;
 		}
+
+		/*
+		 * Reject impossible calendar dates (e.g. Feb 29 in a non-leap year)
+		 * before they are handed to to_timestamp. Without this check the
+		 * underlying datetime conversion raises a raw out-of-range error that
+		 * surfaces as an internal error instead of honoring onError or
+		 * throwing the documented conversion failure. Reuse the PostgreSQL
+		 * date validator (correct leap-year and month-length handling) rather
+		 * than reimplementing the calendar rules here.
+		 */
+		struct pg_tm tmToValidate = { 0 };
+		tmToValidate.tm_year = dateFromParts->year.value.v_int32;
+		tmToValidate.tm_mon = dateFromParts->month.value.v_int32;
+		tmToValidate.tm_mday = dateFromParts->day.value.v_int32;
+
+		/* Named args mirror ValidateDate's signature: the parsed parts are a
+		 * plain Gregorian date, so they are not Julian, not a two-digit year,
+		 * and not BC. */
+		bool isJulianDate = false;
+		bool isTwoDigitYear = false;
+		bool isBcEra = false;
+		if (ValidateDate(DTK_DATE_M, isJulianDate, isTwoDigitYear, isBcEra,
+						 &tmToValidate) != 0)
+		{
+			CONDITIONAL_EREPORT(isOnErrorPresent, ereport(ERROR, (errcode(
+																	  ERRCODE_DOCUMENTDB_CONVERSIONFAILURE),
+																  errmsg(
+																	  "Error parsing date string '%s';The parsed date was invalid",
+																	  dateString),
+																  errdetail_log(
+																	  "Error parsing date string ;The parsed date was invalid"))));
+			*isInputValid = false;
+			return;
+		}
 	}
 }
 
