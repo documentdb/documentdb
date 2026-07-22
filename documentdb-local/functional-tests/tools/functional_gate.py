@@ -13,7 +13,11 @@ import json
 import os
 import sys
 
-import yaml
+# NOTE: PyYAML is imported lazily inside load_yaml() (below), NOT at module
+# top. Only validate-config and compare-engines read YAML; the gate path
+# (report-failures / merge-reports / reconcile) must have zero third-party
+# dependencies so a lane that hasn't pip-installed pyyaml cannot crash $GATE on
+# import and fail open to a green gate.
 
 
 # ---------------------------------------------------------------------------
@@ -32,6 +36,7 @@ class ConfigError:
 
 
 def load_yaml(path: str) -> dict:
+    import yaml  # lazy: keeps the gate path free of the PyYAML dependency
     with open(path) as f:
         data = yaml.safe_load(f)
     if not isinstance(data, dict):
@@ -217,6 +222,255 @@ def cmd_shard_allowlist(args):
     else:
         if text:
             print(text)
+    return 0
+
+
+def _read_manifest_ids(manifest_path: str) -> list[str]:
+    """Extract pytest node IDs from a collection manifest, dropping noise.
+
+    Accepts the raw output of ``pytest --collect-only -q``: one node ID per
+    line, followed by a trailing ``"<N> tests collected in <t>s"`` summary line
+    and possibly blank or warning lines. Only lines containing ``::`` (the
+    node-ID separator) are kept. Duplicates are removed, first-seen order kept.
+    """
+    ids: list[str] = []
+    seen: set[str] = set()
+    with open(manifest_path) as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "::" not in stripped:
+                continue
+            if stripped not in seen:
+                seen.add(stripped)
+                ids.append(stripped)
+    return ids
+
+
+def shard_collection_ids(manifest_path: str, num_shards: int, shard_id: int,
+                         prefix: str = "", strip_prefix: str = "") -> list[str]:
+    """Return the collected test node IDs assigned to one shard.
+
+    Same deterministic round-robin (stride-slice ``ids[shard_id::num_shards]``
+    over a sorted universe) as :func:`shard_allowlist_ids`, but the universe is
+    a pytest collection manifest (the full non-quarantined suite) rather than
+    the allowlist. This lets each shard run its slice of the whole collected
+    suite under the default-pass model.
+
+    ``strip_prefix`` is removed from each manifest node ID *before* sharding and
+    ``prefix`` is prepended *after*, so passing the same value for both makes
+    the output prefix idempotent regardless of the collector's node-ID form.
+    """
+    if num_shards < 1:
+        raise ValueError(f"num_shards must be >= 1, got {num_shards}")
+    if not (0 <= shard_id < num_shards):
+        raise ValueError(f"shard_id must be in [0, {num_shards}), got {shard_id}")
+    ids = _read_manifest_ids(manifest_path)
+    if strip_prefix:
+        ids = [tid[len(strip_prefix):] if tid.startswith(strip_prefix) else tid
+               for tid in ids]
+    ids = sorted(set(ids))
+    return [prefix + tid for tid in ids[shard_id::num_shards]]
+
+
+def cmd_shard_collection(args):
+    ids = shard_collection_ids(args.manifest, args.num_shards, args.shard_id,
+                               args.prefix, args.strip_prefix)
+    text = "\n".join(ids)
+    if args.output:
+        with open(args.output, "w") as f:
+            f.write(text + ("\n" if text else ""))
+    else:
+        if text:
+            print(text)
+    return 0
+
+
+def report_failure_ids(report_path: str, strip_prefix: str = "") -> list[str]:
+    """Return node IDs whose outcome is ``failed``/``error`` in a JSON report.
+
+    With the ``conftest_known_failures`` xfail plugin applied in-process, known
+    failures are reported as ``xfailed`` and flaky/upstream passes as
+    ``xpassed``/``xfailed`` — so a ``failed``/``error`` outcome is a genuine
+    regression or an XPASS(strict) of a known failure. Used both to pick the
+    sequential re-run set (engine-crash victims) and, in the combine job, to
+    decide the gate: any residual ``failed``/``error`` fails the build.
+
+    ``strip_prefix`` (e.g. ``docdb_functional_tests/documentdb_tests/``) is
+    removed from each node ID so the caller can re-prefix idempotently.
+    """
+    with open(report_path) as f:
+        report = json.load(f)
+    seen: set[str] = set()
+    out: list[str] = []
+    for test in report.get("tests", []):
+        if test.get("outcome", "") in ("failed", "error"):
+            nid = test.get("nodeid", "")
+            if strip_prefix and nid.startswith(strip_prefix):
+                nid = nid[len(strip_prefix):]
+            if nid and nid not in seen:
+                seen.add(nid)
+                out.append(nid)
+    return out
+
+
+def cmd_report_failures(args):
+    ids = report_failure_ids(args.report, args.strip_prefix)
+    text = "\n".join(ids)
+    if args.output:
+        with open(args.output, "w") as f:
+            f.write(text + ("\n" if text else ""))
+    else:
+        if text:
+            print(text)
+    return 0
+
+
+_ROOTDIR_NAME = "documentdb_tests"
+
+
+def _normalize_node_id(node_id: str, rootdir_name: str = _ROOTDIR_NAME) -> str:
+    """Normalize a node ID to its rootdir-relative form.
+
+    Mirrors ``conftest_known_failures._build_suffix_set``: if the path part of
+    the ID contains the rootdir directory name (``documentdb_tests``), return
+    the suffix after its last occurrence; otherwise return the ID unchanged.
+    This lets prefixed list entries (``docdb_functional_tests/documentdb_tests/
+    compatibility/...``) and bare report node IDs (``compatibility/...``)
+    compare equal.
+    """
+    parts = node_id.split("/")
+    if rootdir_name in parts:
+        idx = len(parts) - 1 - parts[::-1].index(rootdir_name)
+        return "/".join(parts[idx + 1:])
+    return node_id
+
+
+def reconcile_failing_list(report_path: str, failing_path: str,
+                           flaky_path: str = "",
+                           prune_uncollected: bool = False) -> dict:
+    """Reconcile a known-failures list against a (merged) pytest JSON report.
+
+    The classification mirrors the gate's strict-xfail semantics under
+    ``conftest_known_failures``:
+
+    * ``failed``/``error`` test NOT on the list  -> new failure -> **add**
+      (unless it is on the flaky list, which would make the plugin's
+      failing/flaky overlap check throw — those are skipped with a warning).
+    * ``failed`` test ON the list -> XPASS(strict) (a listed expected failure
+      now passes) -> **remove**. As a safety net, if the failure detail is
+      available and does not look like an XPASS (e.g. a setup ``error`` on a
+      listed test), the entry is kept and reported instead.
+    * List entry whose test was not collected at all (renamed/deleted
+      upstream) -> **pruned** when ``prune_uncollected`` is set, otherwise
+      only reported. Keep the default when reconciling from a partial run.
+
+    Returns a dict with the updated list ``lines`` (comments and entry order
+    preserved, additions appended under a marker comment in the file's
+    dominant prefix style) plus the classification buckets.
+    """
+    with open(report_path) as f:
+        report = json.load(f)
+
+    outcomes = {}
+    details = {}
+    for test in report.get("tests", []):
+        nid = test.get("nodeid", "")
+        if not nid:
+            continue
+        norm = _normalize_node_id(nid)
+        outcomes[norm] = test.get("outcome", "unknown")
+        call = test.get("call", {}) or {}
+        details[norm] = str(call.get("longrepr", "") or "")
+
+    raw_lines = []
+    with open(failing_path) as f:
+        for line in f:
+            raw_lines.append(line.rstrip("\n"))
+    entries = [l.strip() for l in raw_lines if l.strip() and not l.strip().startswith("#")]
+    entry_by_norm = {_normalize_node_id(e): e for e in entries}
+
+    flaky_norm = set()
+    if flaky_path and os.path.exists(flaky_path):
+        with open(flaky_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    flaky_norm.add(_normalize_node_id(line))
+
+    added, removed, kept_errored, skipped_flaky = [], [], [], []
+    for norm, outcome in sorted(outcomes.items()):
+        if outcome not in ("failed", "error"):
+            continue
+        if norm in entry_by_norm:
+            # Listed + failed = XPASS(strict) in the gate. A listed test can
+            # also 'error' outside the call phase (xfail does not cover setup
+            # errors) — keep those and let a human look.
+            detail = details.get(norm, "")
+            if outcome == "error" and "XPASS" not in detail:
+                kept_errored.append(norm)
+            else:
+                removed.append(norm)
+        elif norm in flaky_norm:
+            skipped_flaky.append(norm)
+        else:
+            added.append(norm)
+
+    uncollected = [norm for norm in entry_by_norm if norm not in outcomes]
+    pruned = uncollected if prune_uncollected else []
+
+    drop = {entry_by_norm[n] for n in removed}
+    drop.update(entry_by_norm[n] for n in pruned)
+    new_lines = [l for l in raw_lines if l.strip() not in drop]
+
+    if added:
+        # Preserve the file's dominant entry style: prefixed (backend-gate
+        # style) vs bare rootdir-relative (report style).
+        prefixed = sum(1 for e in entries if _normalize_node_id(e) != e)
+        style_prefix = ""
+        if entries and prefixed > len(entries) / 2:
+            sample = next(e for e in entries if _normalize_node_id(e) != e)
+            style_prefix = sample[: len(sample) - len(_normalize_node_id(sample))]
+        while new_lines and not new_lines[-1].strip():
+            new_lines.pop()
+        new_lines.append("")
+        new_lines.append("# --- added by functional_gate.py reconcile ---")
+        new_lines.extend(style_prefix + n for n in added)
+
+    return {
+        "lines": new_lines,
+        "added": added,
+        "removed": removed,
+        "uncollected": uncollected,
+        "pruned": pruned,
+        "kept_errored": kept_errored,
+        "skipped_flaky": skipped_flaky,
+        "flaky_passes": sorted(n for n, o in outcomes.items()
+                               if o == "xpassed" and n in flaky_norm),
+    }
+
+
+def cmd_reconcile(args):
+    result = reconcile_failing_list(args.report, args.failing, args.flaky,
+                                    prune_uncollected=args.prune_uncollected)
+    out_path = args.out or args.failing
+    with open(out_path, "w", newline="\n") as f:
+        f.write("\n".join(result["lines"]) + "\n")
+
+    print(f"Reconciled {args.failing} from {args.report} -> {out_path}")
+    print(f"  added (new failures):          {len(result['added'])}")
+    print(f"  removed (XPASS strict):        {len(result['removed'])}")
+    print(f"  uncollected list entries:      {len(result['uncollected'])}"
+          + ("  [pruned]" if args.prune_uncollected else "  [kept — use --prune-uncollected]"))
+    if result["kept_errored"]:
+        print(f"  KEPT listed-but-errored (inspect manually): {len(result['kept_errored'])}")
+        for n in result["kept_errored"]:
+            print(f"    {n}")
+    if result["skipped_flaky"]:
+        print(f"  SKIPPED failures already on the flaky list (would overlap): {len(result['skipped_flaky'])}")
+        for n in result["skipped_flaky"]:
+            print(f"    {n}")
+    if result["flaky_passes"]:
+        print(f"  flaky-list entries that passed this run (pruning candidates): {len(result['flaky_passes'])}")
     return 0
 
 
@@ -1141,6 +1395,52 @@ def main():
     shard_parser.add_argument("--output", default="",
                               help="Write node IDs (one per line) to this file instead of stdout")
 
+    # shard-collection: like shard-allowlist, but shards a pytest collection
+    # manifest (the full suite) instead of the allowlist.
+    shard_coll_parser = subparsers.add_parser(
+        "shard-collection",
+        help="Print the collected test node IDs for one shard (round-robin split of a manifest)")
+    shard_coll_parser.add_argument("--manifest", required=True,
+                                   help="Path to a collection manifest (pytest --collect-only -q output)")
+    shard_coll_parser.add_argument("--num-shards", type=int, required=True, help="Total number of shards")
+    shard_coll_parser.add_argument("--shard-id", type=int, required=True,
+                                   help="This shard's index [0, num-shards)")
+    shard_coll_parser.add_argument("--prefix", default="",
+                                   help="String prepended to each node ID (e.g. 'docdb_functional_tests/documentdb_tests/')")
+    shard_coll_parser.add_argument("--strip-prefix", default="",
+                                   help="Prefix stripped from each manifest node ID before sharding "
+                                        "(pass the same value as --prefix to make prefixing idempotent)")
+    shard_coll_parser.add_argument("--output", default="",
+                                   help="Write node IDs (one per line) to this file instead of stdout")
+
+    # report-failures: node IDs with a failed/error outcome (re-run + gate set)
+    report_fail_parser = subparsers.add_parser(
+        "report-failures",
+        help="Print node IDs that failed/errored in a JSON report (re-run set; any residual = gate fail)")
+    report_fail_parser.add_argument("--report", required=True, help="Path to pytest JSON report")
+    report_fail_parser.add_argument("--strip-prefix", default="",
+                                    help="Prefix stripped from each node ID before output")
+    report_fail_parser.add_argument("--output", default="",
+                                    help="Write node IDs (one per line) to this file instead of stdout")
+
+    # reconcile: fold a gate run's outcomes back into a known-failures list
+    reconcile_parser = subparsers.add_parser(
+        "reconcile",
+        help="Update a known-failures list from a (merged) JSON report: add new "
+             "failures, drop XPASS(strict) entries (used after a source_sha bump)")
+    reconcile_parser.add_argument("--report", required=True,
+                                  help="Path to the merged pytest JSON report of a gate run")
+    reconcile_parser.add_argument("--failing", required=True,
+                                  help="Path to the known-failures list to reconcile")
+    reconcile_parser.add_argument("--flaky", default="",
+                                  help="Path to the flaky list (new failures already on it are "
+                                       "skipped so the plugin's overlap check cannot throw)")
+    reconcile_parser.add_argument("--out", default="",
+                                  help="Write the updated list here (default: rewrite --failing in place)")
+    reconcile_parser.add_argument("--prune-uncollected", action="store_true",
+                                  help="Also drop list entries whose test no longer exists in the "
+                                       "report (only safe when reconciling from a FULL-suite run)")
+
     args = parser.parse_args()
 
     if args.command == "validate-config":
@@ -1157,6 +1457,12 @@ def main():
         return cmd_merge_reports(args)
     elif args.command == "shard-allowlist":
         return cmd_shard_allowlist(args)
+    elif args.command == "shard-collection":
+        return cmd_shard_collection(args)
+    elif args.command == "report-failures":
+        return cmd_report_failures(args)
+    elif args.command == "reconcile":
+        return cmd_reconcile(args)
 
 
 if __name__ == "__main__":

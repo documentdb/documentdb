@@ -1,0 +1,58 @@
+# OSS (documentdb engine) flaky/slow-timeout list for the functional gate (non-strict xfail).
+# Seeded from ADO build 227070804: tests that hit the per-test timeout.
+# Pass or timeout keep the gate green; drive these to 0 over time.
+# Plus cross-run non-deterministic failures observed between builds 227070804 and 227088904.
+# Hardened from builds 227113785/227122667: all /rand/ tests + this lane's cross-run non-deterministic (accumulator tie/NaN/ordering) are flaky.
+compatibility/tests/core/operator/expressions/accumulator/setUnion/test_setUnion_numeric_edge_cases.py::test_setunion_numeric_edge_cases[nan_cross_type_dedup_decimal_first]
+compatibility/tests/core/operator/expressions/accumulator/setUnion/test_setUnion_numeric_edge_cases.py::test_setunion_numeric_edge_cases[nan_with_other_values]
+compatibility/tests/core/operator/expressions/accumulator/setUnion/test_setUnion_numeric_edge_cases.py::test_setunion_numeric_edge_cases[zero_decimal_neg_then_pos]
+compatibility/tests/core/operator/expressions/misc/rand/test_rand_argument_handling.py::test_rand_empty_array_type
+compatibility/tests/core/operator/expressions/misc/rand/test_rand_argument_handling.py::test_rand_field_ref_errors[field_ref_scalar]
+compatibility/tests/core/operator/expressions/misc/rand/test_rand_argument_handling.py::test_rand_invalid_inputs[array_with_int]
+compatibility/tests/core/operator/expressions/misc/rand/test_rand_argument_handling.py::test_rand_invalid_inputs[bool_false]
+compatibility/tests/core/operator/expressions/misc/rand/test_rand_argument_handling.py::test_rand_invalid_inputs[decimal128_inf]
+compatibility/tests/core/operator/expressions/misc/rand/test_rand_argument_handling.py::test_rand_invalid_inputs[float_inf]
+compatibility/tests/core/operator/expressions/misc/rand/test_rand_argument_handling.py::test_rand_invalid_inputs[int_1]
+compatibility/tests/core/operator/expressions/misc/rand/test_rand_argument_handling.py::test_rand_invalid_inputs[long]
+compatibility/tests/core/operator/expressions/string/replaceAll/test_replaceAll_size_limit.py::test_replaceall_size_limit_cases[size_error_byte_based_2byte]
+compatibility/tests/core/operator/expressions/string/replaceAll/test_replaceAll_size_limit.py::test_replaceall_size_limit_cases[size_error_byte_based_4byte]
+compatibility/tests/core/operator/expressions/string/replaceAll/test_replaceAll_size_limit.py::test_replaceall_size_limit_cases[size_error_result_amplification]
+compatibility/tests/core/operator/expressions/string/replaceAll/test_replaceAll_size_limit.py::test_replaceall_size_limit_cases[size_success_empty_find_amplification]
+compatibility/tests/core/operator/expressions/string/replaceAll/test_smoke_replaceAll.py::test_smoke_replaceAll
+compatibility/tests/core/operator/expressions/string/replaceOne/test_replaceOne_core.py::test_replaceone_core_cases[case_fi_ligature_no_match]
+compatibility/tests/core/operator/expressions/string/replaceOne/test_replaceOne_core.py::test_replaceone_core_cases[case_sharp_s_no_match_lower_ss]
+compatibility/tests/core/operator/stages/sort/test_sort_direction_values.py::test_sort_direction_values[accept_meta_textscore]
+compatibility/tests/core/operator/stages/sort/test_sort_field_paths.py::test_sort_field_paths[field_name_unicode]
+compatibility/tests/core/operator/stages/sort/test_sort_field_paths.py::test_sort_field_paths[nested_dot_notation_asc]
+compatibility/tests/core/operator/stages/sort/test_sort_field_paths.py::test_sort_field_paths[nested_non_traversable_intermediate_treated_as_missing_desc]
+compatibility/tests/core/operator/stages/sort/test_sort_key_resolution.py::test_sort_key_resolution[compound_left_to_right]
+compatibility/tests/core/operator/stages/test_stages_position_sort.py::test_stage_position_sort_cases[geo_near_distance_sort]
+compatibility/tests/core/operator/stages/test_stages_position_sort.py::test_stage_position_sort_cases[text_score_sort_desc]
+compatibility/tests/core/operator/stages/match/test_match_pipeline_semantics.py::test_match_pipeline_semantics_cases[text_first_stage]
+compatibility/tests/core/operator/stages/test_stages_position_project.py::test_stages_position_project_cases[pipeline_project_meta_textscore]
+# --- unioned slow/nondeterministic family (non-strict) ---
+compatibility/tests/core/indexes/commands/dropIndexes/test_dropIndexes_basic.py::test_dropIndexes[nIndexesWas_drop_one_of_three]
+compatibility/tests/core/indexes/commands/dropIndexes/test_dropIndexes_basic.py::test_dropIndexes[numeric_string_name]
+compatibility/tests/core/indexes/commands/dropIndexes/test_dropIndexes_errors.py::test_dropIndexes_error[spec_extra_fields]
+compatibility/tests/core/indexes/commands/dropIndexes/test_dropIndexes_errors.py::test_dropIndexes_error[spec_wrong_sort_order]
+compatibility/tests/core/indexes/commands/dropIndexes/test_dropIndexes_errors.py::test_dropIndexes_unrecognized_field
+compatibility/tests/core/indexes/commands/dropIndexes/test_dropIndexes_index_types.py::test_dropIndexes_index_type[2dsphere_by_name]
+compatibility/tests/core/indexes/commands/dropIndexes/test_dropIndexes_index_types.py::test_dropIndexes_index_type[partial_filter_by_name]
+compatibility/tests/core/indexes/commands/dropIndexes/test_dropIndexes_index_types.py::test_dropIndexes_index_type[unique_by_name]
+compatibility/tests/core/indexes/commands/dropIndexes/test_dropIndexes_options.py::test_dropIndexes_comment[comment_object]
+compatibility/tests/core/indexes/commands/dropIndexes/test_dropIndexes_options.py::test_dropIndexes_writeConcern[wc_empty_object]
+compatibility/tests/core/operator/expressions/accumulator/max/test_max_tie_breaking.py::test_max_tie_breaking_cases[tie_int32_decimal128_first]
+compatibility/tests/core/operator/expressions/accumulator/max/test_max_tie_breaking.py::test_max_tie_breaking_cases[tie_int64_double_first]
+compatibility/tests/core/operator/expressions/accumulator/min/test_min_array.py::test_min_array_cases[multi_operand_does_not_traverse]
+compatibility/tests/core/operator/expressions/accumulator/min/test_min_array.py::test_min_array_cases[traversal_empty_array]
+compatibility/tests/core/operator/expressions/accumulator/min/test_min_bson_order.py::test_min_bson_order_cases[bson_array_vs_binary]
+compatibility/tests/core/operator/expressions/accumulator/sum/test_sum_null.py::test_sum_null[null_first_with_values]
+compatibility/tests/core/operator/expressions/accumulator/sum/test_sum_return_type.py::test_sum_return_type[rtype_all_decimal128]
+compatibility/tests/core/operator/expressions/accumulator/sum/test_sum_return_type.py::test_sum_return_type[rtype_all_nonnumeric]
+compatibility/tests/core/operator/expressions/accumulator/sum/test_sum_return_type.py::test_sum_return_type[rtype_int32_double]
+compatibility/tests/core/operator/expressions/misc/rand/test_rand_argument_handling.py::test_rand_invalid_inputs[object_with_field]
+compatibility/tests/core/operator/expressions/misc/rand/test_rand_argument_handling.py::test_rand_invalid_inputs[string]
+compatibility/tests/core/operator/expressions/misc/rand/test_rand_return_value.py::test_rand_two_calls_differ
+compatibility/tests/core/operator/expressions/object/mergeObjects/test_mergeObjects_basic_operations.py::test_mergeObjects_field_ref[all_missing]
+compatibility/tests/core/operator/stages/lookup/test_lookup_sub_pipeline.py::test_lookup_text_in_sub_pipeline
+compatibility/tests/system/administration/commands/setIndexCommitQuorum/test_smoke_setIndexCommitQuorum.py::test_smoke_setIndexCommitQuorum

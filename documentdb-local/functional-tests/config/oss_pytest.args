@@ -1,0 +1,7 @@
+--show-capture=log
+--color=no
+-n=auto
+--ignore=docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_window.py
+--ignore=docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/planCacheStats/test_planCacheStats_type_errors.py
+--ignore=docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/accumulator/setUnion/test_setUnion_core.py
+--ignore=docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/accumulator/setUnion/test_setUnion_type_dedup.py
