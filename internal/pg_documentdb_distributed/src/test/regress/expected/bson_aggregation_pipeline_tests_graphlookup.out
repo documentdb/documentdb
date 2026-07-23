@@ -336,13 +336,13 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIn
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
-\d+ documentdb_data.documents_9123;
-                              Table "documentdb_data.documents_9123"
-     Column      |  Type  | Collation | Nullable | Default | Storage  | Stats target | Description 
+\d documentdb_data.documents_9123;
+          Table "documentdb_data.documents_9123"
+     Column      |  Type  | Collation | Nullable | Default 
 ---------------------------------------------------------------------
- shard_key_value | bigint |           | not null |         | plain    |              | 
- object_id       | bson   |           | not null |         | extended |              | 
- document        | bson   |           | not null |         | extended |              | 
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
 Indexes:
     "collection_pk_9123" PRIMARY KEY, btree (shard_key_value, object_id)
     "documents_rum_index_9127" documentdb_rum (document bson_rum_single_path_ops (path='userName', tl='2691'), document bson_rum_single_path_ops (path=interests, tl='2691'))

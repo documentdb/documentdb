@@ -262,8 +262,10 @@ EXECUTE q1( 'db', 'queryOperatorParameterized', bson_json_to_bson('{ "a.b": { "$
  BSONHEX0b00000010000c00000000 | BSONHEX85000000105f6964000c00000004610074000000033000220000000462001a000000103000ffffffff10310001000000103200020000000000033100220000000462001a0000001030000000000010310001000000103200020000000000033200220000000462001a00000010300000000000103100010000001032000700000000000000
 (4 rows)
 
-EXPLAIN (COSTS OFF) EXECUTE q1( 'db', 'queryOperatorParameterized', bson_json_to_bson('{ "a.b": { "$eq" : 1 }}'));
-                                                    QUERY PLAN                                                     
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) EXECUTE q1( 'db', 'queryOperatorParameterized', bson_json_to_bson('{ "a.b": { "$eq" : 1 }}'))
+$cmd$);
+                                               run_explain_and_trim                                                
 ---------------------------------------------------------------------
  Seq Scan on documents_6640
    Filter: ((document #= 'BSONHEX0e00000010612e62000100000000'::bsonquery) AND (shard_key_value = '6640'::bigint))
@@ -271,8 +273,10 @@ EXPLAIN (COSTS OFF) EXECUTE q1( 'db', 'queryOperatorParameterized', bson_json_to
 
 ROLLBACK;
 -- run an explain analyze
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) EXECUTE q1( 'db', 'queryOperatorParameterized', '{ "a.b": { "$eq" : 1 }}');
-                                                    QUERY PLAN                                                    
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) EXECUTE q1( 'db', 'queryOperatorParameterized', '{ "a.b": { "$eq" : 1 }}')
+$cmd$);
+                                               run_explain_and_trim                                               
 ---------------------------------------------------------------------
  Seq Scan on documents_6640 (actual rows=4 loops=1)
    Filter: ((document #= '{ "a.b" : { "$numberInt" : "1" } }'::bsonquery) AND (shard_key_value = '6640'::bigint))
@@ -280,8 +284,10 @@ EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) EXECUTE q1( 'db', 'quer
 (3 rows)
 
 PREPARE q2(text, text, bson, bson) AS SELECT document FROM documentdb_api.collection($1, $2) WHERE document OPERATOR(documentdb_api_catalog.@@) $3 ORDER BY documentdb_api_catalog.bson_orderby(document, $4) DESC;
-EXPLAIN (COSTS OFF) EXECUTE q2( 'db', 'queryOperatorParameterized', '{ "a.b" : { "$gt": 0 } }', '{ "a.b": -1 }');
-                                                       QUERY PLAN                                                       
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) EXECUTE q2( 'db', 'queryOperatorParameterized', '{ "a.b" : { "$gt": 0 } }', '{ "a.b": -1 }')
+$cmd$);
+                                                  run_explain_and_trim                                                  
 ---------------------------------------------------------------------
  Sort
    Sort Key: (bson_orderby(document, '{ "a.b" : { "$numberInt" : "-1" } }'::bson)) DESC
@@ -291,8 +297,10 @@ EXPLAIN (COSTS OFF) EXECUTE q2( 'db', 'queryOperatorParameterized', '{ "a.b" : {
 
 BEGIN;
 set local citus.enable_local_execution to off;
-EXPLAIN (COSTS OFF) EXECUTE q2( 'db', 'queryOperatorParameterized', '{ "a.b" : { "$gt": 0 } }', '{ "a.b": -1 }');
-                                                       QUERY PLAN                                                       
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) EXECUTE q2( 'db', 'queryOperatorParameterized', '{ "a.b" : { "$gt": 0 } }', '{ "a.b": -1 }')
+$cmd$);
+                                                  run_explain_and_trim                                                  
 ---------------------------------------------------------------------
  Sort
    Sort Key: (bson_orderby(document, '{ "a.b" : { "$numberInt" : "-1" } }'::bson)) DESC

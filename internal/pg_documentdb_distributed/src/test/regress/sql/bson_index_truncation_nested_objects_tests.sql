@@ -128,7 +128,7 @@ SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documen
 -- wild card
 SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documentdb_distributed_test_helpers.gin_bson_get_single_path_generated_terms('{"_id": 1, "ikey" : { "a" : ["abcdefghijklmonpqrstuvwsyz"]}}', 'ikey', true, true, true, 50) term;
 SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documentdb_distributed_test_helpers.gin_bson_get_single_path_generated_terms('{"_id": 2, "ikey" : { "a" : [1]}}', 'ikey', true, true, true, 50) term;
-SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documentdb_distributed_test_helpers.gin_bson_get_single_path_generated_terms('{"_id": 3, "ikey" : { "a" : [{ "$numberDecimal" : "1234567891011" }]]}}', 'ikey', true, true, true, 50) term;
+SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documentdb_distributed_test_helpers.gin_bson_get_single_path_generated_terms('{"_id": 3, "ikey" : { "a" : [{ "$numberDecimal" : "1234567891011" }]}}', 'ikey', true, true, true, 50) term;
 SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documentdb_distributed_test_helpers.gin_bson_get_single_path_generated_terms('{"_id": 3, "ikey" : { "a" : [true]}}', 'ikey', true, true, true, 50) term;
 
 SELECT length(bson_dollar_project(term, '{ "t": 0 }')::bytea), term FROM documentdb_distributed_test_helpers.gin_bson_get_single_path_generated_terms('{"_id": 1, "ikey" : { "a" : ["abcdefghijklmonpqrstuvwsyz"]}}', 'ikey', true, true, true, 35) term;
@@ -149,7 +149,7 @@ SELECT documentdb_api.insert_one('db', 'index_truncation_tests_nested_documents'
 SELECT documentdb_api.insert_one('db', 'index_truncation_tests_nested_documents', '{ "_id": 2, "ikey": { "a" : [1]} }');
 SELECT documentdb_api.insert_one('db', 'index_truncation_tests_nested_documents', '{ "_id": 3, "ikey": { "a" : [{ "$numberDecimal" : "1234567891011" }]} }');
 SELECT documentdb_api.insert_one('db', 'index_truncation_tests_nested_documents', '{ "_id": 4, "ikey": { "a" : [true]} }');
-SELECT documentdb_api.insert_one('db', 'index_truncation_tests_nested_documents', '{ "_id": 5, "ikey": { "a" : [[]}] }');
+SELECT documentdb_api.insert_one('db', 'index_truncation_tests_nested_documents', '{ "_id": 5, "ikey": { "a" : [[]]} }');
 SELECT documentdb_api.insert_one('db', 'index_truncation_tests_nested_documents', '{ "_id": 6, "ikey": { "a" : [{}]} }');
 
 SELECT document FROM documentdb_api.collection('db', 'index_truncation_tests_nested_documents') WHERE document @@ '{ "ikey.a": { "$gt": [1] } }';
@@ -497,6 +497,7 @@ SELECT document FROM bson_aggregation_find('db', '{ "find": "index_truncation_te
 
 -- 5. Index usage explain
 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN(ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('db', '{ "find": "index_truncation_tests_nested", "filter": { "itemData": { "$eq": 
 
     {
@@ -520,7 +521,8 @@ EXPLAIN(ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT docu
         }
     }
 
-} }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "skip": 0, "limit": 5 }');
+} }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "skip": 0, "limit": 5 }')
+$cmd$);
 
 
 SELECT document FROM bson_aggregation_find('db', '{ "find": "index_truncation_tests_nested", "filter": { "itemData.largePathWithObject.option2": { "$eq": 
@@ -529,8 +531,10 @@ SELECT document FROM bson_aggregation_find('db', '{ "find": "index_truncation_te
 
 } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "skip": 0, "limit": 5 }');
 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN(ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('db', '{ "find": "index_truncation_tests_nested", "filter": { "itemData.largePathWithObject.option2": { "$eq": 
 
 "small-string1"
 
-} }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "skip": 0, "limit": 5 }');
+} }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "skip": 0, "limit": 5 }')
+$cmd$);

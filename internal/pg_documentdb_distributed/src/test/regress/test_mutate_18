@@ -1,46 +1,23 @@
-/^test:.*bson_aggregation_pipeline_tests_maxmin_group/d
+/^test: bson_aggregation_pipeline_tests_maxmin_group/d
 /^test: bson_aggregation_cursor_tests_pk_cursors$/d
-/^test: bson_collation_index_tests$/d
-/^test: bson_collation_index_unique_pfe_tests$/d
-/^test: bson_collation_composite_index_tests$/d
-/^test: bson_collation_composite_index_unique_pfe_tests$/d
 /^test: create_indexes_cosmos_vector /d
 /^test: bson_query_operator_geospatial_tests_explain_index$/d
 /^test: bson_query_operator_geospatial_tests_explain_runtime$/d
 s/ bson_aggregation_pipeline_stage_densify//
 s/ bson_aggregation_pipeline_stage_fill//
-/^test:.*bson_aggregation_pipeline_tests_bucket_auto/d
+/^test: bson_aggregation_pipeline_tests_bucket_auto/d
 s/ bson_aggregation_date_operators_tests//
-s/ bson_aggregation_pipeline_tests_graphlookup//
-s/ bson_aggregation_pipeline_tests_pg16//
 s/ bson_aggregation_stage_inversematch_tests//
-/^test: bson_sort_index_pushdown$/d
-s/ bson_selectivity_index_tests//
 s/ query_sharding_tests//
-s/ bson_composite_prefer_ordered_tests//
 s/commands_delete //
 s/ bson_aggregation_stage_lookup_tests_pg17\\b//
-s/ commands_create_indexes_wp//
-s/ bson_query_operator_tests_parameterized//
-s/bson_hash_indexes //
 s/ bson_unique_index_composite//
-s/ bson_aggregation_pipeline_tests_point_read//
 s/ commands_shard_collection//
 s/ commands_update\\b//
-s/commands_create_indexes_pfe_b //
 s/ commands_create_indexes_pfe_a//
-/^test:.*bson_aggregation_count_query_tests/d
-s/ bson_aggregation_pipeline_tests_vector_hnsw\\b//
-s/bson_aggregation_pipeline_tests_vector_ivf //
-s/ bson_aggregation_pipeline_tests_vector_hnsw_planner//
-s/ bson_composite_pfe_order_by_index_tests//
+/^test: bson_aggregation_count_query_tests/d
 s/ bson_aggregation_stage_lookup_tests_pg17_composite//
-s/commands_create_ttl_indexes //
-s/ bson_index_truncation_nested_objects_tests//
 s/ bson_aggregation_pipeline_stage_setWindowFields//
-s/ bson_hashed_aggregates_tests//
 s/cursors_basic_support //
 s/ commands_update_txn_proc//
 /^test: command_compact$/d
-s/bson_composite_order_by_index_tests_indexterm//
-s/bson_composite_order_by_index_tests//

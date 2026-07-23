@@ -19,19 +19,19 @@ SELECT documentdb_api.list_indexes_cursor_first_page('db','{ "listIndexes": "que
 -- Explain various hash index scenarios.
 BEGIN;
 set local enable_seqscan to off;
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryhashindex') WHERE bson_dollar_eq(document, '{ "a.b": 1 }');
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryhashindex') WHERE bson_dollar_in(document, '{ "a.b": [ 1, 2, true ]}'::bson);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryhashindex') WHERE bson_dollar_eq(document, '{ "a.b": 1 }')$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryhashindex') WHERE bson_dollar_in(document, '{ "a.b": [ 1, 2, true ]}'::bson)$$);
 
 -- these should not use the index.
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryhashindex') WHERE bson_dollar_ne(document, '{ "a.b": 1 }');
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryhashindex') WHERE bson_dollar_gt(document, '{ "a.b": 1 }');
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryhashindex') WHERE bson_dollar_gte(document, '{ "a.b": 1 }');
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryhashindex') WHERE bson_dollar_lt(document, '{ "a.b": 1 }');
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryhashindex') WHERE bson_dollar_lte(document, '{ "a.b": 1 }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryhashindex') WHERE bson_dollar_ne(document, '{ "a.b": 1 }')$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryhashindex') WHERE bson_dollar_gt(document, '{ "a.b": 1 }')$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryhashindex') WHERE bson_dollar_gte(document, '{ "a.b": 1 }')$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryhashindex') WHERE bson_dollar_lt(document, '{ "a.b": 1 }')$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryhashindex') WHERE bson_dollar_lte(document, '{ "a.b": 1 }')$$);
 
 -- null can be pushed down.
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryhashindex') WHERE bson_dollar_eq(document, '{ "a.b": null }');
-EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryhashindex') WHERE bson_dollar_in(document, '{ "a.b": [ 1, 2, null ]}'::bson);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryhashindex') WHERE bson_dollar_eq(document, '{ "a.b": null }')$$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (COSTS OFF) SELECT object_id, document FROM documentdb_api.collection('db', 'queryhashindex') WHERE bson_dollar_in(document, '{ "a.b": [ 1, 2, null ]}'::bson)$$);
 
 -- now insert some documents and run the queries above.
 SELECT documentdb_api.insert_one('db', 'queryhashindex', '{ "a": { "b": 1 } }');

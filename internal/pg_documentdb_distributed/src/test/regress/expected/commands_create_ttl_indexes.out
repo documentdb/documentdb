@@ -1058,11 +1058,13 @@ END;
 VACUUM (INDEX_CLEANUP OFF) documentdb_data.documents_20006;
 --  Check the query to fetch the eligible TTL indexes uses IndexScan.
 BEGIN;
-EXPLAIN(analyze on, verbose on, costs off, timing off, summary off) SELECT ctid FROM documentdb_data.documents_20006_2000105
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN(analyze on, verbose on, costs off, timing off, summary off, buffers off) SELECT ctid FROM documentdb_data.documents_20006_2000105
                 WHERE bson_dollar_lt(document, '{ "ttl" : { "$date" : { "$numberLong" : "1754515365000" } } }'::documentdb_core.bson)
                 AND documentdb_api_internal.bson_dollar_index_hint(document, 'ttl_index'::text, '{"key": {"ttl": 1}}'::documentdb_core.bson, true)
-        LIMIT 100;
-                                                              QUERY PLAN                                                               
+        LIMIT 100
+$cmd$);
+                                                         run_explain_and_trim                                                          
 ---------------------------------------------------------------------
  Limit (actual rows=100 loops=1)
    Output: ctid
@@ -1111,11 +1113,13 @@ SELECT count(*) from ( SELECT shard_key_value, object_id, document  from documen
 
 --  Check for Ordered Indes Scan on the ttl index 
 BEGIN;
-EXPLAIN(analyze on, verbose on, costs off, timing off, summary off) SELECT ctid FROM documentdb_data.documents_20006_2000124
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN(analyze on, verbose on, costs off, timing off, summary off, buffers off) SELECT ctid FROM documentdb_data.documents_20006_2000124
                 WHERE bson_dollar_lt(document, '{ "ttl" : { "$date" : { "$numberLong" : "1657900030775" } } }'::documentdb_core.bson)
                 AND documentdb_api_internal.bson_dollar_index_hint(document, 'ttl_index'::text, '{"key": {"ttl": 1}}'::documentdb_core.bson, true)
-        LIMIT 100;
-                                                              QUERY PLAN                                                               
+        LIMIT 100
+$cmd$);
+                                                         run_explain_and_trim                                                          
 ---------------------------------------------------------------------
  Limit (actual rows=100 loops=1)
    Output: ctid
@@ -1137,11 +1141,13 @@ EXPLAIN(analyze on, verbose on, costs off, timing off, summary off) SELECT ctid 
 END;
 BEGIN;
 SET client_min_messages TO INFO;
-EXPLAIN(COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT ctid FROM documentdb_data.documents_20006_2000122
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN(COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT ctid FROM documentdb_data.documents_20006_2000122
                 WHERE bson_dollar_lt(document, '{ "ttl" : { "$date" : { "$numberLong" : "1657900030775" } } }'::documentdb_core.bson)
                 AND documentdb_api_internal.bson_dollar_index_hint(document, 'ttl_index'::text, '{"key": {"ttl": 1}}'::documentdb_core.bson, true)
-        LIMIT 100;
-                                                             QUERY PLAN                                                             
+        LIMIT 100
+$cmd$);
+                                                        run_explain_and_trim                                                        
 ---------------------------------------------------------------------
  Limit (actual rows=100 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
@@ -1185,15 +1191,17 @@ set local enable_seqscan to off;
 SET LOCAL enable_bitmapscan to off;
 SET client_min_messages TO INFO;
 -- Check ORDER BY uses index 
-EXPLAIN(COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) 
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN(COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) 
     SELECT ctid FROM documentdb_data.documents_20006_2000122
         WHERE 
         bson_dollar_lt(document, '{ "ttl" : { "$date" : { "$numberLong" : "1657900030775" } } }'::documentdb_core.bson) AND
         documentdb_api_internal.bson_dollar_index_hint(document, 'ttl_index'::text, '{"key": {"ttl": 1}}'::documentdb_core.bson, true) AND
         documentdb_api_internal.bson_dollar_fullscan(document, '{ "ttl" : -1 }'::documentdb_core.bson)
         ORDER BY documentdb_api_catalog.bson_orderby(document, '{ "ttl" : -1}'::documentdb_core.bson)
-        LIMIT 100;
-                                                             QUERY PLAN                                                             
+        LIMIT 100
+$cmd$);
+                                                        run_explain_and_trim                                                        
 ---------------------------------------------------------------------
  Limit (actual rows=100 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
@@ -1230,13 +1238,13 @@ NOTICE:  creating collection
 (1 row)
 
 END;
-\d+ documentdb_data.documents_20008;
-                              Table "documentdb_data.documents_20008"
-     Column      |  Type  | Collation | Nullable | Default | Storage  | Stats target | Description 
+\d documentdb_data.documents_20008;
+          Table "documentdb_data.documents_20008"
+     Column      |  Type  | Collation | Nullable | Default 
 ---------------------------------------------------------------------
- shard_key_value | bigint |           | not null |         | plain    |              | 
- object_id       | bson   |           | not null |         | extended |              | 
- document        | bson   |           | not null |         | extended |              | 
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
 Indexes:
     "collection_pk_20008" PRIMARY KEY, btree (shard_key_value, object_id)
     "documents_rum_index_20028" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=ttl))
@@ -1253,13 +1261,13 @@ NOTICE:  creating collection
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
-\d+ documentdb_data.documents_20009;
-                              Table "documentdb_data.documents_20009"
-     Column      |  Type  | Collation | Nullable | Default | Storage  | Stats target | Description 
+\d documentdb_data.documents_20009;
+          Table "documentdb_data.documents_20009"
+     Column      |  Type  | Collation | Nullable | Default 
 ---------------------------------------------------------------------
- shard_key_value | bigint |           | not null |         | plain    |              | 
- object_id       | bson   |           | not null |         | extended |              | 
- document        | bson   |           | not null |         | extended |              | 
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
 Indexes:
     "collection_pk_20009" PRIMARY KEY, btree (shard_key_value, object_id)
     "documents_rum_index_20030" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691'))
@@ -1278,13 +1286,13 @@ NOTICE:  creating collection
 (1 row)
 
 END;
-\d+ documentdb_data.documents_20010;
-                              Table "documentdb_data.documents_20010"
-     Column      |  Type  | Collation | Nullable | Default | Storage  | Stats target | Description 
+\d documentdb_data.documents_20010;
+          Table "documentdb_data.documents_20010"
+     Column      |  Type  | Collation | Nullable | Default 
 ---------------------------------------------------------------------
- shard_key_value | bigint |           | not null |         | plain    |              | 
- object_id       | bson   |           | not null |         | extended |              | 
- document        | bson   |           | not null |         | extended |              | 
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
 Indexes:
     "collection_pk_20010" PRIMARY KEY, btree (shard_key_value, object_id)
     "documents_rum_index_20032" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691'))
@@ -1303,13 +1311,13 @@ NOTICE:  creating collection
 (1 row)
 
 END;
-\d+ documentdb_data.documents_20011;
-                              Table "documentdb_data.documents_20011"
-     Column      |  Type  | Collation | Nullable | Default | Storage  | Stats target | Description 
+\d documentdb_data.documents_20011;
+          Table "documentdb_data.documents_20011"
+     Column      |  Type  | Collation | Nullable | Default 
 ---------------------------------------------------------------------
- shard_key_value | bigint |           | not null |         | plain    |              | 
- object_id       | bson   |           | not null |         | extended |              | 
- document        | bson   |           | not null |         | extended |              | 
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
 Indexes:
     "collection_pk_20011" PRIMARY KEY, btree (shard_key_value, object_id)
     "documents_rum_index_20034" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691'))
@@ -1328,13 +1336,13 @@ NOTICE:  creating collection
 (1 row)
 
 END;
-\d+ documentdb_data.documents_20012;
-                              Table "documentdb_data.documents_20012"
-     Column      |  Type  | Collation | Nullable | Default | Storage  | Stats target | Description 
+\d documentdb_data.documents_20012;
+          Table "documentdb_data.documents_20012"
+     Column      |  Type  | Collation | Nullable | Default 
 ---------------------------------------------------------------------
- shard_key_value | bigint |           | not null |         | plain    |              | 
- object_id       | bson   |           | not null |         | extended |              | 
- document        | bson   |           | not null |         | extended |              | 
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
 Indexes:
     "collection_pk_20012" PRIMARY KEY, btree (shard_key_value, object_id)
     "documents_rum_index_20036" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691'))
@@ -1352,13 +1360,13 @@ NOTICE:  creating collection
 (1 row)
 
 END;
-\d+ documentdb_data.documents_20013;
-                              Table "documentdb_data.documents_20013"
-     Column      |  Type  | Collation | Nullable | Default | Storage  | Stats target | Description 
+\d documentdb_data.documents_20013;
+          Table "documentdb_data.documents_20013"
+     Column      |  Type  | Collation | Nullable | Default 
 ---------------------------------------------------------------------
- shard_key_value | bigint |           | not null |         | plain    |              | 
- object_id       | bson   |           | not null |         | extended |              | 
- document        | bson   |           | not null |         | extended |              | 
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
 Indexes:
     "collection_pk_20013" PRIMARY KEY, btree (shard_key_value, object_id)
     "documents_rum_index_20038" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691'))
@@ -1378,13 +1386,13 @@ NOTICE:  creating collection
 (1 row)
 
 END;
-\d+ documentdb_data.documents_20014;
-                              Table "documentdb_data.documents_20014"
-     Column      |  Type  | Collation | Nullable | Default | Storage  | Stats target | Description 
+\d documentdb_data.documents_20014;
+          Table "documentdb_data.documents_20014"
+     Column      |  Type  | Collation | Nullable | Default 
 ---------------------------------------------------------------------
- shard_key_value | bigint |           | not null |         | plain    |              | 
- object_id       | bson   |           | not null |         | extended |              | 
- document        | bson   |           | not null |         | extended |              | 
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
 Indexes:
     "collection_pk_20014" PRIMARY KEY, btree (shard_key_value, object_id)
     "documents_rum_index_20040" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=ttl))
@@ -1487,13 +1495,13 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIn
 
 END;
 -- Verify index is_ordered is false
-\d+ documentdb_data.documents_20015;
-                              Table "documentdb_data.documents_20015"
-     Column      |  Type  | Collation | Nullable | Default | Storage  | Stats target | Description 
+\d documentdb_data.documents_20015;
+          Table "documentdb_data.documents_20015"
+     Column      |  Type  | Collation | Nullable | Default 
 ---------------------------------------------------------------------
- shard_key_value | bigint |           | not null |         | plain    |              | 
- object_id       | bson   |           | not null |         | extended |              | 
- document        | bson   |           | not null |         | extended |              | 
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
 Indexes:
     "collection_pk_20015" PRIMARY KEY, btree (shard_key_value, object_id)
     "documents_rum_index_20042" documentdb_extended_rum (document documentdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=ttl))

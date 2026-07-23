@@ -67,8 +67,10 @@ SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "
  { "_id" : { "$numberInt" : "20" }, "a" : { "$numberInt" : "22" } }
 (20 rows)
 
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {}, "sort": {"_id": 1} }');
-                                        QUERY PLAN                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {}, "sort": {"_id": 1} }')
+$cmd$);
+                                   run_explain_and_trim                                   
 ---------------------------------------------------------------------
  Index Scan using _id_ on documents_964001_9640002 collection (actual rows=10000 loops=1)
    Index Cond: (shard_key_value = '964001'::bigint)
@@ -99,8 +101,10 @@ SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "
  { "_id" : { "$numberInt" : "9981" }, "a" : { "$numberInt" : "12" } }
 (20 rows)
 
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {}, "sort": {"_id": -1} }');
-                                            QUERY PLAN                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {}, "sort": {"_id": -1} }')
+$cmd$);
+                                       run_explain_and_trim                                        
 ---------------------------------------------------------------------
  Index Scan Backward using _id_ on documents_964001_9640002 collection (actual rows=10000 loops=1)
    Index Cond: (shard_key_value = '964001'::bigint)
@@ -164,15 +168,19 @@ SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "
  { "_id" : { "$numberInt" : "9981" }, "a" : { "$numberInt" : "12" } }
 (20 rows)
 
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"_id": {"$gt": 5}}, "sort": {"_id": 1} }');
-                                                                                     QUERY PLAN                                                                                      
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"_id": {"$gt": 5}}, "sort": {"_id": 1} }')
+$cmd$);
+                                                                                run_explain_and_trim                                                                                 
 ---------------------------------------------------------------------
  Index Scan using _id_ on documents_964001_9640002 collection (actual rows=9995 loops=1)
    Index Cond: ((shard_key_value = '964001'::bigint) AND (object_id > '{ "" : { "$numberInt" : "5" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
 (2 rows)
 
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"_id": {"$gt": 5}}, "sort": {"_id": -1} }');
-                                                                                     QUERY PLAN                                                                                      
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"_id": {"$gt": 5}}, "sort": {"_id": -1} }')
+$cmd$);
+                                                                                run_explain_and_trim                                                                                 
 ---------------------------------------------------------------------
  Index Scan Backward using _id_ on documents_964001_9640002 collection (actual rows=9995 loops=1)
    Index Cond: ((shard_key_value = '964001'::bigint) AND (object_id > '{ "" : { "$numberInt" : "5" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
@@ -204,8 +212,10 @@ SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "
  { "_id" : { "$numberInt" : "59" }, "a" : { "$numberInt" : "22" } }
 (20 rows)
 
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$eq": 22}}, "sort": {"_id": 1}, "limit": 20 }');
-                                         QUERY PLAN                                          
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$eq": 22}}, "sort": {"_id": 1}, "limit": 20 }')
+$cmd$);
+                                    run_explain_and_trim                                     
 ---------------------------------------------------------------------
  Limit (actual rows=20 loops=1)
    ->  Index Scan using _id_ on documents_964001_9640002 collection (actual rows=20 loops=1)
@@ -247,8 +257,10 @@ SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "
  { "_id" : { "$numberInt" : "58" }, "a" : { "$numberInt" : "14" } }
 (20 rows)
 
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$eq": 14}}, "sort": {"_id": 1}, "limit": 20 }');
-                                             QUERY PLAN                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$eq": 14}}, "sort": {"_id": 1}, "limit": 20 }')
+$cmd$);
+                                        run_explain_and_trim                                        
 ---------------------------------------------------------------------
  Limit (actual rows=20 loops=1)
    ->  Sort (actual rows=20 loops=1)
@@ -261,8 +273,10 @@ EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bs
                      Index Cond: (document @= '{ "a" : { "$numberInt" : "14" } }'::bson)
 (9 rows)
 
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$in": [12, 14]}}, "sort": {"_id": 1}, "limit": 20 }');
-                                                      QUERY PLAN                                                       
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$in": [12, 14]}}, "sort": {"_id": 1}, "limit": 20 }')
+$cmd$);
+                                                 run_explain_and_trim                                                  
 ---------------------------------------------------------------------
  Limit (actual rows=20 loops=1)
    ->  Sort (actual rows=20 loops=1)
@@ -276,8 +290,10 @@ EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bs
 (9 rows)
 
 set documentdb.enableOrderByIdOnCostFunction to on;
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$eq": 14}}, "sort": {"_id": 1}, "limit": 20 }');
-                                         QUERY PLAN                                          
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$eq": 14}}, "sort": {"_id": 1}, "limit": 20 }')
+$cmd$);
+                                    run_explain_and_trim                                     
 ---------------------------------------------------------------------
  Limit (actual rows=20 loops=1)
    ->  Index Scan using _id_ on documents_964001_9640002 collection (actual rows=20 loops=1)
@@ -286,8 +302,10 @@ EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bs
          Rows Removed by Filter: 38
 (5 rows)
 
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$in": [12, 14]}}, "sort": {"_id": 1}, "limit": 20 }');
-                                              QUERY PLAN                                               
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$in": [12, 14]}}, "sort": {"_id": 1}, "limit": 20 }')
+$cmd$);
+                                         run_explain_and_trim                                          
 ---------------------------------------------------------------------
  Limit (actual rows=20 loops=1)
    ->  Index Scan using _id_ on documents_964001_9640002 collection (actual rows=20 loops=1)
@@ -305,8 +323,10 @@ SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
 BEGIN;
 ---- should not use  Index Scan using _id_ 
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$eq": 14}}, "sort": {"_id": 1}, "limit": 20 }');
-                                                                      QUERY PLAN                                                                       
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$eq": 14}}, "sort": {"_id": 1}, "limit": 20 }')
+$cmd$);
+                                                                 run_explain_and_trim                                                                  
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=20 loops=1)
    Task Count: 1
@@ -327,8 +347,10 @@ EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bs
 (16 rows)
 
 ---- should not use  Index Scan using _id_ with $in
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$in": [12, 14]}}, "sort": {"_id": 1}, "limit": 20 }');
-                                                                                     QUERY PLAN                                                                                     
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$in": [12, 14]}}, "sort": {"_id": 1}, "limit": 20 }')
+$cmd$);
+                                                                                run_explain_and_trim                                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=20 loops=1)
    Task Count: 1
@@ -380,8 +402,10 @@ SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "
  { "_id" : { "$numberInt" : "120" }, "a" : { "$numberInt" : "12" } }
 (20 rows)
 
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"_id": {"$gt": 100}}, "sort": {"_id": 1}, "limit": 20 }');
-                                                                                         QUERY PLAN                                                                                          
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"_id": {"$gt": 100}}, "sort": {"_id": 1}, "limit": 20 }')
+$cmd$);
+                                                                                    run_explain_and_trim                                                                                     
 ---------------------------------------------------------------------
  Limit (actual rows=20 loops=1)
    ->  Index Scan using _id_ on documents_964001_9640002 collection (actual rows=20 loops=1)
@@ -389,8 +413,10 @@ EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bs
 (3 rows)
 
 -- no filter should still prefer the _id index
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {}, "sort": {"_id": 1}, "limit": 20 }');
-                                         QUERY PLAN                                          
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {}, "sort": {"_id": 1}, "limit": 20 }')
+$cmd$);
+                                    run_explain_and_trim                                     
 ---------------------------------------------------------------------
  Limit (actual rows=20 loops=1)
    ->  Index Scan using _id_ on documents_964001_9640002 collection (actual rows=20 loops=1)
@@ -406,8 +432,10 @@ SELECT documentdb_api.shard_collection('{ "shardCollection": "sort_pushdown.coll
 
 SET citus.explain_all_tasks to on;
 SET citus.max_adaptive_executor_pool_size to 1;
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$eq": 14}}, "sort": {"_id": 1}, "limit": 20 }');
-                                                                                                QUERY PLAN                                                                                                
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$eq": 14}}, "sort": {"_id": 1}, "limit": 20 }')
+$cmd$);
+                                                                                           run_explain_and_trim                                                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=20 loops=1)
    Task Count: 1
@@ -430,13 +458,15 @@ EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bs
                                        Index Cond: (shard_key_value = '3904677705083871083'::bigint)
 (19 rows)
 
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$gt": 14}}, "sort": {"_id": 1}, "limit": 20 }');
-                                                                            QUERY PLAN                                                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$gt": 14}}, "sort": {"_id": 1}, "limit": 20 }')
+$cmd$);
+                                                                       run_explain_and_trim                                                                        
 ---------------------------------------------------------------------
  Limit (actual rows=20 loops=1)
    ->  Sort (actual rows=20 loops=1)
          Sort Key: remote_scan."?sort?" NULLS FIRST
-         Sort Method: quicksort  Memory: 26kB
+         Sort Method: quicksort  Memory: xxxkB
          ->  Custom Scan (Citus Adaptive) (actual rows=20 loops=1)
                Task Count: 2
                Tuple data received from nodes: 700 bytes
@@ -459,7 +489,7 @@ EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bs
                      ->  Limit (actual rows=0 loops=1)
                            ->  Sort (actual rows=0 loops=1)
                                  Sort Key: (documentdb_api_catalog.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
-                                 Sort Method: quicksort  Memory: 25kB
+                                 Sort Method: quicksort  Memory: xxxkB
                                  ->  Bitmap Heap Scan on documents_964001_9640005 collection (actual rows=0 loops=1)
                                        Recheck Cond: (document OPERATOR(documentdb_api_catalog.@>) '{ "a" : { "$numberInt" : "14" } }'::documentdb_core.bson)
                                        ->  Bitmap Index Scan on a_id (actual rows=0 loops=1)
@@ -467,13 +497,15 @@ EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bs
 (31 rows)
 
 -- no filter on sharded collection should not sort on object_id
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {}, "sort": {"_id": 1}, "limit": 20 }');
-                                                                            QUERY PLAN                                                                             
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {}, "sort": {"_id": 1}, "limit": 20 }')
+$cmd$);
+                                                                       run_explain_and_trim                                                                        
 ---------------------------------------------------------------------
  Limit (actual rows=20 loops=1)
    ->  Sort (actual rows=20 loops=1)
          Sort Key: remote_scan."?sort?" NULLS FIRST
-         Sort Method: quicksort  Memory: 26kB
+         Sort Method: quicksort  Memory: xxxkB
          ->  Custom Scan (Citus Adaptive) (actual rows=20 loops=1)
                Task Count: 2
                Tuple data received from nodes: 700 bytes
@@ -492,7 +524,7 @@ EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bs
                      ->  Limit (actual rows=0 loops=1)
                            ->  Sort (actual rows=0 loops=1)
                                  Sort Key: (documentdb_api_catalog.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
-                                 Sort Method: quicksort  Memory: 25kB
+                                 Sort Method: quicksort  Memory: xxxkB
                                  ->  Seq Scan on documents_964001_9640005 collection (actual rows=0 loops=1)
 (24 rows)
 
@@ -505,8 +537,10 @@ CALL documentdb_api.drop_indexes('sort_pushdown', '{ "dropIndexes": "coll", "ind
 
 ANALYZE documentdb_data.documents_964001;
 BEGIN;
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$eq": 14}}, "sort": {"_id": 1}, "limit": 20 }');
-                                                              QUERY PLAN                                                              
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"a": {"$eq": 14}}, "sort": {"_id": 1}, "limit": 20 }')
+$cmd$);
+                                                         run_explain_and_trim                                                         
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=20 loops=1)
    Task Count: 1
@@ -522,8 +556,10 @@ EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bs
 (11 rows)
 
 -- or should push down to the shards and use object_id
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"$or": [{"a": {"$eq": 14}}, {"a": {"$eq": 22}}]}, "sort": {"_id": 1}, "limit": 20 }');
-                                                                                                                                        QUERY PLAN                                                                                                                                        
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('sort_pushdown', '{ "find": "coll", "filter": {"$or": [{"a": {"$eq": 14}}, {"a": {"$eq": 22}}]}, "sort": {"_id": 1}, "limit": 20 }')
+$cmd$);
+                                                                                                                                   run_explain_and_trim                                                                                                                                   
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=20 loops=1)
    Task Count: 1

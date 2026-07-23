@@ -82,7 +82,7 @@ $$;
 
 -- $graphlookup with restrictSearchWithMatch
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "graphlookup_members", "indexes": [{"key": {"userName": 1, "interests": 1}, "name": "userName_1_interests_1" }]}', true);
-\d+ documentdb_data.documents_9123;
+\d documentdb_data.documents_9123;
 ANALYZE documentdb_data.documents_9123;
 BEGIN;
 SET enable_seqscan TO off;

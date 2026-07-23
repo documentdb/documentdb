@@ -119,7 +119,9 @@ END; $$ language plpgsql;
 CREATE OR REPLACE FUNCTION documentdb_distributed_test_helpers.run_explain_and_trim(
     p_query text,
     p_ignore_heap_fetches boolean DEFAULT false,
-    p_ignore_distributed_runtime_details boolean DEFAULT false)
+    p_ignore_distributed_runtime_details boolean DEFAULT false,
+    p_ignore_window_details boolean DEFAULT false,
+    p_ignore_distributed_subplan_ids boolean DEFAULT false)
 RETURNS SETOF text
 AS $$
 DECLARE
@@ -130,6 +132,10 @@ BEGIN
     IF v_explain_row ~ '^\s+Disabled: true\s*$' THEN
       CONTINUE;
     ELSIF v_explain_row ~ '^\s+Index Searches: [0-9]+\s*$' THEN
+      CONTINUE;
+    ELSIF v_explain_row ~ '^\s+Storage: \S+  Maximum Storage: [0-9]+kB\s*$' THEN
+      CONTINUE;
+    ELSIF p_ignore_window_details AND v_explain_row ~ '^\s+Window: \w+ AS \(.*\)\s*$' THEN
       CONTINUE;
     ELSIF p_ignore_heap_fetches AND v_explain_row ~ '^\s+Heap Fetches: [0-9]+\s*$' THEN
       SELECT regexp_replace(v_explain_row, 'Heap Fetches: [0-9]+', 'Heap Fetches: xxx') INTO v_explain_row;
@@ -155,6 +161,21 @@ BEGIN
                                            'Parallel Index Scan using \1 on documents_\2 collection (actual rows=xyz loops=\3)') INTO v_explain_row;
     ELSIF v_explain_row ~ 'Sort Method: quicksort  Memory: [0-9]+kB' THEN
       SELECT regexp_replace(v_explain_row, 'Sort Method: quicksort  Memory: [0-9]+kB', 'Sort Method: quicksort  Memory: xxxkB') INTO v_explain_row;
+    ELSIF v_explain_row ~ 'Average Memory: [0-9]+kB  Peak Memory: [0-9]+kB' THEN
+      SELECT regexp_replace(v_explain_row, 'Average Memory: [0-9]+kB  Peak Memory: [0-9]+kB', 'Average Memory: xxxkB  Peak Memory: xxxkB') INTO v_explain_row;
+    END IF;
+
+    -- The distributed subplan id (e.g. "353_1") embeds a session-global counter
+    -- that depends on how many distributed subplans ran earlier in the session,
+    -- so it is not stable across run order or PostgreSQL versions. Normalize the
+    -- volatile counter while preserving the trailing group index.
+    IF p_ignore_distributed_subplan_ids THEN
+      IF v_explain_row ~ 'Distributed Subplan [0-9]+_[0-9]+' THEN
+        SELECT regexp_replace(v_explain_row, 'Distributed Subplan [0-9]+_([0-9]+)', 'Distributed Subplan XXX_\1', 'g') INTO v_explain_row;
+      END IF;
+      IF v_explain_row ~ 'read_intermediate_result\(''[0-9]+_[0-9]+''' THEN
+        SELECT regexp_replace(v_explain_row, 'read_intermediate_result\(''[0-9]+_([0-9]+)''', 'read_intermediate_result(''XXX_\1''', 'g') INTO v_explain_row;
+      END IF;
     END IF;
 
     IF v_explain_row ~ 'actual rows=[0-9]+\.00' THEN

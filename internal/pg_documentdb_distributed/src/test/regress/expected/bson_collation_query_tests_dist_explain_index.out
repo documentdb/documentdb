@@ -763,5 +763,5 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_q_idx_d
     '{ "aggregate": "coll_graph_src_d", "pipeline": [ { "$graphLookup": { "from": "coll_graph_dst_d", "startWith": "$pet", "connectFromField": "name", "connectToField": "_id", "as": "destinations", "depthField": "depth" } } ],  "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
 ERROR:  $graphLookup using 'from' on a sharded collection is currently unsupported
-CONTEXT:  PL/pgSQL function documentdb_distributed_test_helpers.run_explain_and_trim(text,boolean,boolean) line 5 at FOR over EXECUTE statement
+CONTEXT:  PL/pgSQL function documentdb_distributed_test_helpers.run_explain_and_trim(text,boolean,boolean,boolean,boolean) line 5 at FOR over EXECUTE statement
 END;

@@ -74,17 +74,25 @@ BEGIN;
 set local citus.enable_local_execution to off;
 set local documentdb_core.bsonUseEJson to off;
 EXECUTE q1( 'db', 'queryOperatorParameterized', bson_json_to_bson('{ "a.b": { "$eq" : 1 }}'));
-EXPLAIN (COSTS OFF) EXECUTE q1( 'db', 'queryOperatorParameterized', bson_json_to_bson('{ "a.b": { "$eq" : 1 }}'));
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) EXECUTE q1( 'db', 'queryOperatorParameterized', bson_json_to_bson('{ "a.b": { "$eq" : 1 }}'))
+$cmd$);
 ROLLBACK;
 
 -- run an explain analyze
-EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF) EXECUTE q1( 'db', 'queryOperatorParameterized', '{ "a.b": { "$eq" : 1 }}');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, TIMING OFF, ANALYZE ON, SUMMARY OFF, BUFFERS OFF) EXECUTE q1( 'db', 'queryOperatorParameterized', '{ "a.b": { "$eq" : 1 }}')
+$cmd$);
 
 PREPARE q2(text, text, bson, bson) AS SELECT document FROM documentdb_api.collection($1, $2) WHERE document OPERATOR(documentdb_api_catalog.@@) $3 ORDER BY documentdb_api_catalog.bson_orderby(document, $4) DESC;
 
-EXPLAIN (COSTS OFF) EXECUTE q2( 'db', 'queryOperatorParameterized', '{ "a.b" : { "$gt": 0 } }', '{ "a.b": -1 }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) EXECUTE q2( 'db', 'queryOperatorParameterized', '{ "a.b" : { "$gt": 0 } }', '{ "a.b": -1 }')
+$cmd$);
 
 BEGIN;
 set local citus.enable_local_execution to off;
-EXPLAIN (COSTS OFF) EXECUTE q2( 'db', 'queryOperatorParameterized', '{ "a.b" : { "$gt": 0 } }', '{ "a.b": -1 }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, BUFFERS OFF) EXECUTE q2( 'db', 'queryOperatorParameterized', '{ "a.b" : { "$gt": 0 } }', '{ "a.b": -1 }')
+$cmd$);
 ROLLBACK;
