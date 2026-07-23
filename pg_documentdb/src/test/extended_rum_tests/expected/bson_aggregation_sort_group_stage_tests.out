@@ -1,6 +1,8 @@
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documentdb_api_internal,public;
 SET documentdb.next_collection_id TO 1800;
 SET documentdb.next_collection_index_id TO 1800;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 -- 1. Setup test data.
 set documentdb.defaultUseCompositeOpClass to on;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "fl_grp_test", "indexes": [ { "key": { "g": 1 }, "name": "g_1" } ] }', true);
@@ -20,7 +22,7 @@ BEGIN;
 set LOCAL enable_seqscan to off;
 set LOCAL enable_bitmapscan to off;
 set LOCAL enable_hashagg to off;
-ANALYZE documentdb_data.documents_1800;
+ANALYZE documentdb_data.documents_1801;
 -- 2. Without enableSortGroupStage
 SET LOCAL documentdb.enableSortGroupStage TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');

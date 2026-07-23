@@ -31,7 +31,7 @@
 #include "operators/bson_expression_operators.h"
 #include "collation/collation.h"
 
-extern bool EnableAddToSetAggregationRewrite;
+extern bool EnableMinMaxSkipNullValues;
 extern bool BsonTextUseJsonRepresentation;
 
 /* --------------------------------------------------------- */
@@ -105,6 +105,7 @@ static Datum ParseAndReturnMergeObjectsTree(BsonObjectAggState *state);
 static Datum bson_maxminn_transition(PG_FUNCTION_ARGS, bool isMaxN);
 static void BsonArrayAggFinalCore(BsonArrayAggState *state,
 								  pgbson_array_writer *arrayWriter);
+static bool CanSkipNullInMinMax(void);
 
 void DeserializeBinaryHeapState(bytea *byteArray, DynamicHeapState *state);
 bytea * SerializeBinaryHeapState(MemoryContext aggregateContext, DynamicHeapState *state,
@@ -764,6 +765,18 @@ bson_avg_final(PG_FUNCTION_ARGS)
 
 
 /*
+ * Gate null-skipping on the cluster version so all nodes change behavior together
+ * during a rolling upgrade.
+ */
+static bool
+CanSkipNullInMinMax(void)
+{
+	return EnableMinMaxSkipNullValues &&
+		   IsClusterVersionAtleast(DocDB_V0, 115, 0);
+}
+
+
+/*
  * Applies the "final calculation" (FINALFUNC) for min and max.
  * This takes the final value fills in a null bson for empty sets
  */
@@ -801,6 +814,22 @@ bson_max_transition(PG_FUNCTION_ARGS)
 {
 	pgbson *left = PG_GETARG_MAYBE_NULL_PGBSON(0);
 	pgbson *right = PG_GETARG_MAYBE_NULL_PGBSON(1);
+
+	/*
+	 * Treat an explicit null candidate as a skipped value so only non-null,
+	 * non-missing values are considered. Missing values already arrive as null
+	 * here (projected with isNullOnEmpty), so this covers both cases.
+	 */
+	if (right != NULL && CanSkipNullInMinMax())
+	{
+		pgbsonelement candidateElement;
+		PgbsonToSinglePgbsonElement(right, &candidateElement);
+		if (candidateElement.bsonValue.value_type == BSON_TYPE_NULL)
+		{
+			right = NULL;
+		}
+	}
+
 	if (left == NULL)
 	{
 		if (right == NULL)
@@ -837,6 +866,22 @@ bson_min_transition(PG_FUNCTION_ARGS)
 {
 	pgbson *left = PG_GETARG_MAYBE_NULL_PGBSON(0);
 	pgbson *right = PG_GETARG_MAYBE_NULL_PGBSON(1);
+
+	/*
+	 * Treat an explicit null candidate as a skipped value so only non-null,
+	 * non-missing values are considered. Missing values already arrive as null
+	 * here (projected with isNullOnEmpty), so this covers both cases.
+	 */
+	if (right != NULL && CanSkipNullInMinMax())
+	{
+		pgbsonelement candidateElement;
+		PgbsonToSinglePgbsonElement(right, &candidateElement);
+		if (candidateElement.bsonValue.value_type == BSON_TYPE_NULL)
+		{
+			right = NULL;
+		}
+	}
+
 	if (left == NULL)
 	{
 		if (right == NULL)
@@ -1157,19 +1202,15 @@ bson_add_to_set_transition(PG_FUNCTION_ARGS)
 						HASH_ENTER, &found);
 
 			/*
-			 * If the BSON was not found in the hash table, add its size to the current
-			 * state object.
+			 * If the BSON was not found in the hash table, add its size to the
+			 * current state object and append it to the ordered list. The list
+			 * lets the final function emit values in insertion order without
+			 * iterating the hash table.
 			 */
 			if (!found)
 			{
 				currentState->currentSizeWritten += PgbsonGetBsonSize(currentValue);
-			}
 
-			/*
-			 * If rewrite is enabled, append to list to avoid hash table iteration in final function.
-			 */
-			if (!found && EnableAddToSetAggregationRewrite)
-			{
 				bson_value_t *bsonValueCopy = palloc(sizeof(bson_value_t));
 				*bsonValueCopy = singleBsonElement.bsonValue;
 				currentState->aggregateList = lappend(currentState->aggregateList,
@@ -1206,56 +1247,30 @@ bson_add_to_set_final(PG_FUNCTION_ARGS)
 		pgbson_array_writer arrayWriter;
 		PgbsonWriterStartArray(&writer, "", 0, &arrayWriter);
 
-		if (EnableAddToSetAggregationRewrite)
+		ListCell *cell;
+		foreach(cell, state->aggregateList)
 		{
-			ListCell *cell;
-			foreach(cell, state->aggregateList)
-			{
-				bson_value_t *currentValue = (bson_value_t *) lfirst(cell);
-				PgbsonArrayWriterWriteValue(&arrayWriter, currentValue);
-			}
-
-			/*
-			 * For window aggregation, we must not destroy the hash table as it may be needed
-			 * for subsequent calls to this final function when processing other groups with
-			 * certain window bounds such as ["unbounded", constant]. In such cases, the window
-			 * frame head does not advance and the aggregation state is not reinitialized, so
-			 * the table must remain valid for continued use.
-			 *
-			 * For non-window aggregation, we can safely destroy the hash table here if it exists.
-			 * However, we intentionally do not free the aggregateList. This list may need to be
-			 * traversed again if a ReScan operation occurs following a HoldPortal operation.
-			 * Since the aggregateList is allocated within the aggregation memory context, it
-			 * will be automatically freed when that context is destroyed after aggregation completes.
-			 */
-			if (!state->isWindowAggregation && state->set != NULL)
-			{
-				hash_destroy(state->set);
-				state->set = NULL;
-			}
+			bson_value_t *currentValue = (bson_value_t *) lfirst(cell);
+			PgbsonArrayWriterWriteValue(&arrayWriter, currentValue);
 		}
-		else
+
+		/*
+		 * For window aggregation, we must not destroy the hash table as it may be needed
+		 * for subsequent calls to this final function when processing other groups with
+		 * certain window bounds such as ["unbounded", constant]. In such cases, the window
+		 * frame head does not advance and the aggregation state is not reinitialized, so
+		 * the table must remain valid for continued use.
+		 *
+		 * For non-window aggregation, we can safely destroy the hash table here if it exists.
+		 * However, we intentionally do not free the aggregateList. This list may need to be
+		 * traversed again if a ReScan operation occurs following a HoldPortal operation.
+		 * Since the aggregateList is allocated within the aggregation memory context, it
+		 * will be automatically freed when that context is destroyed after aggregation completes.
+		 */
+		if (!state->isWindowAggregation && state->set != NULL)
 		{
-			HASH_SEQ_STATUS seq_status;
-			const bson_value_t *entry;
-			hash_seq_init(&seq_status, state->set);
-
-			while ((entry = hash_seq_search(&seq_status)) != NULL)
-			{
-				PgbsonArrayWriterWriteValue(&arrayWriter, entry);
-			}
-
-			/*
-			 * For window aggregation, with the HASHCTL destroyed (on the call for the first group),
-			 * subsequent calls to this final function for other groups will fail
-			 * for certain bounds such as ["unbounded", constant].
-			 * This is because the head never moves and the aggregation is not restarted.
-			 * Thus, the table is expected to hold something valid.
-			 */
-			if (!state->isWindowAggregation)
-			{
-				hash_destroy(state->set);
-			}
+			hash_destroy(state->set);
+			state->set = NULL;
 		}
 
 		PgbsonWriterEndArray(&writer, &arrayWriter);
@@ -2201,8 +2216,14 @@ BsonMinMaxWithExprTransitionCore(PG_FUNCTION_ARGS, bool isMax)
 									  &expressionResult, false /* isNullOnEmpty */);
 	bson_value_t evaluatedValue = expressionResult.value;
 
-	/* Check for empty/missing property in document with BSON_TYPE_EOD */
-	if (evaluatedValue.value_type == BSON_TYPE_EOD)
+	/*
+	 * Skip missing values (BSON_TYPE_EOD), and explicit null values when
+	 * null-skipping is enabled, so only non-null, non-missing values are
+	 * considered. If all values are skipped the state stays NULL and the final
+	 * function returns null.
+	 */
+	if (evaluatedValue.value_type == BSON_TYPE_EOD ||
+		(evaluatedValue.value_type == BSON_TYPE_NULL && CanSkipNullInMinMax()))
 	{
 		if (PG_ARGISNULL(0))
 		{

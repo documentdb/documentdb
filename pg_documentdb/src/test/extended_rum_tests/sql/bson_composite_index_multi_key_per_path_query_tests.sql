@@ -13,6 +13,10 @@ set documentdb.enableCompositeIndexPlanner to on;
 -- multi-key, rather than on a single index-wide multi-key flag.
 set documentdb.enableIndexMetadataGlobalTracking to on;
 
+-- This suite intentionally exercises independent multi-key paths. Parallel-array
+-- rejection is covered by dedicated tests.
+set documentdb.enable_failure_on_parallel_index_arrays_for_metadata_tracking to off;
+
 set documentdb.enableExtendedExplainPlans to on;
 -- Suppress per-index cost details so explain output is stable across runs.
 set documentdb.enableExplainScanIndexCosts to off;
@@ -513,9 +517,9 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 
 -- Control: with index-only scans disabled, the same covered $count falls back to a
 -- regular Index Scan over the same metadata-bearing index (no "Index Only Scan").
-set documentdb.enableIndexOnlyScan to off;
+set enable_indexonlyscan to off;
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('mkpq_db', '{ "aggregate" : "mkpq_ios", "pipeline" : [{ "$match" : { "country": { "$eq": "USA" } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
-set documentdb.enableIndexOnlyScan to on;
+set enable_indexonlyscan to on;
 
 -- --- H2: making the SAME index multi-key removes index-only-scan eligibility ---
 -- Insert one document into the SAME collection whose "city" value is an array. This
@@ -532,8 +536,9 @@ SELECT documentdb_api.insert_one('mkpq_db', 'mkpq_ios', '{ "_id": 7, "country": 
 -- multi-key state and not on heap visibility.
 SELECT format('VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_%s', :'mkpq_ios_cid') \gexec
 
--- Covered $count on the now-multi-key index: NOT an Index Only Scan (regular Index
--- Scan), because the opclass metadata now marks the index multi-key.
+-- Covered $count on the now-multi-key index: still an Index Only Scan, because the
+-- filtered/covered path "country" is not multi-key (only "city" is). Per-path
+-- multi-key tracking gates index-only eligibility per column, not index-wide.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('mkpq_db', '{ "aggregate" : "mkpq_ios", "pipeline" : [{ "$match" : { "country": { "$eq": "USA" } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
 
 reset documentdb.forceIndexOnlyScanIfAvailable;

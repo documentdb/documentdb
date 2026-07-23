@@ -6,8 +6,6 @@
  *-------------------------------------------------------------------------
  */
 
-use std::sync::Arc;
-
 use bson::{Document, RawDocumentBuf};
 use tokio::time::{Duration, Instant};
 
@@ -25,7 +23,7 @@ use crate::{
 pub async fn process_create_indexes(
     request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
-    dynamic_config: &Arc<dyn DynamicConfiguration>,
+    dynamic_config: &dyn DynamicConfiguration,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
     let create_indexes_rows = pg_data_client
@@ -53,12 +51,11 @@ pub async fn process_create_indexes(
     }
 }
 
-#[expect(clippy::cast_sign_loss, reason = "value is always positive")]
 pub async fn wait_for_index(
     request_context: &RequestContext<'_>,
     create_result: PgResponse,
     connection_context: &ConnectionContext,
-    dynamic_config: &Arc<dyn DynamicConfiguration>,
+    dynamic_config: &dyn DynamicConfiguration,
     pg_data_client: &impl PgDataClient,
 ) -> Result<Response> {
     let start_time = Instant::now();
@@ -69,7 +66,7 @@ pub async fn wait_for_index(
     }
 
     let mut interval = tokio::time::interval(Duration::from_millis(
-        dynamic_config.index_build_sleep_milli_secs() as u64,
+        dynamic_config.index_build_sleep_milli_secs(),
     ));
     loop {
         interval.tick().await;
@@ -187,6 +184,89 @@ fn parse_create_index_error(
         connection_context,
         activity_id,
     ))
+}
+
+pub async fn process_create_search_indexes(
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    dynamic_config: &dyn DynamicConfiguration,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response> {
+    let db = request_context.request().db().to_owned();
+    if db == "config" || db == "admin" {
+        return Err(DocumentDBError::documentdb_error(
+            ErrorCode::IllegalOperation,
+            "Creating search indexes in the \"config\" or \"admin\" databases is not allowed"
+                .to_owned(),
+        ));
+    }
+
+    let (success, response) = pg_data_client
+        .execute_create_search_indexes(request_context, connection_context)
+        .await?;
+
+    if success {
+        wait_for_search_index(
+            request_context,
+            response,
+            connection_context,
+            dynamic_config,
+            pg_data_client,
+        )
+        .await
+    } else {
+        parse_create_index_error(&response, connection_context, request_context.activity_id)
+    }
+}
+
+pub async fn wait_for_search_index(
+    request_context: &RequestContext<'_>,
+    create_result: PgResponse,
+    connection_context: &ConnectionContext,
+    dynamic_config: &dyn DynamicConfiguration,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response> {
+    let start_time = Instant::now();
+    let index_build_id: PgDocument = pg_data_client.get_index_build_id(&create_result)?;
+
+    if index_build_id.0.is_empty() {
+        return Ok(Response::Pg(create_result));
+    }
+
+    let mut interval = tokio::time::interval(Duration::from_millis(
+        dynamic_config.index_build_sleep_milli_secs(),
+    ));
+    loop {
+        interval.tick().await;
+        let (success, complete, wait_response) = pg_data_client
+            .execute_wait_for_search_index(request_context, &index_build_id, connection_context)
+            .await?;
+
+        if !success {
+            return parse_create_index_error(
+                &wait_response,
+                connection_context,
+                request_context.activity_id,
+            );
+        }
+
+        if complete {
+            return Ok(Response::Pg(create_result));
+        }
+
+        if let Some(max_time_ms) = request_context.request().max_time_ms() {
+            let max_time_ms: u128 = max_time_ms.try_into().map_err(|error| {
+                tracing::error!("Failed to convert max_time_ms to u128: {error}");
+                DocumentDBError::internal_error("Failed to convert max_time_ms to u128".to_owned())
+            })?;
+
+            if start_time.elapsed().as_millis() > max_time_ms {
+                return Err(DocumentDBError::documentdb_error(ErrorCode::ExceededTimeLimit,
+                    "The command being executed was terminated due to a command timeout. This may be due to concurrent transactions. Consider increasing the maxTimeMS on the command.".to_owned(),
+                ));
+            }
+        }
+    }
 }
 
 pub async fn process_reindex(

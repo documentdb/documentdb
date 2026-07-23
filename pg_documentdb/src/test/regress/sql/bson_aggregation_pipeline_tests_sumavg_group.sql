@@ -15,30 +15,35 @@ SELECT documentdb_api.insert_one('db','sumavg_int_test','{ "_id": 5, "category":
 SELECT documentdb_api.insert_one('db','sumavg_int_test','{ "_id": 6, "category": "B", "value": 25 }');
 
 -- $sum on integer field
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": "$category", "total": { "$sum": "$value" } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": "$category", "total": { "$sum": "$value" } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- $avg on integer field
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": "$category", "average": { "$avg": "$value" } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": "$category", "average": { "$avg": "$value" } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- $sum and $avg together
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": "$category", "total": { "$sum": "$value" }, "average": { "$avg": "$value" } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": "$category", "total": { "$sum": "$value" }, "average": { "$avg": "$value" } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- $sum with constant value (count pattern)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": "$category", "count": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": "$category", "count": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- $sum with constant value > 1
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": "$category", "weighted": { "$sum": 5 } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -54,6 +59,7 @@ SELECT documentdb_api.insert_one('db','sumavg_double_test','{ "_id": 3, "categor
 SELECT documentdb_api.insert_one('db','sumavg_double_test','{ "_id": 4, "category": "Y", "value": 0.1 }');
 SELECT documentdb_api.insert_one('db','sumavg_double_test','{ "_id": 5, "category": "Y", "value": 0.2 }');
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_double_test", "pipeline": [ { "$group": { "_id": "$category", "total": { "$sum": "$value" }, "average": { "$avg": "$value" } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -68,6 +74,7 @@ SELECT documentdb_api.insert_one('db','sumavg_mixed_test','{ "_id": 2, "category
 SELECT documentdb_api.insert_one('db','sumavg_mixed_test','{ "_id": 3, "category": "M", "value": {"$numberLong": "100"} }');
 SELECT documentdb_api.insert_one('db','sumavg_mixed_test','{ "_id": 4, "category": "M", "value": {"$numberDecimal": "7.25"} }');
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_mixed_test", "pipeline": [ { "$group": { "_id": "$category", "total": { "$sum": "$value" }, "average": { "$avg": "$value" } } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -83,6 +90,7 @@ SELECT documentdb_api.insert_one('db','sumavg_nonnumeric_test','{ "_id": 3, "cat
 SELECT documentdb_api.insert_one('db','sumavg_nonnumeric_test','{ "_id": 4, "category": "A", "value": 20 }');
 SELECT documentdb_api.insert_one('db','sumavg_nonnumeric_test','{ "_id": 5, "category": "A", "value": [1, 2, 3] }');
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_nonnumeric_test", "pipeline": [ { "$group": { "_id": "$category", "total": { "$sum": "$value" }, "average": { "$avg": "$value" } } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -97,6 +105,7 @@ SELECT documentdb_api.insert_one('db','sumavg_null_test','{ "_id": 2, "category"
 SELECT documentdb_api.insert_one('db','sumavg_null_test','{ "_id": 3, "category": "A" }');
 SELECT documentdb_api.insert_one('db','sumavg_null_test','{ "_id": 4, "category": "A", "value": 20 }');
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_null_test", "pipeline": [ { "$group": { "_id": "$category", "total": { "$sum": "$value" }, "average": { "$avg": "$value" } } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -106,6 +115,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_nul
 -- Test 6: $sum/$avg on empty group (no documents matching)
 -- =============================================================================
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_null_test", "pipeline": [ { "$match": { "_id": 999 } }, { "$group": { "_id": "$category", "total": { "$sum": "$value" }, "average": { "$avg": "$value" } } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -115,6 +125,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_nul
 -- Test 7: $sum/$avg with _id: null (single group)
 -- =============================================================================
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$value" }, "average": { "$avg": "$value" }, "count": { "$sum": 1 } } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -129,6 +140,7 @@ SELECT documentdb_api.insert_one('db','sumavg_expr_test','{ "_id": 2, "price": 2
 SELECT documentdb_api.insert_one('db','sumavg_expr_test','{ "_id": 3, "price": 30, "qty": 1 }');
 
 -- $sum with $multiply expression
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_expr_test", "pipeline": [ { "$group": { "_id": null, "totalRevenue": { "$sum": { "$multiply": ["$price", "$qty"] } }, "avgRevenue": { "$avg": { "$multiply": ["$price", "$qty"] } } } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -139,6 +151,7 @@ SELECT documentdb_api.insert_one('db','sumavg_nested_test','{ "_id": 1, "info": 
 SELECT documentdb_api.insert_one('db','sumavg_nested_test','{ "_id": 2, "info": { "score": 92 } }');
 SELECT documentdb_api.insert_one('db','sumavg_nested_test','{ "_id": 3, "info": { "score": 78 } }');
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_nested_test", "pipeline": [ { "$group": { "_id": null, "totalScore": { "$sum": "$info.score" }, "avgScore": { "$avg": "$info.score" } } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -152,6 +165,7 @@ SELECT documentdb_api.insert_one('db','sumavg_let_test','{ "_id": 1, "price": 10
 SELECT documentdb_api.insert_one('db','sumavg_let_test','{ "_id": 2, "price": 20, "tax": 0.15 }');
 SELECT documentdb_api.insert_one('db','sumavg_let_test','{ "_id": 3, "price": 30, "tax": 0.2 }');
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_let_test", "pipeline": [ { "$group": { "_id": null, "totalWithTax": { "$sum": { "$let": { "vars": { "total": { "$multiply": ["$price", { "$add": [1, "$tax"] }] } }, "in": "$$total" } } } } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -170,12 +184,14 @@ SELECT documentdb_api.insert_one('db','sumavg_window_test','{ "_id": 6, "partiti
 SELECT documentdb_api.insert_one('db','sumavg_window_test','{ "_id": 7, "partition": "B", "order": 3, "value": 25 }');
 
 -- unbounded $sum window
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$partition", "sortBy": {"order": 1}, "output": { "runningSum": { "$sum": "$value", "window": { "documents": ["unbounded", "current"] } } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$partition", "sortBy": {"order": 1}, "output": { "runningSum": { "$sum": "$value", "window": { "documents": ["unbounded", "current"] } } } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- unbounded $avg window
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$partition", "sortBy": {"order": 1}, "output": { "runningAvg": { "$avg": "$value", "window": { "documents": ["unbounded", "current"] } } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -186,12 +202,14 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_win
 -- =============================================================================
 
 -- sliding window of size 2 with $sum
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$partition", "sortBy": {"order": 1}, "output": { "slidingSum": { "$sum": "$value", "window": { "documents": [-1, 0] } } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$partition", "sortBy": {"order": 1}, "output": { "slidingSum": { "$sum": "$value", "window": { "documents": [-1, 0] } } } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- sliding window of size 3 with $avg
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$partition", "sortBy": {"order": 1}, "output": { "slidingAvg": { "$avg": "$value", "window": { "documents": [-1, 1] } } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -201,6 +219,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_win
 -- Test 12: $setWindowFields with $sum using no explicit window (whole partition)
 -- =============================================================================
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$partition", "sortBy": {"order": 1}, "output": { "partitionSum": { "$sum": "$value" }, "partitionAvg": { "$avg": "$value" } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -217,12 +236,14 @@ SELECT documentdb_api.insert_one('db','sumavg_window_null_test','{ "_id": 4, "or
 SELECT documentdb_api.insert_one('db','sumavg_window_null_test','{ "_id": 5, "order": 5, "value": "text" }');
 SELECT documentdb_api.insert_one('db','sumavg_window_null_test','{ "_id": 6, "order": 6, "value": 30 }');
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_null_test", "pipeline": [ { "$setWindowFields": { "sortBy": {"order": 1}, "output": { "runningSum": { "$sum": "$value", "window": { "documents": ["unbounded", "current"] } }, "runningAvg": { "$avg": "$value", "window": { "documents": ["unbounded", "current"] } } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_null_test", "pipeline": [ { "$setWindowFields": { "sortBy": {"order": 1}, "output": { "runningSum": { "$sum": "$value", "window": { "documents": ["unbounded", "current"] } }, "runningAvg": { "$avg": "$value", "window": { "documents": ["unbounded", "current"] } } } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- moving window with null/missing (exercises inverse transition with non-numeric skipping)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_null_test", "pipeline": [ { "$setWindowFields": { "sortBy": {"order": 1}, "output": { "slidingSum": { "$sum": "$value", "window": { "documents": [-1, 1] } }, "slidingAvg": { "$avg": "$value", "window": { "documents": [-1, 1] } } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -232,6 +253,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_win
 -- Test 14: $sum with $group + $sum: {} (empty document sum)
 -- =============================================================================
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": null, "result": { "$sum": {} } } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -245,6 +267,7 @@ SELECT documentdb_api.insert_one('db','sumavg_same_test','{ "_id": 1, "value": 7
 SELECT documentdb_api.insert_one('db','sumavg_same_test','{ "_id": 2, "value": 7 }');
 SELECT documentdb_api.insert_one('db','sumavg_same_test','{ "_id": 3, "value": 7 }');
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_same_test", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$value" }, "average": { "$avg": "$value" } } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -272,30 +295,35 @@ SELECT documentdb_api.insert_one('db','sumavg_extreme_test','{ "_id": 12, "group
 SELECT documentdb_api.insert_one('db','sumavg_extreme_test','{ "_id": 13, "group": "mixednums", "val": { "$numberDecimal": "1E6144" } }');
 
 -- Int64 extremes
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_extreme_test", "pipeline": [ { "$match": { "group": "int64" } }, { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_extreme_test", "pipeline": [ { "$match": { "group": "int64" } }, { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } } ] }');
 
 -- Decimal128 extremes
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_extreme_test", "pipeline": [ { "$match": { "group": "decimal" } }, { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_extreme_test", "pipeline": [ { "$match": { "group": "decimal" } }, { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } } ] }');
 
 -- Special values (Infinity, -Infinity, NaN)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_extreme_test", "pipeline": [ { "$match": { "group": "special" } }, { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_extreme_test", "pipeline": [ { "$match": { "group": "special" } }, { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } } ] }');
 
 -- Mixed numeric types
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_extreme_test", "pipeline": [ { "$match": { "group": "mixednums" } }, { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_extreme_test", "pipeline": [ { "$match": { "group": "mixednums" } }, { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } } ] }');
 
 -- All groups
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_extreme_test", "pipeline": [ { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -312,30 +340,35 @@ SELECT documentdb_api.insert_one('db','sumavg_variable_test','{ "_id": 4, "group
 SELECT documentdb_api.insert_one('db','sumavg_variable_test','{ "_id": 5, "group": "B", "val": 25 }');
 
 -- Using $$variable with $add
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_variable_test", "pipeline": [ { "$group": { "_id": "$group", "sumWithOffset": { "$sum": { "$add": ["$val", "$$offset"] } } } }, { "$sort": { "_id": 1 } } ], "let": { "offset": 100 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_variable_test", "pipeline": [ { "$group": { "_id": "$group", "sumWithOffset": { "$sum": { "$add": ["$val", "$$offset"] } } } }, { "$sort": { "_id": 1 } } ], "let": { "offset": 100 } }');
 
 -- Using $$variable with $avg
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_variable_test", "pipeline": [ { "$group": { "_id": "$group", "avgWithOffset": { "$avg": { "$add": ["$val", "$$offset"] } } } }, { "$sort": { "_id": 1 } } ], "let": { "offset": 50 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_variable_test", "pipeline": [ { "$group": { "_id": "$group", "avgWithOffset": { "$avg": { "$add": ["$val", "$$offset"] } } } }, { "$sort": { "_id": 1 } } ], "let": { "offset": 50 } }');
 
 -- Multiple variables
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_variable_test", "pipeline": [ { "$group": { "_id": "$group", "sumCalc": { "$sum": { "$add": [{ "$multiply": ["$val", "$$multiplier"] }, "$$offset"] } } } }, { "$sort": { "_id": 1 } } ], "let": { "offset": 10, "multiplier": 2 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_variable_test", "pipeline": [ { "$group": { "_id": "$group", "sumCalc": { "$sum": { "$add": [{ "$multiply": ["$val", "$$multiplier"] }, "$$offset"] } } } }, { "$sort": { "_id": 1 } } ], "let": { "offset": 10, "multiplier": 2 } }');
 
 -- Using $$CURRENT
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_variable_test", "pipeline": [ { "$group": { "_id": "$group", "total": { "$sum": "$$CURRENT.val" } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_variable_test", "pipeline": [ { "$group": { "_id": "$group", "total": { "$sum": "$$CURRENT.val" } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- Using $$ROOT
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_variable_test", "pipeline": [ { "$group": { "_id": "$group", "total": { "$sum": "$$ROOT.val" } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -352,28 +385,33 @@ SELECT documentdb_api.insert_one('db','sumavg_expr2_test','{ "_id": 4, "group": 
 SELECT documentdb_api.insert_one('db','sumavg_expr2_test','{ "_id": 5, "group": "B", "a": 50, "b": 50 }');
 
 -- $add expression
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_expr2_test", "pipeline": [ { "$group": { "_id": "$group", "sumAdd": { "$sum": { "$add": ["$a", "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_expr2_test", "pipeline": [ { "$group": { "_id": "$group", "sumAdd": { "$sum": { "$add": ["$a", "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_expr2_test", "pipeline": [ { "$group": { "_id": "$group", "avgAdd": { "$avg": { "$add": ["$a", "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_expr2_test", "pipeline": [ { "$group": { "_id": "$group", "avgAdd": { "$avg": { "$add": ["$a", "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- $subtract expression
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_expr2_test", "pipeline": [ { "$group": { "_id": "$group", "sumDiff": { "$sum": { "$subtract": ["$a", "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_expr2_test", "pipeline": [ { "$group": { "_id": "$group", "sumDiff": { "$sum": { "$subtract": ["$a", "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- Nested expression: multiply then add
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_expr2_test", "pipeline": [ { "$group": { "_id": "$group", "sumCalc": { "$sum": { "$add": [{ "$multiply": ["$a", 2] }, "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_expr2_test", "pipeline": [ { "$group": { "_id": "$group", "sumCalc": { "$sum": { "$add": [{ "$multiply": ["$a", 2] }, "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- Complex nested expression
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_expr2_test", "pipeline": [ { "$group": { "_id": "$group", "avgComplex": { "$avg": { "$multiply": [{ "$add": ["$a", "$b"] }, 2] } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -393,30 +431,35 @@ SELECT documentdb_api.insert_one('db','sumavg_cond_test','{ "_id": 7, "group": "
 SELECT documentdb_api.insert_one('db','sumavg_cond_test','{ "_id": 8, "group": "C", "val": 50 }');
 
 -- $cond: if active then val else 0
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_cond_test", "pipeline": [ { "$group": { "_id": "$group", "sumActive": { "$sum": { "$cond": { "if": "$active", "then": "$val", "else": 0 } } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_cond_test", "pipeline": [ { "$group": { "_id": "$group", "sumActive": { "$sum": { "$cond": { "if": "$active", "then": "$val", "else": 0 } } } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- $cond: if active then val else null (null values ignored by $avg)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_cond_test", "pipeline": [ { "$group": { "_id": "$group", "avgActive": { "$avg": { "$cond": { "if": "$active", "then": "$val", "else": null } } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_cond_test", "pipeline": [ { "$group": { "_id": "$group", "avgActive": { "$avg": { "$cond": { "if": "$active", "then": "$val", "else": null } } } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- $cond with array syntax
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_cond_test", "pipeline": [ { "$group": { "_id": "$group", "tier": { "$sum": { "$cond": [{ "$gt": ["$val", 50] }, { "$multiply": ["$val", 2] }, "$val"] } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_cond_test", "pipeline": [ { "$group": { "_id": "$group", "tier": { "$sum": { "$cond": [{ "$gt": ["$val", 50] }, { "$multiply": ["$val", 2] }, "$val"] } } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- $ifNull expression
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_cond_test", "pipeline": [ { "$group": { "_id": "$group", "sumWithDefault": { "$sum": { "$ifNull": ["$optionalField", 0] } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_cond_test", "pipeline": [ { "$group": { "_id": "$group", "sumWithDefault": { "$sum": { "$ifNull": ["$optionalField", 0] } } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- Nested $cond
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_cond_test", "pipeline": [ { "$group": { "_id": "$group", "categorized": { "$sum": { "$cond": { "if": { "$gt": ["$val", 100] }, "then": 3, "else": { "$cond": { "if": { "$gt": ["$val", 50] }, "then": 2, "else": 1 } } } } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -428,12 +471,14 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_con
 -- =============================================================================
 
 -- EXPLAIN to verify query plan for $group
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": "$category", "total": { "$sum": "$value" }, "average": { "$avg": "$value" } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": "$category", "total": { "$sum": "$value" }, "average": { "$avg": "$value" } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- EXPLAIN to verify query plan for $setWindowFields
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$partition", "sortBy": { "order": 1 }, "output": { "runningSum": { "$sum": "$value", "window": { "documents": ["unbounded", "current"] } }, "runningAvg": { "$avg": "$value", "window": { "documents": ["unbounded", "current"] } } } } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -461,42 +506,49 @@ SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 
 -- $sum counting matches: count docs where name case-insensitively equals "CHERRY"
 -- Legacy path errors; WithExpr path correctly applies collation (matchCount = 1 for group "A").
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
 
 -- Without collation baseline (binary: "cherry" != "CHERRY", no matches)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- $sum conditional value: sum val for matching docs, 0 otherwise
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchedSum": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchedSum": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
 
 -- Without collation baseline
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchedSum": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": 0 } } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchedSum": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": 0 } } } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- $avg with conditional filter: average val for matching docs, null otherwise
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
 
 -- Without collation baseline
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- $sum and $avg together with collation strength 2 (case-insensitive, accent-sensitive)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } }, "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 2 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -520,24 +572,28 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- =============================================================================
 
 -- $sum counting with _id: null (all docs in one group)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": null, "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } } ], "collation": { "locale": "en", "strength": 1 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": null, "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } } ], "collation": { "locale": "en", "strength": 1 } }');
 
 -- Without collation baseline on constant group
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": null, "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": null, "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } } ] }');
 
 -- $avg with constant _id: null
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": null, "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } } ], "collation": { "locale": "en", "strength": 1 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": null, "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } } ], "collation": { "locale": "en", "strength": 1 } }');
 
 -- With constant _id: 1
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": 1, "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } }, "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } } ], "collation": { "locale": "en", "strength": 1 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -553,12 +609,14 @@ SELECT documentdb_api.insert_one('db','sumavg_collation_mixed','{ "_id": 3, "gro
 SELECT documentdb_api.insert_one('db','sumavg_collation_mixed','{ "_id": 4, "group": "G", "val": null }');
 
 -- With collation: "CHERRY" case-insensitively equals "cherry" → count 1; number/null don't match
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_mixed", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$val", "cherry"] }, "then": 1, "else": 0 } } } } } ], "collation": { "locale": "en", "strength": 1 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_mixed", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$val", "cherry"] }, "then": 1, "else": 0 } } } } } ], "collation": { "locale": "en", "strength": 1 } }');
 
 -- Without collation baseline (binary: "CHERRY" != "cherry")
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_mixed", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$val", "cherry"] }, "then": 1, "else": 0 } } } } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -578,24 +636,28 @@ SELECT documentdb_api.insert_one('db','sumavg_numeric_order','{ "_id": 6, "cat":
 
 -- $sum counting items greater than "item2"
 -- numericOrdering=true: "item10">true, "item1">false, "item2">false for A; "item20">true, "item3">true, "item5">true for B
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_numeric_order", "pipeline": [ { "$group": { "_id": "$cat", "countAbove": { "$sum": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "numericOrdering": true } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_numeric_order", "pipeline": [ { "$group": { "_id": "$cat", "countAbove": { "$sum": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "numericOrdering": true } }');
 
 -- numericOrdering=false (lexical): "item10"<"item2", "item20">"item2", "item3">"item2", "item5">"item2"
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_numeric_order", "pipeline": [ { "$group": { "_id": "$cat", "countAbove": { "$sum": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "numericOrdering": false } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_numeric_order", "pipeline": [ { "$group": { "_id": "$cat", "countAbove": { "$sum": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "numericOrdering": false } }');
 
 -- Without collation baseline (same as numericOrdering=false)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_numeric_order", "pipeline": [ { "$group": { "_id": "$cat", "countAbove": { "$sum": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_numeric_order", "pipeline": [ { "$group": { "_id": "$cat", "countAbove": { "$sum": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- $avg scoring: average 10 for items above threshold, 0 otherwise
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_numeric_order", "pipeline": [ { "$group": { "_id": "$cat", "avgScore": { "$avg": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": 10, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "numericOrdering": true } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -605,6 +667,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_num
 -- Test 26: Collation blocked when enableCollationWithNewGroupAccumulators is off
 -- =============================================================================
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
@@ -617,6 +680,7 @@ SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 -- With enableCollation off and skipFailOnCollation on, collation is ignored and binary comparison applies.
 SET documentdb_core.enableCollation TO off;
 SET documentdb.skipFailOnCollation TO on;
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -626,7 +690,8 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 RESET documentdb.skipFailOnCollation;
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SET documentdb_core.enableCollation TO off;
-RESET documentdb.enableNewWithExprAccumulators;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- =============================================================================
 -- Test 28: enableSortGroupStage drops dead outer $sort for order-insensitive

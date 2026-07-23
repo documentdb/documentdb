@@ -63,6 +63,9 @@ typedef struct CreateSpec
 
 	/* enable or disable change stream update descriptions */
 	bool enableUpdateDescription;
+
+	/* Whether or not the collection has stats enabled */
+	bool statsEnabled;
 } CreateSpec;
 
 static const StringView SystemPrefix = { .string = "system.", .length = 7 };
@@ -147,6 +150,13 @@ command_create_collection_view(PG_FUNCTION_ARGS)
 			 */
 			collection = GetMongoCollectionOrViewByNameDatum(
 				databaseDatum, createDatum, AccessShareLock);
+
+			if (collection == NULL)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg("Collection not found after creation")));
+			}
+
 			UpdateChangeStreamPreAndPostImages(collection,
 											   createDefinition->
 											   changeStreamPreAndPostImageEnabled);
@@ -159,8 +169,33 @@ command_create_collection_view(PG_FUNCTION_ARGS)
 				collection = GetMongoCollectionOrViewByNameDatum(
 					databaseDatum, createDatum, AccessShareLock);
 			}
+
+			if (collection == NULL)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg("Collection not found after creation")));
+			}
+
 			UpdateEnableUpdateDescription(collection,
 										  createDefinition->enableUpdateDescription);
+		}
+
+		if (createDefinition->statsEnabled)
+		{
+			if (collection == NULL)
+			{
+				collection = GetMongoCollectionOrViewByNameDatum(
+					databaseDatum, createDatum, AccessShareLock);
+			}
+
+			if (collection == NULL)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg("Collection not found after creation")));
+			}
+
+			UpdateCollectionStatsEnabledOption(collection->collectionId,
+											   createDefinition->statsEnabled);
 		}
 	}
 
@@ -326,6 +361,11 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 								errmsg("Capped collections not supported yet")));
 			}
+		}
+		else if (strcmp(key, "statsEnabled") == 0)
+		{
+			EnsureTopLevelFieldIsBooleanLike("create.statsEnabled", &createIter);
+			spec->statsEnabled = BsonValueAsBool(bson_iter_value(&createIter));
 		}
 		else if (strcmp(key, "timeseries") == 0)
 		{

@@ -1,6 +1,8 @@
 SET citus.next_shard_id TO 60000;
 SET documentdb.next_collection_id TO 6000;
 SET documentdb.next_collection_index_id TO 6000;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 \i sql/bson_aggregation_stage_lookup_tests_core.sql
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
 -- Insert data

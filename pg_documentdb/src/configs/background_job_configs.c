@@ -90,6 +90,9 @@ bool EnableTTLBatchObservability = DEFAULT_ENABLE_TTL_BATCH_OBSERVABILITY;
 #define DEFAULT_USE_INDEX_HINTS_TTL_TASK true
 bool UseIndexHintsForTTLTask = DEFAULT_USE_INDEX_HINTS_TTL_TASK;
 
+#define DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ONLY true
+bool EnableDropInvalidIndexesOnReadOnly = DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ONLY;
+
 
 void
 InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPrefix)
@@ -124,6 +127,14 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		gettext_noop(
 			"Whether to force ordered Index Scan via Index Hints for TTL task"),
 		NULL, &UseIndexHintsForTTLTask, DEFAULT_USE_INDEX_HINTS_TTL_TASK,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_drop_invalid_indexes_on_read_only", newGucPrefix),
+		gettext_noop(
+			"Whether to enable dropping invalid indexes on read only database state."),
+		NULL, &EnableDropInvalidIndexesOnReadOnly,
+		DEFAULT_ENABLE_DROP_INDEXES_ON_READ_ONLY,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomIntVariable(

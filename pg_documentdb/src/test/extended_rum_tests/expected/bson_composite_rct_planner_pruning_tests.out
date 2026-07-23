@@ -1,0 +1,882 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+SET documentdb.next_collection_id TO 29200;
+SET documentdb.next_collection_index_id TO 29200;
+SET documentdb.enableCompositeIndexPlanner TO on;
+SET documentdb.enableIndexMetadataGlobalTracking TO on;
+SET documentdb.enableCompositeReducedCorrelatedTermsOnCommonSubPath TO on;
+SET documentdb.enable_composite_reduced_correlated_bounds_planning TO on;
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.enableExplainScanIndexCosts TO off;
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+-- An MKP reduced-correlated index can prune unsafe plain dotted-path quals
+-- during planning while preserving directly correlated quals from one
+-- $elemMatch.
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'rct_prune_db',
+    '{ "createIndexes": "items", "indexes": [
+        {
+          "key": {
+            "items.id": 1,
+            "items.city": 1,
+            "items.role": 1,
+            "profile.city": 1,
+            "profile.age": 1
+          },
+          "name": "idx_items_profile",
+          "enableOrderedIndex": 1
+        }
+    ]}',
+    true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'rct_prune_db', 'items',
+    '{"_id":1,"items":[{"id":"A","city":"seattle","role":"customer","age":30}],"profile":{"city":"seattle","age":30}}');
+                              insert_one
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'rct_prune_db', 'items',
+    '{"_id":2,"items":[{"id":"A","city":"portland","role":"lawyer","age":30},{"id":"B","city":"seattle","role":"customer","age":40}],"profile":{"city":"seattle","age":30}}');
+                              insert_one
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'rct_prune_db', 'items',
+    '{"_id":3,"items":[{"id":"A","city":"seattle","role":"auditor","age":20}],"profile":{"city":"portland","age":20}}');
+                              insert_one
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- One $elemMatch owns the leading bound, so all of its same-prefix quals stay
+-- on the index. The cross-element decoy (_id:2) is rejected by the index.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"items":{"$elemMatch":{"id":"A","city":"seattle"}}},"hint":"idx_items_profile"}')
+$cmd$);
+                                                                                                                                                                                                                    run_explain_and_trim
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: rct_prune_db.items
+   indexName: idx_items_profile
+   indexKey: {"items.id": 1,"items.city": 1,"items.role": 1,"profile.city": 1,"profile.age": 1}
+   isMultiKey: true
+   multiKeyPaths: items.id, items.city, items.role
+   hasCorrelatedTerms: true
+   indexBounds: ["items.id": ["A", "A"], "items.city": ["seattle", "seattle"], "items.role": (MinKey, MaxKey), "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)]
+   innerScanLoops: 3 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
+   ->  Index Scan using idx_items_profile on documents_29201 collection (actual rows=2 loops=1)
+         Index Cond: ((document @<> '{ "items.id" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "A", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson) AND (document @<> '{ "items.city" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "seattle", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson))
+         Filter: (document @#? '{ "items" : { "id" : "A", "city" : "seattle" } }'::bson)
+(14 rows)
+
+SELECT document
+FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"items","filter":{"items":{"$elemMatch":{"id":"A","city":"seattle"}}},"sort":{"_id":1},"hint":"idx_items_profile"}');
+                                                                                                    document
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ { "id" : "A", "city" : "seattle", "role" : "customer", "age" : { "$numberInt" : "30" } } ], "profile" : { "city" : "seattle", "age" : { "$numberInt" : "30" } } }
+ { "_id" : { "$numberInt" : "3" }, "items" : [ { "id" : "A", "city" : "seattle", "role" : "auditor", "age" : { "$numberInt" : "20" } } ], "profile" : { "city" : "portland", "age" : { "$numberInt" : "20" } } }
+(2 rows)
+
+-- Plain dotted-path predicates may match different elements. Keep the leading
+-- id bound and evaluate city as a runtime filter so _id:2 remains visible.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"items.id":"A","items.city":"seattle"},"hint":"idx_items_profile"}')
+$cmd$);
+                                                                            run_explain_and_trim
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+   namespaceName: rct_prune_db.items
+   indexName: idx_items_profile
+   indexKey: {"items.id": 1,"items.city": 1,"items.role": 1,"profile.city": 1,"profile.age": 1}
+   isMultiKey: true
+   multiKeyPaths: items.id, items.city, items.role
+   hasCorrelatedTerms: true
+   indexBounds: ["items.id": ["A", "A"], "items.city": (MinKey, MaxKey), "items.role": (MinKey, MaxKey), "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)]
+   innerScanLoops: 4 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+   ->  Index Scan using idx_items_profile on documents_29201 collection (actual rows=3 loops=1)
+         Index Cond: (document @= '{ "items.id" : "A" }'::bson)
+         Filter: (document @= '{ "items.city" : "seattle" }'::bson)
+(14 rows)
+
+SELECT document
+FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"items","filter":{"items.id":"A","items.city":"seattle"},"sort":{"_id":1},"hint":"idx_items_profile"}');
+                                                                                                                                                 document
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ { "id" : "A", "city" : "seattle", "role" : "customer", "age" : { "$numberInt" : "30" } } ], "profile" : { "city" : "seattle", "age" : { "$numberInt" : "30" } } }
+ { "_id" : { "$numberInt" : "2" }, "items" : [ { "id" : "A", "city" : "portland", "role" : "lawyer", "age" : { "$numberInt" : "30" } }, { "id" : "B", "city" : "seattle", "role" : "customer", "age" : { "$numberInt" : "40" } } ], "profile" : { "city" : "seattle", "age" : { "$numberInt" : "30" } } }
+ { "_id" : { "$numberInt" : "3" }, "items" : [ { "id" : "A", "city" : "seattle", "role" : "auditor", "age" : { "$numberInt" : "20" } } ], "profile" : { "city" : "portland", "age" : { "$numberInt" : "20" } } }
+(3 rows)
+
+-- Internal order-by range quals do not produce variable bounds and therefore
+-- must not participate in correlated-prefix leader selection.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"items.id":"A","items.city":"seattle"},"sort":{"items.role":1},"hint":"idx_items_profile"}')
+$cmd$);
+                                                                               run_explain_and_trim
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=3 loops=1)
+   Sort Key: (bson_orderby(document, '{ "items.role" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+         namespaceName: rct_prune_db.items
+         indexName: idx_items_profile
+         indexKey: {"items.id": 1,"items.city": 1,"items.role": 1,"profile.city": 1,"profile.age": 1}
+         isMultiKey: true
+         multiKeyPaths: items.id, items.city, items.role
+         hasCorrelatedTerms: true
+         indexBounds: ["items.id": ["A", "A"], "items.city": (MinKey, MaxKey), "items.role": (MinKey, MaxKey), "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)]
+         innerScanLoops: 4 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+         ->  Index Scan using idx_items_profile on documents_29201 collection (actual rows=3 loops=1)
+               Index Cond: (document @= '{ "items.id" : "A" }'::bson)
+               Filter: (document @= '{ "items.city" : "seattle" }'::bson)
+(17 rows)
+
+-- Planner-certified $elemMatch bounds must also survive the ordered-scan path.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"items":{"$elemMatch":{"id":"A","city":"seattle"}}},"sort":{"items.role":1},"hint":"idx_items_profile"}')
+$cmd$);
+                                                                                                                                                                                                                       run_explain_and_trim
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Sort Key: (bson_orderby(document, '{ "items.role" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         namespaceName: rct_prune_db.items
+         indexName: idx_items_profile
+         indexKey: {"items.id": 1,"items.city": 1,"items.role": 1,"profile.city": 1,"profile.age": 1}
+         isMultiKey: true
+         multiKeyPaths: items.id, items.city, items.role
+         hasCorrelatedTerms: true
+         indexBounds: ["items.id": ["A", "A"], "items.city": ["seattle", "seattle"], "items.role": (MinKey, MaxKey), "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)]
+         innerScanLoops: 3 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
+         ->  Index Scan using idx_items_profile on documents_29201 collection (actual rows=2 loops=1)
+               Index Cond: ((document @<> '{ "items.id" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "A", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson) AND (document @<> '{ "items.city" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "seattle", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson))
+               Filter: (document @#? '{ "items" : { "id" : "A", "city" : "seattle" } }'::bson)
+(17 rows)
+
+SELECT document
+FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"items","filter":{"items":{"$elemMatch":{"id":"A","city":"seattle"}}},"sort":{"items.role":1},"hint":"idx_items_profile"}');
+                                                                                                    document
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "items" : [ { "id" : "A", "city" : "seattle", "role" : "auditor", "age" : { "$numberInt" : "20" } } ], "profile" : { "city" : "portland", "age" : { "$numberInt" : "20" } } }
+ { "_id" : { "$numberInt" : "1" }, "items" : [ { "id" : "A", "city" : "seattle", "role" : "customer", "age" : { "$numberInt" : "30" } } ], "profile" : { "city" : "seattle", "age" : { "$numberInt" : "30" } } }
+(2 rows)
+
+-- Independent $elemMatch groups may use different elements. They must not be
+-- combined into one same-element bound group.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"$and":[{"items":{"$elemMatch":{"id":"A"}}},{"items":{"$elemMatch":{"city":"seattle"}}}]},"hint":"idx_items_profile"}')
+$cmd$);
+                                                                                                       run_explain_and_trim
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+   namespaceName: rct_prune_db.items
+   indexName: idx_items_profile
+   indexKey: {"items.id": 1,"items.city": 1,"items.role": 1,"profile.city": 1,"profile.age": 1}
+   isMultiKey: true
+   multiKeyPaths: items.id, items.city, items.role
+   hasCorrelatedTerms: true
+   indexBounds: ["items.id": ["A", "A"], "items.city": (MinKey, MaxKey), "items.role": (MinKey, MaxKey), "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)]
+   innerScanLoops: 4 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+   ->  Index Scan using idx_items_profile on documents_29201 collection (actual rows=3 loops=1)
+         Index Cond: (document @<> '{ "items.id" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "A", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson)
+         Filter: ((document @#? '{ "items" : { "id" : "A" } }'::bson) AND (document @#? '{ "items" : { "city" : "seattle" } }'::bson))
+(14 rows)
+
+SELECT document
+FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"items","filter":{"$and":[{"items":{"$elemMatch":{"id":"A"}}},{"items":{"$elemMatch":{"city":"seattle"}}}]},"sort":{"_id":1},"hint":"idx_items_profile"}');
+                                                                                                                                                 document
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ { "id" : "A", "city" : "seattle", "role" : "customer", "age" : { "$numberInt" : "30" } } ], "profile" : { "city" : "seattle", "age" : { "$numberInt" : "30" } } }
+ { "_id" : { "$numberInt" : "2" }, "items" : [ { "id" : "A", "city" : "portland", "role" : "lawyer", "age" : { "$numberInt" : "30" } }, { "id" : "B", "city" : "seattle", "role" : "customer", "age" : { "$numberInt" : "40" } } ], "profile" : { "city" : "seattle", "age" : { "$numberInt" : "30" } } }
+ { "_id" : { "$numberInt" : "3" }, "items" : [ { "id" : "A", "city" : "seattle", "role" : "auditor", "age" : { "$numberInt" : "20" } } ], "profile" : { "city" : "portland", "age" : { "$numberInt" : "20" } } }
+(3 rows)
+
+-- A plain predicate under the same prefix remains independent from the
+-- $elemMatch group and is pruned.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"items":{"$elemMatch":{"id":"A","city":"seattle"}},"items.role":"customer"},"hint":"idx_items_profile"}')
+$cmd$);
+                                                                                                                                                                                                                    run_explain_and_trim
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: rct_prune_db.items
+   indexName: idx_items_profile
+   indexKey: {"items.id": 1,"items.city": 1,"items.role": 1,"profile.city": 1,"profile.age": 1}
+   isMultiKey: true
+   multiKeyPaths: items.id, items.city, items.role
+   hasCorrelatedTerms: true
+   indexBounds: ["items.id": ["A", "A"], "items.city": ["seattle", "seattle"], "items.role": (MinKey, MaxKey), "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)]
+   innerScanLoops: 3 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
+   ->  Index Scan using idx_items_profile on documents_29201 collection (actual rows=1 loops=1)
+         Index Cond: ((document @<> '{ "items.id" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "A", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson) AND (document @<> '{ "items.city" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "seattle", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson))
+         Filter: ((document @#? '{ "items" : { "id" : "A", "city" : "seattle" } }'::bson) AND (document @= '{ "items.role" : "customer" }'::bson))
+         Rows Removed by Filter: 1
+(15 rows)
+
+-- A plain predicate and $elemMatch both constrain the lowest column. Keep both
+-- id bounds, but trim the secondary city bound because the owners differ.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"$and":[{"items.id":"A"},{"items":{"$elemMatch":{"id":"B","city":"seattle"}}}]},"hint":"idx_items_profile"}')
+$cmd$);
+                                                                                                                                                          run_explain_and_trim
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: rct_prune_db.items
+   indexName: idx_items_profile
+   indexKey: {"items.id": 1,"items.city": 1,"items.role": 1,"profile.city": 1,"profile.age": 1}
+   isMultiKey: true
+   multiKeyPaths: items.id, items.city, items.role
+   hasCorrelatedTerms: true
+   indexBounds: ["items.id": ["A", "A"], "items.city": (MinKey, MaxKey), "items.role": (MinKey, MaxKey), "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)], ["items.id": ["B", "B"], "items.city": (MinKey, MaxKey), "items.role": (MinKey, MaxKey), "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)]
+   innerScanLoops: 3 loops
+   scanType: regular
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3), (isInequality: true, estimatedEntryCount: 1)]
+   ->  Index Scan using idx_items_profile on documents_29201 collection (actual rows=1 loops=1)
+         Index Cond: ((document @= '{ "items.id" : "A" }'::bson) AND (document @<> '{ "items.id" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "B", "isTopLevel" : false, "hasMultiSegmentSubpath" : false } ] } }'::bson))
+         Filter: (document @#? '{ "items" : { "id" : "B", "city" : "seattle" } }'::bson)
+(14 rows)
+
+SELECT document
+FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"items","filter":{"$and":[{"items.id":"A"},{"items":{"$elemMatch":{"id":"B","city":"seattle"}}}]},"sort":{"_id":1},"hint":"idx_items_profile"}');
+                                                                                                                                                 document
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "items" : [ { "id" : "A", "city" : "portland", "role" : "lawyer", "age" : { "$numberInt" : "30" } }, { "id" : "B", "city" : "seattle", "role" : "customer", "age" : { "$numberInt" : "40" } } ], "profile" : { "city" : "seattle", "age" : { "$numberInt" : "30" } } }
+(1 row)
+
+-- The original heap filter still evaluates unindexed $elemMatch fields.
+SELECT document
+FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"items","filter":{"items":{"$elemMatch":{"id":"A","city":"seattle","age":30}}},"sort":{"_id":1},"hint":"idx_items_profile"}');
+                                                                                                    document
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ { "id" : "A", "city" : "seattle", "role" : "customer", "age" : { "$numberInt" : "30" } } ], "profile" : { "city" : "seattle", "age" : { "$numberInt" : "30" } } }
+(1 row)
+
+-- A regex condition from the same $elemMatch remains an index qual. The heap
+-- filter is still required for full $elemMatch semantics.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"items":{"$elemMatch":{"id":"A","role":{"$regex":"^CUSTOMER$","$options":"i"}}}},"hint":"idx_items_profile"}')
+$cmd$);
+                                                                                                                                                                                                                                                    run_explain_and_trim
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: rct_prune_db.items
+   indexName: idx_items_profile
+   indexKey: {"items.id": 1,"items.city": 1,"items.role": 1,"profile.city": 1,"profile.age": 1}
+   isMultiKey: true
+   multiKeyPaths: items.id, items.city, items.role
+   hasCorrelatedTerms: true
+   indexBounds: ["items.id": ["A", "A"], "items.city": (MinKey, MaxKey), "items.role": ["", { }), "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)], ["items.id": ["A", "A"], "items.city": (MinKey, MaxKey), "items.role": [{ "$regularExpression" : { "pattern" : "^CUSTOMER$", "options" : "i" } }, { "$regularExpression" : { "pattern" : "^CUSTOMER$", "options" : "i" } }], "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)]
+   innerScanLoops: 1 loops
+   scanType: regular
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1), (isInequality: true, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0)]
+   ->  Index Scan using idx_items_profile on documents_29201 collection (actual rows=1 loops=1)
+         Index Cond: ((document @<> '{ "items.id" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "A", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson) AND (document @<> '{ "items.role" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "9" }, "value" : { "$regularExpression" : { "pattern" : "^CUSTOMER$", "options" : "i" } }, "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson))
+         Filter: (document @#? '{ "items" : { "id" : "A", "role" : { "$regularExpression" : { "pattern" : "^CUSTOMER$", "options" : "i" } } } }'::bson)
+(14 rows)
+
+-- Two multi-field $elemMatch groups both constrain the leader. The leader is
+-- ambiguous, so neither group may extend into secondary bounds.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"$and":[{"items":{"$elemMatch":{"id":"A","role":"lawyer"}}},{"items":{"$elemMatch":{"id":"B","city":"seattle"}}}]},"hint":"idx_items_profile"}')
+$cmd$);
+                                                                                                                                                                                 run_explain_and_trim
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: rct_prune_db.items
+   indexName: idx_items_profile
+   indexKey: {"items.id": 1,"items.city": 1,"items.role": 1,"profile.city": 1,"profile.age": 1}
+   isMultiKey: true
+   multiKeyPaths: items.id, items.city, items.role
+   hasCorrelatedTerms: true
+   indexBounds: ["items.id": ["A", "A"], "items.city": (MinKey, MaxKey), "items.role": (MinKey, MaxKey), "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)], ["items.id": ["B", "B"], "items.city": (MinKey, MaxKey), "items.role": (MinKey, MaxKey), "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)]
+   innerScanLoops: 3 loops
+   scanType: regular
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3), (isInequality: true, estimatedEntryCount: 1)]
+   ->  Index Scan using idx_items_profile on documents_29201 collection (actual rows=1 loops=1)
+         Index Cond: ((document @<> '{ "items.id" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "A", "isTopLevel" : false, "hasMultiSegmentSubpath" : false } ] } }'::bson) AND (document @<> '{ "items.id" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "B", "isTopLevel" : false, "hasMultiSegmentSubpath" : false } ] } }'::bson))
+         Filter: ((document @#? '{ "items" : { "id" : "A", "role" : "lawyer" } }'::bson) AND (document @#? '{ "items" : { "id" : "B", "city" : "seattle" } }'::bson))
+(14 rows)
+
+SELECT document
+FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"items","filter":{"$and":[{"items":{"$elemMatch":{"id":"A","role":"lawyer"}}},{"items":{"$elemMatch":{"id":"B","city":"seattle"}}}]},"sort":{"_id":1},"hint":"idx_items_profile"}');
+                                                                                                                                                 document
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "items" : [ { "id" : "A", "city" : "portland", "role" : "lawyer", "age" : { "$numberInt" : "30" } }, { "id" : "B", "city" : "seattle", "role" : "customer", "age" : { "$numberInt" : "40" } } ], "profile" : { "city" : "seattle", "age" : { "$numberInt" : "30" } } }
+(1 row)
+
+-- $or branches use separate bitmap index scans, so each $elemMatch can retain
+-- the safe correlated bounds within its own branch.
+SET enable_bitmapscan TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"$or":[{"items":{"$elemMatch":{"id":"A","role":"lawyer"}}},{"items":{"$elemMatch":{"id":"A","city":"seattle"}}}]},"hint":"idx_items_profile"}')
+$cmd$);
+                                                                                                                                                                                                                          run_explain_and_trim
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+   namespaceName: rct_prune_db.items
+   indexName: idx_items_profile
+   indexKey: {"items.id": 1,"items.city": 1,"items.role": 1,"profile.city": 1,"profile.age": 1}
+   isMultiKey: true
+   multiKeyPaths: items.id, items.city, items.role
+   hasCorrelatedTerms: true
+   indexBounds: ["items.id": ["A", "A"], "items.city": (MinKey, MaxKey), "items.role": ["lawyer", "lawyer"], "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)]
+   innerScanLoops: 3 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+   indexName: idx_items_profile
+   indexKey: {"items.id": 1,"items.city": 1,"items.role": 1,"profile.city": 1,"profile.age": 1}
+   isMultiKey: true
+   multiKeyPaths: items.id, items.city, items.role
+   hasCorrelatedTerms: true
+   indexBounds: ["items.id": ["A", "A"], "items.city": ["seattle", "seattle"], "items.role": (MinKey, MaxKey), "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)]
+   innerScanLoops: 3 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
+   ->  Bitmap Heap Scan on documents_29201 collection (actual rows=3 loops=1)
+         Recheck Cond: ((document @#? '{ "items" : { "id" : "A", "role" : "lawyer" } }'::bson) OR (document @#? '{ "items" : { "id" : "A", "city" : "seattle" } }'::bson))
+         Filter: ((document @#? '{ "items" : { "id" : "A", "role" : "lawyer" } }'::bson) OR (document @#? '{ "items" : { "id" : "A", "city" : "seattle" } }'::bson))
+         Heap Blocks: exact=1
+         ->  BitmapOr (actual rows=0 loops=1)
+               ->  Bitmap Index Scan on idx_items_profile (actual rows=1 loops=1)
+                     Index Cond: ((document @<> '{ "items.id" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "A", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson) AND (document @<> '{ "items.role" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "lawyer", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson))
+               ->  Bitmap Index Scan on idx_items_profile (actual rows=2 loops=1)
+                     Index Cond: ((document @<> '{ "items.id" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "A", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson) AND (document @<> '{ "items.city" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "seattle", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson))
+(29 rows)
+
+SELECT document
+FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"items","filter":{"$or":[{"items":{"$elemMatch":{"id":"A","role":"lawyer"}}},{"items":{"$elemMatch":{"id":"A","city":"seattle"}}}]},"sort":{"_id":1},"hint":"idx_items_profile"}');
+                                                                                                                                                 document
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ { "id" : "A", "city" : "seattle", "role" : "customer", "age" : { "$numberInt" : "30" } } ], "profile" : { "city" : "seattle", "age" : { "$numberInt" : "30" } } }
+ { "_id" : { "$numberInt" : "2" }, "items" : [ { "id" : "A", "city" : "portland", "role" : "lawyer", "age" : { "$numberInt" : "30" } }, { "id" : "B", "city" : "seattle", "role" : "customer", "age" : { "$numberInt" : "40" } } ], "profile" : { "city" : "seattle", "age" : { "$numberInt" : "30" } } }
+ { "_id" : { "$numberInt" : "3" }, "items" : [ { "id" : "A", "city" : "seattle", "role" : "auditor", "age" : { "$numberInt" : "20" } } ], "profile" : { "city" : "portland", "age" : { "$numberInt" : "20" } } }
+(3 rows)
+
+SET enable_bitmapscan TO off;
+-- Per-path metadata proves these dotted siblings are scalar, so both bounds
+-- are safe to retain.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"profile.city":"seattle","profile.age":30},"hint":"idx_items_profile"}')
+$cmd$);
+                                                                              run_explain_and_trim
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: rct_prune_db.items
+   indexName: idx_items_profile
+   indexKey: {"items.id": 1,"items.city": 1,"items.role": 1,"profile.city": 1,"profile.age": 1}
+   isMultiKey: true
+   multiKeyPaths: items.id, items.city, items.role
+   hasCorrelatedTerms: true
+   indexBounds: ["items.id": (MinKey, MaxKey), "items.city": (MinKey, MaxKey), "items.role": (MinKey, MaxKey), "profile.city": ["seattle", "seattle"], "profile.age": [30, 30]]
+   numDuplicates: 1 entries
+   innerScanLoops: 4 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+   ->  Index Scan using idx_items_profile on documents_29201 collection (actual rows=2 loops=1)
+         Index Cond: ((document @= '{ "profile.city" : "seattle" }'::bson) AND (document @= '{ "profile.age" : { "$numberInt" : "30" } }'::bson))
+(14 rows)
+
+-- A full-correlated index stores cross-element combinations, so planner
+-- pruning is unnecessary. This legacy mode intentionally relies on full
+-- cross-products, so opt it out of the metadata-backed parallel-array guard.
+SET documentdb.enableCompositeReducedCorrelatedTermsOnCommonSubPath TO off;
+SET documentdb.enable_failure_on_parallel_index_arrays_for_metadata_tracking TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'rct_prune_db',
+    '{"createIndexes":"full_terms","indexes":[{"key":{"items.id":1,"items.city":1},"name":"idx_full_terms","enableOrderedIndex":1}]}',
+    true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'rct_prune_db', 'full_terms',
+    '{"_id":1,"items":[{"id":"A","city":"portland"},{"id":"B","city":"seattle"}]}');
+                              insert_one
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"full_terms","filter":{"items.id":"A","items.city":"seattle"},"hint":"idx_full_terms"}')
+$cmd$);
+                                                  run_explain_and_trim
+-------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: rct_prune_db.full_terms
+   indexName: idx_full_terms
+   indexKey: {"items.id": 1,"items.city": 1}
+   isMultiKey: true
+   multiKeyPaths: items.id, items.city
+   indexBounds: ["items.id": ["A", "A"], "items.city": ["seattle", "seattle"]]
+   innerScanLoops: 1 loops
+   scanType: regular
+   scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 1)]
+   ->  Index Scan using idx_full_terms on documents_29202 collection (actual rows=1 loops=1)
+         Index Cond: ((document @= '{ "items.id" : "A" }'::bson) AND (document @= '{ "items.city" : "seattle" }'::bson))
+(12 rows)
+
+SELECT document FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"full_terms","filter":{"items.id":"A","items.city":"seattle"},"hint":"idx_full_terms"}');
+                                                         document
+---------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ { "id" : "A", "city" : "portland" }, { "id" : "B", "city" : "seattle" } ] }
+(1 row)
+
+RESET documentdb.enable_failure_on_parallel_index_arrays_for_metadata_tracking;
+-- Legacy indexes without planner-readable MKP metadata keep the execution-time
+-- pruning fallback.
+SET documentdb.enableCompositeReducedCorrelatedTermsOnCommonSubPath TO on;
+SET documentdb.enableIndexMetadataGlobalTracking TO off;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'rct_prune_db',
+    '{"createIndexes":"legacy_terms","indexes":[{"key":{"items.id":1,"items.city":1},"name":"idx_legacy_terms","enableOrderedIndex":1}]}',
+    true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'rct_prune_db', 'legacy_terms',
+    '{"_id":1,"items":[{"id":"A","city":"portland"},{"id":"B","city":"seattle"}]}');
+                              insert_one
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"legacy_terms","filter":{"items.id":"A","items.city":"seattle"},"hint":"idx_legacy_terms"}')
+$cmd$);
+                                                  run_explain_and_trim
+-------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: rct_prune_db.legacy_terms
+   indexName: idx_legacy_terms
+   indexKey: {"items.id": 1,"items.city": 1}
+   isMultiKey: true
+   hasCorrelatedTerms: true
+   indexBounds: ["items.id": ["A", "A"], "items.city": (MinKey, MaxKey)]
+   innerScanLoops: 2 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+   ->  Index Scan using idx_legacy_terms on documents_29203 collection (actual rows=1 loops=1)
+         Index Cond: ((document @= '{ "items.id" : "A" }'::bson) AND (document @= '{ "items.city" : "seattle" }'::bson))
+(12 rows)
+
+SELECT document FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"legacy_terms","filter":{"items.id":"A","items.city":"seattle"},"hint":"idx_legacy_terms"}');
+                                                         document
+---------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ { "id" : "A", "city" : "portland" }, { "id" : "B", "city" : "seattle" } ] }
+(1 row)
+
+-- Flag-off plans carry no planner marker, so execution retains conservative
+-- reduced-correlated trimming even on an MKP index.
+SET documentdb.enable_composite_reduced_correlated_bounds_planning TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"items":{"$elemMatch":{"id":"A","city":"seattle"}}},"hint":"idx_items_profile"}')
+$cmd$);
+                                                                                                                                                   run_explain_and_trim
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: rct_prune_db.items
+   indexName: idx_items_profile
+   indexKey: {"items.id": 1,"items.city": 1,"items.role": 1,"profile.city": 1,"profile.age": 1}
+   isMultiKey: true
+   multiKeyPaths: items.id, items.city, items.role
+   hasCorrelatedTerms: true
+   indexBounds: ["items.id": ["A", "A"], "items.city": (MinKey, MaxKey), "items.role": (MinKey, MaxKey), "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)]
+   innerScanLoops: 4 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+   ->  Index Scan using idx_items_profile on documents_29201 collection (actual rows=2 loops=1)
+         Index Cond: ((document @<> '{ "items.id" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "A", "isTopLevel" : false } ] } }'::bson) AND (document @<> '{ "items.city" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "seattle", "isTopLevel" : false } ] } }'::bson))
+         Filter: (document @#? '{ "items" : { "id" : "A", "city" : "seattle" } }'::bson)
+         Rows Removed by Filter: 1
+(15 rows)
+
+SET documentdb.enable_composite_reduced_correlated_bounds_planning TO on;
+SET documentdb.enableIndexMetadataGlobalTracking TO on;
+-- Add cross-element and same-element documents after the pre-existing matrix
+-- so these cases do not perturb its EXPLAIN cardinalities.
+SELECT documentdb_api.insert_one(
+    'rct_prune_db', 'items',
+    '{"_id":4,"items":[{"id":"C","city":"portland","role":"customer"},{"id":"Z","city":"seattle","role":"lawyer"}]}');
+                              insert_one
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'rct_prune_db', 'items',
+    '{"_id":5,"items":[{"id":"C","city":"seattle","role":"auditor"}]}');
+                              insert_one
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- The lowest queried column need not be the first indexed column. With id
+-- unbounded, city becomes the lowest queried items column and may retain role
+-- from the same $elemMatch. The cross-element decoy (_id:4) must be rejected.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"items":{"$elemMatch":{"city":"seattle","role":"customer"}}},"hint":"idx_items_profile"}')
+$cmd$);
+                                                                                                                                                                                                                         run_explain_and_trim
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: rct_prune_db.items
+   indexName: idx_items_profile
+   indexKey: {"items.id": 1,"items.city": 1,"items.role": 1,"profile.city": 1,"profile.age": 1}
+   isMultiKey: true
+   multiKeyPaths: items.id, items.city, items.role
+   hasCorrelatedTerms: true
+   indexBounds: ["items.id": (MinKey, MaxKey), "items.city": ["seattle", "seattle"], "items.role": ["customer", "customer"], "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)]
+   innerScanLoops: 7 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
+   ->  Index Scan using idx_items_profile on documents_29201 collection (actual rows=2 loops=1)
+         Index Cond: ((document @<> '{ "items.city" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "seattle", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson) AND (document @<> '{ "items.role" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "customer", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson))
+         Filter: (document @#? '{ "items" : { "city" : "seattle", "role" : "customer" } }'::bson)
+(14 rows)
+
+SELECT document
+FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"items","filter":{"items":{"$elemMatch":{"city":"seattle","role":"customer"}}},"sort":{"_id":1},"hint":"idx_items_profile"}');
+                                                                                                                                                 document
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ { "id" : "A", "city" : "seattle", "role" : "customer", "age" : { "$numberInt" : "30" } } ], "profile" : { "city" : "seattle", "age" : { "$numberInt" : "30" } } }
+ { "_id" : { "$numberInt" : "2" }, "items" : [ { "id" : "A", "city" : "portland", "role" : "lawyer", "age" : { "$numberInt" : "30" } }, { "id" : "B", "city" : "seattle", "role" : "customer", "age" : { "$numberInt" : "40" } } ], "profile" : { "city" : "seattle", "age" : { "$numberInt" : "30" } } }
+(2 rows)
+
+-- Multiple range operations on the lowest queried column must all retain the
+-- same planner marker as the secondary city bound.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"items":{"$elemMatch":{"id":{"$gt":"B","$lt":"D"},"city":"seattle"}}},"hint":"idx_items_profile"}')
+$cmd$);
+                                                                                                                                                                                                                                                                                         run_explain_and_trim
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: rct_prune_db.items
+   indexName: idx_items_profile
+   indexKey: {"items.id": 1,"items.city": 1,"items.role": 1,"profile.city": 1,"profile.age": 1}
+   isMultiKey: true
+   multiKeyPaths: items.id, items.city, items.role
+   hasCorrelatedTerms: true
+   indexBounds: ["items.id": ("B", { }), "items.city": ["seattle", "seattle"], "items.role": (MinKey, MaxKey), "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)], ["items.id": ["", "D"), "items.city": ["seattle", "seattle"], "items.role": (MinKey, MaxKey), "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)]
+   innerScanLoops: 5 loops
+   scanType: regular
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2), (isInequality: true, estimatedEntryCount: 4)]
+   ->  Index Scan using idx_items_profile on documents_29201 collection (actual rows=1 loops=1)
+         Index Cond: ((document @<> '{ "items.id" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "2" }, "value" : "B", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true }, { "op" : { "$numberInt" : "4" }, "value" : "D", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson) AND (document @<> '{ "items.city" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "seattle", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson))
+         Filter: (document @#? '{ "items" : { "id" : { "$gt" : "B", "$lt" : "D" }, "city" : "seattle" } }'::bson)
+(14 rows)
+
+SELECT document
+FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"items","filter":{"items":{"$elemMatch":{"id":{"$gt":"B","$lt":"D"},"city":"seattle"}}},"sort":{"_id":1},"hint":"idx_items_profile"}');
+                                                 document
+----------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "items" : [ { "id" : "C", "city" : "seattle", "role" : "auditor" } ] }
+(1 row)
+
+-- $in expansion inside $elemMatch must preserve the same-element city bound.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"items":{"$elemMatch":{"id":{"$in":["C","Q"]},"city":"seattle"}}},"hint":"idx_items_profile"}')
+$cmd$);
+                                                                                                                                                                                                                         run_explain_and_trim
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: rct_prune_db.items
+   indexName: idx_items_profile
+   indexKey: {"items.id": 1,"items.city": 1,"items.role": 1,"profile.city": 1,"profile.age": 1}
+   isMultiKey: true
+   multiKeyPaths: items.id, items.city, items.role
+   hasCorrelatedTerms: true
+   indexBounds: ["items.id": ["C", "C"], "items.city": ["seattle", "seattle"], "items.role": (MinKey, MaxKey), "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)], ["items.id": ["Q", "Q"], "items.city": ["seattle", "seattle"], "items.role": (MinKey, MaxKey), "profile.city": (MinKey, MaxKey), "profile.age": (MinKey, MaxKey)]
+   innerScanLoops: 1 loops
+   scanType: regular
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1), (isInequality: true, estimatedEntryCount: 0)]
+   ->  Index Scan using idx_items_profile on documents_29201 collection (actual rows=1 loops=1)
+         Index Cond: ((document @<> '{ "items.id" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "6" }, "value" : [ "C", "Q" ], "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson) AND (document @<> '{ "items.city" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "seattle", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson))
+         Filter: (document @#? '{ "items" : { "id" : { "$in" : [ "C", "Q" ] }, "city" : "seattle" } }'::bson)
+(14 rows)
+
+SELECT document
+FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"items","filter":{"items":{"$elemMatch":{"id":{"$in":["C","Q"]},"city":"seattle"}}},"sort":{"_id":1},"hint":"idx_items_profile"}');
+                                                 document
+----------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "items" : [ { "id" : "C", "city" : "seattle", "role" : "auditor" } ] }
+(1 row)
+
+-- A generic plan built before the index has arrays carries no planner marker.
+-- A later execution must retain the legacy trim if the index becomes reduced
+-- correlated.
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'rct_prune_db',
+    '{"createIndexes":"metadata_growth","indexes":[{"key":{"a.b":1,"a.c":1},"name":"idx_metadata_growth","enableOrderedIndex":1}]}',
+    true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'rct_prune_db', 'metadata_growth',
+    '{"_id":1,"a":{"b":0,"c":0}}');
+                              insert_one
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SET plan_cache_mode TO force_generic_plan;
+PREPARE cached_rct_query AS
+SELECT document FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"metadata_growth","filter":{"a.b":1,"a.c":2},"hint":"idx_metadata_growth"}');
+EXECUTE cached_rct_query;
+ document
+----------
+(0 rows)
+
+-- This insert makes both paths multikey and starts emitting reduced-correlated
+-- terms. Execution must trim a.c from the unmarked cached plan before scanning.
+SELECT documentdb_api.insert_one(
+    'rct_prune_db', 'metadata_growth',
+    '{"_id":2,"a":[{"b":1,"c":0},{"b":0,"c":2}]}');
+                              insert_one
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+EXECUTE cached_rct_query;
+                                                                                   document
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "a" : [ { "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "0" } }, { "b" : { "$numberInt" : "0" }, "c" : { "$numberInt" : "2" } } ] }
+(1 row)
+
+DEALLOCATE cached_rct_query;
+RESET plan_cache_mode;
+-- An outer $elemMatch does not correlate fields across a nested array. Keep
+-- only one deep bound so predicates may match different nested elements.
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'rct_prune_db',
+    '{"createIndexes":"nested_arrays","indexes":[{"key":{"a.b.c":1,"a.b.d":1},"name":"idx_nested_arrays","enableOrderedIndex":1}]}',
+    true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'rct_prune_db', 'nested_arrays',
+    '{"_id":1,"a":[{"b":[{"c":1,"d":0},{"c":0,"d":2}]}]}');
+                              insert_one
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"nested_arrays","filter":{"a":{"$elemMatch":{"b.c":1,"b.d":2}}},"hint":"idx_nested_arrays"}')
+$cmd$);
+                                                                                               run_explain_and_trim
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: rct_prune_db.nested_arrays
+   indexName: idx_nested_arrays
+   indexKey: {"a.b.c": 1,"a.b.d": 1}
+   isMultiKey: true
+   multiKeyPaths: a.b.c, a.b.d
+   hasCorrelatedTerms: true
+   indexBounds: ["a.b.c": [1, 1], "a.b.d": (MinKey, MaxKey)]
+   innerScanLoops: 1 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+   ->  Index Scan using idx_nested_arrays on documents_29205 collection (actual rows=1 loops=1)
+         Index Cond: (document @<> '{ "a.b.c" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" }, "isTopLevel" : false, "hasMultiSegmentSubpath" : true } ] } }'::bson)
+         Filter: (document @#? '{ "a" : { "b.c" : { "$numberInt" : "1" }, "b.d" : { "$numberInt" : "2" } } }'::bson)
+(14 rows)
+
+SELECT document FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"nested_arrays","filter":{"a":{"$elemMatch":{"b.c":1,"b.d":2}}},"hint":"idx_nested_arrays"}');
+                                                                                          document
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : [ { "b" : [ { "c" : { "$numberInt" : "1" }, "d" : { "$numberInt" : "0" } }, { "c" : { "$numberInt" : "0" }, "d" : { "$numberInt" : "2" } } ] } ] }
+(1 row)
+
+-- Moving $elemMatch to the physical correlation level makes both bounds safe.
+SELECT documentdb_api.insert_one(
+    'rct_prune_db', 'nested_arrays',
+    '{"_id":2,"a":[{"b":[{"c":1,"d":2}]}]}');
+                              insert_one
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"nested_arrays","filter":{"a.b":{"$elemMatch":{"c":1,"d":2}}},"hint":"idx_nested_arrays"}')
+$cmd$);
+                                                                                                                                                                                                                                run_explain_and_trim
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: rct_prune_db.nested_arrays
+   indexName: idx_nested_arrays
+   indexKey: {"a.b.c": 1,"a.b.d": 1}
+   isMultiKey: true
+   multiKeyPaths: a.b.c, a.b.d
+   hasCorrelatedTerms: true
+   indexBounds: ["a.b.c": [1, 1], "a.b.d": [2, 2]]
+   innerScanLoops: 1 loops
+   scanType: regular
+   scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 1)]
+   ->  Index Scan using idx_nested_arrays on documents_29205 collection (actual rows=1 loops=1)
+         Index Cond: ((document @<> '{ "a.b.c" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" }, "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson) AND (document @<> '{ "a.b.d" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "2" }, "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::bson))
+         Filter: (document @#? '{ "a.b" : { "c" : { "$numberInt" : "1" }, "d" : { "$numberInt" : "2" } } }'::bson)
+(14 rows)
+
+SELECT document FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"nested_arrays","filter":{"a.b":{"$elemMatch":{"c":1,"d":2}}},"hint":"idx_nested_arrays"}');
+                                                          document
+----------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "a" : [ { "b" : [ { "c" : { "$numberInt" : "1" }, "d" : { "$numberInt" : "2" } } ] } ] }
+(1 row)
+
+SELECT documentdb_api.drop_collection('rct_prune_db', 'items');
+ drop_collection
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('rct_prune_db', 'full_terms');
+ drop_collection
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('rct_prune_db', 'legacy_terms');
+ drop_collection
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('rct_prune_db', 'metadata_growth');
+ drop_collection
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('rct_prune_db', 'nested_arrays');
+ drop_collection
+-----------------
+ t
+(1 row)
+

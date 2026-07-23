@@ -18,6 +18,9 @@
 #include <optimizer/planner.h>
 #include <optimizer/paths.h>
 #include <commands/explain.h>
+#if PG_VERSION_NUM >= 180000
+#include <commands/explain_state.h>
+#endif
 #include <optimizer/plancat.h>
 
 
@@ -36,6 +39,7 @@ extern planner_hook_type ExtensionPreviousPlannerHook;
 extern set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook;
 extern explain_get_index_name_hook_type ExtensionPreviousIndexNameHook;
 extern get_relation_info_hook_type ExtensionPreviousGetRelationInfoHook;
+extern ExplainOneQuery_hook_type ExtensionPreviousExplainOneQueryHook;
 extern bool SimulateRecoveryState;
 extern bool DocumentDBPGReadOnlyForDiskFull;
 
@@ -43,6 +47,9 @@ extern bool DocumentDBPGReadOnlyForDiskFull;
 PlannedStmt * DocumentDBApiPlanner(Query *parse, const char *queryString, int
 								   cursorOptions,
 								   ParamListInfo boundParams);
+void DocumentDBApiExplainOneQuery(Query *query, int cursorOptions, IntoClause *into,
+								  ExplainState *es, const char *queryString,
+								  ParamListInfo params, QueryEnvironment *queryEnv);
 void ExtensionRelPathlistHook(PlannerInfo *root, RelOptInfo *rel, Index rti,
 							  RangeTblEntry *rte);
 void ExtensionGetRelationInfoHook(PlannerInfo *root, Oid relationObjectId,

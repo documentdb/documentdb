@@ -400,6 +400,7 @@ static void ProcessBatchUpdateNonTransactionalUnsharded(MongoCollection *collect
 static inline void PgbsonWriterAppendInt(pgbson_writer *writer, const char *path,
 										 uint32_t pathLength, int64 value);
 static inline void ReportUpdateFeatureUsage(int batchSize);
+static inline void ReportUpdatedManyDocumentFeatureUsage(UpdateResult *result);
 
 PG_FUNCTION_INFO_V1(command_update_bulk);
 PG_FUNCTION_INFO_V1(command_update);
@@ -1705,6 +1706,8 @@ ProcessUpdate(MongoCollection *collection, UpdateSpec *updateSpec,
 			&hasOnlyObjectIdFilter);
 		result->rowsMatched = updateAllResult.matchedDocs;
 		result->rowsModified = updateAllResult.rowsUpdated;
+
+		ReportUpdatedManyDocumentFeatureUsage(result);
 
 		/*
 		 * In case of an upsert,
@@ -4172,5 +4175,35 @@ ReportUpdateFeatureUsage(int batchSize)
 	else
 	{
 		ReportFeatureUsage(FEATURE_COMMAND_UPDATE_EXTENDED);
+	}
+}
+
+
+static inline void
+ReportUpdatedManyDocumentFeatureUsage(UpdateResult *result)
+{
+	if (result == NULL || result->rowsMatched == 0 ||
+		result->rowsMatched == result->rowsModified)
+	{
+		return;
+	}
+
+	uint64 rowsNotUpdated = result->rowsMatched - result->rowsModified;
+
+	if (rowsNotUpdated <= 10)
+	{
+		ReportFeatureUsage(FEATURE_COMMAND_UPDATEMANY_10_NOOP);
+	}
+	else if (rowsNotUpdated <= 100)
+	{
+		ReportFeatureUsage(FEATURE_COMMAND_UPDATEMANY_100_NOOP);
+	}
+	else if (rowsNotUpdated <= 1000)
+	{
+		ReportFeatureUsage(FEATURE_COMMAND_UPDATEMANY_1000_NOOP);
+	}
+	else
+	{
+		ReportFeatureUsage(FEATURE_COMMAND_UPDATEMANY_EXTENDED_NOOP);
 	}
 }

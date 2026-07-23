@@ -2,6 +2,8 @@ SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documen
 SET citus.next_shard_id TO 884500;
 SET documentdb.next_collection_id TO 88450;
 SET documentdb.next_collection_index_id TO 88450;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 CREATE SCHEMA setWindowFieldSchema;
 

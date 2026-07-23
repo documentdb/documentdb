@@ -3,7 +3,6 @@ SET citus.next_shard_id TO 9200000;
 SET documentdb.next_collection_id TO 92000;
 SET documentdb.next_collection_index_id TO 92000;
 SET documentdb.enableExtendedExplainPlans to on;
-SET documentdb.enableIndexOnlyScan to on;
 
 -- if documentdb_extended_rum exists, set alternate index handler
 SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extended_rum', false), extname

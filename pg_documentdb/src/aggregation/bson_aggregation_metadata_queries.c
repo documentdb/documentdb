@@ -61,7 +61,16 @@ static Query * HandleListCollectionsProjector(Query *query,
 											  bool nameOnly, bool addDistributedMetadata);
 static Query * GenerateBaseListIndexesQuery(text *databaseDatum, const
 											StringView *collectionName,
-											AggregationPipelineBuildContext *context);
+											AggregationPipelineBuildContext *context,
+											bool isExtendedIndexListing);
+static Query * GenerateBaseListExtendedIndexesQuery(text *databaseDatum,
+													const StringView *collectionName,
+													AggregationPipelineBuildContext *
+													context,
+													pgbson *filterSpec);
+
+static inline Expr * MakeExtendedIndexOnlyFilter(Var *indexSpecVar);
+static inline Expr * MakeExcludeExtendedIndexFilter(Var *indexSpecVar);
 
 static Query * BuildSingleFunctionQuery(Oid queryFunctionOid, List *queryArgs, bool
 										isMultiRow);
@@ -275,7 +284,9 @@ GenerateListIndexesQuery(text *databaseDatum, pgbson *listIndexesSpec,
 							"Required field collection must be valid")));
 	}
 
-	Query *query = GenerateBaseListIndexesQuery(databaseDatum, &collectionName, &context);
+	bool isExtendedIndexListing = false;
+	Query *query = GenerateBaseListIndexesQuery(databaseDatum, &collectionName, &context,
+												isExtendedIndexListing);
 	queryData->namespaceName = context.namespaceName;
 	return query;
 }
@@ -371,12 +382,95 @@ HandleCurrentOp(const bson_value_t *existingValue, Query *query,
 
 
 /*
- * Generates the base query that queries the ApiCatalogSchemaName.collection_indexes
- * for a listIndexes scenario.
+ * Builds the WHERE clause filter for extended-only indexes:
+ *   index_options IS NOT NULL AND index_options #= '{"isExtendedIndex": true}'
+ */
+static inline Expr *
+MakeExtendedIndexOnlyFilter(Var *indexSpecVar)
+{
+	FieldSelect *indexOptionsField = makeNode(FieldSelect);
+	indexOptionsField->arg = (Expr *) indexSpecVar;
+	indexOptionsField->fieldnum = 10;
+	indexOptionsField->resulttype = BsonTypeId();
+	indexOptionsField->resulttypmod = -1;
+	indexOptionsField->resultcollid = InvalidOid;
+
+	NullTest *indexOptionsNotNull = makeNode(NullTest);
+	indexOptionsNotNull->arg = (Expr *) indexOptionsField;
+	indexOptionsNotNull->nulltesttype = IS_NOT_NULL;
+	indexOptionsNotNull->argisrow = false;
+
+	pgbson_writer filterWriter;
+	PgbsonWriterInit(&filterWriter);
+	PgbsonWriterAppendBool(&filterWriter,
+						   EXTENDED_INDEX_SPEC_FLAG_FIELD_NAME,
+						   EXTENDED_INDEX_SPEC_FLAG_FIELD_NAME_LENGTH,
+						   true);
+	pgbson *filterBson = PgbsonWriterGetPgbson(&filterWriter);
+
+	Expr *isExtendedExpr = make_opclause(BsonEqualMatchRuntimeOperatorId(),
+										 BOOLOID, false,
+										 (Expr *) indexOptionsField,
+										 (Expr *) MakeBsonConst(filterBson),
+										 InvalidOid, InvalidOid);
+
+	return (Expr *) makeBoolExpr(AND_EXPR,
+								 list_make2(indexOptionsNotNull, isExtendedExpr), -1);
+}
+
+
+/*
+ * Builds the WHERE clause filter that excludes extended indexes:
+ *   (index_options IS NULL) OR NOT (index_options #= '{"isExtendedIndex": true}')
+ */
+static inline Expr *
+MakeExcludeExtendedIndexFilter(Var *indexSpecVar)
+{
+	FieldSelect *indexOptionsField = makeNode(FieldSelect);
+	indexOptionsField->arg = (Expr *) indexSpecVar;
+	indexOptionsField->fieldnum = 10;
+	indexOptionsField->resulttype = BsonTypeId();
+	indexOptionsField->resulttypmod = -1;
+	indexOptionsField->resultcollid = InvalidOid;
+
+	pgbson_writer filterWriter;
+	PgbsonWriterInit(&filterWriter);
+	PgbsonWriterAppendBool(&filterWriter,
+						   EXTENDED_INDEX_SPEC_FLAG_FIELD_NAME,
+						   EXTENDED_INDEX_SPEC_FLAG_FIELD_NAME_LENGTH,
+						   true);
+	pgbson *filterBson = PgbsonWriterGetPgbson(&filterWriter);
+
+	Expr *indexOptionsMatchExpr = make_opclause(BsonEqualMatchRuntimeOperatorId(),
+												BOOLOID, false,
+												(Expr *) indexOptionsField,
+												(Expr *) MakeBsonConst(filterBson),
+												InvalidOid, InvalidOid);
+
+	Expr *notExtendedExpr = (Expr *) makeBoolExpr(NOT_EXPR,
+												  list_make1(indexOptionsMatchExpr),
+												  -1);
+
+	NullTest *indexOptionsIsNullExpr = makeNode(NullTest);
+	indexOptionsIsNullExpr->arg = (Expr *) indexOptionsField;
+	indexOptionsIsNullExpr->nulltesttype = IS_NULL;
+	indexOptionsIsNullExpr->argisrow = false;
+
+	return (Expr *) makeBoolExpr(OR_EXPR,
+								 list_make2(indexOptionsIsNullExpr, notExtendedExpr),
+								 -1);
+}
+
+
+/*
+ * Generates the base query that queries the ApiCatalogSchemaName.collection_indexes.
+ * isExtendedIndexListing controls whether to return regular indexes (excluding extended)
+ * or only extended indexes.
  */
 static Query *
 GenerateBaseListIndexesQuery(text *databaseDatum, const StringView *collectionName,
-							 AggregationPipelineBuildContext *context)
+							 AggregationPipelineBuildContext *context,
+							 bool isExtendedIndexListing)
 {
 	Query *query = makeNode(Query);
 	query->commandType = CMD_SELECT;
@@ -480,55 +574,23 @@ GenerateBaseListIndexesQuery(text *databaseDatum, const StringView *collectionNa
 													false, true),
 								 InvalidOid, InvalidOid);
 
-	/* Filter out extended index info when extended indexes feature is enabled */
+	/* Filter extended indexes based on flag */
 	Expr *andClause;
 	if (EnableExtendedIndexes)
 	{
-		/* NOT (index_spec.index_options #= '{ "isExtendedIndex": true }') */
-		Oid queryOpOid = BsonEqualMatchRuntimeOperatorId();
-
-		FieldSelect *indexOptionsField = makeNode(FieldSelect);
-		indexOptionsField->arg = (Expr *) indexSpecVar;
-		indexOptionsField->fieldnum = 10;                  /* index_options is the 10th attribute */
-		indexOptionsField->resulttype = BsonTypeId();       /* index_options is of type bson */
-		indexOptionsField->resulttypmod = -1;
-		indexOptionsField->resultcollid = InvalidOid;
-
-		pgbson_writer filterWriter;
-		PgbsonWriterInit(&filterWriter);
-		PgbsonWriterAppendBool(&filterWriter,
-							   EXTENDED_INDEX_SPEC_FLAG_FIELD_NAME,
-							   EXTENDED_INDEX_SPEC_FLAG_FIELD_NAME_LENGTH,
-							   true);
-		pgbson *filterBson = PgbsonWriterGetPgbson(&filterWriter);
-		Const *filterConst = MakeBsonConst(filterBson);
-
-		Expr *indexOptionsMatchExpr = make_opclause(queryOpOid, BOOLOID, false,
-													(Expr *) indexOptionsField,
-													(Expr *) filterConst,
-													InvalidOid, InvalidOid);
-
-		Expr *notExtendedExpr = (Expr *) makeBoolExpr(NOT_EXPR,
-													  list_make1(indexOptionsMatchExpr),
-													  -1);
-
-		/* (index_spec).index_options is null */
-		NullTest *indexOptionsIsNullExpr = makeNode(NullTest);
-		indexOptionsIsNullExpr->arg = (Expr *) indexOptionsField;
-		indexOptionsIsNullExpr->nulltesttype = IS_NULL;
-		indexOptionsIsNullExpr->argisrow = false;
-
-		/* ((index_spec).index_options is null) or NOT (index_spec.index_options #= '{ "isExtendedIndex": true }') */
-		Expr *notExtendedOrNullExpr = (Expr *) makeBoolExpr(OR_EXPR,
-															list_make2(
-																indexOptionsIsNullExpr,
-																notExtendedExpr),
-															-1);
-
-		/* collection_id = <id> AND (index_is_valid OR ApiInternalSchemaName.index_build_is_in_progress)
-		 * AND ((index_spec).index_options is null OR NOT (index_spec.index_options #= '{ "isExtendedIndex": true }'))
-		 */
-		andClause = make_andclause(list_make3(opExpr, orClause, notExtendedOrNullExpr));
+		if (isExtendedIndexListing)
+		{
+			/* Only include extended indexes */
+			Expr *extendedFilter = MakeExtendedIndexOnlyFilter(indexSpecVar);
+			andClause = make_andclause(list_make3(opExpr, orClause, extendedFilter));
+		}
+		else
+		{
+			/* Exclude extended indexes */
+			Expr *excludeExtendedFilter = MakeExcludeExtendedIndexFilter(indexSpecVar);
+			andClause = make_andclause(list_make3(opExpr, orClause,
+												  excludeExtendedFilter));
+		}
 	}
 	else
 	{
@@ -734,6 +796,285 @@ HandleIndexStats(const bson_value_t *existingValue, Query *query,
 	bool isMultiRow = true;
 	return BuildSingleFunctionQuery(ApiIndexStatsAggregationFunctionOid(),
 									indexStatsArgs, isMultiRow);
+}
+
+
+/*
+ * Generates a base query for extended indexes.
+ * Calls GenerateBaseListIndexesQuery with OnlyExtended mode, then
+ * adds extra target columns and optional name/id filters.
+ *
+ * The generated query is equivalent to:
+ *
+ *   SELECT index_spec_as_bson(index_spec, TRUE),
+ *          index_is_valid,
+ *          index_build_is_in_progress(index_id),
+ *          index_id
+ *   FROM collection_indexes
+ *   WHERE collection_id = <id>
+ *     AND (index_is_valid OR index_build_is_in_progress(index_id))
+ *     AND (index_spec).index_options IS NOT NULL
+ *     AND (index_spec).index_options #= '{"isExtendedIndex": true}'
+ *     AND [(index_spec).index_name = '<filterName>']   -- optional
+ *     AND [index_id = <filterId>]                      -- optional
+ *   ORDER BY index_id;
+ *
+ * Returns 4 columns (+1 sort junk):
+ *  1. index_spec_as_bson(index_spec, TRUE) — bson document
+ *  2. index_is_valid — bool
+ *  3. index_build_is_in_progress(index_id) — bool
+ *  4. index_id — int
+ *  5. sort junk (index_id for ORDER BY)
+ */
+static Query *
+GenerateBaseListExtendedIndexesQuery(text *databaseDatum,
+									 const StringView *collectionName,
+									 AggregationPipelineBuildContext *context,
+									 pgbson *filterSpec)
+{
+	/* Validate collection */
+	MongoCollection *collection = GetMongoCollectionByNameDatum(
+		PointerGetDatum(databaseDatum),
+		CStringGetTextDatum(collectionName->string),
+		NoLock);
+	if (collection == NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_NAMESPACENOTFOUND),
+						errmsg("Namespace does not currently exist: %s.%s",
+							   text_to_cstring(databaseDatum),
+							   collectionName->string)));
+	}
+
+	if (collection->viewDefinition != NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTEDONVIEW),
+						errmsg(
+							"The namespace %s.%s refers to a view object rather than a collection",
+							text_to_cstring(databaseDatum),
+							collectionName->string)));
+	}
+
+	/* Parse optional filter spec for "id" and "name" */
+	const char *filterName = NULL;
+	int32 filterId = -1;
+	bool hasIdFilter = false;
+	if (filterSpec != NULL)
+	{
+		bson_iter_t specIterator;
+		PgbsonInitIterator(filterSpec, &specIterator);
+		while (bson_iter_next(&specIterator))
+		{
+			const char *key = bson_iter_key(&specIterator);
+			if (strcmp(key, "id") == 0)
+			{
+				if (!BSON_ITER_HOLDS_UTF8(&specIterator))
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+									errmsg("$listSearchIndexes 'id' must be a string.")));
+				}
+
+				const bson_value_t *value = bson_iter_value(&specIterator);
+
+				if (value->value.v_utf8.len == 0)
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+									errmsg(
+										"$listSearchIndexes 'id' cannot be an empty string.")));
+				}
+
+				char *filterIdstr = pnstrdup(value->value.v_utf8.str,
+											 value->value.v_utf8.len);
+
+				/* Validate that the string represents a valid non-negative integer and convert to int32 */
+				if (!isdigit((unsigned char) *filterIdstr))
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+									errmsg(
+										"$listSearchIndexes 'id' must represent a valid non-negative integer.")));
+				}
+
+				char *endptr = NULL;
+				long parsedId = strtol(filterIdstr, &endptr, 10);
+				if (*endptr != '\0' || endptr == filterIdstr ||
+					parsedId < 0 || parsedId > INT32_MAX)
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+									errmsg(
+										"$listSearchIndexes 'id' must represent a valid non-negative integer.")));
+				}
+
+				filterId = (int32) parsedId;
+				hasIdFilter = true;
+			}
+			else if (strcmp(key, "name") == 0)
+			{
+				if (!BSON_ITER_HOLDS_UTF8(&specIterator))
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+									errmsg(
+										"$listSearchIndexes 'name' must be a string.")));
+				}
+
+				const bson_value_t *value = bson_iter_value(&specIterator);
+
+				if (value->value.v_utf8.len == 0)
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+									errmsg(
+										"$listSearchIndexes 'name' cannot be an empty string.")));
+				}
+
+				filterName = pnstrdup(value->value.v_utf8.str,
+									  value->value.v_utf8.len);
+			}
+			else
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg("Unrecognized option to $listSearchIndexes: %s",
+									   key)));
+			}
+		}
+
+		if (hasIdFilter && filterName != NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+							errmsg(
+								"Cannot specify both 'id' and 'name' in $listSearchIndexes filter.")));
+		}
+	}
+
+	/* Build base query with extended-only filter */
+	bool isExtendedIndexListing = true;
+	Query *query = GenerateBaseListIndexesQuery(databaseDatum, collectionName,
+												context,
+												isExtendedIndexListing);
+
+	/* Base query target list:
+	 *  [0]=index_spec_as_bson (resno 1),
+	 *  [1]=sort junk (resno 2).
+	 * Add extra columns: index_is_valid, build_in_progress, index_id.
+	 * Move sort junk entry to resno 5.
+	 */
+	Index varno = 1;
+	Index varlevelsup = 0;
+
+	TargetEntry *te2 = makeTargetEntry(
+		(Expr *) makeVar(varno, 4, BOOLOID, -1, InvalidOid, varlevelsup),
+		2, "index_is_valid", false);
+
+	FuncExpr *buildInProgressExpr = makeFuncExpr(
+		IndexBuildIsInProgressFunctionId(), BOOLOID,
+		list_make1(makeVar(varno, 2, INT4OID, -1, InvalidOid, varlevelsup)),
+		InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+	TargetEntry *te3 = makeTargetEntry((Expr *) buildInProgressExpr, 3,
+									   "build_in_progress", false);
+
+	TargetEntry *te4 = makeTargetEntry(
+		(Expr *) makeVar(varno, 2, INT4OID, -1, InvalidOid, varlevelsup),
+		4, "index_id", false);
+
+	TargetEntry *bsonEntry = (TargetEntry *) linitial(query->targetList);
+	bsonEntry->resno = 1;
+	bsonEntry->resname = "document";
+
+	TargetEntry *sortEntry = (TargetEntry *) lsecond(query->targetList);
+	sortEntry->resno = 5;
+
+	query->targetList = list_make4(bsonEntry, te2, te3, te4);
+	query->targetList = lappend(query->targetList, sortEntry);
+
+	/* Add optional name/id filters */
+	Var *indexSpecVar = makeVar(varno, 3, IndexSpecTypeId(), -1, InvalidOid, varlevelsup);
+
+	if (filterName != NULL)
+	{
+		FieldSelect *indexNameField = makeNode(FieldSelect);
+		indexNameField->arg = (Expr *) indexSpecVar;
+		indexNameField->fieldnum = 1;
+		indexNameField->resulttype = TEXTOID;
+		indexNameField->resulttypmod = -1;
+		indexNameField->resultcollid = DEFAULT_COLLATION_OID;
+
+		Expr *nameFilter = make_opclause(TextEqualOperatorId(), BOOLOID, false,
+										 (Expr *) indexNameField,
+										 (Expr *) MakeTextConst(filterName, strlen(
+																	filterName)),
+										 InvalidOid, DEFAULT_COLLATION_OID);
+		query->jointree->quals = (Node *) make_andclause(
+			list_make2(query->jointree->quals, nameFilter));
+	}
+
+	if (hasIdFilter)
+	{
+		Expr *idFilter = make_opclause(PostgresInt4EqualOperatorOid(), BOOLOID, false,
+									   (Expr *) makeVar(varno, 2, INT4OID, -1, InvalidOid,
+														varlevelsup),
+									   (Expr *) makeConst(INT4OID, -1, InvalidOid,
+														  sizeof(int32), Int32GetDatum(
+															  filterId),
+														  false, true),
+									   InvalidOid, InvalidOid);
+		query->jointree->quals = (Node *) make_andclause(
+			list_make2(query->jointree->quals, idFilter));
+	}
+
+	return query;
+}
+
+
+/*
+ * Builds a base query for extended indexes and calls the postprocess hook.
+ */
+Query *
+HandleListExtendedIndexes(const bson_value_t *existingValue, Query *query,
+						  AggregationPipelineBuildContext *context)
+{
+	if (!EnableExtendedIndexes)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+						errmsg("$listSearchIndexes stage is not enabled")));
+	}
+
+	ReportFeatureUsage(FEATURE_STAGE_LIST_SEARCH_INDEXES);
+	EnsureTopLevelFieldValueType("$listSearchIndexes", existingValue,
+								 BSON_TYPE_DOCUMENT);
+
+	if (context->stageNum != 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40602),
+						errmsg(
+							"$listSearchIndexes is only valid as the first stage in a pipeline.")));
+	}
+
+	bool isTopLevel = true;
+	if (IsInTransactionBlock(isTopLevel))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_OPERATIONNOTSUPPORTEDINTRANSACTION),
+						errmsg(
+							"$listSearchIndexes is not permitted for use within a transaction")));
+	}
+
+	pgbson *specBson = PgbsonInitFromDocumentBsonValue(existingValue);
+
+	/* Remove the collection (it's not on the base table) */
+	context->mongoCollection = NULL;
+
+	/* Build base query for extended indexes */
+	Query *baseQuery = GenerateBaseListExtendedIndexesQuery(
+		context->databaseNameDatum,
+		&context->collectionNameView,
+		context,
+		specBson);
+
+	/* rewrite the query with the postprocess hook to add the appropriate project and final filter */
+	Query *result = RewriteListExtendedIndexesQuery(existingValue, baseQuery, context);
+	if (result == NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+						errmsg("$listSearchIndexes is not supported")));
+	}
+
+	return result;
 }
 
 

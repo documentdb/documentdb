@@ -60,6 +60,11 @@ apply_extension_data_table_upgrade(PG_FUNCTION_ARGS)
 		AlterCreationTime();
 	}
 
+	if (IsUpdateForVersion(inputVersion, DocDB_V0, 116, 0))
+	{
+		AlterRolesTablePrimaryKey();
+	}
+
 	PG_RETURN_VOID();
 }
 
@@ -125,6 +130,49 @@ AlterCreationTime()
 		ExtensionExecuteQueryViaSPI(cmdStr->data, readOnly, SPI_OK_UTILITY,
 									&isNull);
 	}
+}
+
+
+/*
+ * Migrate the roles catalog table primary key from role_oid to role_name.
+ *
+ * role_name is a stable identifier (role names are globally unique within the
+ * admin database) whereas OIDs can change across dump/restore, so role_name is
+ * the more durable key for this catalog table.
+ */
+void
+AlterRolesTablePrimaryKey(void)
+{
+	bool readOnly = false;
+	bool isNull = false;
+	StringInfo cmdStr = makeStringInfo();
+
+	/* Drop the existing role_oid primary key (named <table>_pkey). */
+	appendStringInfo(cmdStr,
+					 "ALTER TABLE IF EXISTS %s.roles DROP CONSTRAINT IF EXISTS roles_pkey",
+					 ApiCatalogSchemaName);
+	ExtensionExecuteQueryViaSPI(cmdStr->data, readOnly, SPI_OK_UTILITY, &isNull);
+
+	/* Add the new role_name column (nullable; the primary key makes it NOT NULL). */
+	resetStringInfo(cmdStr);
+	appendStringInfo(cmdStr,
+					 "ALTER TABLE IF EXISTS %s.roles ADD COLUMN IF NOT EXISTS role_name text",
+					 ApiCatalogSchemaName);
+	ExtensionExecuteQueryViaSPI(cmdStr->data, readOnly, SPI_OK_UTILITY, &isNull);
+
+	/* Drop the obsolete role_oid column. */
+	resetStringInfo(cmdStr);
+	appendStringInfo(cmdStr,
+					 "ALTER TABLE IF EXISTS %s.roles DROP COLUMN IF EXISTS role_oid",
+					 ApiCatalogSchemaName);
+	ExtensionExecuteQueryViaSPI(cmdStr->data, readOnly, SPI_OK_UTILITY, &isNull);
+
+	/* Establish role_name as the new primary key. */
+	resetStringInfo(cmdStr);
+	appendStringInfo(cmdStr,
+					 "ALTER TABLE IF EXISTS %s.roles ADD PRIMARY KEY (role_name)",
+					 ApiCatalogSchemaName);
+	ExtensionExecuteQueryViaSPI(cmdStr->data, readOnly, SPI_OK_UTILITY, &isNull);
 }
 
 

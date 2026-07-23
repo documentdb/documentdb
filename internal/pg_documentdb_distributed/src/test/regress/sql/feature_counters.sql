@@ -71,10 +71,13 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_co
 -- sortByCount
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$sortByCount": { "$eq": [ { "$mod": [ { "$toInt": "$_id" }, 2 ] }, 0  ] } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
 -- $group
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- $group with $count with non-empty arg (tracks group_count_with_arg feature counter)
@@ -82,6 +85,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_co
 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$sum": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- $group with first/last
@@ -284,6 +288,9 @@ SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id
 SELECT documentdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$unset": { "tags": "" }},"multi":false}]}');
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
+CALL documentdb_api.delete_txn_proc('db', '{"delete":"writeFC", "deletes":[{"q":{"_id":{"$eq":4}},"limit":0}]}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
 -- Test: Feature counter for list_databases command
 
 -- Reset feature counters
@@ -411,3 +418,31 @@ RESET documentdb.enableDollarSampleReservoirScan;
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
 SELECT documentdb_api.drop_database('feature_counter_hs_db');
+
+
+-- Update many noop feature flags
+
+SELECT documentdb_api.insert('db', '{"insert":"updateMany", "documents":[
+    { "_id" : 1, "a": 1, "b": "noChange", "c": 1 },
+    { "_id" : 2, "a": 1, "b": "noChange", "c": 2 },
+    { "_id" : 3, "a": 1, "b": "noChange", "c": 3 },
+    { "_id" : 4, "a": 1, "b": "noChange", "c": 4 },
+    { "_id" : 5, "a": 1, "b": "noChange", "c": 5 },
+    { "_id" : 6, "a": 1, "b": "noChange", "c": 6 },
+    { "_id" : 7, "a": 1, "b": "noChange", "c": 7 },
+    { "_id" : 8, "a": 1, "b": "noChange", "c": 8 },
+    { "_id" : 9, "a": 1, "b": "noChange", "c": 9 },
+    { "_id" : 10, "a": 1, "b": "noChange", "c": 10 },
+    { "_id" : 11, "a": 1, "b": "noChange", "c": 11 },
+    { "_id" : 12, "a": 1, "b": "noChange", "c": 12 },
+    { "_id" : 13, "a": 1, "b": "noChange", "c": 13 },
+    { "_id" : 14, "a": 1, "b": "noChange", "c": 14 },
+    { "_id" : 15, "a": 1, "b": "noChange", "c": 15 }
+]}');
+
+SELECT documentdb_api.update('db', '{"update": "updateMany", "updates":[{"q": {"_id": {"$lte": 10}},"u":{"$set":{"b": "noChange" }},"multi":true}]}');
+SELECT documentdb_api.update('db', '{"update": "updateMany", "updates":[{"q": {"_id": {"$lte": 11}},"u":{"$set":{"b": "noChange" }},"multi":true}]}');
+SELECT documentdb_api.update('db', '{"update": "updateMany", "updates":[{"q": {"_id": {"$lte": 11}},"u":{"$set":{"b": "change" }},"multi":true}]}');
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+SELECT documentdb_api.drop_collection('db', 'updateMany');

@@ -3,8 +3,10 @@ SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documen
 SET citus.next_shard_id TO 58000000;
 SET documentdb.next_collection_id TO 58000;
 SET documentdb.next_collection_index_id TO 58000;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT COUNT(documentdb_api.insert_one('countdb', 'countcoll', bson_build_document('_id'::text, i, 'value'::text, i))) FROM generate_series(1, 200) i;
-psql:sql/bson_aggregation_count_query_tests.sql:6: NOTICE:  creating collection
+psql:sql/bson_aggregation_count_query_tests.sql:8: NOTICE:  creating collection
  count 
 ---------------------------------------------------------------------
    200
@@ -114,10 +116,10 @@ set local client_min_messages to DEBUG1;
 set local documentdb.forceRunDiagnosticCommandInline to on;
 -- here we only query count metadata
 SELECT document FROM bson_aggregation_count('countdb', '{ "count": "countcoll", "query": {} }');
-psql:sql/bson_aggregation_count_query_tests.sql:35: DEBUG:  executing "SELECT array_agg(shardid) FROM pg_dist_shard WHERE logicalrelid = $1" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:35: DEBUG:  executing "SELECT SUM(reltuples)::int8 FROM pg_catalog.pg_class WHERE oid =ANY ($1) AND reltuples > 0" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:35: DEBUG:  executing "SELECT SUM(pg_catalog.pg_stat_get_live_tuples(oid))::int8 FROM unnest($1) oid" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:35: DEBUG:  [collStats] Taking count from live stats
+psql:sql/bson_aggregation_count_query_tests.sql:37: DEBUG:  executing "SELECT array_agg(shardid) FROM pg_dist_shard WHERE logicalrelid = $1" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:37: DEBUG:  executing "SELECT SUM(reltuples)::int8 FROM pg_catalog.pg_class WHERE oid =ANY ($1) AND reltuples > 0" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:37: DEBUG:  executing "SELECT SUM(pg_catalog.pg_stat_get_live_tuples(oid))::int8 FROM unnest($1) oid" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:37: DEBUG:  [collStats] Taking count from live stats
                                 document                                
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "200" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -125,16 +127,16 @@ psql:sql/bson_aggregation_count_query_tests.sql:35: DEBUG:  [collStats] Taking c
 
 -- here we get storage & index sizes
 SELECT documentdb_api.coll_stats('countdb', 'countcoll');
-psql:sql/bson_aggregation_count_query_tests.sql:38: DEBUG:  executing "SELECT array_agg(shardid) FROM pg_dist_shard WHERE logicalrelid = $1" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:38: DEBUG:  executing "SELECT SUM(reltuples)::int8 FROM pg_catalog.pg_class WHERE oid =ANY ($1) AND reltuples > 0" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:38: DEBUG:  executing "SELECT SUM(pg_catalog.pg_stat_get_live_tuples(oid))::int8 FROM unnest($1) oid" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:38: DEBUG:  executing "SELECT SUM(pg_catalog.pg_total_relation_size(r))::int8, SUM(pg_catalog.pg_table_size(r))::int8 FROM unnest($1) r" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:38: DEBUG:  executing "SELECT AVG(s.avg_width)::int4 AS avg_width FROM pg_catalog.pg_stats s  WHERE s.schemaname = $2 AND s.tablename =ANY ($1) and s.attname = 'document'" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:38: DEBUG:  executing "SELECT (index_spec).index_name FROM documentdb_api_catalog.collection_indexes WHERE index_id = $1" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:38: DEBUG:  [collStats] Taking count from live stats
-psql:sql/bson_aggregation_count_query_tests.sql:38: DEBUG:  executing "SELECT avg(pg_column_size(document))::int4 FROM (SELECT document FROM documentdb_data.documents_58001 TABLESAMPLE public.SYSTEM_ROWS(1000)) AS sample" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:38: DEBUG:  executing "SELECT array_agg((index_spec).index_name ORDER BY index_id) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 58001 AND documentdb_api_internal.index_build_is_in_progress(index_id)" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:38: DEBUG:  executing "SELECT array_agg((index_spec).index_name ORDER BY index_id) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 58001 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:40: DEBUG:  executing "SELECT array_agg(shardid) FROM pg_dist_shard WHERE logicalrelid = $1" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:40: DEBUG:  executing "SELECT SUM(reltuples)::int8 FROM pg_catalog.pg_class WHERE oid =ANY ($1) AND reltuples > 0" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:40: DEBUG:  executing "SELECT SUM(pg_catalog.pg_stat_get_live_tuples(oid))::int8 FROM unnest($1) oid" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:40: DEBUG:  executing "SELECT SUM(pg_catalog.pg_total_relation_size(r))::int8, SUM(pg_catalog.pg_table_size(r))::int8 FROM unnest($1) r" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:40: DEBUG:  executing "SELECT AVG(s.avg_width)::int4 AS avg_width FROM pg_catalog.pg_stats s  WHERE s.schemaname = $2 AND s.tablename =ANY ($1) and s.attname = 'document'" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:40: DEBUG:  executing "SELECT (index_spec).index_name FROM documentdb_api_catalog.collection_indexes WHERE index_id = $1" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:40: DEBUG:  [collStats] Taking count from live stats
+psql:sql/bson_aggregation_count_query_tests.sql:40: DEBUG:  executing "SELECT avg(pg_column_size(document))::int4 FROM (SELECT document FROM documentdb_data.documents_58001 TABLESAMPLE public.SYSTEM_ROWS(1000)) AS sample" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:40: DEBUG:  executing "SELECT array_agg((index_spec).index_name ORDER BY index_id) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 58001 AND documentdb_api_internal.index_build_is_in_progress(index_id)" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:40: DEBUG:  executing "SELECT array_agg((index_spec).index_name ORDER BY index_id) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 58001 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
                                                                                                                                                                                                                                                      coll_stats                                                                                                                                                                                                                                                      
 ---------------------------------------------------------------------
  { "ns" : "countdb.countcoll", "size" : { "$numberInt" : "5200" }, "count" : { "$numberInt" : "200" }, "avgObjSize" : { "$numberInt" : "26" }, "storageSize" : { "$numberInt" : "49152" }, "nindexes" : { "$numberInt" : "2" }, "indexBuilds" : [  ], "totalIndexSize" : { "$numberInt" : "32768" }, "totalSize" : { "$numberInt" : "81920" }, "indexSizes" : { "_id_" : { "$numberLong" : "16384" }, "a_1" : { "$numberLong" : "16384" } }, "scaleFactor" : { "$numberInt" : "1" }, "ok" : { "$numberInt" : "1" } }
@@ -142,26 +144,26 @@ psql:sql/bson_aggregation_count_query_tests.sql:38: DEBUG:  executing "SELECT ar
 
 -- test it out for collstats aggregation too
 SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate": "countcoll", "pipeline": [ { "$collStats": { "count": {} }} ] }');
-psql:sql/bson_aggregation_count_query_tests.sql:41: DEBUG:  executing "SELECT array_agg(shardid) FROM pg_dist_shard WHERE logicalrelid = $1" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:41: DEBUG:  executing "SELECT SUM(reltuples)::int8 FROM pg_catalog.pg_class WHERE oid =ANY ($1) AND reltuples > 0" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:41: DEBUG:  executing "SELECT SUM(pg_catalog.pg_stat_get_live_tuples(oid))::int8 FROM unnest($1) oid" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:41: DEBUG:  [collStats] Taking count from live stats
+psql:sql/bson_aggregation_count_query_tests.sql:43: DEBUG:  executing "SELECT array_agg(shardid) FROM pg_dist_shard WHERE logicalrelid = $1" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:43: DEBUG:  executing "SELECT SUM(reltuples)::int8 FROM pg_catalog.pg_class WHERE oid =ANY ($1) AND reltuples > 0" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:43: DEBUG:  executing "SELECT SUM(pg_catalog.pg_stat_get_live_tuples(oid))::int8 FROM unnest($1) oid" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:43: DEBUG:  [collStats] Taking count from live stats
                               document                              
 ---------------------------------------------------------------------
  { "ns" : "countdb.countcoll", "count" : { "$numberInt" : "200" } }
 (1 row)
 
 SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate": "countcoll", "pipeline": [ { "$collStats": { "storageStats": {} }} ] }');
-psql:sql/bson_aggregation_count_query_tests.sql:43: DEBUG:  executing "SELECT array_agg(shardid) FROM pg_dist_shard WHERE logicalrelid = $1" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:43: DEBUG:  executing "SELECT SUM(reltuples)::int8 FROM pg_catalog.pg_class WHERE oid =ANY ($1) AND reltuples > 0" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:43: DEBUG:  executing "SELECT SUM(pg_catalog.pg_stat_get_live_tuples(oid))::int8 FROM unnest($1) oid" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:43: DEBUG:  executing "SELECT SUM(pg_catalog.pg_total_relation_size(r))::int8, SUM(pg_catalog.pg_table_size(r))::int8 FROM unnest($1) r" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:43: DEBUG:  executing "SELECT AVG(s.avg_width)::int4 AS avg_width FROM pg_catalog.pg_stats s  WHERE s.schemaname = $2 AND s.tablename =ANY ($1) and s.attname = 'document'" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:43: DEBUG:  executing "SELECT (index_spec).index_name FROM documentdb_api_catalog.collection_indexes WHERE index_id = $1" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:43: DEBUG:  [collStats] Taking count from live stats
-psql:sql/bson_aggregation_count_query_tests.sql:43: DEBUG:  executing "SELECT avg(pg_column_size(document))::int4 FROM (SELECT document FROM documentdb_data.documents_58001 TABLESAMPLE public.SYSTEM_ROWS(1000)) AS sample" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:43: DEBUG:  executing "SELECT array_agg((index_spec).index_name ORDER BY index_id) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 58001 AND documentdb_api_internal.index_build_is_in_progress(index_id)" via SPI
-psql:sql/bson_aggregation_count_query_tests.sql:43: DEBUG:  executing "SELECT array_agg((index_spec).index_name ORDER BY index_id) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 58001 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:45: DEBUG:  executing "SELECT array_agg(shardid) FROM pg_dist_shard WHERE logicalrelid = $1" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:45: DEBUG:  executing "SELECT SUM(reltuples)::int8 FROM pg_catalog.pg_class WHERE oid =ANY ($1) AND reltuples > 0" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:45: DEBUG:  executing "SELECT SUM(pg_catalog.pg_stat_get_live_tuples(oid))::int8 FROM unnest($1) oid" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:45: DEBUG:  executing "SELECT SUM(pg_catalog.pg_total_relation_size(r))::int8, SUM(pg_catalog.pg_table_size(r))::int8 FROM unnest($1) r" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:45: DEBUG:  executing "SELECT AVG(s.avg_width)::int4 AS avg_width FROM pg_catalog.pg_stats s  WHERE s.schemaname = $2 AND s.tablename =ANY ($1) and s.attname = 'document'" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:45: DEBUG:  executing "SELECT (index_spec).index_name FROM documentdb_api_catalog.collection_indexes WHERE index_id = $1" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:45: DEBUG:  [collStats] Taking count from live stats
+psql:sql/bson_aggregation_count_query_tests.sql:45: DEBUG:  executing "SELECT avg(pg_column_size(document))::int4 FROM (SELECT document FROM documentdb_data.documents_58001 TABLESAMPLE public.SYSTEM_ROWS(1000)) AS sample" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:45: DEBUG:  executing "SELECT array_agg((index_spec).index_name ORDER BY index_id) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 58001 AND documentdb_api_internal.index_build_is_in_progress(index_id)" via SPI
+psql:sql/bson_aggregation_count_query_tests.sql:45: DEBUG:  executing "SELECT array_agg((index_spec).index_name ORDER BY index_id) FROM documentdb_api_catalog.collection_indexes WHERE collection_id = 58001 AND (index_is_valid OR documentdb_api_internal.index_build_is_in_progress(index_id))" via SPI
                                                                                                                                                                                                                                                  document                                                                                                                                                                                                                                                  
 ---------------------------------------------------------------------
  { "ns" : "countdb.countcoll", "storageStats" : { "size" : { "$numberInt" : "5200" }, "count" : { "$numberInt" : "200" }, "avgObjSize" : { "$numberInt" : "26" }, "storageSize" : { "$numberInt" : "49152" }, "nindexes" : { "$numberInt" : "2" }, "indexBuilds" : [  ], "totalIndexSize" : { "$numberInt" : "32768" }, "totalSize" : { "$numberInt" : "81920" }, "indexSizes" : { "_id_" : { "$numberLong" : "16384" }, "a_1" : { "$numberLong" : "16384" } }, "scaleFactor" : { "$numberInt" : "0" } } }

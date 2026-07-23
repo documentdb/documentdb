@@ -108,6 +108,9 @@ typedef struct DynamicCursorInputContinuation
 
 	/* The continuation state for the index scan */
 	bytea *indexContinuation;
+
+	/* The deduplication state for the index scan */
+	bytea *indexDedupState;
 } DynamicCursorInputContinuation;
 
 
@@ -129,6 +132,9 @@ typedef struct ParsedContinuationState
 	ScanDirection indexScanDirection;
 
 	Datum cursorDatums[INDEX_MAX_KEYS];
+
+	/* Deduplication state for index scans */
+	bytea *dedupState;
 } ParsedContinuationState;
 
 
@@ -157,6 +163,9 @@ typedef struct ExtensionCursorScanState
 
 	/* The continuation state for the index scan */
 	bytea *indexContinuation;
+
+	/* The continuation state for the index scan */
+	bytea *indexDedupState;
 
 	/* The core scan method to fetch tuples */
 	ExecScanAccessMtd execScanMethod;
@@ -207,13 +216,17 @@ static void AddOrderByRequiredClausesIfNecessary(IndexPath *indexPath, PlannerIn
 static void AddContinuationQualsToIndexPath(PlannerInfo *root, RelOptInfo *rel,
 											IndexPath *resumePath,
 											ParsedContinuationState *state);
+static bool IsGroupByFullyPushableForStreaming(PlannerInfo *root);
 
 PG_FUNCTION_INFO_V1(command_cursor_tracker);
 
 extern bool EnableRumCursorDynamicIndexScans;
 extern bool EnableRumDynamicIndexScansSkipToTid;
 extern bool EnableOrderByIdOnCostFunction;
+extern bool EnableMergeSortForInPrefix;
 extern bool EnableDynamicPersistentCursorsWithStats;
+extern bool EnableGroupByDynamicStreaming;
+extern bool EnableDynamicCursorMultiKeyBitmap;
 
 /* Declaration of extensibility paths for query processing (See extensible.h) */
 static const struct CustomPathMethods DynamicExtensionCursorScanMethods = {
@@ -267,6 +280,32 @@ RegisterDynamicCursorScanNodes(void)
 }
 
 
+/*
+ * Returns true if the given plan node is a grouping/deduplication node that
+ * preserves the streaming (non-blocking) property of its input, i.e. it emits
+ * output rows incrementally as it consumes ordered input rather than
+ * materializing the whole input first.
+ *
+ * A sorted GroupAggregate (AGG_SORTED) and a Unique node both stream: they read
+ * input in group-key order and emit one row per group as soon as the group
+ * boundary is observed. A plain aggregate (AGG_PLAIN) produces a single row and
+ * is drained in one batch. A hashed/mixed aggregate (AGG_HASHED / AGG_MIXED)
+ * is blocking - it must consume the entire input before emitting any row - so
+ * it cannot back a streaming cursor and is rejected here.
+ */
+static bool
+IsStreamableGroupingPlan(Plan *plan)
+{
+	if (IsA(plan, Agg))
+	{
+		Agg *agg = (Agg *) plan;
+		return agg->aggstrategy == AGG_SORTED || agg->aggstrategy == AGG_PLAIN;
+	}
+
+	return IsA(plan, Unique);
+}
+
+
 bool
 IsDynamicCustomScanPath(Plan *plan)
 {
@@ -286,12 +325,42 @@ IsDynamicCustomScanPath(Plan *plan)
 		return IsDynamicCustomScanPath(subqueryScan->subplan);
 	}
 
+	/*
+	 * A streaming grouping node (sorted GroupAggregate / Unique) directly over
+	 * the dynamic cursor scan keeps the cursor streamable: it consumes ordered
+	 * rows from the custom scan and emits one row per group. Descend through it
+	 * to locate the custom scan. Blocking grouping strategies (hash aggregate)
+	 * are rejected by IsStreamableGroupingPlan, falling back to a persistent
+	 * cursor.
+	 */
+	if (IsStreamableGroupingPlan(plan))
+	{
+		return outerPlan(plan) != NULL && IsDynamicCustomScanPath(outerPlan(plan));
+	}
+
 	return false;
 }
 
 
+/*
+ * Locates the dynamic cursor custom scan state within the plan tree rooted at
+ * planState, descending through SubqueryScan wrappers and a single streaming
+ * grouping node (sorted GroupAggregate / Unique) that may sit above it. Returns
+ * NULL if no dynamic cursor custom scan is found.
+ *
+ * When isGroupReadAhead is non-NULL it is set to true iff the descent passed
+ * through a sorted GroupAggregate (AGG_SORTED). Such a node reads one input row
+ * *past* each group it emits in order to detect the group boundary, so the
+ * underlying scan is already positioned at the first row of the next group when
+ * a group is handed downstream. This "read-ahead" changes how a continuation
+ * must be captured on a batch boundary: the streaming DestReceiver snapshots it
+ * after each emitted group rather than at reject time (which would be one group
+ * too far ahead and would skip a group on the next page). Other streamable
+ * shapes (plain aggregate, Unique) do not read ahead and leave the flag unset.
+ * The caller must initialize *isGroupReadAhead before calling.
+ */
 CustomScanState *
-GetDynamicStreamingCustomScanState(PlanState *planState)
+GetDynamicStreamingCustomScanState(PlanState *planState, bool *isGroupReadAhead)
 {
 	CHECK_FOR_INTERRUPTS();
 	check_stack_depth();
@@ -310,7 +379,23 @@ GetDynamicStreamingCustomScanState(PlanState *planState)
 	if (IsA(planState, SubqueryScanState))
 	{
 		SubqueryScanState *subqueryScan = (SubqueryScanState *) planState;
-		return GetDynamicStreamingCustomScanState(subqueryScan->subplan);
+		return GetDynamicStreamingCustomScanState(subqueryScan->subplan,
+												  isGroupReadAhead);
+	}
+
+	/* Descend through a streaming grouping node (see IsDynamicCustomScanPath). */
+	if (IsStreamableGroupingPlan(planState->plan) &&
+		outerPlanState(planState) != NULL)
+	{
+		if (isGroupReadAhead != NULL &&
+			IsA(planState->plan, Agg) &&
+			((Agg *) planState->plan)->aggstrategy == AGG_SORTED)
+		{
+			*isGroupReadAhead = true;
+		}
+
+		return GetDynamicStreamingCustomScanState(outerPlanState(planState),
+												  isGroupReadAhead);
 	}
 
 	return NULL;
@@ -331,6 +416,22 @@ GetContinuationFromCustomScan(CustomScanState *scan)
 	/* Serialize necessary information to continue the scan */
 	ExtensionCursorScanState *cursorScanState = (ExtensionCursorScanState *) scan;
 
+	ScanState *ps = cursorScanState->innerScanState;
+
+	/*
+	 * A streaming sorted GroupAggregate detects the final group's boundary by
+	 * reading one row past it and hitting end-of-scan, which leaves the inner
+	 * scan's tuple slot empty. There is no next row to resume from in that case,
+	 * so the cursor is complete and there is no continuation to serialize.
+	 * Returning NULL here avoids reading attributes off an empty slot; the drain
+	 * loop then terminates as a natural cursor completion (which ignores the
+	 * continuation anyway).
+	 */
+	if (ps->ss_ScanTupleSlot == NULL || TTS_EMPTY(ps->ss_ScanTupleSlot))
+	{
+		return NULL;
+	}
+
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);
 	PgbsonWriterAppendInt32(&writer, "type", 4, cursorScanState->scanType);
@@ -338,7 +439,6 @@ GetContinuationFromCustomScan(CustomScanState *scan)
 	const char *tableName = get_rel_name(cursorScanState->tableOid);
 	PgbsonWriterAppendUtf8(&writer, "tbl", 3, tableName);
 
-	ScanState *ps = cursorScanState->innerScanState;
 
 	WriteContinuationBasedOnScanTypeAndState(ps, &writer, cursorScanState->scanType);
 	return PgbsonWriterGetPgbson(&writer);
@@ -439,6 +539,57 @@ GetIndexSupportsGetIndexKey(Oid relam, Oid opfamily)
 }
 
 
+/*
+ * Returns true when an ordered streaming index scan on the given index would be
+ * unsafe and the dynamic cursor must fall back to a bitmap scan instead.
+ *
+ * An ordered index scan yields one row per matching index entry, in index
+ * order, and does not de-duplicate row pointers. A multikey index has several
+ * entries per document (one per array element or per matched field on a wildcard
+ * index), and those entries can fall at different positions in the index
+ * ordering. An ordered scan therefore emits a document more than once whenever
+ * two or more of its entries qualify at different positions - for example an
+ * unbounded or range predicate over a multikey path, a leading-column equality
+ * with a multikey trailing column, or any predicate on a multikey wildcard
+ * index. The streaming continuation only remembers a single (key, row pointer)
+ * position, so it cannot suppress a document already returned at an earlier key.
+ * A bitmap scan collects distinct row pointers and is therefore correct.
+ *
+ * The ordered scan is only allowed when the index is provably non-multikey. The
+ * multikey status is read either from the fully tracked opclass metadata (the
+ * "mkp" reloption) or from the term-based multikey status the index records by
+ * default; both reliably report whether the index is multikey. When the index is
+ * multikey (or its multikey state cannot be read at all), the cursor must use a
+ * bitmap scan. Only indexes that support ordered operator scans (the composite
+ * opclass) reach this check, so a non-composite index is never forced to bitmap
+ * here.
+ *
+ * This safeguard is opt-in via the enable_dynamic_cursor_multikey_bitmap GUC
+ * (default off). When it is off, ordered scans are allowed on multikey indexes
+ * and deduplicate across cursor pages by carrying their dedup state forward in
+ * the continuation token.
+ */
+static bool
+MultiKeyIndexRequiresBitmapScan(IndexOptInfo *indexInfo)
+{
+	if (!EnableDynamicCursorMultiKeyBitmap)
+	{
+		return false;
+	}
+
+	CompositeOpClassMetadataInfo metadataInfo = { 0 };
+	CompositeOpClassMetadataReadResult readResult =
+		TryGetCompositeOpClassMetadataInfo(indexInfo->indexoid, AccessShareLock,
+										   &metadataInfo);
+
+	bool orderedScanIsSafe =
+		readResult != CompositeOpClassMetadataReadResult_None &&
+		!metadataInfo.isMultiKey;
+
+	return !orderedScanIsSafe;
+}
+
+
 static Path *
 UpdateAndClassifyPath(Path *inputPath, PlannerInfo *root, RelOptInfo *rel,
 					  uint64 collectionId, QueryScanType *scanType)
@@ -457,7 +608,8 @@ UpdateAndClassifyPath(Path *inputPath, PlannerInfo *root, RelOptInfo *rel,
 				*scanType = QueryScanType_PrimaryKeyScan;
 			}
 			else if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
-												 indexPath->indexinfo->opfamily[0]))
+												 indexPath->indexinfo->opfamily[0]) &&
+					 !MultiKeyIndexRequiresBitmapScan(indexPath->indexinfo))
 			{
 				/* Mark as supported indexscan */
 				*scanType = QueryScanType_SecondaryIndexScan;
@@ -494,7 +646,8 @@ UpdateAndClassifyPath(Path *inputPath, PlannerInfo *root, RelOptInfo *rel,
 				*scanType = QueryScanType_PrimaryKeyScan;
 			}
 			else if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
-												 indexPath->indexinfo->opfamily[0]))
+												 indexPath->indexinfo->opfamily[0]) &&
+					 !MultiKeyIndexRequiresBitmapScan(indexPath->indexinfo))
 			{
 				/* IndexOnlyScan is always an ordered scan - nothing to do here */
 				*scanType = QueryScanType_SecondaryIndexOnlyScan;
@@ -542,7 +695,8 @@ UpdateAndClassifyPath(Path *inputPath, PlannerInfo *root, RelOptInfo *rel,
 				else if (bitmapQualPath->pathtype == T_IndexOnlyScan)
 				{
 					if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
-													indexPath->indexinfo->opfamily[0]))
+													indexPath->indexinfo->opfamily[0]) &&
+						!MultiKeyIndexRequiresBitmapScan(indexPath->indexinfo))
 					{
 						/* IndexOnlyScan is always an ordered scan - nothing to do here */
 						*scanType = QueryScanType_SecondaryIndexOnlyScan;
@@ -557,7 +711,8 @@ UpdateAndClassifyPath(Path *inputPath, PlannerInfo *root, RelOptInfo *rel,
 				{
 					Assert(bitmapQualPath->pathtype == T_IndexScan);
 					if (GetIndexSupportsGetIndexKey(indexPath->indexinfo->relam,
-													indexPath->indexinfo->opfamily[0]))
+													indexPath->indexinfo->opfamily[0]) &&
+						!MultiKeyIndexRequiresBitmapScan(indexPath->indexinfo))
 					{
 						*scanType = QueryScanType_SecondaryIndexScan;
 						AddOrderByRequiredClausesIfNecessary(indexPath, root, rel);
@@ -682,7 +837,19 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 		inputPath = UpdateAndClassifyPath(inputPath, root, rel, optCollectionId,
 										  &scanType);
 
-		if (root->sort_pathkeys != NIL)
+		/*
+		 * The scan feeding a streaming cursor must provide a deterministic
+		 * ordering. For ORDER BY that ordering is sort_pathkeys; for a fully
+		 * pushable $group (no ORDER BY) the GroupAggregate needs the index to
+		 * provide the grouping order, i.e. group_pathkeys.
+		 */
+		List *orderingPathKeys = root->sort_pathkeys;
+		if (orderingPathKeys == NIL && IsGroupByFullyPushableForStreaming(root))
+		{
+			orderingPathKeys = root->group_pathkeys;
+		}
+
+		if (orderingPathKeys != NIL)
 		{
 			bool isSupportedPath = scanType != QueryScanType_Unknown;
 			switch (scanType)
@@ -692,7 +859,7 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 				{
 					IndexPath *ipath = (IndexPath *) inputPath;
 					if (list_length(ipath->indexorderbys) != list_length(
-							root->sort_pathkeys))
+							orderingPathKeys))
 					{
 						/* The pathkeys required by the query are not provided by the index order by - we can't use this path for streaming */
 						isSupportedPath = false;
@@ -714,7 +881,7 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 					}
 
 					if (list_length(ipath->path.pathkeys) != list_length(
-							root->sort_pathkeys))
+							orderingPathKeys))
 					{
 						/* The pathkeys required by the query are not provided by the index order by - we can't use this path for streaming */
 						isSupportedPath = false;
@@ -771,15 +938,49 @@ WalkRelPathsAndCreateCustomPathsForFirstPage(PlannerInfo *root, RelOptInfo *rel,
 }
 
 
+/*
+ * Returns true when the query's $group can be satisfied entirely from an
+ * ordered index scan and is therefore eligible for a streaming dynamic cursor.
+ * This mirrors the "order by keys are fully pushed down" reasoning: the
+ * grouping keys must line up one-for-one with the query pathkeys so the index
+ * ordering alone provides the grouping order. This holds whether or not the
+ * $group carries accumulators ($sum/$max/...), because a sorted GroupAggregate
+ * over ordered input emits only complete groups - the read-ahead never spans
+ * more than the immediately following group.
+ */
+static bool
+IsGroupByFullyPushableForStreaming(PlannerInfo *root)
+{
+	return EnableGroupByDynamicStreaming &&
+		   root->group_pathkeys != NIL &&
+		   root->query_pathkeys != NIL &&
+		   list_length(root->group_pathkeys) == list_length(root->query_pathkeys);
+}
+
+
 static bool
 IsPlannerInfoValidForDynamicCursorPlans(PlannerInfo *root)
 {
 	check_stack_depth();
 	CHECK_FOR_INTERRUPTS();
 
+	/*
+	 * A GROUP BY whose group keys can be provided in order by an index can be
+	 * streamed: the planner produces a sorted GroupAggregate (or Unique for a
+	 * distinct-style group) over an ordered index scan, which emits one row per
+	 * group without materializing the whole input. Allow such queries through
+	 * (including those with accumulators) when the grouping order is fully
+	 * pushable; the final plan shape is still validated at execution time by
+	 * IsDynamicCustomScanPath(), which rejects blocking (hash) aggregates and
+	 * top-level Sort nodes and falls back to a persistent cursor.
+	 */
+	bool allowGroupByPushdown = IsGroupByFullyPushableForStreaming(root);
+
 	if (root->hasJoinRTEs || root->hasRecursion || root->hasLateralRTEs ||
-		root->group_pathkeys != NIL || root->distinct_pathkeys != NIL ||
-		root->agginfos != NIL || root->hasAlternativeSubPlans ||
+		(root->group_pathkeys != NIL && !allowGroupByPushdown) ||
+		root->distinct_pathkeys != NIL ||
+		(root->agginfos != NIL && !allowGroupByPushdown) ||
+		root->hasAlternativeSubPlans ||
 		root->window_pathkeys != NIL || root->parse->hasTargetSRFs)
 	{
 		/* Use persisted cursors for these scenarios */
@@ -955,6 +1156,35 @@ UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 		return false;
 	}
 
+	/*
+	 * If any path is a merge-sort-in-prefix candidate, fall back to a persistent
+	 * cursor. The marker is added during cost estimation and is only rewritten
+	 * into a MergeAppend (and stripped) later in the relpathlist hook, after this
+	 * runs -- so the marked path here still carries placeholder pathkeys that do
+	 * not reflect a real streamable order. Streaming off it would be incorrect.
+	 */
+	if (EnableMergeSortForInPrefix)
+	{
+		foreach(cell, rel->pathlist)
+		{
+			Path *path = lfirst(cell);
+			if (IsA(path, BitmapHeapPath))
+			{
+				BitmapHeapPath *bitmapPath = (BitmapHeapPath *) path;
+				if (IsA(bitmapPath->bitmapqual, IndexPath))
+				{
+					path = (Path *) bitmapPath->bitmapqual;
+				}
+			}
+
+			if (IsA(path, IndexPath) &&
+				IndexPathHasMergeSortInPrefixMarker((IndexPath *) path))
+			{
+				return false;
+			}
+		}
+	}
+
 	/* Parse the continuation state */
 	DynamicCursorInputContinuation inputContinuation = { 0 };
 	inputContinuation.extensible.type = T_ExtensibleNode;
@@ -1016,11 +1246,44 @@ UpdatePathsWithDynamicStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 /* --------------------------------------------------------- */
 
 /*
+ * Builds the custom scan's output target list for the case where the node is a
+ * transparent wrapper that passes its inner plan's columns straight through:
+ * one Var per entry of sourceTlist, referencing the inner plan output.
+ *
+ * e.g. if the inner plan emits (document, object_id, shard_key_value), this
+ * returns three Vars - Var(1,1)=document, Var(1,2)=object_id,
+ * Var(1,3)=shard_key_value - forwarding those columns unchanged to the parent.
+ */
+static List *
+BuildCursorScanPassThroughTargetList(List *sourceTlist)
+{
+	List *outputTargetEntries = NIL;
+	ListCell *cell;
+	foreach(cell, sourceTlist)
+	{
+		TargetEntry *tle = (TargetEntry *) lfirst(cell);
+		Var *projVar = makeVar(1, tle->resno, exprType((Node *) tle->expr),
+							   exprTypmod((Node *) tle->expr),
+							   exprCollation((Node *) tle->expr), 0);
+		TargetEntry *outputTle = makeTargetEntry((Expr *) projVar, tle->resno,
+												 tle->resname, tle->resjunk);
+		outputTargetEntries = lappend(outputTargetEntries, outputTle);
+	}
+
+	return outputTargetEntries;
+}
+
+
+/*
  * Given a scan path for the extension path, generates a
  * Custom Plan for the path. Note that the inner path
- * is already planned since it is listed as an inner_path
- * in the custom path above.
+ * (e.g., Index scan etc. backing the cursor scan )is already
+ * planned since it is listed as an inner_path in the custom path above.
  * This is roughly the same as custom_scan_continuation's behavior.
+ *
+ * Its main responsibility is deciding the node's scan.plan.targetlist
+ * (the columns the custom scan outputs to its parent) and custom_scan_tlist
+ * (the scan-tuple schema the node exposes).
  */
 static Plan *
 ExtensionCursorScanPlanCustomPath(PlannerInfo *root,
@@ -1045,9 +1308,34 @@ ExtensionCursorScanPlanCustomPath(PlannerInfo *root,
 			cscan->custom_private);
 	if (tlist != NIL)
 	{
-		/* This is available when there's no projections */
+		/*
+		 * The planner already resolved this level's output columns against
+		 * this path and handed them to us as a non-NIL tlist, so we adopt it
+		 * verbatim - no projection to push down or pass-through Vars to
+		 * synthesize.
+		 *
+		 * e.g. find({x: 1}) with no projection -> tlist is just the single
+		 * `document` column.
+		 */
 		cscan->scan.plan.targetlist = tlist;
 		cscan->custom_scan_tlist = nestedPlan->plan.targetlist;
+	}
+	else if (root->group_pathkeys != NIL || root->agginfos != NIL)
+	{
+		/*
+		 * A grouping / aggregation node (and possibly a Sort) sits above the
+		 * custom scan, so root->processed_tlist describes the *grouped* output
+		 * - it references group keys and aggregates that this scan cannot
+		 * produce. The custom scan is a transparent wrapper over its inner
+		 * plan, so it simply passes through whatever columns the inner plan
+		 * emits; the upper grouping node computes processed_tlist from those.
+		 * Overwriting the inner plan's target list here (as the projection
+		 * pushdown branch below does) would corrupt it and lead to a "variable
+		 * not found in subplan target list" planner error.
+		 */
+		cscan->custom_scan_tlist = nestedPlan->plan.targetlist;
+		cscan->scan.plan.targetlist = BuildCursorScanPassThroughTargetList(
+			nestedPlan->plan.targetlist);
 	}
 	else if (continuation->scanType == QueryScanType_PrimaryKeyScan)
 	{
@@ -1055,33 +1343,44 @@ ExtensionCursorScanPlanCustomPath(PlannerInfo *root,
 		 * from the table, and apply the projection at the custom scan layer.
 		 * scanrelid is intentionally left unset (0): the PK scan path uses
 		 * a custom_scan_tlist to pull columns from the inner plan, so the
-		 * custom scan itself does not directly scan a relation. */
+		 * custom scan itself does not directly scan a relation.
+		 *
+		 * We can hand processed_tlist directly to the scan output (no
+		 * pass-through rebuild) because its Vars already reference the inner
+		 * plan's columns as it wraps a plain scan of the single base
+		 * documents relation.
+		 *
+		 * Crucially, we do NOT overwrite the inner plan's target list here
+		 * (unlike the default branch below). The PK cursor's continuation
+		 * token is rebuilt by reading shard_key_value and object_id straight
+		 * out of the scan tuple slot by position (tts_values[0]/[1] in
+		 * WriteContinuationBasedOnScanTypeAndState). That only works if the
+		 * inner plan keeps emitting the natural full base row in that order,
+		 * so the projection is applied at the custom scan layer instead.
+		 * Secondary/index-only scans don't need this: their continuation comes
+		 * from the index scan descriptor (index key + heap TID), independent
+		 * of the output tuple layout, so they can push projection down. */
 		cscan->scan.plan.targetlist = root->processed_tlist;
 		cscan->custom_scan_tlist = nestedPlan->plan.targetlist;
 	}
 	else
 	{
-		/* While we're responsible for doing projections here
-		 * Push the projection to the nestedPlan.
+		/*
+		 * No grouping/aggregation node sits above this scan, so
+		 * root->processed_tlist is exactly the columns this level must output,
+		 * and every entry is an expression over the raw document that the scan
+		 * itself can evaluate. So we push the projection down into the inner
+		 * plan and pass its result straight through - unlike the grouping
+		 * branch above, which must leave the inner plan untouched.
+		 *
+		 * e.g. {$project: {name: "$user.name"}} -> the inner scan computes
+		 * name = document->'user'->'name' directly.
 		 */
 		nestedPlan->plan.targetlist = root->processed_tlist;
 
-		ListCell *cell;
-		List *outputTargetEntries = NIL;
-		foreach(cell, root->processed_tlist)
-		{
-			TargetEntry *tle = (TargetEntry *) lfirst(cell);
-
-			/* Do something with each target entry */
-			Oid resultType = exprType((Node *) tle->expr);
-			Var *projVar = makeVar(1, tle->resno, resultType, -1, InvalidOid, 0);
-			TargetEntry *outputTle = makeTargetEntry((Expr *) projVar, tle->resno,
-													 tle->resname, tle->resjunk);
-			outputTargetEntries = lappend(outputTargetEntries, outputTle);
-		}
-
 		cscan->custom_scan_tlist = root->processed_tlist;
-		cscan->scan.plan.targetlist = outputTargetEntries;
+		cscan->scan.plan.targetlist = BuildCursorScanPassThroughTargetList(
+			root->processed_tlist);
 	}
 
 #if (PG_VERSION_NUM >= 150000)
@@ -1126,6 +1425,7 @@ ExtensionCursorScanCreateCustomScanState(CustomScan *cscan)
 	Uint64AsItemPointer(&scanState->userContinuationState,
 						continuation->itemPointerAsUint64);
 	scanState->indexContinuation = continuation->indexContinuation;
+	scanState->indexDedupState = continuation->indexDedupState;
 
 	/* Set the exec scan method */
 	switch (scanState->scanType)
@@ -1385,7 +1685,8 @@ ExtensionCursorScanNextWithIndexContinuation(CustomScanState *node)
 				rd_opfamily[0], &pathKeySummarizationForced);
 		}
 
-		Datum currentKey = DocumentDBRumGetCurrentIndexKey(scanDesc);
+		bytea **dedupBytes = NULL;
+		Datum currentKey = DocumentDBRumGetCurrentIndexKey(scanDesc, dedupBytes);
 		bytea *currentKeyBytes = DatumGetByteaP(currentKey);
 
 		const char *collation = NULL;
@@ -1520,6 +1821,12 @@ CopyNodeDynamicCursorContinuation(struct ExtensibleNode *target_node, const stru
 		newNode->indexContinuation = DatumGetByteaPCopy(PointerGetDatum(
 															newNode->indexContinuation));
 	}
+
+	if (newNode->indexDedupState)
+	{
+		newNode->indexDedupState = DatumGetByteaPCopy(PointerGetDatum(
+														  newNode->indexDedupState));
+	}
 }
 
 
@@ -1551,6 +1858,25 @@ OutDynamicCursorInputContinuation(StringInfo str, const struct ExtensibleNode *r
 	}
 	WRITE_STRING_FIELD_VALUE(continuation, targetStr);
 	pfree(targetStr);
+	targetStr = NULL;
+
+	if (node->indexDedupState != NULL)
+	{
+		PG_USED_FOR_ASSERTS_ONLY uint64_t targetLength;
+		int dataSize = VARSIZE_ANY_EXHDR(node->indexDedupState);
+		int requiredSize = dataSize * 2 + 1; /* each byte is represented by 2 hex chars, plus null terminator */
+		targetStr = (char *) palloc(requiredSize);
+		targetLength = hex_encode((char *) VARDATA_ANY(node->indexDedupState), dataSize,
+								  targetStr);
+		Assert(targetLength == (uint64_t) (requiredSize - 1));
+	}
+	else
+	{
+		targetStr = pstrdup("");
+	}
+	WRITE_STRING_FIELD_VALUE(indexDedupState, targetStr);
+	pfree(targetStr);
+	targetStr = NULL;
 }
 
 
@@ -1561,6 +1887,7 @@ static void
 ReadDynamicCursorInputContinuation(struct ExtensibleNode *node)
 {
 	const char *continuationHex = NULL;
+	const char *dedupStateHex = NULL;
 	const char *token;
 	int length;
 	DynamicCursorInputContinuation *local_node = (DynamicCursorInputContinuation *) node;
@@ -1571,6 +1898,7 @@ ReadDynamicCursorInputContinuation(struct ExtensibleNode *node)
 	READ_INT32_FIELD(scanType);
 	READ_UINT64_FIELD(itemPointerAsUint64);
 	READ_STRING_FIELD_VALUE(continuationHex);
+	READ_STRING_FIELD_VALUE(dedupStateHex);
 
 	if (continuationHex != NULL && strlen(continuationHex) > 0)
 	{
@@ -1587,6 +1915,23 @@ ReadDynamicCursorInputContinuation(struct ExtensibleNode *node)
 	else
 	{
 		local_node->indexContinuation = NULL;
+	}
+
+	if (dedupStateHex != NULL && strlen(dedupStateHex) > 0)
+	{
+		PG_USED_FOR_ASSERTS_ONLY uint64 written;
+		length = strlen(dedupStateHex) / 2;
+		bytea *buffer = (bytea *) palloc(length + VARHDRSZ);
+		SET_VARSIZE(buffer, length + VARHDRSZ);
+
+		char *writePtr = VARDATA(buffer);
+		written = hex_decode(dedupStateHex, length, writePtr);
+		Assert(written == (uint64) length);
+		local_node->indexDedupState = buffer;
+	}
+	else
+	{
+		local_node->indexDedupState = NULL;
 	}
 }
 
@@ -1733,7 +2078,8 @@ WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
 			const char *indexName = get_rel_name(indexOid);
 			PgbsonWriterAppendUtf8(writer, "idx", 3, indexName);
 
-			Datum currentKey = DocumentDBRumGetCurrentIndexKey(scanDesc);
+			bytea *dedupState = NULL;
+			Datum currentKey = DocumentDBRumGetCurrentIndexKey(scanDesc, &dedupState);
 			bytea *buffer = DatumGetByteaP(currentKey);
 			bson_value_t bufferBinary = { 0 };
 			bufferBinary.value_type = BSON_TYPE_BINARY;
@@ -1741,6 +2087,19 @@ WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
 			bufferBinary.value.v_binary.data = (uint8_t *) VARDATA_ANY(buffer);
 			bufferBinary.value.v_binary.data_len = VARSIZE_ANY_EXHDR(buffer);
 			PgbsonWriterAppendValue(writer, "sik", 3, &bufferBinary);
+
+			/* See if there's a dedup state to serialize */
+			if (dedupState != NULL)
+			{
+				bson_value_t dedupBufferBinary = { 0 };
+				dedupBufferBinary.value_type = BSON_TYPE_BINARY;
+				dedupBufferBinary.value.v_binary.subtype = 0;
+				dedupBufferBinary.value.v_binary.data = (uint8_t *) VARDATA_ANY(
+					dedupState);
+				dedupBufferBinary.value.v_binary.data_len = VARSIZE_ANY_EXHDR(dedupState);
+				PgbsonWriterAppendValue(writer, "sds", 3, &dedupBufferBinary);
+			}
+
 			break;
 		}
 
@@ -1783,6 +2142,7 @@ ParseContinuationDocument(pgbson *continuation, ParsedContinuationState *state)
 	bson_iter_t reader;
 	bson_value_t pkContinuation = { 0 };
 	bson_value_t secondaryIndexContinuation = { 0 };
+	bson_value_t secondaryIndexDedupState = { 0 };
 	state->indexScanDirection = ForwardScanDirection;
 	PgbsonInitIterator(continuation, &reader);
 
@@ -1895,6 +2255,11 @@ ParseContinuationDocument(pgbson *continuation, ParsedContinuationState *state)
 				{
 					secondaryIndexContinuation = *bson_iter_value(&reader);
 				}
+				else if (strcmp(fieldName, "sds") == 0)
+				{
+					/* This is optional, so we don't error if it's not present */
+					secondaryIndexDedupState = *bson_iter_value(&reader);
+				}
 
 				continue;
 			}
@@ -1972,6 +2337,19 @@ ParseContinuationDocument(pgbson *continuation, ParsedContinuationState *state)
 				   secondaryIndexContinuation.value.v_binary.data_len);
 			Datum currentKey = PointerGetDatum(buffer);
 			state->cursorDatums[0] = currentKey;
+			if (secondaryIndexDedupState.value_type == BSON_TYPE_BINARY)
+			{
+				bytea *dedupBuffer = palloc(
+					secondaryIndexDedupState.value.v_binary.data_len +
+					VARHDRSZ);
+				SET_VARSIZE(dedupBuffer,
+							secondaryIndexDedupState.value.v_binary.data_len +
+							VARHDRSZ);
+				memcpy(VARDATA(dedupBuffer), secondaryIndexDedupState.value.v_binary.data,
+					   secondaryIndexDedupState.value.v_binary.data_len);
+				state->dedupState = dedupBuffer;
+			}
+
 			break;
 		}
 
@@ -2085,9 +2463,21 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 
 			IndexPath *inputPath = NULL;
 			bool rowCompareInclusive = true;
+
+			/*
+			 * The resumed primary-key scan must maintain the same ordering the
+			 * first page used. For ORDER BY that ordering comes from sort_pathkeys;
+			 * for a fully pushable $group (no ORDER BY) it comes from group_pathkeys -
+			 * sort_pathkeys is NULL in that case, so we must also push the index
+			 * order-by when the grouping is streamable (mirrors the first-page logic in
+			 * WalkRelPathsAndCreateCustomPathsForFirstPage).
+			 */
+			bool needsOrderingPushdown =
+				root->sort_pathkeys != NIL ||
+				IsGroupByFullyPushableForStreaming(root);
 			if (existingPkPath != NULL)
 			{
-				if (root->sort_pathkeys != NULL && existingPkPath->path.pathkeys == NIL)
+				if (needsOrderingPushdown && existingPkPath->path.pathkeys == NIL)
 				{
 					ConsiderBtreeOrderByPushdown(root, existingPkPath);
 				}
@@ -2104,7 +2494,7 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 															   state->indexScanDirection,
 															   rowCompareInclusive);
 
-				if (root->sort_pathkeys != NULL && inputPath->path.pathkeys == NIL)
+				if (needsOrderingPushdown && inputPath->path.pathkeys == NIL)
 				{
 					ConsiderBtreeOrderByPushdown(root, inputPath);
 
@@ -2183,6 +2573,7 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 			inputContinuation->itemPointerAsUint64 = ItemPointerToUint64(
 				&state->userContinuationState);
 			inputContinuation->indexContinuation = DatumGetByteaP(state->cursorDatums[0]);
+			inputContinuation->indexDedupState = state->dedupState;
 			if (state->tableOid != inputContinuation->queryTableId)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED),
@@ -2251,6 +2642,22 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED), errmsg(
 										"Expected path to be either an index path or a bitmap heap path for continuation with index")));
 				}
+			}
+
+			/* An index that has become multikey (or whose multikey state is no
+			 * longer tracked) since the first page cannot be resumed as an
+			 * ordered stream: the ordered scan does not de-duplicate row
+			 * pointers, so a document with several matching entries would be
+			 * emitted more than once. The ordered and bitmap resume strategies
+			 * consume rows in different orders, so the cursor cannot switch
+			 * mid-stream. Kill the plan so the client restarts and re-classifies
+			 * this index as a bitmap scan.
+			 */
+			if (MultiKeyIndexRequiresBitmapScan(resumePath->indexinfo))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED),
+								errmsg(
+									"Cannot resume an ordered scan on an index that is no longer eligible for an ordered scan.")));
 			}
 
 			/* Here we need to add the operators to skip based on continuation */
@@ -2468,6 +2875,20 @@ AddContinuationQualsToIndexPath(PlannerInfo *root, RelOptInfo *rel, IndexPath *r
 	bufferValue.value.v_binary.data = (uint8_t *) continuationBuffer;
 	bufferValue.value.v_binary.data_len = VARSIZE_ANY(continuationBuffer);
 	PgbsonWriterAppendValue(&childWriter, "minIndexOp", 10, &bufferValue);
+
+	/* When the continuation carried a serialized dedup state, embed it so the
+	 * ordered scan can restore its dedup tracker and suppress documents already
+	 * returned on earlier pages. */
+	if (state->dedupState != NULL)
+	{
+		bson_value_t dedupValue = { 0 };
+		dedupValue.value_type = BSON_TYPE_BINARY;
+		dedupValue.value.v_binary.subtype = 0;
+		dedupValue.value.v_binary.data = (uint8_t *) state->dedupState;
+		dedupValue.value.v_binary.data_len = VARSIZE_ANY(state->dedupState);
+		PgbsonWriterAppendValue(&childWriter, "dedupState", 10, &dedupValue);
+	}
+
 	PgbsonWriterEndDocument(&writer, &childWriter);
 	pgbson *minIndexKeySpec = PgbsonWriterGetPgbson(&writer);
 

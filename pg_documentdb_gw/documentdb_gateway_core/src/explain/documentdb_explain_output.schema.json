@@ -26,6 +26,10 @@
       "type": "string",
       "description": "Total size of tuple data received from distributed worker nodes, as reported by Citus. Only present for distributed (sharded) queries."
     },
+    "instanceName": {
+      "type": "string",
+      "description": "Identifier of the DocumentDB instance that produced the explain output. Sourced from the gateway configuration. Omitted when not configured."
+    },
     "queryPlanner": {
       "$ref": "#/$defs/QueryPlanner",
       "description": "Query planner information for non-aggregation commands (find, count, distinct). Present at the top level for simple cursor-based explains."
@@ -160,7 +164,7 @@
           "type": "number",
           "description": "The number of matching rows passed over without entering the reservoir during heap skip sampling. Only present under executionStats verbosity when the plan uses heap skip sampling."
         },
-        "sampleHeapSkips": {
+        "sampleHeapFetches": {
           "type": "number",
           "description": "The number of skipped rows that still required a heap read (page not all-visible or a lossy index match); the rest were counted from the visibility map. Only present under executionStats verbosity when the plan uses heap skip sampling."
         },

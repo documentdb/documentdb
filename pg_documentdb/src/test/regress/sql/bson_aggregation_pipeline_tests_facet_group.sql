@@ -2,6 +2,8 @@ SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_core;
 
 SET documentdb.next_collection_id TO 4000;
 SET documentdb.next_collection_index_id TO 4000;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 SELECT documentdb_api.insert_one('db','agg_facet_group','{ "_id": 1, "a": { "b": 1, "c": 1} }', NULL);
 SELECT documentdb_api.insert_one('db','agg_facet_group','{ "_id": 2, "a": { "b": 1, "c": 2} }', NULL);

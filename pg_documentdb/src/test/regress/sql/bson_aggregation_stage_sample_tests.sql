@@ -63,6 +63,40 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '
 -- $sample + $match on sharded collection (filter after sampling)
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": 5 } }, { "$match": { "unitPrice": { "$gt": 4 } } } ] }');
 
+-- OVERSIZED SAMPLE SIZE TESTS (regression: size >= 2^63 must not produce a negative LIMIT)
+
+-- samplePlanTest is sharded above, so $sample on it uses the TABLESAMPLE path:
+-- an oversized size returns all documents, sorted deterministically.
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDouble": "1e19" } } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+
+-- order-by-random LIMIT path (subquery RTE after $limit): oversized size must not error
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$limit": 1000 }, { "$sample": { "size": { "$numberDouble": "1e19" } } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+
+-- order-by-random LIMIT path with size just above INT64_MAX
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$limit": 1000 }, { "$sample": { "size": { "$numberDouble": "9.3e18" } } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+
+-- Unsharded collection eligible for the reservoir: eligibility is capped by
+-- work_mem (the reservoir buffers K HeapTuple copies), so a size whose buffer
+-- would exceed that budget skips the reservoir and falls back to an
+-- ORDER BY random() sort, returning all matching documents instead of erroring.
+SET work_mem TO '1MB';
+SELECT documentdb_api.insert_one('sampledb','sampleOversizeUnsharded', FORMAT('{ "_id": %s, "v": %s }', g, g)::documentdb_core.bson, NULL) FROM generate_series(1, 5) g;
+
+-- size within the INT32 range but above the cap derived from work_mem (and above
+-- the palloc capacity): must fall back to an ORDER BY random() sort and return
+-- all 5 documents rather than failing the reservoir allocation at execution time.
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "sampleOversizeUnsharded", "pipeline": [ { "$sample": { "size": 200000000 } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+
+-- size just above INT32_MAX: falls back, returns all 5 documents
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "sampleOversizeUnsharded", "pipeline": [ { "$sample": { "size": 2200000000 } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+
+-- huge double size: clamped, falls back, returns all 5 documents
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "sampleOversizeUnsharded", "pipeline": [ { "$sample": { "size": { "$numberDouble": "1e19" } } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+
+-- small size stays within the work_mem cap and uses the reservoir, returning exactly K documents
+SELECT count(*) AS reservoir_k FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "sampleOversizeUnsharded", "pipeline": [ { "$sample": { "size": 3 } } ] }')) t;
+RESET work_mem;
+
 -- SHARDED COLLECTION TESTS WITH FIX DISABLED (regression)
 
 SET documentdb.enableSampleScanFixOnSharded TO off;
@@ -79,3 +113,67 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '
 
 RESET documentdb.enableSampleScanFixOnSharded;
 RESET documentdb.enableDollarSampleReservoirScan;
+
+-- SIZE VALIDATION TESTS
+
+-- size 0 must be a positive integer and is rejected (error 28747)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": 0 } } ] }');
+
+-- negative size is rejected (error 28747)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": -5 } } ] }');
+
+-- a fractional size that rounds down to zero is rejected (error 28747)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDouble": "0.5" } } } ] }');
+
+-- NaN coerces to zero and is rejected (error 28747)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDouble": "NaN" } } } ] }');
+
+-- negative infinity clamps to the int64 lower bound and is rejected (error 28747)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDouble": "-Infinity" } } } ] }');
+
+-- positive infinity clamps to the int64 upper bound: returns all documents rather than erroring
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDouble": "Infinity" } } }, { "$sort": { "_id": 1 } }, { "$project": { "_id": 1 } } ] }');
+
+-- non-numeric size is rejected (error 28746)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": "five" } } ] }');
+
+-- missing size is rejected (error 28749)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { } } ] }');
+
+-- unrecognized option is rejected (error 28748)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": 2, "foo": 1 } } ] }');
+
+-- a non-numeric size takes precedence over a later unrecognized option (error 28746, not 28748)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": "bad", "foo": 1 } } ] }');
+
+-- non-object specification is rejected (error 28745)
+SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": 3 } ] }');
+
+-- SIZE NUMERIC COERCION TESTS (use COUNT so the result is deterministic regardless of which rows are sampled)
+
+-- doubles truncate toward zero: 1.9 -> 1
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDouble": "1.9" } } } ] }')) q;
+
+-- doubles truncate toward zero: 2.1 -> 2
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDouble": "2.1" } } } ] }')) q;
+
+-- Decimal128 uses round-half-to-even: 1.5 -> 2
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDecimal": "1.5" } } } ] }')) q;
+
+-- Decimal128 uses round-half-to-even: 2.5 -> 2
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDecimal": "2.5" } } } ] }')) q;
+
+-- Decimal128 uses round-half-to-even: 3.5 -> 4
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDecimal": "3.5" } } } ] }')) q;
+
+-- Decimal128 just above the half rounds up: 0.51 -> 1
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDecimal": "0.51" } } } ] }')) q;
+
+-- Decimal128 exactly one half rounds to even (zero): a valid empty sample (no error)
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDecimal": "0.5" } } } ] }')) q;
+
+-- Decimal128 overflow saturates and returns all documents rather than erroring
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDecimal": "1E6144" } } } ] }')) q;
+
+-- Decimal128 infinity saturates and returns all documents rather than erroring
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": { "$numberDecimal": "Infinity" } } } ] }')) q;

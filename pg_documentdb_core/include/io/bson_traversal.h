@@ -27,7 +27,18 @@ typedef enum TraverseBsonResult
 	 * The field had a type or value mismatch, or the parent path
 	 * had a value that was incompatible with the dotted path traversal.
 	 */
-	TraverseBsonResult_TypeMismatch = 1
+	TraverseBsonResult_TypeMismatch = 1,
+
+	/*
+	 * The field was not found because a numeric path component addressed no
+	 * element of an array (index out of bounds), or resolved to a scalar while
+	 * the path continued past it (positional descent blocked). This is distinct
+	 * from PathNotFound (a field missing from a document / a null leaf): callers
+	 * that special-case missing paths - notably null-equality, which matches a
+	 * missing document field but not an out-of-bounds array index - can treat
+	 * this as a non-match. Callers that do not care may treat it as PathNotFound.
+	 */
+	TraverseBsonResult_ArrayIndexNotFound = 2
 } TraverseBsonResult;
 
 /*

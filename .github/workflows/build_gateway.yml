@@ -132,6 +132,29 @@ jobs:
 
         docker exec "$CONTAINER_NAME" mongosh "localhost:10260" -u docdb_admin -p 123456 --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --quiet --eval 'const count = db.getSiblingDB("gateway_smoke").image_smoke.countDocuments({ name: "documentdb-local-smoke", ok: true }); if (count !== 1) { print(`expected 1 document, found ${count}`); quit(1); }'
 
+        # Backend-contract gate (issue #650). The smoke above drives the gateway
+        # end to end, including the getParameter discovery probe mongosh issues
+        # on connect, whose backend-contract failure clients silently tolerate --
+        # exactly how #650 shipped past a green CRUD assertion. The scan is
+        # delegated to the shared, unit-tested, ANSI-aware detector so this
+        # release smoke and the pre-merge image test enforce the identical
+        # contract; see documentdb-local/scripts/documentdb_local_tests/
+        # backend_contract.py for the SQLSTATE deny-list and the report mode.
+        # --report-unexpected prints (report-only, no failure) any non-empty
+        # sub_status SQLSTATE outside the deny-list for triage; the deny-list
+        # itself still hard-fails. A short sleep lets late teardown-path logging
+        # land before the snapshot.
+        echo "Checking gateway logs for backend-contract errors (issue #650)..."
+        sleep 2
+        if ! smoke_logs=$(docker logs "$CONTAINER_NAME" 2>&1); then
+          echo "Failed to read container logs for the backend-contract gate." >&2
+          exit 1
+        fi
+        if ! printf '%s\n' "$smoke_logs" \
+            | python3 documentdb-local/scripts/documentdb_local_tests/backend_contract.py --report-unexpected -; then
+          exit 1
+        fi
+
         dump_logs=false
     - name: Push ${{ matrix.arch }} Image
       if: github.event.inputs.push_images == 'true' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
