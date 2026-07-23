@@ -78,6 +78,17 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
     // Needed to downcast to concrete type
     fn as_any(&self) -> &dyn std::any::Any;
 
+    /// Returns the `DocumentDB` instance identifier surfaced in explain output as
+    /// `instanceName`, or `None` when it is not configured. Reads the
+    /// `instanceName` dynamic-config key by default.
+    ///
+    /// TODO: The instance identifier is effectively fixed for the lifetime of the
+    /// process, so it should ideally be sourced from static/setup configuration
+    /// rather than dynamic configuration. Move it to static config in the future.
+    fn instance_name(&self) -> Option<String> {
+        self.get_str("instanceName")
+    }
+
     fn enable_change_streams(&self) -> bool {
         self.get_bool("enableChangeStreams", false)
     }
@@ -98,8 +109,8 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
         self.get_bool("enableVerboseLoggingInGateway", false)
     }
 
-    fn index_build_sleep_milli_secs(&self) -> i32 {
-        self.get_i32("indexBuildWaitSleepTimeInMilliSec", 1000)
+    fn index_build_sleep_milli_secs(&self) -> u64 {
+        self.get_u64("indexBuildWaitSleepTimeInMilliSec", 1000)
     }
 
     fn is_postgres_writable(&self) -> bool {
@@ -193,8 +204,11 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
     }
 
     fn gateway_connection_buffer_size(&self) -> usize {
-        usize::try_from(self.get_u64("gatewayConnectionBufferSize", conn_mgmt::CONN_BUFFER_SIZE))
-            .unwrap_or(usize::MAX)
+        usize::try_from(self.get_u64(
+            "gateway_connection_buffer_size_bytes",
+            conn_mgmt::CONN_BUFFER_SIZE as u64,
+        ))
+        .unwrap_or(conn_mgmt::CONN_BUFFER_SIZE)
     }
 
     fn slow_query_log_interval_ms(&self) -> u64 {

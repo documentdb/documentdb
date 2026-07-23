@@ -52,6 +52,8 @@ void CreateAndDrainPointReadQuery(const char *cursorName, Query *query,
 
 QueryCursorPlanResult * PlanForcedPersistentQuery(Query *query, bool isHoldCursor);
 
+bool PlanResultHasParallelPlan(QueryCursorPlanResult *planResult);
+
 
 QueryCursorPlanResult * PlanDynamicQueryAndDetermineCursorType(Query *query,
 															   bool *isDynamicStreamable);

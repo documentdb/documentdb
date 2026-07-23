@@ -54,7 +54,6 @@
 #define NESTED_PIPELINE_VAR_FLAG 0x0F000000
 
 const int MaximumLookupPipelineDepth = 20;
-extern bool EnableLookupIdJoinOptimizationOnCollation;
 extern bool EnableOperatorVariablesInLookup;
 
 /*
@@ -2110,13 +2109,13 @@ OptimizeLookup(LookupArgs *lookupArgs,
 		StringViewEquals(&lookupArgs->foreignField, &IdFieldStringView) &&
 		!optimizationArgs->isLookupAgnostic;
 
-	if (IsCollationApplicable(leftQueryContext->collationString) &&
-		!EnableLookupIdJoinOptimizationOnCollation)
+	if (IsCollationApplicable(leftQueryContext->collationString))
 	{
-		/* Can't perform _id join when collation is applicable (since _id can
-		 * contain UTF8 which is collation aware), unless it is explicitly instructed
-		 * via GUC `EnableLookupIdJoinOptimizationOnCollation` (e.g., for cases when _id
-		 * contains collation agnostic datatype) */
+		/* Can't perform the _id join when collation is applicable. The optimization
+		 * joins on the physical id via byte-wise equality, which is not
+		 * collation-aware, so an _id that holds collation-sensitive values (UTF8
+		 * strings or documents) would incorrectly drop matches that the collation
+		 * considers equal. Fall back to the collation-aware filter path. */
 		optimizationArgs->isLookupJoinOnRightId = false;
 	}
 
@@ -2381,6 +2380,29 @@ ProcessLookupCoreWithLet(Query *query, AggregationPipelineBuildContext *context,
 														   rightQuery->targetList) +
 													   1, "objectId", false);
 			rightQuery->targetList = lappend(rightQuery->targetList, objectEntry);
+
+			if (ShouldSkipShardKeyFilterOnBaseTable(&optimizationArgs.rightQueryContext))
+			{
+				/* Add the shard key filter to the right query. In the path where we are
+				 * in ShouldSkipShardKeyFilterOnBaseTable, the base table doesn't automatically
+				 * get the shard key and since we have a lookup right query on _id, we need to
+				 * explicitly inject the shard_key_value here to use the _id index.
+				 */
+				Expr *zeroShardKeyFilter = CreateNonShardedShardKeyValueFilter(
+					1,
+					optimizationArgs.rightQueryContext.mongoCollection);
+				if (rightQuery->jointree->quals == NULL)
+				{
+					rightQuery->jointree->quals = (Node *) zeroShardKeyFilter;
+				}
+				else
+				{
+					List *newQuals = make_ands_implicit(
+						(Expr *) rightQuery->jointree->quals);
+					newQuals = lappend(newQuals, zeroShardKeyFilter);
+					rightQuery->jointree->quals = (Node *) make_ands_explicit(newQuals);
+				}
+			}
 		}
 
 		CommonTableExpr *rightTableExpr = makeNode(CommonTableExpr);

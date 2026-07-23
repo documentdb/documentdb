@@ -2,6 +2,8 @@ SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,pg_cata
 SET citus.next_shard_id TO 87100000;
 SET documentdb.next_collection_id TO 87100;
 SET documentdb.next_collection_index_id TO 87100;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 -- ============================================================================
 -- Project push-up before $unwind (with $group) — distributed tests
 --
@@ -126,7 +128,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 33_1
+   ->  Distributed Subplan 34_1
          ->  HashAggregate
                Output: remote_scan.c1, remote_scan.c2
                Group Key: remote_scan.c2
@@ -151,11 +153,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2 FROM read_intermediate_result('33_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson)) agg_stage_4
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2 FROM read_intermediate_result('34_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson)) agg_stage_4
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2)
-               Function Call: read_intermediate_result('33_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('34_1'::text, 'binary'::citus_copy_format)
 (32 rows)
 
 -- D1.2 Sharded by ownerId (the group key) — co-located group. Each worker
@@ -308,7 +310,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 71_1
+   ->  Distributed Subplan 70_1
          ->  HashAggregate
                Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson)
                Group Key: remote_scan.c2
@@ -331,11 +333,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('71_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_2
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('70_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_2
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4)
-               Function Call: read_intermediate_result('71_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('70_1'::text, 'binary'::citus_copy_format)
 (30 rows)
 
 -- D1.4 Sharded by _id, universal aggregate ($group _id: null). Every
@@ -486,7 +488,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 88_1
+   ->  Distributed Subplan 87_1
          ->  Custom Scan (Citus Adaptive)
                Output: remote_scan.document, remote_scan.lookup_filter
                Task Count: 8
@@ -496,7 +498,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                      Node: host=localhost port=58070 dbname=regression
                      ->  Seq Scan on documentdb_data.documents_87101_87100004 collection
                            Output: document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(document, '{ "ownerId" : "ownerId" }'::documentdb_core.bson)
-   ->  Distributed Subplan 88_2
+   ->  Distributed Subplan 87_2
          ->  Custom Scan (Citus Adaptive)
                Output: remote_scan.document
                Task Count: 1
@@ -512,7 +514,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2) AS document FROM (SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(agg_stage_2_1.document, '{ "" : "$ownerId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2 FROM (SELECT documentdb_api_catalog.bson_dollar_unwind(agg_stage_1.document, '$items'::text) AS document FROM (SELECT documentdb_api_internal.bson_dollar_merge_documents(lookup_stage_1.document, "lookupRight_stage_1".document, true) AS document FROM ((SELECT intermediate_result.document, intermediate_result.lookup_filter FROM read_intermediate_result('88_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, lookup_filter documentdb_core.bson)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'owner_doc'::text), '{ "owner_doc" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('88_2'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_0.document, lookup_stage_1.lookup_filter, 'ownerId'::text)) "lookupRight_stage_1" ON (true))) agg_stage_1) agg_stage_2_1 GROUP BY (documentdb_api_internal.bson_expression_get(agg_stage_2_1.document, '{ "" : "$ownerId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))) agg_stage_2
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2) AS document FROM (SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(agg_stage_2_1.document, '{ "" : "$ownerId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2 FROM (SELECT documentdb_api_catalog.bson_dollar_unwind(agg_stage_1.document, '$items'::text) AS document FROM (SELECT documentdb_api_internal.bson_dollar_merge_documents(lookup_stage_1.document, "lookupRight_stage_1".document, true) AS document FROM ((SELECT intermediate_result.document, intermediate_result.lookup_filter FROM read_intermediate_result('87_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, lookup_filter documentdb_core.bson)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'owner_doc'::text), '{ "owner_doc" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('87_2'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_0.document, lookup_stage_1.lookup_filter, 'ownerId'::text)) "lookupRight_stage_1" ON (true))) agg_stage_1) agg_stage_2_1 GROUP BY (documentdb_api_internal.bson_expression_get(agg_stage_2_1.document, '{ "" : "$ownerId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))) agg_stage_2
          Node: host=localhost port=58070 dbname=regression
          ->  Subquery Scan on agg_stage_2
                Output: documentdb_core.bson_repath_and_build(agg_stage_2.c1, agg_stage_2.c2)
@@ -527,12 +529,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                                        Output: intermediate_result.document, (COALESCE(documentdb_api_catalog.bson_array_agg(intermediate_result_1.document, 'owner_doc'::text), '{ "owner_doc" : [  ] }'::documentdb_core.bson))
                                        ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                                              Output: intermediate_result.document, intermediate_result.lookup_filter
-                                             Function Call: read_intermediate_result('88_1'::text, 'binary'::citus_copy_format)
+                                             Function Call: read_intermediate_result('87_1'::text, 'binary'::citus_copy_format)
                                        ->  Aggregate
                                              Output: COALESCE(documentdb_api_catalog.bson_array_agg(intermediate_result_1.document, 'owner_doc'::text), '{ "owner_doc" : [  ] }'::documentdb_core.bson)
                                              ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result_1
                                                    Output: intermediate_result_1.document
-                                                   Function Call: read_intermediate_result('88_2'::text, 'binary'::citus_copy_format)
+                                                   Function Call: read_intermediate_result('87_2'::text, 'binary'::citus_copy_format)
                                                    Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(intermediate_result_1.document, intermediate_result.lookup_filter, 'ownerId'::text)
 (50 rows)
 
@@ -550,7 +552,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 93_1
+   ->  Distributed Subplan 92_1
          ->  Custom Scan (Citus Adaptive)
                Output: remote_scan.document
                Task Count: 8
@@ -560,7 +562,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                      Node: host=localhost port=58070 dbname=regression
                      ->  Seq Scan on documentdb_data.documents_87101_87100004 collection
                            Output: document
-   ->  Distributed Subplan 93_2
+   ->  Distributed Subplan 92_2
          ->  Custom Scan (Citus Adaptive)
                Output: remote_scan.document
                Task Count: 1
@@ -573,25 +575,25 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                            Recheck Cond: (collection_0_1.shard_key_value = '87103'::bigint)
                            ->  Bitmap Index Scan on _id_
                                  Index Cond: (collection_0_1.shard_key_value = '87103'::bigint)
-   ->  Distributed Subplan 93_3
+   ->  Distributed Subplan 92_3
          ->  Custom Scan (Citus Adaptive)
                Output: remote_scan.document
                Task Count: 1
                Tasks Shown: All
                ->  Task
-                     Query: SELECT intermediate_result.document FROM read_intermediate_result('93_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson) UNION ALL SELECT intermediate_result.document FROM read_intermediate_result('93_2'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)
+                     Query: SELECT intermediate_result.document FROM read_intermediate_result('92_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson) UNION ALL SELECT intermediate_result.document FROM read_intermediate_result('92_2'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)
                      Node: host=localhost port=58070 dbname=regression
                      ->  Append
                            ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                                  Output: intermediate_result.document
-                                 Function Call: read_intermediate_result('93_1'::text, 'binary'::citus_copy_format)
+                                 Function Call: read_intermediate_result('92_1'::text, 'binary'::citus_copy_format)
                            ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result_1
                                  Output: intermediate_result_1.document
-                                 Function Call: read_intermediate_result('93_2'::text, 'binary'::citus_copy_format)
+                                 Function Call: read_intermediate_result('92_2'::text, 'binary'::citus_copy_format)
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2) AS document FROM (SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(agg_stage_2_1.document, '{ "" : "$ownerId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2 FROM (SELECT documentdb_api_catalog.bson_dollar_unwind(agg_stage_0.document, '$items'::text) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('93_3'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0) agg_stage_2_1 GROUP BY (documentdb_api_internal.bson_expression_get(agg_stage_2_1.document, '{ "" : "$ownerId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))) agg_stage_2
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2) AS document FROM (SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(agg_stage_2_1.document, '{ "" : "$ownerId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2 FROM (SELECT documentdb_api_catalog.bson_dollar_unwind(agg_stage_0.document, '$items'::text) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('92_3'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0) agg_stage_2_1 GROUP BY (documentdb_api_internal.bson_expression_get(agg_stage_2_1.document, '{ "" : "$ownerId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))) agg_stage_2
          Node: host=localhost port=58070 dbname=regression
          ->  Subquery Scan on agg_stage_2
                Output: documentdb_core.bson_repath_and_build(agg_stage_2.c1, agg_stage_2.c2)
@@ -604,7 +606,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                                  Output: documentdb_api_catalog.bson_dollar_unwind(intermediate_result.document, '$items'::text)
                                  ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                                        Output: intermediate_result.document
-                                       Function Call: read_intermediate_result('93_3'::text, 'binary'::citus_copy_format)
+                                       Function Call: read_intermediate_result('92_3'::text, 'binary'::citus_copy_format)
 (57 rows)
 
 -- ============================================================================

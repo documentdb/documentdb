@@ -7,6 +7,8 @@ SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extende
 
 set documentdb.defaultUseCompositeOpClass to on;
 set documentdb_core.enableWriteDocumentsInRepath to on;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- Clean up from any prior run
 SELECT documentdb_api.drop_collection('group_corr_db', 'group_push') IS NOT NULL;

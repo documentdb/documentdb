@@ -23,6 +23,7 @@ pub async fn process_delete(
     connection_context: &ConnectionContext,
     dynamic_config: &Arc<dyn DynamicConfiguration>,
     pg_data_client: &impl PgDataClient,
+    enable_write_procedures: bool,
 ) -> Result<Response> {
     // Nested transactions not allowed when database is in read-only mode
     let is_read_only_for_disk_full =
@@ -34,7 +35,7 @@ pub async fn process_delete(
             .await?
     } else {
         pg_data_client
-            .execute_delete(request_context, connection_context)
+            .execute_delete(request_context, connection_context, enable_write_procedures)
             .await?
     };
 

@@ -1790,3 +1790,216 @@ WITH r1 AS (SELECT ordered_saop_scan_test.validate_index_runtime_equivalence(
      0
 (1 row)
 
+-- ===== Forced ordered scan on a root wildcard index with a simple filter =====
+-- A root wildcard ("$**") index forced into an ordered scan by the low
+-- max_non_ordered_term_scan_threshold. A simple single-path filter should
+-- push down to the wildcard root index.
+SELECT COUNT(documentdb_api.insert_one('ordered_saop_scan_test', 'ordered_saop_wildcard_root_coll',
+    bson_build_document('_id', i, 'a', i, 'b', i * 2, 'c', i * 3))) FROM generate_series(1, 100) i;
+NOTICE:  creating collection
+ count 
+-------
+   100
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ordered_saop_scan_test',
+    '{ "createIndexes": "ordered_saop_wildcard_root_coll", "indexes": [ { "key": { "$**": 1 }, "name": "wc_1", "enableOrderedIndex": true } ] }'::bson, TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+set enable_seqscan to off;
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "a": { "$in": [ 5, 16, 42, 77 ] } } }'::bson);
+$cmd$);
+                                                                    run_explain_and_trim                                                                    
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+   namespaceName: ordered_saop_scan_test.ordered_saop_wildcard_root_coll
+   indexName: wc_1
+   indexKey: {"$**": 1}
+   isMultiKey: false
+   startBounds: ["a": [ { "a": 5 } ,  { "a": 5 } ]]
+   rawBounds: ["": [ { "a": 5 } ,  { "a": 5 } ], [ { "a": 16 } ,  { "a": 16 } ], [ { "a": 42 } ,  { "a": 42 } ], [ { "a": 77 } ,  { "a": 77 } ]]
+   innerScanLoops: 8 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+   ->  Index Scan using wc_1 on documents_1206 collection (actual rows=4 loops=1)
+         Index Cond: (document @*= '{ "a" : [ { "$numberInt" : "5" }, { "$numberInt" : "16" }, { "$numberInt" : "42" }, { "$numberInt" : "77" } ] }'::bson)
+(12 rows)
+
+SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+    '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "a": { "$in": [ 5, 16, 42, 77 ] } } }'::bson);
+                                                              document                                                              
+------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "5" }, "b" : { "$numberInt" : "10" }, "c" : { "$numberInt" : "15" } }
+ { "_id" : { "$numberInt" : "16" }, "a" : { "$numberInt" : "16" }, "b" : { "$numberInt" : "32" }, "c" : { "$numberInt" : "48" } }
+ { "_id" : { "$numberInt" : "42" }, "a" : { "$numberInt" : "42" }, "b" : { "$numberInt" : "84" }, "c" : { "$numberInt" : "126" } }
+ { "_id" : { "$numberInt" : "77" }, "a" : { "$numberInt" : "77" }, "b" : { "$numberInt" : "154" }, "c" : { "$numberInt" : "231" } }
+(4 rows)
+
+-- Same $in semantics on field "b" (b = i * 2).
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "b": { "$in": [ 10, 32, 84, 154 ] } } }'::bson);
+$cmd$);
+                                                                     run_explain_and_trim                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+   namespaceName: ordered_saop_scan_test.ordered_saop_wildcard_root_coll
+   indexName: wc_1
+   indexKey: {"$**": 1}
+   isMultiKey: false
+   startBounds: ["b": [ { "b": 10 } ,  { "b": 10 } ]]
+   rawBounds: ["": [ { "b": 10 } ,  { "b": 10 } ], [ { "b": 32 } ,  { "b": 32 } ], [ { "b": 84 } ,  { "b": 84 } ], [ { "b": 154 } ,  { "b": 154 } ]]
+   innerScanLoops: 8 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
+   ->  Index Scan using wc_1 on documents_1206 collection (actual rows=4 loops=1)
+         Index Cond: (document @*= '{ "b" : [ { "$numberInt" : "10" }, { "$numberInt" : "32" }, { "$numberInt" : "84" }, { "$numberInt" : "154" } ] }'::bson)
+(12 rows)
+
+SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+    '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "b": { "$in": [ 10, 32, 84, 154 ] } } }'::bson);
+                                                              document                                                              
+------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "5" }, "b" : { "$numberInt" : "10" }, "c" : { "$numberInt" : "15" } }
+ { "_id" : { "$numberInt" : "16" }, "a" : { "$numberInt" : "16" }, "b" : { "$numberInt" : "32" }, "c" : { "$numberInt" : "48" } }
+ { "_id" : { "$numberInt" : "42" }, "a" : { "$numberInt" : "42" }, "b" : { "$numberInt" : "84" }, "c" : { "$numberInt" : "126" } }
+ { "_id" : { "$numberInt" : "77" }, "a" : { "$numberInt" : "77" }, "b" : { "$numberInt" : "154" }, "c" : { "$numberInt" : "231" } }
+(4 rows)
+
+-- Same $in semantics on field "c" (c = i * 3).
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "c": { "$in": [ 15, 48, 126, 231 ] } } }'::bson);
+$cmd$);
+                                                                     run_explain_and_trim                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+   namespaceName: ordered_saop_scan_test.ordered_saop_wildcard_root_coll
+   indexName: wc_1
+   indexKey: {"$**": 1}
+   isMultiKey: false
+   startBounds: ["c": [ { "c": 15 } ,  { "c": 15 } ]]
+   rawBounds: ["": [ { "c": 15 } ,  { "c": 15 } ], [ { "c": 48 } ,  { "c": 48 } ], [ { "c": 126 } ,  { "c": 126 } ], [ { "c": 231 } ,  { "c": 231 } ]]
+   innerScanLoops: 8 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
+   ->  Index Scan using wc_1 on documents_1206 collection (actual rows=4 loops=1)
+         Index Cond: (document @*= '{ "c" : [ { "$numberInt" : "15" }, { "$numberInt" : "48" }, { "$numberInt" : "126" }, { "$numberInt" : "231" } ] }'::bson)
+(12 rows)
+
+SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+    '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "c": { "$in": [ 15, 48, 126, 231 ] } } }'::bson);
+                                                              document                                                              
+------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "5" }, "b" : { "$numberInt" : "10" }, "c" : { "$numberInt" : "15" } }
+ { "_id" : { "$numberInt" : "16" }, "a" : { "$numberInt" : "16" }, "b" : { "$numberInt" : "32" }, "c" : { "$numberInt" : "48" } }
+ { "_id" : { "$numberInt" : "42" }, "a" : { "$numberInt" : "42" }, "b" : { "$numberInt" : "84" }, "c" : { "$numberInt" : "126" } }
+ { "_id" : { "$numberInt" : "77" }, "a" : { "$numberInt" : "77" }, "b" : { "$numberInt" : "154" }, "c" : { "$numberInt" : "231" } }
+(4 rows)
+
+-- Multiple filters against the wildcard index: a single ordered walk can only
+-- drive one wildcard path, so the index bounds consider one path and the
+-- remaining filter is applied via runtime recheck. { a: $in [5,16,42,77] }
+-- yields a=5,16,42,77 (b=10,32,84,154); the b > 20 recheck keeps a=16,42,77.
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "a": { "$in": [ 5, 16, 42, 77 ] }, "b": { "$gt": 20 } } }'::bson);
+$cmd$);
+                                                                                                   run_explain_and_trim                                                                                                   
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+   namespaceName: ordered_saop_scan_test.ordered_saop_wildcard_root_coll
+   indexName: wc_1
+   indexKey: {"$**": 1}
+   isMultiKey: false
+   startBounds: ["a": [ { "a": 5 } ,  { "a": 5 } ]]
+   rawBounds: ["": [ { "a": 5 } ,  { "a": 5 } ], [ { "a": 16 } ,  { "a": 16 } ], [ { "a": 42 } ,  { "a": 42 } ], [ { "a": 77 } ,  { "a": 77 } ]]
+   innerScanLoops: 8 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+   ->  Index Scan using wc_1 on documents_1206 collection (actual rows=3 loops=1)
+         Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "5" }, { "$numberInt" : "16" }, { "$numberInt" : "42" }, { "$numberInt" : "77" } ] }'::bson) AND (document @> '{ "b" : { "$numberInt" : "20" } }'::bson))
+         Rows Removed by Index Recheck: 1
+(13 rows)
+
+SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+    '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "a": { "$in": [ 5, 16, 42, 77 ] }, "b": { "$gt": 20 } } }'::bson);
+                                                              document                                                              
+------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "16" }, "a" : { "$numberInt" : "16" }, "b" : { "$numberInt" : "32" }, "c" : { "$numberInt" : "48" } }
+ { "_id" : { "$numberInt" : "42" }, "a" : { "$numberInt" : "42" }, "b" : { "$numberInt" : "84" }, "c" : { "$numberInt" : "126" } }
+ { "_id" : { "$numberInt" : "77" }, "a" : { "$numberInt" : "77" }, "b" : { "$numberInt" : "154" }, "c" : { "$numberInt" : "231" } }
+(3 rows)
+
+-- Multiple bounds on the SAME wildcard path form a range that is pushed into
+-- the single ordered walk (lower and upper bound combined), so no runtime
+-- recheck is needed for the range. { a: { $gt: 3, $lt: 6 } } yields a=4,5.
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "a": { "$gt": 3, "$lt": 6 } } }'::bson);
+$cmd$);
+                                                          run_explain_and_trim                                                           
+-----------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: ordered_saop_scan_test.ordered_saop_wildcard_root_coll
+   indexName: wc_1
+   indexKey: {"$**": 1}
+   isMultiKey: false
+   indexBounds: ["a": ( { "a": 3 } ,  { "a": 6 } )]
+   innerScanLoops: 5 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
+   ->  Index Scan using wc_1 on documents_1206 collection (actual rows=2 loops=1)
+         Index Cond: ((document @> '{ "a" : { "$numberInt" : "3" } }'::bson) AND (document @< '{ "a" : { "$numberInt" : "6" } }'::bson))
+(11 rows)
+
+SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+    '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "a": { "$gt": 3, "$lt": 6 } } }'::bson);
+                                                            document                                                            
+--------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : { "$numberInt" : "4" }, "b" : { "$numberInt" : "8" }, "c" : { "$numberInt" : "12" } }
+ { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "5" }, "b" : { "$numberInt" : "10" }, "c" : { "$numberInt" : "15" } }
+(2 rows)
+
+-- $in combined with a range bound on the SAME wildcard path: the $in discrete
+-- bounds are constrained by the > 6 lower bound within the single walk.
+-- { a: { $in: [1,4,5,9], $gt: 6 } } keeps only a=9.
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+        '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "a": { "$in": [ 1, 4, 5, 9 ], "$gt": 6 } } }'::bson);
+$cmd$);
+                                                                                                 run_explain_and_trim                                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: ordered_saop_scan_test.ordered_saop_wildcard_root_coll
+   indexName: wc_1
+   indexKey: {"$**": 1}
+   isMultiKey: false
+   startBounds: ["a": ( { "a": 6 } ,  { "a": 1 } ]]
+   rawBounds: ["": [ { "a": 1 } ,  { "a": 1 } ], [ { "a": 4 } ,  { "a": 4 } ], [ { "a": 5 } ,  { "a": 5 } ], [ { "a": 9 } ,  { "a": 9 } ]], ["": ( { "a": 6 } ,  { "a": Infinity } ]]
+   innerScanLoops: 4 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+   ->  Index Scan using wc_1 on documents_1206 collection (actual rows=1 loops=1)
+         Index Cond: ((document @*= '{ "a" : [ { "$numberInt" : "1" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "9" } ] }'::bson) AND (document @> '{ "a" : { "$numberInt" : "6" } }'::bson))
+(12 rows)
+
+SELECT document FROM bson_aggregation_find('ordered_saop_scan_test',
+    '{ "find": "ordered_saop_wildcard_root_coll", "filter": { "a": { "$in": [ 1, 4, 5, 9 ], "$gt": 6 } } }'::bson);
+                                                            document                                                            
+--------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "9" }, "a" : { "$numberInt" : "9" }, "b" : { "$numberInt" : "18" }, "c" : { "$numberInt" : "27" } }
+(1 row)
+
+reset enable_seqscan;

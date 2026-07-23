@@ -1152,40 +1152,7 @@ $cmd$);
                Index Cond: (document @!*= '{ "a" : [ { "$regularExpression" : { "pattern" : "^string", "options" : "" } } ] }'::bson)
 (12 rows)
 
--- feature flag off: should revert to full UTF8 type bounds even with ^
-set documentdb.enableRegexPrefixIndexBounds to off;
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
-    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^string" } } }')
-$cmd$);
-                                                                                                        run_explain_and_trim                                                                                                        
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
-   namespaceName: regex_db.regex_coll
-   indexName: idx_a_1_b_1
-   indexKey: {"a": 1,"b": 1}
-   isMultiKey: false
-   hasTruncation: true
-   indexBounds: ["a": ["", { }), "b": (MinKey, MaxKey)], ["a": [{ "$regularExpression" : { "pattern" : "^string", "options" : "" } }, { "$regularExpression" : { "pattern" : "^string", "options" : "" } }], "b": (MinKey, MaxKey)]
-   ->  Bitmap Heap Scan on documents_1201 collection (actual rows=3 loops=1)
-         Recheck Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^string", "options" : "" } } }'::bson)
-         Rows Removed by Index Recheck: 2
-         Heap Blocks: exact=1
-         ->  Bitmap Index Scan on idx_a_1_b_1 (actual rows=5 loops=1)
-               Index Cond: (document @~ '{ "a" : { "$regularExpression" : { "pattern" : "^string", "options" : "" } } }'::bson)
-(13 rows)
-
--- feature flag off result verification: same correct results regardless of flag
-set documentdb.enableRegexPrefixIndexBounds to off;
-SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^string" } } }');
-                              document                              
---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "1" }, "a" : "string1", "b" : true }
- { "_id" : { "$numberInt" : "2" }, "a" : "string2", "b" : true }
- { "_id" : { "$numberInt" : "3" }, "a" : "string123", "b" : false }
-(3 rows)
-
-set documentdb.enableRegexPrefixIndexBounds to on;
+-- result verification for anchored prefix regex
 SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^string" } } }');
                               document                              
 --------------------------------------------------------------------

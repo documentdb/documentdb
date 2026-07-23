@@ -16,6 +16,20 @@
 #include "nodes/primnodes.h"
 
 /*
+ * Tri-state multi-key status of an index path. Unknown means the multi-key state
+ * is not tracked/known (callers must treat the path conservatively as multi-key);
+ * HasArrays / HasNoArrays are the known states.
+ */
+typedef enum IndexMultiKeyStatus
+{
+	IndexMultiKeyStatus_Unknown = 0,
+
+	IndexMultiKeyStatus_HasArrays = 1,
+
+	IndexMultiKeyStatus_HasNoArrays = 2
+} IndexMultiKeyStatus;
+
+/*
  * Enum identifying the kind of index based on the options.
  */
 typedef enum IndexOptionsType
@@ -236,7 +250,8 @@ typedef struct SortIndexInputDetails
 
 
 struct IndexPath;
-bool CompositeIndexSupportsIndexOnlyScan(const struct IndexPath *indexPath);
+bool CompositeIndexSupportsIndexOnlyScan(const struct IndexPath *indexPath,
+										 bool skipTruncationCheck);
 
 int32_t GetCompositeOpClassColumnNumber(const char *currentPath, void *contextOptions,
 										int8_t *sortDirection);
@@ -252,7 +267,8 @@ bool SubPathHasArrayIndexElements(const StringView *path, StringView subPath);
 
 struct PlannerInfo;
 bool TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct
-										PlannerInfo *root, bool *canSupportIndexOnlyScan);
+										PlannerInfo *root,
+										bool *canSupportIndexOnlyScan);
 List * ExtractBoundaryQualsForOrderedIndexPath(struct IndexPath *indexPath,
 											   int *num_sa_scans);
 OpExpr * CreateFullScanOpExpr(Expr *documentExpr, const char *sourcePath, uint32_t

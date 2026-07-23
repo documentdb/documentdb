@@ -43,13 +43,6 @@ pub struct TtlCacheEntry<V> {
     expires_at: u64,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "Not all methods of TtlCacheEntry may be used in all configurations"
-    )
-)]
 impl<V> TtlCacheEntry<V> {
     /// Creates a new cache entry with the given value and TTL.
     pub fn new(value: V, ttl: Duration) -> Self {
@@ -134,13 +127,6 @@ where
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Only called from AsyncCache impl which is not exercised in all configurations"
-        )
-    )]
     #[must_use]
     fn size_change_guard(&self) -> Option<MutexGuard<'_, ()>> {
         if self.config.max_capacity() == 0
@@ -490,7 +476,7 @@ mod tests {
 
     fn test_cache() -> TtlCache<u32, String> {
         TtlCache::new(CacheConfiguration::new(
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             None,
             None,
             None,
@@ -572,7 +558,7 @@ mod tests {
     fn insert_with_ttl_enforces_capacity_under_parallel_inserts() {
         let _insert_delay_guard = InsertDelayGuard::enable();
         let cache = Arc::new(TtlCache::new(CacheConfiguration::new(
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             Some(1),
             Some(1),
             Some(CapacityEnforcement::Strict),
@@ -740,7 +726,7 @@ mod tests {
     async fn insert_with_ttl_async_enforces_capacity_under_parallel_inserts() {
         let _insert_delay_guard = InsertDelayGuard::enable();
         let cache = Arc::new(TtlCache::new(CacheConfiguration::new(
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             Some(1),
             Some(1),
             Some(CapacityEnforcement::Strict),
@@ -820,7 +806,7 @@ mod tests {
     #[tokio::test]
     async fn upsert_async_enforces_capacity_for_new_keys() {
         let cache = TtlCache::new(CacheConfiguration::new(
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             Some(1),
             Some(1),
             Some(CapacityEnforcement::Strict),

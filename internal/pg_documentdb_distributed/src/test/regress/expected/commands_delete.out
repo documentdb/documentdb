@@ -1442,7 +1442,11 @@ NOTICE:  creating collection
  
 (1 row)
 
-BEGIN;
+-- Populate the sharded collection outside the explain transaction so its metadata/data
+-- writes run with local execution. The explain transaction below then disables local
+-- execution as its first statement, so it never has a local-execution-required op to
+-- conflict with (which would otherwise flakily fail with "cannot switch local
+-- execution status from local execution required to local execution disabled").
 select  documentdb_api.insert('db', '{"insert":"deleteIndex", "documents":[{"_id":1}]}');
                                          insert                                         
 ---------------------------------------------------------------------
@@ -1455,15 +1459,17 @@ select  documentdb_api.insert('db', '{"insert":"deleteIndex", "documents":[{"_id
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
-SET LOCAL citus.log_remote_commands TO ON;
-SET local client_min_messages TO ERROR;
-SET LOCAL enable_seqscan TO OFF;
-SELECT  documentdb_api.insert('db', '{"insert":"deleteIndex", "documents":[{"_id":3}]}');
+select  documentdb_api.insert('db', '{"insert":"deleteIndex", "documents":[{"_id":3}]}');
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
+BEGIN;
+SET LOCAL citus.enable_local_execution TO off;
+SET LOCAL citus.log_remote_commands TO ON;
+SET local client_min_messages TO ERROR;
+SET LOCAL enable_seqscan TO OFF;
 SET LOCAL documentdb.useLocalExecutionShardQueries to off;
 SET LOCAL citus.log_remote_commands TO OFF;
 -- 6. bson_query_match with $lt, $lte, $gt, $gte, $eq and $in

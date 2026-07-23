@@ -33,6 +33,7 @@ const fn collection_fields_for(request_type: RequestType) -> &'static [&'static 
         RequestType::Create => &["create"],
         RequestType::CreateIndex => &["createIndex"],
         RequestType::CreateIndexes => &["createIndexes"],
+        RequestType::CreateSearchIndexes => &["createSearchIndexes"],
         RequestType::Delete => &["delete"],
         RequestType::Distinct => &["distinct"],
         RequestType::Drop => &["drop"],

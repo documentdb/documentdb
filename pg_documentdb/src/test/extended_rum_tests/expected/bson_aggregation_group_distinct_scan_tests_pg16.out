@@ -19,9 +19,11 @@ SELECT documentdb_api.drop_collection('db', 'setup_sentinel');
 
 SET documentdb.next_collection_id TO 20000;
 SET documentdb.next_collection_index_id TO 20000;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 -- Setup: create collection with repeated values for field "x"
 SELECT documentdb_api.insert_one('db', 'grp_dist', '{ "_id": 1, "x": "a", "y": 10 }', NULL);
-psql:sql/bson_aggregation_group_distinct_scan_tests.sql:15: NOTICE:  creating collection
+psql:sql/bson_aggregation_group_distinct_scan_tests.sql:17: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -79,7 +81,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
 
 -- Companion collection with an array field for $unwind cases.
 SELECT documentdb_api.insert_one('db', 'grp_dist_arr', '{ "_id": 1, "x": "a", "tags": ["t1", "t2"] }', NULL);
-psql:sql/bson_aggregation_group_distinct_scan_tests.sql:29: NOTICE:  creating collection
+psql:sql/bson_aggregation_group_distinct_scan_tests.sql:31: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1322,7 +1324,7 @@ ROLLBACK;
 -- composite idx_xy_composite (for the compound-_id case).
 -- ------------------------------------------------------------
 SELECT documentdb_api.insert_one('db', 'grp_dist_more', '{ "_id": 1, "x": "a", "y": 10 }', NULL);
-psql:sql/bson_aggregation_group_distinct_scan_tests.sql:707: NOTICE:  creating collection
+psql:sql/bson_aggregation_group_distinct_scan_tests.sql:709: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1396,7 +1398,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
 COMMIT;
 -- Companion collection: multikey (array) indexed field.
 SELECT documentdb_api.insert_one('db', 'grp_mk', '{ "_id": 1, "tags": ["a","b","c"] }', NULL);
-psql:sql/bson_aggregation_group_distinct_scan_tests.sql:732: NOTICE:  creating collection
+psql:sql/bson_aggregation_group_distinct_scan_tests.sql:734: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1433,7 +1435,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
 -- tested; the divergent shape is a known hazard if the planner
 -- ever lets the partial index serve a non-subsuming predicate.
 SELECT documentdb_api.insert_one('db', 'grp_part', '{ "_id": 1, "x": "a", "y": 60 }', NULL);
-psql:sql/bson_aggregation_group_distinct_scan_tests.sql:744: NOTICE:  creating collection
+psql:sql/bson_aggregation_group_distinct_scan_tests.sql:746: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

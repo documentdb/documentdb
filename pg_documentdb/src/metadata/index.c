@@ -51,6 +51,7 @@
 extern int MaxNumActiveUsersIndexBuilds;
 extern int IndexBuildScheduleInSec;
 extern bool EmitEnableOrderedIndexFalseInResponse;
+extern bool SkipLegacyIdIndexStatsCheck;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -3093,7 +3094,9 @@ GetOptionsEquivalencyFromIndexOptions(HTAB *bsonElementHash,
 bool
 CollectionHasStatisticsEnabled(uint64 collectionId)
 {
-	/* Check the cached collection options (new path) */
+	/* Check the cached collection options, which are the source of truth for
+	 * whether planner statistics are enabled for a collection.
+	 */
 	MongoCollection *collection = GetMongoCollectionByColId(collectionId, NoLock);
 
 	/* Return false if the collection is not found, let the caller handle non existent collections. */
@@ -3107,9 +3110,20 @@ CollectionHasStatisticsEnabled(uint64 collectionId)
 		return true;
 	}
 
-	/* Fall back to _id_ index options for backward compatibility with
-	 * collections that were stats-enabled before the options column was used.
+	/*
+	 * Legacy fallback: older collections tracked stats via the _id_ index
+	 * options before the collections.options column was used. Skipping this
+	 * check is the default because querying the index catalog here runs
+	 * index_build_is_in_progress against the index queue, which cannot be
+	 * executed from within a nested distributed context (e.g. shard_collection).
+	 * This fallback is retained only for backward compatibility and will be
+	 * retired.
 	 */
+	if (SkipLegacyIdIndexStatsCheck)
+	{
+		return false;
+	}
+
 	IndexDetails *details = IndexNameGetIndexDetails(collectionId, "_id_");
 	if (details == NULL)
 	{

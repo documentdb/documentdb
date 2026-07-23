@@ -51,7 +51,7 @@ fn pg_configuration(
     user: &str,
     password: Option<&str>,
     application_name: &str,
-    buffer_size: usize,
+    connection_buffer_size: usize,
 ) -> tokio_postgres::Config {
     let mut config = tokio_postgres::Config::new();
 
@@ -71,7 +71,6 @@ fn pg_configuration(
         .dbname(setup_configuration.postgres_database())
         .user(user)
         .application_name(application_name)
-        .buffer_size(buffer_size)
         .options(
             query_catalog.set_search_path_and_timeout(&command_timeout_ms, &transaction_timeout_ms),
         );
@@ -80,8 +79,24 @@ fn pg_configuration(
         config.password(pass);
     }
 
+    set_connection_buffer_size(&mut config, connection_buffer_size);
+
     config
 }
+
+/// Applies the per-connection buffer size to the `PostgreSQL` configuration.
+///
+/// Only compiled when the `pg_buffer_size` cfg is set, which requires a
+/// `tokio-postgres` build that exposes `Config::buffer_size`.
+#[cfg(pg_buffer_size)]
+fn set_connection_buffer_size(config: &mut tokio_postgres::Config, buffer_size: usize) {
+    config.buffer_size(buffer_size);
+}
+
+/// No-op fallback when the `pg_buffer_size` cfg is not set: the default
+/// `tokio-postgres` does not expose a buffer size setting.
+#[cfg(not(pg_buffer_size))]
+const fn set_connection_buffer_size(_config: &mut tokio_postgres::Config, _buffer_size: usize) {}
 
 /// Internal deadpool manager wrapper that records connection creation metrics.
 #[doc(hidden)]

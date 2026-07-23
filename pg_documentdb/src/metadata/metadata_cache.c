@@ -481,6 +481,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* Oid of the bson_full_scan function */
 	Oid BsonFullScanFunctionId;
 
+	/* Oid of the bson_dollar_distinct_exists function */
+	Oid BsonDistinctExistsFunctionId;
+
 	/* Oid of the index hint function */
 	Oid BsonIndexHintFunctionId;
 
@@ -1015,6 +1018,9 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* OID of the bson_repath_and_build function */
 	Oid ApiCatalogBsonRepathAndBuildFunctionOid;
+
+	/* OID of the bson_build_document function */
+	Oid ApiCatalogBsonBuildDocumentFunctionOid;
 
 	/* OID of the BSONSTDDEVPOP aggregate function */
 	Oid ApiCatalogBsonStdDevPopAggregateFunctionOid;
@@ -2102,6 +2108,19 @@ BsonFullScanFunctionOid(void)
 	return GetSchemaFunctionIdWithNargs(&Cache.BsonFullScanFunctionId,
 										ApiInternalSchemaNameV2,
 										"bson_dollar_fullscan", nargs, argTypes,
+										missingOk);
+}
+
+
+Oid
+BsonDollarDistinctExistsFunctionOid(void)
+{
+	int nargs = 2;
+	Oid argTypes[2] = { BsonTypeId(), BsonTypeId() };
+	bool missingOk = true;
+	return GetSchemaFunctionIdWithNargs(&Cache.BsonDistinctExistsFunctionId,
+										ApiInternalSchemaNameV2,
+										"bson_dollar_distinct_exists", nargs, argTypes,
 										missingOk);
 }
 
@@ -5047,6 +5066,29 @@ BsonRepathAndBuildFunctionOid(void)
 	}
 
 	return Cache.ApiCatalogBsonRepathAndBuildFunctionOid;
+}
+
+
+Oid
+BsonBuildDocumentFunctionOid(void)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (Cache.ApiCatalogBsonBuildDocumentFunctionOid == InvalidOid)
+	{
+		/* Given it's a variadic function, we just look it up by name */
+		List *functionNameList = list_make2(makeString(CoreSchemaName),
+											makeString("bson_build_document"));
+		bool missingOK = false;
+		ObjectWithArgs args = { 0 };
+		args.args_unspecified = true;
+		args.objname = functionNameList;
+
+		Cache.ApiCatalogBsonBuildDocumentFunctionOid =
+			LookupFuncWithArgs(OBJECT_FUNCTION, &args, missingOK);
+	}
+
+	return Cache.ApiCatalogBsonBuildDocumentFunctionOid;
 }
 
 

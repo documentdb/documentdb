@@ -267,7 +267,7 @@ mod tests {
         },
     };
 
-    const NON_EXPIRING_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+    const NON_EXPIRING_IDLE_TIMEOUT: Duration = Duration::from_mins(1);
 
     async fn execute_handle_message<T>(
         connection_context: &mut ConnectionContext,

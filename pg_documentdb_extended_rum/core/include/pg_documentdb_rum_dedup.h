@@ -15,7 +15,11 @@
 
 typedef void *(*CreateIndexArrayTrackerState)(void);
 typedef bool (*IndexArrayTrackerAdd)(void *state, ItemPointer item);
+typedef void (*IndexArrayTrackerRemove)(void *state, ItemPointer item);
 typedef void (*FreeIndexArrayTrackerState)(void *);
+
+typedef bytea *(*SerializeIndexArrayTrackerState)(void *state);
+typedef void *(*DeserializeIndexArrayTrackerState)(bytea *data);
 
 /*
  * Adapter struct that provides function pointers to allow
@@ -31,8 +35,17 @@ typedef struct RumIndexArrayStateFuncs
 	/* Add an item to the index scan and return whether or not it is new or existing */
 	IndexArrayTrackerAdd addItem;
 
+	/* Removes an item from the tracked state (no-op if absent) */
+	IndexArrayTrackerRemove removeItem;
+
 	/* Frees the temporary state used for the adding of items */
 	FreeIndexArrayTrackerState freeState;
+
+	/* Serializes the state to a bytea for storage in the scan descriptor */
+	SerializeIndexArrayTrackerState serializeState;
+
+	/* Deserializes the state from a bytea for use in the scan descriptor */
+	DeserializeIndexArrayTrackerState deserializeState;
 } RumIndexArrayStateFuncs;
 
 

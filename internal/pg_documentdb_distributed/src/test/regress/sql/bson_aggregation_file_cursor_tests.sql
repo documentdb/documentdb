@@ -196,6 +196,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
@@ -203,6 +204,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 -- $max with file cursor - test with new aggregate implementation
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 1, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }, { "$limit": 1 }]}');
@@ -234,6 +236,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
@@ -241,6 +244,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 -- $max with local execution off - test with new aggregate implementation
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 RESET citus.enable_local_execution;
@@ -273,6 +277,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
@@ -280,6 +285,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 -- $max with sharded file cursor - test with new aggregate implementation
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- With local execution off.
@@ -304,6 +310,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }', obfuscate_id => true);
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }', obfuscate_id => true);
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }', obfuscate_id => true);
@@ -311,6 +318,7 @@ SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 
 -- $max with file cursor sharded - test with new aggregate implementation
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }', obfuscate_id => true);
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 RESET citus.enable_local_execution;
@@ -400,7 +408,6 @@ SELECT * FROM pg_ls_dir('pg_documentdb_cursor_files') f WHERE f LIKE '%429496728
 -- killCursors (delete_cursors) and the cursor file name.
 -- ===========================================================================
 set documentdb.useFileBasedPersistedCursors to on;
-set documentdb.enableDelayedHoldPortal to on;
 
 -- Case 1: caller supplies an explicit cursor id. The on-disk file is named
 -- after that id, so killCursors keyed by the same id unlinks the file.

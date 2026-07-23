@@ -3,6 +3,8 @@ SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,pg_cata
 SET citus.next_shard_id TO 87100000;
 SET documentdb.next_collection_id TO 87100;
 SET documentdb.next_collection_index_id TO 87100;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- ============================================================================
 -- Project push-up before $unwind (with $group) — distributed tests

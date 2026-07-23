@@ -34,7 +34,7 @@ SELECT cursorPage->'cursor.firstBatch' FROM aggregate_cursor_first_page('testdb'
  { "" : [ { "_id" : { "$numberInt" : "1" }, "items" : [ { "_id" : { "$numberInt" : "1" }, "key" : { "$numberInt" : "1" }, "value" : "abc" }, { "_id" : { "$numberInt" : "3" }, "key" : { "$numberInt" : "1" }, "value" : "ghi" } ] } ] }
 (1 row)
 
--- fails without enableAddToSetAggregationRewrite set to 'on'
+-- $addToSet under hash aggregation
 SELECT cursorPage->'cursor.firstBatch' FROM aggregate_cursor_first_page('testdb', '{ "aggregate": "hash_aggTest", "pipeline": [ { "$group": { "_id": "$key", "items": { "$addToSet": "$$ROOT" } } } ], "cursor" : {  } }');
 NOTICE:  There are open held portals. Closing them
                                                                                                                 ?column?                                                                                                                 
