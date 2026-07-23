@@ -550,6 +550,10 @@
           "type": "string",
           "description": "Name of the index these cost estimates apply to."
         },
+        "indexKeyString": {
+          "type": "string",
+          "description": "The index key document for the index these cost estimates apply to, rendered as a string (e.g. '{ \"a\" : 1 }'). Present when the index key can be resolved."
+        },
         "startupCost": {
           "type": "number",
           "description": "PostgreSQL estimated startup cost for this index scan. Omitted if zero."

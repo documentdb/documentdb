@@ -1939,6 +1939,9 @@ fn build_index_cost_doc(cost: &IndexCost) -> RawDocumentBuf {
     } else {
         return cost_doc;
     }
+    if let Some(index_key) = cost.index_key.as_deref() {
+        cost_doc.append("indexKeyString", index_key);
+    }
     if let Some(v) = cost.startup_cost.filter(|v| *v != 0.0) {
         cost_doc.append("startupCost", v);
     }

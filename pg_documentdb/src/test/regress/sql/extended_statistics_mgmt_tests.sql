@@ -485,7 +485,7 @@ DECLARE
 BEGIN
     FOR v_row IN EXECUTE p_query
     LOOP
-        IF v_row LIKE '%' || p_index || ': (startup cost=%selectivity=%' THEN
+        IF v_row LIKE '%' || p_index || ': (%startup cost=%selectivity=%' THEN
             v_sel := substring(v_row from 'selectivity=([0-9.eE+-]+)')::numeric;
             IF v_sel < 0.001 THEN
                 RETURN p_index || ': very selective (selectivity < 0.001)';

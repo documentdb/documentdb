@@ -1530,6 +1530,79 @@ ExtensionIndexOidGetIndexName(Oid indexId, bool useLibPq)
 
 
 /*
+ * Retrieves the "documentdb" index key document (as a json display string) for
+ * a given indexId by looking it up in the collection_indexes catalog. This is
+ * the analog of ExtensionIndexOidGetIndexName for the index key, and is used to
+ * annotate the candidate indexes reported in extended EXPLAIN output. Introduces
+ * an option to use libPQ or SPI.
+ *
+ * For LibPQ, note that this should only be used for nested distributed
+ * transaction cases that are not in the hot path (e.g. EXPLAIN scenarios).
+ *
+ * Returns NULL if the index is not an extension index whose key can be resolved.
+ */
+const char *
+ExtensionIndexOidGetIndexKey(Oid indexId, bool useLibPq)
+{
+	const char *pgIndexName = get_rel_name(indexId);
+	if (pgIndexName == NULL)
+	{
+		return NULL;
+	}
+
+	int prefixLength = strlen(DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT_PREFIX);
+	if (strncmp(pgIndexName, DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT_PREFIX,
+				prefixLength) == 0)
+	{
+		int64 indexIdValue = atoll(pgIndexName + prefixLength);
+		StringInfo indexKeyQuery = makeStringInfo();
+		const char *indexKey = NULL;
+		if (useLibPq)
+		{
+			appendStringInfo(indexKeyQuery,
+							 "SELECT (index_spec).index_key FROM %s.collection_indexes WHERE index_id = %ld",
+							 ApiCatalogSchemaName, indexIdValue);
+
+			indexKey = ExtensionExecuteQueryOnLocalhostViaLibPQ(indexKeyQuery->data);
+		}
+		else
+		{
+			appendStringInfo(indexKeyQuery,
+							 "SELECT (index_spec).index_key FROM %s.collection_indexes WHERE index_id = $1",
+							 ApiCatalogSchemaName);
+
+			bool readOnly = true;
+			bool isNull[1] = { true };
+			Datum resultDatum[1] = { 0 };
+
+			Datum args[1] = { Int64GetDatum(indexIdValue) };
+			Oid argTypes[1] = { INT8OID };
+			char argNulls[1] = { ' ' };
+
+			RunMultiValueQueryWithNestedDistribution(indexKeyQuery->data, 1, argTypes,
+													 args, argNulls, readOnly,
+													 SPI_OK_SELECT, resultDatum, isNull,
+													 1);
+			if (!isNull[0])
+			{
+				indexKey = PgbsonToJsonForLogging(DatumGetPgBson(resultDatum[0]));
+			}
+		}
+
+		return indexKey;
+	}
+	else if (strncmp(pgIndexName, DOCUMENT_DATA_PRIMARY_KEY_FORMAT_PREFIX,
+					 strlen(DOCUMENT_DATA_PRIMARY_KEY_FORMAT_PREFIX)) == 0)
+	{
+		/* this is the _id index */
+		return "{\"_id\": 1}";
+	}
+
+	return NULL;
+}
+
+
+/*
  * HasUnresolvedExternParamsWalker returns true if the passed in expression
  * has external parameters that are not contained in boundParams, false
  * otherwise.

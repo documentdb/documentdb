@@ -220,6 +220,7 @@ pub struct ExplainPlan {
 #[serde(rename_all = "camelCase")]
 pub struct IndexCost {
     pub index_name: Option<String>,
+    pub index_key: Option<String>,
     pub startup_cost: Option<f64>,
     pub total_cost: Option<f64>,
     pub selectivity: Option<f64>,

@@ -16,7 +16,9 @@
 #include <utils/index_selfuncs.h>
 #include <utils/selfuncs.h>
 #include <utils/lsyscache.h>
+#include <utils/builtins.h>
 #include <access/relscan.h>
+#include <access/genam.h>
 #include <utils/rel.h>
 #include "math.h"
 #include <optimizer/optimizer.h>
@@ -2272,6 +2274,17 @@ ExplainRegularIndexScanToWriter(IndexScanDesc scan, pgbson_writer *writer)
 }
 
 
+/*
+ * Records a single index's planner cost estimate for later reporting in the
+ * extended EXPLAIN index-cost summary.
+ *
+ * Entries are keyed by index OID. If the planner costs the same index more than
+ * once - for example when it evaluates different access-path shapes for that
+ * index such as a plain index scan, an index-only scan, or a bitmap index scan -
+ * each call overwrites the previous estimate for that OID. As a result the
+ * reported numbers reflect the last variant costed for the index, which is not
+ * necessarily the access path the planner ultimately chose as the winning plan.
+ */
 void
 RecordCostEstimateForIndex(Oid indexOid, Oid relOid, Cost indexStartupCost,
 						   Cost indexTotalCost, Selectivity indexSelectivity,
@@ -2290,7 +2303,8 @@ RecordCostEstimateForIndex(Oid indexOid, Oid relOid, Cost indexStartupCost,
 	{
 		if (IndexExplainCosts[i].indexOid == indexOid)
 		{
-			/* We already have an entry for this index - update it with the new cost */
+			/* Same index already recorded - overwrite with the latest estimate
+			 * (last variant costed wins; see the function header comment). */
 			costData = &IndexExplainCosts[i];
 			break;
 		}
@@ -2328,6 +2342,44 @@ CompareIndexCostsByTotalCost(const void *left, const void *right)
 	/* Sort by cost ascending */
 	return leftData->indexTotalCost > rightData->indexTotalCost ? 1 :
 		   (leftData->indexTotalCost < rightData->indexTotalCost ? -1 : 0);
+}
+
+
+/*
+ * Resolves the index key document (as a display string) for a candidate index
+ * reported in the extended EXPLAIN index-cost summary.
+ *
+ * For composite/ordered indexes the key is read directly from the in-memory
+ * opclass options. This produces the same clean representation used for the
+ * selected index (e.g. {"a": 1}) and avoids a catalog round-trip. For other
+ * index types (e.g. the _id_ btree) it falls back to resolving the key from the
+ * collection_indexes catalog. Returns NULL when no key can be resolved.
+ */
+static const char *
+GetReportedIndexKeyString(Oid indexOid)
+{
+	const char *indexKeyString = NULL;
+
+	Relation indexRelation = index_open(indexOid, AccessShareLock);
+	if (IsCompositeOpClass(indexRelation) && indexRelation->rd_opcoptions != NULL)
+	{
+		indexKeyString = SerializeCompositeIndexKeyForExplain(
+			indexRelation->rd_opcoptions[0]);
+	}
+	else if (indexRelation->rd_index != NULL && indexRelation->rd_index->indisprimary)
+	{
+		/* The primary key btree is the _id index, whose key is always {"_id": 1} */
+		indexKeyString = "{\"_id\": 1}";
+	}
+	index_close(indexRelation, AccessShareLock);
+
+	if (indexKeyString == NULL)
+	{
+		bool useLibPq = true;
+		indexKeyString = ExtensionIndexOidGetIndexKey(indexOid, useLibPq);
+	}
+
+	return indexKeyString;
 }
 
 
@@ -2373,11 +2425,20 @@ LogReportedIndexCosts(Oid relOid, struct ExplainState *es)
 		}
 
 		numPlansLogged++;
+
+		const char *indexKeyString = GetReportedIndexKeyString(
+			IndexExplainCosts[i].indexOid);
 		if (es->format == EXPLAIN_FORMAT_TEXT)
 		{
 			resetStringInfo(&buf);
+			appendStringInfoChar(&buf, '(');
+			if (indexKeyString != NULL)
+			{
+				appendStringInfo(&buf, "indexKey=%s, ",
+								 quote_literal_cstr(indexKeyString));
+			}
 			appendStringInfo(&buf,
-							 "(startup cost=%.3f, total cost=%.3f, selectivity=%g, correlation=%.3f, estimated index pages loaded=%.2f%%, estimated total index entries=%.0f, boundary selectivity=%g, num boundaries=%d, estimated data pages loaded=%.2f%%)",
+							 "startup cost=%.3f, total cost=%.3f, selectivity=%g, correlation=%.3f, estimated index pages loaded=%.2f%%, estimated total index entries=%.0f, boundary selectivity=%g, num boundaries=%d, estimated data pages loaded=%.2f%%)",
 							 IndexExplainCosts[i].indexStartupCost,
 							 IndexExplainCosts[i].indexTotalCost,
 							 IndexExplainCosts[i].indexSelectivity,
@@ -2394,6 +2455,10 @@ LogReportedIndexCosts(Oid relOid, struct ExplainState *es)
 		{
 			ExplainOpenGroup("indexScanCost", NULL, true, es);
 			ExplainPropertyText("indexName", indexName, es);
+			if (indexKeyString != NULL)
+			{
+				ExplainPropertyText("indexKey", indexKeyString, es);
+			}
 			ExplainPropertyFloat("startupCost", "", IndexExplainCosts[i].indexStartupCost,
 								 3, es);
 			ExplainPropertyFloat("totalCost", "", IndexExplainCosts[i].indexTotalCost, 3,

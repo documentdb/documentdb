@@ -91,17 +91,17 @@ set documentdb.enableExtendedExplainPlans to on;
 SELECT index_selectivity_tests.transform_explain_index_bounds($cmd$ 
     EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb', '{ "find": "comp_index_selectivity", "filter": { "path1": 5, "path2": { "$gt": 500 } }}');
 $cmd$);
-                                                                                                               transform_explain_index_bounds                                                                                                                
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                            transform_explain_index_bounds                                                                                                                            
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
    namespaceName: comp_idb.comp_index_selectivity
    indexName: comp_index1
    indexKey: {"path1": 1}
    isMultiKey: false
    indexBounds: ["path1": [5, 5]]
-   comp_index1: (startup cost=xx.xx, total cost=xx.xx, selectivity=xx.xx, correlation=xx.xx, estimated index pages loaded=xx.xx%, estimated total index entries=xx.xx, boundary selectivity=xx.xx, num boundaries=xx.xx, estimated data pages loaded=xx.xx%)
-   _id_: (startup cost=xx.xx, total cost=xx.xx, selectivity=xx.xx, correlation=xx.xx, estimated index pages loaded=xx.xx%, estimated total index entries=xx.xx, boundary selectivity=xx.xx, num boundaries=xx.xx, estimated data pages loaded=xx.xx%)
-   comp_index2: (startup cost=xx.xx, total cost=xx.xx, selectivity=xx.xx, correlation=xx.xx, estimated index pages loaded=xx.xx%, estimated total index entries=xx.xx, boundary selectivity=xx.xx, num boundaries=xx.xx, estimated data pages loaded=xx.xx%)
+   comp_index1: (indexKey='{"path1": 1}', startup cost=xx.xx, total cost=xx.xx, selectivity=xx.xx, correlation=xx.xx, estimated index pages loaded=xx.xx%, estimated total index entries=xx.xx, boundary selectivity=xx.xx, num boundaries=xx.xx, estimated data pages loaded=xx.xx%)
+   _id_: (indexKey='{"_id": 1}', startup cost=xx.xx, total cost=xx.xx, selectivity=xx.xx, correlation=xx.xx, estimated index pages loaded=xx.xx%, estimated total index entries=xx.xx, boundary selectivity=xx.xx, num boundaries=xx.xx, estimated data pages loaded=xx.xx%)
+   comp_index2: (indexKey='{"path2": 1}', startup cost=xx.xx, total cost=xx.xx, selectivity=xx.xx, correlation=xx.xx, estimated index pages loaded=xx.xx%, estimated total index entries=xx.xx, boundary selectivity=xx.xx, num boundaries=xx.xx, estimated data pages loaded=xx.xx%)
    ->  Index Scan using comp_index1 on documents_201 collection
          Index Cond: (document @= '{ "path1" : { "$numberInt" : "5" } }'::bson)
          Filter: (document @> '{ "path2" : { "$numberInt" : "500" } }'::bson)

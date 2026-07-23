@@ -63,6 +63,7 @@ Const * GetConstParamValue(Node *param, ParamListInfo boundParams);
 const char * ExtensionIndexOidGetIndexName(Oid indexId, bool useLibPq);
 const char * GetDocumentDBIndexNameFromPostgresIndex(const char *pgIndexName, bool
 													 useLibPq);
+const char * ExtensionIndexOidGetIndexKey(Oid indexId, bool useLibPq);
 
 /* Method that throws an error if we're trying to execute a write command and the
  * current database is in recovery mode (read-only mode). */
