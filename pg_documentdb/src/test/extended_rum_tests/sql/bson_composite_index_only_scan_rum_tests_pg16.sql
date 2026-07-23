@@ -2,6 +2,8 @@ SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 
 SET documentdb.next_collection_id TO 9100;
 SET documentdb.next_collection_index_id TO 9100;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- Tests for composite on non-primary key
 
@@ -85,10 +87,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$in": ["USA", null]}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$in": ["USA", []]}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
 
--- turning off enableIndexOnlyScan should prevent index only scan
-set documentdb.enableIndexOnlyScan to off;
+-- turning off index only scan should prevent index only scan
+set enable_indexonlyscan to off;
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
-set documentdb.enableIndexOnlyScan to on;
+set enable_indexonlyscan to on;
 
 -- turning off enableIndexOnlyScanForCoveredAggregateTargets should keep count IOS enabled,
 -- but disable the new covered aggregate-target IOS path
@@ -109,13 +111,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -- forceIndexOnlyScan + uncovered accumulator (provider not in country_1): should NOT use IOS
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$group" : { "_id" : 1, "maxProvider" : { "$max" : "$provider" } } }]}') $$, p_ignore_heap_fetches => true);
 reset documentdb.forceIndexOnlyScanIfAvailable;
-
--- disable index only scan on cost to go through the legacy path
-set documentdb.enableIndexOnlyScanOnCost to off;
-SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
--- enableIndexOnlyScanOnCost=off + uncovered accumulator (provider not in country_1): should NOT use IOS
-SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$group" : { "_id" : 1, "maxProvider" : { "$max" : "$provider" } } }]}') $$, p_ignore_heap_fetches => true);
-reset documentdb.enableIndexOnlyScanOnCost;
 
 -- Multi-key value should prevent index only scan
 SELECT documentdb_api.insert_one('iosdb_rum', 'iosc_comp', '{"_id": 17, "country": "Mexico", "provider": ["AWS", "GCP"]}');
@@ -225,6 +220,9 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$match" : {"city": {"$eq": "Seattle"} }}, { "$group" : { "_id" : 1, "avgSqft" : { "$avg" : "$sqft" } } }]}') $$, p_ignore_heap_fetches => true);
 
 -- SORT BEFORE GROUP
+-- Pin the sort-prefix push optimization off so these plans exercise the
+-- non-pushed shape regardless of the GUC default.
+set documentdb.enableSortPushToAccumulatorWithPrefix to off;
 -- $sort on uncovered field (sqft) before $group should NOT use index only scan
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "sqft": 1} }, { "$group" : { "_id" : "$city", "firstRent" : { "$first" : "$rent" } } }]}') $$, p_ignore_heap_fetches => true);
 
@@ -556,6 +554,7 @@ SET documentdb.enableIndexOnlyScanForCoveredAggregateTargets TO on;
 
 -- Result correctness must hold both with the legacy $sum accumulator and the
 -- new with-expr accumulator path; both runs should produce the same counts.
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate": "sum_const_test", "pipeline": [ { "$match": { "region": 100, "dept": 20, "level": 5 } }, { "$group": { "_id": "$tag", "count": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "cursor": {}, "hint": "region_1_dept_1_level_1_tag_1" }');
 SET documentdb.enableNewWithExprAccumulators TO on;

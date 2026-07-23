@@ -306,3 +306,32 @@ SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PA
 SELECT documentdb_api_internal.documentdb_rum_get_meta_page_info(public.get_raw_page(('documentdb_data.documents_rum_index_' || :legacy_idx), 0));
 
 RESET documentdb.indexTermLimitOverride;
+
+-- ---------------------------------------------------------------------------
+-- Empty arrays make a path multi-key. An empty array at an indexed path indexes
+-- as a (literal) undefined value term, but the path is still multi-key. With
+-- per-path multi-key tracking enabled, an empty array on a path is recorded in
+-- the opclass-metadata blob just like a non-empty array, so "multiKeyPaths"
+-- lists the path even though no array-element terms are produced.
+-- ---------------------------------------------------------------------------
+SELECT documentdb_api_internal.create_indexes_non_concurrently('mkp_db', '{ "createIndexes": "mkp_empty_coll", "indexes": [ { "key": { "a.b": 1, "a.c": 1 }, "name": "a_b_c_1", "enableOrderedIndex": 1 } ] }');
+
+-- Empty array only on the second path (a.c): explain reports "multiKeyPaths: a.c".
+SELECT documentdb_api.insert_one('mkp_db', 'mkp_empty_coll', '{ "_id": 1, "a": { "b": 1, "c": [ ] } }');
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkp_db', '{ "find": "mkp_empty_coll", "filter": { "a.b": 1, "a.c": { "$exists": true } }}') $cmd$);
+
+-- Empty array on the first path (a.b) too: per-path tracking is cumulative, so
+-- explain now reports "multiKeyPaths: a.b, a.c".
+SELECT documentdb_api.insert_one('mkp_db', 'mkp_empty_coll', '{ "_id": 2, "a": { "b": [ ], "c": 9 } }');
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkp_db', '{ "find": "mkp_empty_coll", "filter": { "a.b": { "$exists": true }, "a.c": 9 }}') $cmd$);
+
+-- Build path: an empty array present at build time also marks the path multi-key.
+-- Insert a document with an empty array on a.c into a fresh collection, then build
+-- the composite index over the existing data (the third argument skips the
+-- empty-collection check): explain reports "multiKeyPaths: a.c".
+SELECT documentdb_api.insert_one('mkp_db', 'mkp_empty_build_coll', '{ "_id": 1, "a": { "b": 1, "c": [ ] } }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('mkp_db', '{ "createIndexes": "mkp_empty_build_coll", "indexes": [ { "key": { "a.b": 1, "a.c": 1 }, "name": "a_b_c_1", "enableOrderedIndex": 1 } ] }', TRUE);
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('mkp_db', '{ "find": "mkp_empty_build_coll", "filter": { "a.b": 1, "a.c": { "$exists": true } }}') $cmd$);

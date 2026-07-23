@@ -61,7 +61,6 @@
 /* --------------------------------------------------------- */
 
 extern int DefaultUniqueIndexKeyhashOverride;
-extern bool UseNewUniqueHashEqualityFunction;
 
 static pgbson * GetShardKeyAndDocument(HeapTupleHeader input, int64_t *shardKey);
 static IndexTraverseOption GetExclusionIndexTraverseOption(void *contextOptions,
@@ -78,12 +77,9 @@ static bool ProcessUniqueShardDocumentKeysNew(pgbson *uniqueShardDocument,
 											  int64_t *shardKeyComparison,
 											  bool *hasShardKey,
 											  HTAB *termsHashSet, HASHACTION hashAction);
-static bool ProcessUniqueShardDocumentKeys(pgbson *uniqueShardDocument,
-										   HTAB *termsHashSet, HASHACTION hashAction);
 static HTAB * GetUniqueShardDocumentTermsHTABNew(pgbson *uniqueShardDocument,
 												 int64_t *shardKeyValue,
 												 bool *hasShardKeyValue);
-static HTAB * GetUniqueShardDocumentTermsHTAB(pgbson *document);
 
 typedef struct IndexBounds
 {
@@ -449,39 +445,8 @@ generate_unique_shard_document(PG_FUNCTION_ARGS)
 }
 
 
-static Datum
-BsonUniqueShardEqualLegacy(PG_FUNCTION_ARGS)
-{
-	/*
-	 * Logging for testing purposes. We need to assert that we recheck the index when there's a hash collision and the
-	 * terms are truncated.
-	 */
-	ereport(DEBUG1, (errmsg("Executing unique index runtime recheck.")));
-
-	pgbson *left = PG_GETARG_PGBSON_PACKED(0);
-	pgbson *right = PG_GETARG_PGBSON_PACKED(1);
-
-
-	/* Build HTAB with every pair of { <path> : <term> } */
-	HTAB *leftHashTable = GetUniqueShardDocumentTermsHTAB(left);
-
-	/*
-	 * Iterate through pgbson on the right to check if every path (key) has
-	 * a term match on the left.
-	 */
-	bool uniquenessConflict = ProcessUniqueShardDocumentKeys(right, leftHashTable,
-															 HASH_FIND);
-
-	hash_destroy(leftHashTable);
-	PG_FREE_IF_COPY(left, 0);
-	PG_FREE_IF_COPY(right, 1);
-
-	PG_RETURN_BOOL(uniquenessConflict);
-}
-
-
-static Datum
-BsonUniqueShardEqualNew(PG_FUNCTION_ARGS)
+Datum
+bson_unique_shard_path_equal(PG_FUNCTION_ARGS)
 {
 	/*
 	 * Logging for testing purposes. We need to assert that we recheck the index when there's a hash collision and the
@@ -524,20 +489,6 @@ BsonUniqueShardEqualNew(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_BOOL(uniquenessConflict);
-}
-
-
-Datum
-bson_unique_shard_path_equal(PG_FUNCTION_ARGS)
-{
-	if (UseNewUniqueHashEqualityFunction)
-	{
-		return BsonUniqueShardEqualNew(fcinfo);
-	}
-	else
-	{
-		return BsonUniqueShardEqualLegacy(fcinfo);
-	}
 }
 
 
@@ -1097,71 +1048,6 @@ GenerateTermsForExclusion(pgbson *document,
  * boolean indicating an uniqueness conflict.
  */
 static bool
-ProcessUniqueShardDocumentKeys(pgbson *uniqueShardDocument, HTAB *termsHashSet, HASHACTION
-							   hashAction)
-{
-	bson_iter_t specIter;
-	PgbsonInitIterator(uniqueShardDocument, &specIter);
-
-	while (bson_iter_next(&specIter))
-	{
-		/*
-		 * This skips the loop until we reach the keys that contain arrays. These are the ones
-		 * that store the terms we need to process.
-		 */
-		if (!BSON_ITER_HOLDS_ARRAY(&specIter))
-		{
-			continue;
-		}
-
-		const char *key = bson_iter_key(&specIter);
-		bson_iter_t arrayIter;
-		bson_iter_recurse(&specIter, &arrayIter);
-
-		bool keyTermMatch = false;
-		while (bson_iter_next(&arrayIter))
-		{
-			pgbson_writer writer;
-			PgbsonWriterInit(&writer);
-
-			const bson_value_t *indexTerm = bson_iter_value(&arrayIter);
-			PgbsonWriterAppendValue(&writer, key, strlen(key), indexTerm);
-
-			/* Get bson containing both key and indexTerm. */
-			pgbson *pgbson = PgbsonWriterGetPgbson(&writer);
-			const bson_value_t keyValueTerm = ConvertPgbsonToBsonValue(pgbson);
-
-			/* Query hash table with given action. */
-			bool found;
-			hash_search(termsHashSet, &keyValueTerm, hashAction, &found);
-
-			if (found)
-			{
-				/* keyTerm pair on the document was found on the hash table. */
-				keyTermMatch = true;
-				break;
-			}
-		}
-
-		if (!keyTermMatch && hashAction == HASH_FIND)
-		{
-			/*
-			 * No term for this key was found on the hash table, meaning the unique shard
-			 * documents don't have a uniqueness conflict. We return early if action is HASH_FIND.
-			 */
-			return false;
-		}
-	}
-
-	/*
-	 * Each path (key) on the document has a term match on the hash table, meaning
-	 * there's a uniqueness conflict.
-	 */
-	return true;
-}
-
-
-static bool
 ProcessUniqueShardDocumentKeysNew(pgbson *uniqueShardDocument,
 								  int64_t *shardKeyComparison, bool *hasShardKey,
 								  HTAB *termsHashSet, HASHACTION hashAction)
@@ -1228,15 +1114,6 @@ ProcessUniqueShardDocumentKeysNew(pgbson *uniqueShardDocument,
 	 * there's a uniqueness conflict.
 	 */
 	return true;
-}
-
-
-static HTAB *
-GetUniqueShardDocumentTermsHTAB(pgbson *uniqueShardDocument)
-{
-	HTAB *termsHashSet = CreateBsonValueHashSet();
-	ProcessUniqueShardDocumentKeys(uniqueShardDocument, termsHashSet, HASH_ENTER);
-	return termsHashSet;
 }
 
 

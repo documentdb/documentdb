@@ -10,6 +10,8 @@ SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extende
 set documentdb.defaultUseCompositeOpClass to on;
 set documentdb.enableGroupByCompoundIdIndexPushdown to on;
 set documentdb_core.enableWriteDocumentsInRepath to on;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'group_idx_db', '{ "createIndexes": "group_push", "indexes": [ { "name": "a_1", "key": { "a": 1 } }, { "name": "b_c_1", "key": { "b": 1, "c": 1 } } ] }', TRUE);

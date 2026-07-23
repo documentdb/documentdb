@@ -368,18 +368,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$nin": [{ "$regularExpression": { "pattern": "^string", "options": "" } }] } } }')
 $cmd$);
 
--- feature flag off: should revert to full UTF8 type bounds even with ^
-set documentdb.enableRegexPrefixIndexBounds to off;
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
-    SELECT document FROM bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^string" } } }')
-$cmd$);
-
--- feature flag off result verification: same correct results regardless of flag
-set documentdb.enableRegexPrefixIndexBounds to off;
-SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^string" } } }');
-
-set documentdb.enableRegexPrefixIndexBounds to on;
+-- result verification for anchored prefix regex
 SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regex_db', '{ "find": "regex_coll", "filter": { "a": { "$regex": "^string" } } }');
 
 -- regex truncation case: long anchored prefix

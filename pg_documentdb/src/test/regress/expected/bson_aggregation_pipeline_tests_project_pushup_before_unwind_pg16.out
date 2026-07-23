@@ -3,6 +3,8 @@ NOTICE:  identifier "pg_regress/bson_aggregation_pipeline_tests_project_pushup_b
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 SET documentdb.next_collection_id TO 87000;
 SET documentdb.next_collection_index_id TO 87000;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 -- ============================================================================
 -- Project push-up before $unwind (with $group) — single-node tests
 --
@@ -32,7 +34,7 @@ SELECT documentdb_api.insert_one('proj_pushup_db', 'orders_coll',
        "noise": "wide-payload-aaaaa",
        "tag": "t1",
        "items": [ {"kind": "x", "qty": 1}, {"kind": "y", "qty": 2} ] }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_project_pushup_before_unwind.sql:37: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_project_pushup_before_unwind.sql:39: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1087,7 +1089,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- even though the unwind/group pair downstream looks otherwise eligible.
 SELECT documentdb_api.insert_one('proj_pushup_db', 'lookup_target',
     '{ "_id": 1, "ownerId": "A", "name": "Alice" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_project_pushup_before_unwind.sql:655: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_project_pushup_before_unwind.sql:657: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

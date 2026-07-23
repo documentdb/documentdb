@@ -19,7 +19,7 @@ SET documentdb.defaultcursorfirstpagebatchsize = 1;
 
 SELECT cursorPage->'cursor.firstBatch' FROM aggregate_cursor_first_page('testdb', '{ "aggregate": "hash_aggTest", "pipeline": [ { "$group": { "_id": "$key", "items": { "$push": "$$ROOT" } } } ], "cursor" : {  } }');
 
--- fails without enableAddToSetAggregationRewrite set to 'on'
+-- $addToSet under hash aggregation
 SELECT cursorPage->'cursor.firstBatch' FROM aggregate_cursor_first_page('testdb', '{ "aggregate": "hash_aggTest", "pipeline": [ { "$group": { "_id": "$key", "items": { "$addToSet": "$$ROOT" } } } ], "cursor" : {  } }');
 
 -- Check if we are really are doing hash aggregations

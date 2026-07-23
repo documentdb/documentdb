@@ -285,6 +285,7 @@ typedef struct
 
 typedef bool (*IsQueryFilterNullFunc)(const TraverseValidateState *state);
 extern bool EnableCollation;
+extern bool EnableExistentialNullArrayMatch;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -393,6 +394,9 @@ static bool IsQueryFilterNullForDollarAll(const TraverseValidateState *filterEle
 static bool CompareVisitTopLevelField(pgbsonelement *element, const
 									  StringView *filterPath,
 									  void *state);
+static bool CompareVisitTopLevelFieldForNulls(pgbsonelement *element, const
+											  StringView *filterPath,
+											  void *state);
 static bool CompareVisitArrayField(pgbsonelement *element, const StringView *filterPath,
 								   int arrayIndex, void *state);
 static void CompareSetTraverseResult(void *state, TraverseBsonResult compareResult);
@@ -451,7 +455,7 @@ static const TraverseBsonExecutionFuncs CompareNullExecutionFuncs = {
 	.ContinueProcessIntermediateArray = CompareContinueProcessIntermediateArray,
 	.SetTraverseResult = CompareSetTraverseResultForNulls,
 	.VisitArrayField = CompareVisitArrayField,
-	.VisitTopLevelField = CompareVisitTopLevelField,
+	.VisitTopLevelField = CompareVisitTopLevelFieldForNulls,
 	.SetIntermediateArrayIndex = NULL,
 	.HandleIntermediateArrayPathNotFound = NULL,
 	.SetIntermediateArrayStartEnd = NULL,
@@ -591,6 +595,7 @@ PG_FUNCTION_INFO_V1(bson_dollar_not_gte);
 PG_FUNCTION_INFO_V1(bson_dollar_not_lt);
 PG_FUNCTION_INFO_V1(bson_dollar_not_lte);
 PG_FUNCTION_INFO_V1(bson_dollar_fullscan);
+PG_FUNCTION_INFO_V1(bson_dollar_distinct_exists);
 PG_FUNCTION_INFO_V1(bson_dollar_index_hint);
 
 PG_FUNCTION_INFO_V1(bson_value_dollar_eq);
@@ -1370,6 +1375,16 @@ bson_dollar_range(PG_FUNCTION_ARGS)
 	rangeState.isMinConditionSet = false;
 	rangeState.isMaxConditionSet = false;
 
+	if (rangeState.params.isMergeSortInPrefixMarker)
+	{
+		/* The $in-prefix merge-sort marker is a planner-only signal that must be
+		 * stripped before execution. If it reaches runtime evaluation, the planner
+		 * did not strip it and query results would be incorrect. */
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg("$in-prefix merge-sort marker must not be evaluated "
+							   "at runtime")));
+	}
+
 	if (rangeState.params.isFullScan || rangeState.params.isElemMatch ||
 		rangeState.params.isMinIndexKey || rangeState.params.isMaxIndexKey)
 	{
@@ -1659,8 +1674,16 @@ bson_dollar_nin(PG_FUNCTION_ARGS)
 
 	PgbsonInitIterator(document, &documentIterator);
 
+	const TraverseBsonExecutionFuncs *execFuncs = &CompareExecutionFuncs;
+	if (EnableExistentialNullArrayMatch && state.hasNull)
+	{
+		/* $nin with null: existential null semantics, same as $in. */
+		state.traverseState.compareResult = CompareResult_Mismatch;
+		execFuncs = &CompareNullExecutionFuncs;
+	}
+
 	TraverseBson(&documentIterator, filterElement.path, &state.traverseState,
-				 &CompareExecutionFuncs);
+				 execFuncs);
 
 	if (state.hasNull)
 	{
@@ -1751,6 +1774,28 @@ bson_dollar_exists(PG_FUNCTION_ARGS)
 	bool match = CompareBsonAgainstQuery(documentDatum, filter, CompareExistsMatch,
 										 isNullFilterEquality);
 	PG_RETURN_BOOL(existsPositiveMatch ? match : !match);
+}
+
+
+/*
+ * bson_dollar_distinct_exists is a runtime filter added during distinct
+ * planning that keeps only documents where the distinct path is present. It is
+ * semantically an $exists: true on that path (a document without the path
+ * contributes no distinct value). The planner support function converts this
+ * to a "path >= MinKey" index condition when a suitable ordered index exists;
+ * this runtime implementation covers the case where the filter is not pushed
+ * to an index (e.g. a sequential scan).
+ */
+Datum
+bson_dollar_distinct_exists(PG_FUNCTION_ARGS)
+{
+	Datum documentDatum = PG_GETARG_DATUM(0);
+	pgbson *filter = PG_GETARG_PGBSON(1);
+
+	IsQueryFilterNullFunc isNullFilterEquality = NULL;
+	bool match = CompareBsonAgainstQuery(documentDatum, filter, CompareExistsMatch,
+										 isNullFilterEquality);
+	PG_RETURN_BOOL(match);
 }
 
 
@@ -3975,8 +4020,21 @@ BsonDollarInCore(PG_FUNCTION_ARGS, bool hasObjectIdArg)
 
 	Datum documentDatum = PG_GETARG_DATUM(0);
 	IsQueryFilterNullFunc queryNullFunc = IsQueryFilterNullForDollarIn;
+
+	const TraverseBsonExecutionFuncs *execFuncs = &CompareExecutionFuncs;
+	if (EnableExistentialNullArrayMatch && state.hasNull)
+	{
+		/*
+		 * $in with null: seed Mismatch so a null/missing path (PathNotFound) is
+		 * distinguishable and latches a match, and use the null execution funcs
+		 * so a later array element cannot overwrite it.
+		 */
+		state.traverseState.compareResult = CompareResult_Mismatch;
+		execFuncs = &CompareNullExecutionFuncs;
+	}
+
 	PG_RETURN_BOOL(TraverseBsonAndProcessQueryResult(
-					   documentDatum, &CompareExecutionFuncs, filterElement.path,
+					   documentDatum, execFuncs, filterElement.path,
 					   &state.traverseState, queryNullFunc));
 }
 
@@ -4345,6 +4403,41 @@ CompareVisitTopLevelField(pgbsonelement *element, const StringView *filterPath,
 
 
 /*
+ * Variant of CompareVisitTopLevelField for the null-equality family ($eq/$gte/
+ * $lte null, $in/$nin containing null, and their negations).
+ *
+ * Null-equality is existential across an implicitly traversed array: once an
+ * earlier position latches a null/missing result (PathNotFound), a later
+ * position resolving the leaf to a concrete value must not downgrade it to
+ * Mismatch. A match still short-circuits; an initial Mismatch is still recorded.
+ */
+static bool
+CompareVisitTopLevelFieldForNulls(pgbsonelement *element, const
+								  StringView *filterPath, void *state)
+{
+	TraverseValidateState *validateState = (TraverseValidateState *) state;
+	element->pathLength = 0;
+
+	bool isFirstArrayTerm = false;
+	bool isMatched = validateState->matchFunc(element, validateState, isFirstArrayTerm);
+	if (isMatched)
+	{
+		validateState->compareResult = CompareResult_Match;
+		return false;
+	}
+
+	/* Preserve a PathNotFound latched from an earlier array position. When the GUC is enabled. */
+	if (!EnableExistentialNullArrayMatch ||
+		validateState->compareResult != CompareResult_PathNotFound)
+	{
+		validateState->compareResult = CompareResult_Mismatch;
+	}
+
+	return true;
+}
+
+
+/*
  * Visits the top level field of a given path (e.g. the value at a.b.c given a filterPath of a.b.c)
  * And runs the comparison logic against the value found at that path.
  * Returns true if comparison logic should continue processing.
@@ -4391,6 +4484,28 @@ CompareSetTraverseResultForNulls(void *state, TraverseBsonResult traverseResult)
 			break;
 		}
 
+		case TraverseBsonResult_ArrayIndexNotFound:
+		{
+			/* An out-of-bounds / blocked positional array index is not a null match: e.g.
+			 * { "a.5": null } over { "a": [ 10, 20, 30 ] } should not match. Downgrade to a
+			 * Mismatch so it does not count as a missing path - but never clobber a PathNotFound
+			 * already latched by another array position, since null-equality is existential across
+			 * implicitly traversed positions (PathNotFound wins over Mismatch). This runs before the
+			 * array's document-element scan, so an element that genuinely lacks the field can still
+			 * re-establish PathNotFound and match. When the feature is disabled, retain the legacy
+			 * behavior of treating it as a missing path.
+			 */
+			if (!EnableExistentialNullArrayMatch)
+			{
+				validateState->compareResult = CompareResult_PathNotFound;
+			}
+			else if (validateState->compareResult != CompareResult_PathNotFound)
+			{
+				validateState->compareResult = CompareResult_Mismatch;
+			}
+			break;
+		}
+
 		default:
 		{
 			ereport(ERROR, (errmsg("Unexpected traverse result %d", traverseResult)));
@@ -4410,6 +4525,14 @@ CompareSetTraverseResult(void *state, TraverseBsonResult traverseResult)
 	{
 		case TraverseBsonResult_PathNotFound:
 		{
+			validateState->compareResult = CompareResult_PathNotFound;
+			break;
+		}
+
+		case TraverseBsonResult_ArrayIndexNotFound:
+		{
+			/* Non-null comparisons do not distinguish an out-of-bounds array index from a missing
+			 * path; treat it as PathNotFound, matching the pre-existing behavior. */
 			validateState->compareResult = CompareResult_PathNotFound;
 			break;
 		}
@@ -4569,11 +4692,13 @@ OrderBySetTraverseResult(void *state, TraverseBsonResult compareResult)
 {
 	TraverseOrderByValidateState *validateState =
 		(TraverseOrderByValidateState *) state;
-	if (compareResult == TraverseBsonResult_PathNotFound &&
+	if ((compareResult == TraverseBsonResult_PathNotFound ||
+		 compareResult == TraverseBsonResult_ArrayIndexNotFound) &&
 		validateState->nestedArrayCount > 0)
 	{
 		/* This is the path where we request a.b.c (which means we expect b to be an object or array)
-		 * but b is a primitive type. This gets compared as null.
+		 * but b is a primitive type. This gets compared as null. An out-of-bounds array index is
+		 * treated the same as a missing path here, preserving pre-existing order-by behavior.
 		 */
 		bson_value_t nullValue = { 0 };
 		nullValue.value_type = BSON_TYPE_NULL;

@@ -2,6 +2,8 @@ SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 
 SET documentdb.next_collection_id TO 87000;
 SET documentdb.next_collection_index_id TO 87000;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- ============================================================================
 -- Project push-up before $unwind (with $group) — single-node tests

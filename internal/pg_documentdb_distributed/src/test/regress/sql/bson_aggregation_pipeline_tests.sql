@@ -3,6 +3,8 @@ SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documen
 SET citus.next_shard_id TO 411000;
 SET documentdb.next_collection_id TO 4110;
 SET documentdb.next_collection_index_id TO 4110;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 
 SELECT documentdb_api.insert_one('db','aggregation_pipeline','{"_id":"1", "int": 10, "a" : { "b" : [ "x", 1, 2.0, true ] } }', NULL);
@@ -113,6 +115,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- $group with keys having dotted path
@@ -120,6 +123,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d.e": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- $group with first/last
@@ -466,6 +470,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": {"_id": null, "count": { "$sum": 1 } } }], "cursor": {} }');
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": {"_id": null, "count": { "$sum": {} } } }], "cursor": {} }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 

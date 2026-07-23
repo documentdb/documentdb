@@ -98,7 +98,7 @@ typedef struct DocumentDBSearchOptions
 	/* The name of the index to use for the search */
 	const char *indexName;
 
-	/* The number of results to return */
+	/* Options for the count field in the metadata results */
 	DocumentDBSearchCountOptions countOptions;
 
 	bool scoreDetailsRequested;

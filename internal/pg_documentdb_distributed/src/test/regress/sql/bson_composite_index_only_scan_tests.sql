@@ -4,7 +4,6 @@ SET documentdb.next_collection_index_id TO 69000;
 SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_api_internal,documentdb_core;
 
 SET documentdb.enableExtendedExplainPlans to on;
-SET documentdb.enableIndexOnlyScan to on;
 
 -- if documentdb_extended_rum exists, set alternate index handler
 SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extended_rum', false), extname FROM pg_extension WHERE extname = 'documentdb_extended_rum';
@@ -92,10 +91,13 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$sum": 1 } } }]}')$$, p_ignore_heap_fetches => true);
 
 -- this will need index scan
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$max": "$_id" } } }]}')$$, p_ignore_heap_fetches => true);
 
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{"$match": { "_id": { "$gt": 3, "$lt": 8 }}}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$max": "$_id" } } }]}')$$, p_ignore_heap_fetches => true);
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 -- HINTED QUERIES: hint should preserve IOS behavior without bypassing coverage checks
 -- hint by name + $match + $count: should use IOS
@@ -153,20 +155,18 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$in": ["USA", null]}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$in": ["USA", []]}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
 
--- if we turn the GUC off by it shouldn't use index only scan
-set documentdb.enableIndexOnlyScan to off;
+-- if we turn index only scan off it shouldn't use index only scan
+set enable_indexonlyscan to off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
 
-set documentdb.enableIndexOnlyScan to on;
+set enable_indexonlyscan to on;
 
 -- test with force and planner path
 set documentdb.forceIndexOnlyScanIfAvailable to on;
-set documentdb.enableIndexOnlyScanOnCost to off;
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$count": "count" }]}')$$, p_ignore_heap_fetches => true);
 
 reset documentdb.forceIndexOnlyScanIfAvailable;
-reset documentdb.enableIndexOnlyScanOnCost;
 
 -- if we insert a multi-key value, it shouldn't use index only scan
 SELECT documentdb_api.insert_one('idx_only_scan_db', 'idx_only_scan_coll', '{"_id": 17, "country": "Mexico", "provider": ["AWS", "GCP"]}');
@@ -265,6 +265,7 @@ SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate
 -- $sum and $avg across all groups with new accumulators
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" }, "avgAge": { "$avg": "$age" } } }, { "$sort": { "_id": 1 } }]}')$$);
 SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_numeric", "pipeline" : [{ "$group": { "_id": "$dept", "totalAge": { "$sum": "$age" }, "avgAge": { "$avg": "$age" } } }, { "$sort": { "_id": 1 } }]}');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 -----------------------------------------------------------------------------------------------------

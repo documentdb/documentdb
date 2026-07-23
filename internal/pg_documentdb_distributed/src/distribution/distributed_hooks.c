@@ -374,11 +374,12 @@ RunMultiValueQueryWithNestedDistributionCore(const char *query, int nArgs, Oid *
  */
 static const char *
 TryGetShardNameForUnshardedCollectionCore(Oid relationId, uint64 collectionId, const
-										  char *tableName)
+										  char *tableName, bool *isSingleShardTable)
 {
 	if (!UseLocalExecutionShardQueries)
 	{
 		/* Defensive - only turn this on with feature flag */
+		*isSingleShardTable = false;
 		return "";
 	}
 
@@ -400,6 +401,7 @@ TryGetShardNameForUnshardedCollectionCore(Oid relationId, uint64 collectionId, c
 	if (resultNulls[0])
 	{
 		/* Not a distributed table */
+		*isSingleShardTable = false;
 		return NULL;
 	}
 
@@ -411,8 +413,11 @@ TryGetShardNameForUnshardedCollectionCore(Oid relationId, uint64 collectionId, c
 	if (!resultNulls[1] || !resultNulls[2])
 	{
 		/* has at least some shard values */
+		*isSingleShardTable = false;
 		return "";
 	}
+
+	*isSingleShardTable = true;
 
 	/* Construct the shard table name */
 	char *shardTableName = psprintf("%s_%ld", tableName, shardIdValue);
@@ -558,14 +563,30 @@ TryGetExtendedVersionRefreshQueryCore(void)
 {
 	/* Update the version check query to consider distributed versions */
 	MemoryContext currContext = MemoryContextSwitchTo(TopMemoryContext);
-	StringInfo s = makeStringInfo();
-	appendStringInfo(s,
+	StringInfoData s = { 0 };
+	initStringInfo(&s);
+	appendStringInfo(&s,
 					 "SELECT regexp_split_to_array(TRIM(%s.bson_get_value_text(metadata, 'last_deploy_version'), '\"'), '[-\\.]')::int4[] FROM %s.%s_cluster_data",
 					 CoreSchemaName, ApiDistributedSchemaName, ExtensionObjectPrefix);
 	MemoryContextSwitchTo(currContext);
 
-	ereport(DEBUG1, (errmsg("Version refresh query is %s", s->data)));
-	return s->data;
+	return s.data;
+}
+
+
+static char *
+TryGetExtendedInitializedVersionRefreshQueryCore(void)
+{
+	/* Update the version check query to consider distributed versions */
+	MemoryContext currContext = MemoryContextSwitchTo(TopMemoryContext);
+	StringInfoData s = { 0 };
+	initStringInfo(&s);
+	appendStringInfo(&s,
+					 "SELECT regexp_split_to_array(TRIM(%s.bson_get_value_text(metadata, 'initialized_version'), '\"'), '[-\\.]')::int4[] FROM %s.%s_cluster_data",
+					 CoreSchemaName, ApiDistributedSchemaName, ExtensionObjectPrefix);
+	MemoryContextSwitchTo(currContext);
+
+	return s.data;
 }
 
 
@@ -871,6 +892,8 @@ InitializeDocumentDBDistributedHooks(void)
 	UpdateColocationHooks();
 
 	try_get_extended_version_refresh_query_hook = TryGetExtendedVersionRefreshQueryCore;
+	try_get_extended_initialized_version_refresh_query_hook =
+		TryGetExtendedInitializedVersionRefreshQueryCore;
 	get_shard_ids_and_names_for_collection_hook = GetShardIdsAndNamesForCollectionCore;
 
 	get_pid_for_index_build_hook = GetPidForIndexBuildCore;

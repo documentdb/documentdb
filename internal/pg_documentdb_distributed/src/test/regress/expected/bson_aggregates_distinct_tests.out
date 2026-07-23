@@ -33,29 +33,41 @@ SELECT documentdb_api.insert_one('db', 'distinct1', '{ "a": 3, "b": { "c": "foo"
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
--- this is what the query will look like from the GW
+-- this is what the query will look like from the GW. The distinct values have
+-- no inherent order (the source collections are sharded, so array_agg receives
+-- rows in an environment-dependent order); an ORDER BY inside array_agg makes the
+-- assembled values array deterministic without changing the distinct value set.
 PREPARE distinctQuery(text, text, text) AS (WITH r1 AS (SELECT DISTINCT 
     bson_distinct_unwind(document, $3) AS document FROM documentdb_api.collection($1, $2)) 
-    SELECT bson_build_distinct_response(COALESCE(array_agg(document), '{}'::bson[])) FROM r1);
+    SELECT bson_build_distinct_response(COALESCE(array_agg(document ORDER BY document), '{}'::bson[])) FROM r1);
 PREPARE distinctQueryWithFilter(text, text, text, bson) AS (WITH r1 AS (SELECT DISTINCT 
+    bson_distinct_unwind(document, $3) AS document FROM documentdb_api.collection($1, $2) WHERE document @@ $4 )
+    SELECT bson_build_distinct_response(COALESCE(array_agg(document ORDER BY document), '{}'::bson[])) FROM r1);
+-- Plan-shaped variant used only for EXPLAIN below: it mirrors the query the
+-- client actually issues (no ORDER BY inside array_agg), so the demonstrated
+-- plan stays representative and stable across PG versions. The ORDER BY in the
+-- variants above is purely for deterministic value output and would otherwise
+-- let newer planners fold the DISTINCT and the aggregate sort into a single
+-- Sort+Unique, diverging from the HashAggregate plan on other versions.
+PREPARE distinctQueryWithFilterPlan(text, text, text, bson) AS (WITH r1 AS (SELECT DISTINCT 
     bson_distinct_unwind(document, $3) AS document FROM documentdb_api.collection($1, $2) WHERE document @@ $4 )
     SELECT bson_build_distinct_response(COALESCE(array_agg(document), '{}'::bson[])) FROM r1);
 EXECUTE distinctQuery('db', 'distinct1', 'a');
                                                  bson_build_distinct_response                                                  
 ---------------------------------------------------------------------
- { "values" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "1" } ], "ok" : { "$numberDouble" : "1.0" } }
+ { "values" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ], "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 EXECUTE distinctQueryWithFilter('db', 'distinct1', 'a', '{ "a": { "$lt": 3 }}');
                                      bson_build_distinct_response                                      
 ---------------------------------------------------------------------
- { "values" : [ { "$numberInt" : "2" }, { "$numberInt" : "1" } ], "ok" : { "$numberDouble" : "1.0" } }
+ { "values" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ], "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 EXECUTE distinctQuery('db', 'distinct1', 'b.c');
                         bson_build_distinct_response                        
 ---------------------------------------------------------------------
- { "values" : [ "foo", "bar", "baz" ], "ok" : { "$numberDouble" : "1.0" } }
+ { "values" : [ "bar", "baz", "foo" ], "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db', 'distinct2', '{ "a": null }');
@@ -117,13 +129,13 @@ SELECT documentdb_api.insert_one('db', 'distinct3', '{ "a": 9 }');
 EXECUTE distinctQuery('db', 'distinct3', 'a');
                                                                                      bson_build_distinct_response                                                                                      
 ---------------------------------------------------------------------
- { "values" : [ { "$numberInt" : "5" }, { "$numberInt" : "2" }, { "$numberInt" : "9" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "1" } ], "ok" : { "$numberDouble" : "1.0" } }
+ { "values" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "9" } ], "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 EXECUTE distinctQuery('db', 'distinct3', 'a.0');
                                                  bson_build_distinct_response                                                  
 ---------------------------------------------------------------------
- { "values" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "1" } ], "ok" : { "$numberDouble" : "1.0" } }
+ { "values" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ], "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 EXECUTE distinctQuery('db', 'distinct3', 'a.1');
@@ -171,31 +183,31 @@ SELECT documentdb_api.insert_one('db', 'distinct3', '{ "e": { "b": "z" }, "c": 1
 EXECUTE distinctQuery('db', 'distinct3', 'e.b');
                                bson_build_distinct_response                               
 ---------------------------------------------------------------------
- { "values" : [ "b", "a", "c", "e", "f", "z", "d" ], "ok" : { "$numberDouble" : "1.0" } }
+ { "values" : [ "a", "b", "c", "d", "e", "f", "z" ], "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 EXECUTE distinctQuery('db', 'distinct3', 'e.0.b');
                      bson_build_distinct_response                     
 ---------------------------------------------------------------------
- { "values" : [ "b", "a", "c" ], "ok" : { "$numberDouble" : "1.0" } }
+ { "values" : [ "a", "b", "c" ], "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 EXECUTE distinctQuery('db', 'distinct3', 'e.1.b');
                      bson_build_distinct_response                     
 ---------------------------------------------------------------------
- { "values" : [ "e", "f", "d" ], "ok" : { "$numberDouble" : "1.0" } }
+ { "values" : [ "d", "e", "f" ], "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 EXECUTE distinctQuery('db', 'distinct3', 'e');
                                                                   bson_build_distinct_response                                                                  
 ---------------------------------------------------------------------
- { "values" : [ { "b" : "c" }, { "b" : "b" }, { "b" : "d" }, { "b" : "a" }, { "b" : "e" }, { "b" : "z" }, { "b" : "f" } ], "ok" : { "$numberDouble" : "1.0" } }
+ { "values" : [ { "b" : "a" }, { "b" : "b" }, { "b" : "c" }, { "b" : "d" }, { "b" : "e" }, { "b" : "f" }, { "b" : "z" } ], "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 EXECUTE distinctQueryWithFilter('db', 'distinct3', 'e.b', '{ "e.b": { "$gt": "d" } }');
                        bson_build_distinct_response                        
 ---------------------------------------------------------------------
- { "values" : [ "f", "c", "z", "e" ], "ok" : { "$numberDouble" : "1.0" } }
+ { "values" : [ "c", "e", "f", "z" ], "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db', 'distinct4', '{ "a": { "b": { "c": 1 } } }');
@@ -232,13 +244,13 @@ SELECT documentdb_api.insert_one('db', 'distinct4', '{ "a": { "notRelevant": 3 }
 EXECUTE distinctQueryWithFilter('db', 'distinct4', 'a.b.c', '{ "a.b.c": { "$gt": 0 } }');
                                                  bson_build_distinct_response                                                  
 ---------------------------------------------------------------------
- { "values" : [ { "$numberInt" : "3" }, { "$numberInt" : "2" }, { "$numberInt" : "1" } ], "ok" : { "$numberDouble" : "1.0" } }
+ { "values" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ], "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 EXECUTE distinctQueryWithFilter('db', 'distinct4', 'a.b.c', '{ "a.b.c": { "$gt": 1 } }');
                                      bson_build_distinct_response                                      
 ---------------------------------------------------------------------
- { "values" : [ { "$numberInt" : "3" }, { "$numberInt" : "2" } ], "ok" : { "$numberDouble" : "1.0" } }
+ { "values" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" } ], "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 -- test for DBRef
@@ -283,7 +295,7 @@ EXECUTE distinctQueryWithFilter('db', 'distinct5', 'a', '{ "b": { "$ref": "disti
 EXECUTE distinctQueryWithFilter('db', 'distinct5', 'a', '{ "b": { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19cea" } } }');
                                      bson_build_distinct_response                                      
 ---------------------------------------------------------------------
- { "values" : [ { "$numberInt" : "3" }, { "$numberInt" : "2" } ], "ok" : { "$numberDouble" : "1.0" } }
+ { "values" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" } ], "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 -- optional parameter - $db
@@ -387,7 +399,7 @@ EXECUTE distinctQueryWithFilter('db2', 'distinct7', 'd', '{ "b": { "$in": [ { "$
 EXECUTE distinctQueryWithFilter('db2', 'distinct7', 'd', '{ "b": { "$nin": [ { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19ce6" },"$db": "db", "tt":1 }, { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19ce4" }} ] } }');
                                                                                                   bson_build_distinct_response                                                                                                   
 ---------------------------------------------------------------------
- { "values" : [ { "$numberInt" : "3" }, { "$numberInt" : "6" }, { "$numberInt" : "2" }, { "$numberInt" : "20" }, { "$numberInt" : "5" }, { "$numberInt" : "30" }, { "$numberInt" : "1" } ], "ok" : { "$numberDouble" : "1.0" } }
+ { "values" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "20" }, { "$numberInt" : "30" } ], "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 -- index
@@ -400,7 +412,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db2', '{ "create
 ANALYZE;
 begin;
 SET LOCAL enable_seqscan to off;
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) EXECUTE distinctQueryWithFilter('db2', 'distinct7', 'd', '{ "b": { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19ce4" } } }') $cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) EXECUTE distinctQueryWithFilterPlan('db2', 'distinct7', 'd', '{ "b": { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19ce4" } } }') $cmd$);
                                                                                              run_explain_and_trim                                                                                             
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
@@ -413,7 +425,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
          ->  Aggregate (actual rows=1 loops=1)
                ->  HashAggregate (actual rows=1 loops=1)
                      Group Key: documentdb_api_catalog.bson_distinct_unwind(collection.document, $3)
-                     Batches: 1  Memory Usage: 48kB
+                     Batches: 1  Memory Usage: 24kB
                      ->  ProjectSet (actual rows=1 loops=1)
                            ->  Result (actual rows=1 loops=1)
                                  One-Time Filter: documentdb_api_catalog.bson_true_match($4)
@@ -421,7 +433,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
                                        Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "b" : { "$ref" : "distinct6", "$id" : { "$oid" : "147f000000c1de008ec19ce4" } } }'::documentdb_core.bson)
 (16 rows)
 
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) EXECUTE distinctQueryWithFilter('db2', 'distinct7', 'd', '{ "b": { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19ce6" },"$db": "db", "tt":1 } }') $cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) EXECUTE distinctQueryWithFilterPlan('db2', 'distinct7', 'd', '{ "b": { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19ce6" },"$db": "db", "tt":1 } }') $cmd$);
                                                                                                                    run_explain_and_trim                                                                                                                    
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
@@ -434,7 +446,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
          ->  Aggregate (actual rows=1 loops=1)
                ->  HashAggregate (actual rows=1 loops=1)
                      Group Key: documentdb_api_catalog.bson_distinct_unwind(collection.document, $3)
-                     Batches: 1  Memory Usage: 48kB
+                     Batches: 1  Memory Usage: 24kB
                      ->  ProjectSet (actual rows=1 loops=1)
                            ->  Result (actual rows=1 loops=1)
                                  One-Time Filter: documentdb_api_catalog.bson_true_match($4)
@@ -442,7 +454,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
                                        Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "b" : { "$ref" : "distinct6", "$id" : { "$oid" : "147f000000c1de008ec19ce6" }, "$db" : "db", "tt" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
 (16 rows)
 
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) EXECUTE distinctQueryWithFilter('db2', 'distinct7', 'd', '{ "b": {"$id": { "$oid" : "147f000000c1de008ec19ce6" }, "$ref" : "distinct6"}}') $cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) EXECUTE distinctQueryWithFilterPlan('db2', 'distinct7', 'd', '{ "b": {"$id": { "$oid" : "147f000000c1de008ec19ce6" }, "$ref" : "distinct6"}}') $cmd$);
                                                                                              run_explain_and_trim                                                                                             
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
@@ -455,7 +467,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
          ->  Aggregate (actual rows=1 loops=1)
                ->  HashAggregate (actual rows=0 loops=1)
                      Group Key: documentdb_api_catalog.bson_distinct_unwind(collection.document, $3)
-                     Batches: 1  Memory Usage: 48kB
+                     Batches: 1  Memory Usage: 24kB
                      ->  ProjectSet (actual rows=0 loops=1)
                            ->  Result (actual rows=0 loops=1)
                                  One-Time Filter: documentdb_api_catalog.bson_true_match($4)
@@ -463,7 +475,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
                                        Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "b" : { "$id" : { "$oid" : "147f000000c1de008ec19ce6" }, "$ref" : "distinct6" } }'::documentdb_core.bson)
 (16 rows)
 
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) EXECUTE distinctQueryWithFilter('db2', 'distinct7', 'd', '{ "b": { "$in": [ { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19ce6" },"$db": "db", "tt":1 }, { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19ce4" }} ] } }') $cmd$);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) EXECUTE distinctQueryWithFilterPlan('db2', 'distinct7', 'd', '{ "b": { "$in": [ { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19ce6" },"$db": "db", "tt":1 }, { "$ref": "distinct6", "$id": { "$oid" : "147f000000c1de008ec19ce4" }} ] } }') $cmd$);
                                                                                                                                                            run_explain_and_trim                                                                                                                                                            
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=1 loops=1)
@@ -476,7 +488,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
          ->  Aggregate (actual rows=1 loops=1)
                ->  HashAggregate (actual rows=2 loops=1)
                      Group Key: documentdb_api_catalog.bson_distinct_unwind(collection.document, $3)
-                     Batches: 1  Memory Usage: 32kB
+                     Batches: 1  Memory Usage: 24kB
                      ->  ProjectSet (actual rows=2 loops=1)
                            ->  Result (actual rows=2 loops=1)
                                  One-Time Filter: documentdb_api_catalog.bson_true_match($4)

@@ -43,6 +43,7 @@ SELECT documentdb_api.insert_one('db','sumavg_int_test','{ "_id": 6, "category":
 (1 row)
 
 -- $sum on integer field
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": "$category", "total": { "$sum": "$value" } } }, { "$sort": { "_id": 1 } } ] }');
                       document                      
@@ -60,6 +61,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int
 (2 rows)
 
 -- $avg on integer field
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": "$category", "average": { "$avg": "$value" } } }, { "$sort": { "_id": 1 } } ] }');
                          document                          
@@ -77,6 +79,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int
 (2 rows)
 
 -- $sum and $avg together
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": "$category", "total": { "$sum": "$value" }, "average": { "$avg": "$value" } } }, { "$sort": { "_id": 1 } } ] }');
                                            document                                           
@@ -94,6 +97,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int
 (2 rows)
 
 -- $sum with constant value (count pattern)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": "$category", "count": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ] }');
                      document                      
@@ -111,6 +115,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int
 (2 rows)
 
 -- $sum with constant value > 1
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": "$category", "weighted": { "$sum": 5 } } }, { "$sort": { "_id": 1 } } ] }');
                        document                        
@@ -131,7 +136,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int
 -- Test 2: $group + $sum/$avg on double fields
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_double_test','{ "_id": 1, "category": "X", "value": 1.5 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:51: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:56: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -161,6 +166,7 @@ SELECT documentdb_api.insert_one('db','sumavg_double_test','{ "_id": 5, "categor
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_double_test", "pipeline": [ { "$group": { "_id": "$category", "total": { "$sum": "$value" }, "average": { "$avg": "$value" } } }, { "$sort": { "_id": 1 } } ] }');
                                                                document                                                               
@@ -181,7 +187,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_dou
 -- Test 3: $group + $sum/$avg on mixed numeric types
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_mixed_test','{ "_id": 1, "category": "M", "value": 10 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:66: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:72: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -205,6 +211,7 @@ SELECT documentdb_api.insert_one('db','sumavg_mixed_test','{ "_id": 4, "category
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_mixed_test", "pipeline": [ { "$group": { "_id": "$category", "total": { "$sum": "$value" }, "average": { "$avg": "$value" } } } ] }');
                                                      document                                                      
@@ -223,7 +230,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_mix
 -- Test 4: $sum/$avg with non-numeric values (should be ignored)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_nonnumeric_test','{ "_id": 1, "category": "A", "value": 10 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:80: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:87: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -253,6 +260,7 @@ SELECT documentdb_api.insert_one('db','sumavg_nonnumeric_test','{ "_id": 5, "cat
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_nonnumeric_test", "pipeline": [ { "$group": { "_id": "$category", "total": { "$sum": "$value" }, "average": { "$avg": "$value" } } } ] }');
                                            document                                           
@@ -271,7 +279,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_non
 -- Test 5: $sum/$avg with null and missing fields
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_null_test','{ "_id": 1, "category": "A", "value": 10 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:95: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:103: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -295,6 +303,7 @@ SELECT documentdb_api.insert_one('db','sumavg_null_test','{ "_id": 4, "category"
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_null_test", "pipeline": [ { "$group": { "_id": "$category", "total": { "$sum": "$value" }, "average": { "$avg": "$value" } } } ] }');
                                            document                                           
@@ -312,6 +321,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_nul
 -- =============================================================================
 -- Test 6: $sum/$avg on empty group (no documents matching)
 -- =============================================================================
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_null_test", "pipeline": [ { "$match": { "_id": 999 } }, { "$group": { "_id": "$category", "total": { "$sum": "$value" }, "average": { "$avg": "$value" } } } ] }');
  document 
@@ -327,6 +337,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_nul
 -- =============================================================================
 -- Test 7: $sum/$avg with _id: null (single group)
 -- =============================================================================
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$value" }, "average": { "$avg": "$value" }, "count": { "$sum": 1 } } } ] }');
                                                              document                                                             
@@ -345,7 +356,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int
 -- Test 8: $sum/$avg with expressions
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_expr_test','{ "_id": 1, "price": 10, "qty": 2 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:127: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:138: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -364,6 +375,7 @@ SELECT documentdb_api.insert_one('db','sumavg_expr_test','{ "_id": 3, "price": 3
 (1 row)
 
 -- $sum with $multiply expression
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_expr_test", "pipeline": [ { "$group": { "_id": null, "totalRevenue": { "$sum": { "$multiply": ["$price", "$qty"] } }, "avgRevenue": { "$avg": { "$multiply": ["$price", "$qty"] } } } } ] }');
                                                          document                                                          
@@ -380,7 +392,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_exp
 
 -- $sum/$avg with nested field paths
 SELECT documentdb_api.insert_one('db','sumavg_nested_test','{ "_id": 1, "info": { "score": 85 } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:138: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:150: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -398,6 +410,7 @@ SELECT documentdb_api.insert_one('db','sumavg_nested_test','{ "_id": 3, "info": 
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_nested_test", "pipeline": [ { "$group": { "_id": null, "totalScore": { "$sum": "$info.score" }, "avgScore": { "$avg": "$info.score" } } } ] }');
                                                document                                               
@@ -416,7 +429,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_nes
 -- Test 9: $sum/$avg with $let variables
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_let_test','{ "_id": 1, "price": 10, "tax": 0.1 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:151: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:164: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -434,6 +447,7 @@ SELECT documentdb_api.insert_one('db','sumavg_let_test','{ "_id": 3, "price": 30
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_let_test", "pipeline": [ { "$group": { "_id": null, "totalWithTax": { "$sum": { "$let": { "vars": { "total": { "$multiply": ["$price", { "$add": [1, "$tax"] }] } }, "in": "$$total" } } } } } ] }');
                             document                             
@@ -452,7 +466,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_let
 -- Test 10: $setWindowFields with $sum and $avg - document window
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_window_test','{ "_id": 1, "partition": "A", "order": 1, "value": 10 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:164: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:178: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -495,6 +509,7 @@ SELECT documentdb_api.insert_one('db','sumavg_window_test','{ "_id": 7, "partiti
 (1 row)
 
 -- unbounded $sum window
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$partition", "sortBy": {"order": 1}, "output": { "runningSum": { "$sum": "$value", "window": { "documents": ["unbounded", "current"] } } } } }, { "$sort": { "_id": 1 } } ] }');
                                                                               document                                                                               
@@ -522,6 +537,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_win
 (7 rows)
 
 -- unbounded $avg window
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$partition", "sortBy": {"order": 1}, "output": { "runningAvg": { "$avg": "$value", "window": { "documents": ["unbounded", "current"] } } } } }, { "$sort": { "_id": 1 } } ] }');
                                                                                 document                                                                                 
@@ -552,6 +568,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_win
 -- Test 11: $setWindowFields with moving window (validates inverse transition)
 -- =============================================================================
 -- sliding window of size 2 with $sum
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$partition", "sortBy": {"order": 1}, "output": { "slidingSum": { "$sum": "$value", "window": { "documents": [-1, 0] } } } } }, { "$sort": { "_id": 1 } } ] }');
                                                                               document                                                                              
@@ -579,6 +596,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_win
 (7 rows)
 
 -- sliding window of size 3 with $avg
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$partition", "sortBy": {"order": 1}, "output": { "slidingAvg": { "$avg": "$value", "window": { "documents": [-1, 1] } } } } }, { "$sort": { "_id": 1 } } ] }');
                                                                                 document                                                                                 
@@ -608,6 +626,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_win
 -- =============================================================================
 -- Test 12: $setWindowFields with $sum using no explicit window (whole partition)
 -- =============================================================================
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$partition", "sortBy": {"order": 1}, "output": { "partitionSum": { "$sum": "$value" }, "partitionAvg": { "$avg": "$value" } } } }, { "$sort": { "_id": 1 } } ] }');
                                                                                                        document                                                                                                       
@@ -638,7 +657,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_win
 -- Test 13: $setWindowFields with $sum/$avg on window with null/missing values
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_window_null_test','{ "_id": 1, "order": 1, "value": 10 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:213: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:232: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -674,6 +693,7 @@ SELECT documentdb_api.insert_one('db','sumavg_window_null_test','{ "_id": 6, "or
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_null_test", "pipeline": [ { "$setWindowFields": { "sortBy": {"order": 1}, "output": { "runningSum": { "$sum": "$value", "window": { "documents": ["unbounded", "current"] } }, "runningAvg": { "$avg": "$value", "window": { "documents": ["unbounded", "current"] } } } } }, { "$sort": { "_id": 1 } } ] }');
                                                                                            document                                                                                           
@@ -699,6 +719,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_win
 (6 rows)
 
 -- moving window with null/missing (exercises inverse transition with non-numeric skipping)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_null_test", "pipeline": [ { "$setWindowFields": { "sortBy": {"order": 1}, "output": { "slidingSum": { "$sum": "$value", "window": { "documents": [-1, 1] } }, "slidingAvg": { "$avg": "$value", "window": { "documents": [-1, 1] } } } } }, { "$sort": { "_id": 1 } } ] }');
                                                                                            document                                                                                           
@@ -726,6 +747,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_win
 -- =============================================================================
 -- Test 14: $sum with $group + $sum: {} (empty document sum)
 -- =============================================================================
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": null, "result": { "$sum": {} } } } ] }');
                       document                       
@@ -744,7 +766,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int
 -- Test 15: $sum/$avg with $group on all same values
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_same_test','{ "_id": 1, "value": 7 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:244: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:266: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -762,6 +784,7 @@ SELECT documentdb_api.insert_one('db','sumavg_same_test','{ "_id": 3, "value": 7
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_same_test", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$value" }, "average": { "$avg": "$value" } } } ] }');
                                            document                                           
@@ -780,7 +803,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_sam
 -- Test 16: Extreme Int64 and Decimal128 values
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_extreme_test','{ "_id": 1, "group": "int64", "val": { "$numberLong": "9223372036854775807" } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:257: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:280: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -859,6 +882,7 @@ SELECT documentdb_api.insert_one('db','sumavg_extreme_test','{ "_id": 13, "group
 (1 row)
 
 -- Int64 extremes
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_extreme_test", "pipeline": [ { "$match": { "group": "int64" } }, { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } } ] }');
                                                        document                                                       
@@ -874,6 +898,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_ext
 (1 row)
 
 -- Decimal128 extremes
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_extreme_test", "pipeline": [ { "$match": { "group": "decimal" } }, { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } } ] }');
                                                document                                               
@@ -889,6 +914,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_ext
 (1 row)
 
 -- Special values (Infinity, -Infinity, NaN)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_extreme_test", "pipeline": [ { "$match": { "group": "special" } }, { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } } ] }');
                                                 document                                                
@@ -904,24 +930,26 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_ext
 (1 row)
 
 -- Mixed numeric types
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_extreme_test", "pipeline": [ { "$match": { "group": "mixednums" } }, { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } } ] }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:294: ERROR:  Conversion would exceed target type limit
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:321: ERROR:  Conversion would exceed target type limit
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_extreme_test", "pipeline": [ { "$match": { "group": "mixednums" } }, { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } } ] }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:296: ERROR:  Conversion would exceed target type limit
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:323: ERROR:  Conversion would exceed target type limit
 -- All groups
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_extreme_test", "pipeline": [ { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:300: ERROR:  Conversion would exceed target type limit
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:328: ERROR:  Conversion would exceed target type limit
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_extreme_test", "pipeline": [ { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:302: ERROR:  Conversion would exceed target type limit
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:330: ERROR:  Conversion would exceed target type limit
 -- =============================================================================
 -- Test 17: Using $$variable in $sum/$avg expression
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_variable_test','{ "_id": 1, "group": "A", "val": 10 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:308: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:336: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -952,6 +980,7 @@ SELECT documentdb_api.insert_one('db','sumavg_variable_test','{ "_id": 5, "group
 (1 row)
 
 -- Using $$variable with $add
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_variable_test", "pipeline": [ { "$group": { "_id": "$group", "sumWithOffset": { "$sum": { "$add": ["$val", "$$offset"] } } } }, { "$sort": { "_id": 1 } } ], "let": { "offset": 100 } }');
                           document                           
@@ -969,6 +998,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_var
 (2 rows)
 
 -- Using $$variable with $avg
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_variable_test", "pipeline": [ { "$group": { "_id": "$group", "avgWithOffset": { "$avg": { "$add": ["$val", "$$offset"] } } } }, { "$sort": { "_id": 1 } } ], "let": { "offset": 50 } }');
                             document                             
@@ -986,6 +1016,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_var
 (2 rows)
 
 -- Multiple variables
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_variable_test", "pipeline": [ { "$group": { "_id": "$group", "sumCalc": { "$sum": { "$add": [{ "$multiply": ["$val", "$$multiplier"] }, "$$offset"] } } } }, { "$sort": { "_id": 1 } } ], "let": { "offset": 10, "multiplier": 2 } }');
                        document                        
@@ -1003,6 +1034,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_var
 (2 rows)
 
 -- Using $$CURRENT
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_variable_test", "pipeline": [ { "$group": { "_id": "$group", "total": { "$sum": "$$CURRENT.val" } } }, { "$sort": { "_id": 1 } } ] }');
                       document                      
@@ -1020,6 +1052,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_var
 (2 rows)
 
 -- Using $$ROOT
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_variable_test", "pipeline": [ { "$group": { "_id": "$group", "total": { "$sum": "$$ROOT.val" } } }, { "$sort": { "_id": 1 } } ] }');
                       document                      
@@ -1040,7 +1073,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_var
 -- Test 18: Expression evaluation within accumulator ($add, $subtract, nested)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_expr2_test','{ "_id": 1, "group": "A", "a": 10, "b": 5 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:348: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:381: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1071,6 +1104,7 @@ SELECT documentdb_api.insert_one('db','sumavg_expr2_test','{ "_id": 5, "group": 
 (1 row)
 
 -- $add expression
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_expr2_test", "pipeline": [ { "$group": { "_id": "$group", "sumAdd": { "$sum": { "$add": ["$a", "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
                        document                       
@@ -1087,6 +1121,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_exp
  { "_id" : "B", "sumAdd" : { "$numberInt" : "201" } }
 (2 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_expr2_test", "pipeline": [ { "$group": { "_id": "$group", "avgAdd": { "$avg": { "$add": ["$a", "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
                          document                          
@@ -1104,6 +1139,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_exp
 (2 rows)
 
 -- $subtract expression
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_expr2_test", "pipeline": [ { "$group": { "_id": "$group", "sumDiff": { "$sum": { "$subtract": ["$a", "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
                        document                        
@@ -1121,6 +1157,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_exp
 (2 rows)
 
 -- Nested expression: multiply then add
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_expr2_test", "pipeline": [ { "$group": { "_id": "$group", "sumCalc": { "$sum": { "$add": [{ "$multiply": ["$a", 2] }, "$b"] } } } }, { "$sort": { "_id": 1 } } ] }');
                        document                        
@@ -1138,6 +1175,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_exp
 (2 rows)
 
 -- Complex nested expression
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_expr2_test", "pipeline": [ { "$group": { "_id": "$group", "avgComplex": { "$avg": { "$multiply": [{ "$add": ["$a", "$b"] }, 2] } } } }, { "$sort": { "_id": 1 } } ] }');
                            document                            
@@ -1158,7 +1196,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_exp
 -- Test 19: Conditional logic in accumulator input ($cond, $ifNull)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_cond_test','{ "_id": 1, "group": "A", "val": 10, "active": true }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:386: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:424: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1207,6 +1245,7 @@ SELECT documentdb_api.insert_one('db','sumavg_cond_test','{ "_id": 8, "group": "
 (1 row)
 
 -- $cond: if active then val else 0
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_cond_test", "pipeline": [ { "$group": { "_id": "$group", "sumActive": { "$sum": { "$cond": { "if": "$active", "then": "$val", "else": 0 } } } } }, { "$sort": { "_id": 1 } } ] }');
                         document                         
@@ -1226,6 +1265,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_con
 (3 rows)
 
 -- $cond: if active then val else null (null values ignored by $avg)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_cond_test", "pipeline": [ { "$group": { "_id": "$group", "avgActive": { "$avg": { "$cond": { "if": "$active", "then": "$val", "else": null } } } } }, { "$sort": { "_id": 1 } } ] }');
                           document                           
@@ -1245,6 +1285,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_con
 (3 rows)
 
 -- $cond with array syntax
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_cond_test", "pipeline": [ { "$group": { "_id": "$group", "tier": { "$sum": { "$cond": [{ "$gt": ["$val", 50] }, { "$multiply": ["$val", 2] }, "$val"] } } } }, { "$sort": { "_id": 1 } } ] }');
                       document                      
@@ -1264,6 +1305,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_con
 (3 rows)
 
 -- $ifNull expression
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_cond_test", "pipeline": [ { "$group": { "_id": "$group", "sumWithDefault": { "$sum": { "$ifNull": ["$optionalField", 0] } } } }, { "$sort": { "_id": 1 } } ] }');
                            document                           
@@ -1283,6 +1325,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_con
 (3 rows)
 
 -- Nested $cond
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_cond_test", "pipeline": [ { "$group": { "_id": "$group", "categorized": { "$sum": { "$cond": { "if": { "$gt": ["$val", 100] }, "then": 3, "else": { "$cond": { "if": { "$gt": ["$val", 50] }, "then": 2, "else": 1 } } } } } } }, { "$sort": { "_id": 1 } } ] }');
                         document                         
@@ -1305,6 +1348,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_con
 -- Test 20: EXPLAIN query plan verification
 -- =============================================================================
 -- EXPLAIN to verify query plan for $group
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_int_test", "pipeline": [ { "$group": { "_id": "$category", "total": { "$sum": "$value" }, "average": { "$avg": "$value" } } }, { "$sort": { "_id": 1 } } ] }');
                                                                                                                                                                                                                                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                            
@@ -1350,6 +1394,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 (16 rows)
 
 -- EXPLAIN to verify query plan for $setWindowFields
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_window_test", "pipeline": [ { "$setWindowFields": { "partitionBy": "$partition", "sortBy": { "order": 1 }, "output": { "runningSum": { "$sum": "$value", "window": { "documents": ["unbounded", "current"] } }, "runningAvg": { "$avg": "$value", "window": { "documents": ["unbounded", "current"] } } } } } ] }');
                                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                                   
@@ -1400,7 +1445,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- "collation is not supported in $group stage yet."
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_collation_test','{ "_id": 1, "group": "A", "name": "cherry", "val": 10 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:452: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:497: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1435,9 +1480,10 @@ SET documentdb.enableNewWithExprAccumulators TO on;
 SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 -- $sum counting matches: count docs where name case-insensitively equals "CHERRY"
 -- Legacy path errors; WithExpr path correctly applies collation (matchCount = 1 for group "A").
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:465: ERROR:  collation is not supported in $group stage yet.
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:511: ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
                         document                        
@@ -1447,6 +1493,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 (2 rows)
 
 -- Without collation baseline (binary: "cherry" != "CHERRY", no matches)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ] }');
                         document                        
@@ -1464,9 +1511,10 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 (2 rows)
 
 -- $sum conditional value: sum val for matching docs, 0 otherwise
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchedSum": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:477: ERROR:  collation is not supported in $group stage yet.
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:525: ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchedSum": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
                         document                         
@@ -1476,6 +1524,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 (2 rows)
 
 -- Without collation baseline
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchedSum": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": 0 } } } } }, { "$sort": { "_id": 1 } } ] }');
                         document                        
@@ -1493,9 +1542,10 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 (2 rows)
 
 -- $avg with conditional filter: average val for matching docs, null otherwise
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:489: ERROR:  collation is not supported in $group stage yet.
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:539: ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
                            document                           
@@ -1505,6 +1555,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 (2 rows)
 
 -- Without collation baseline
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } }, { "$sort": { "_id": 1 } } ] }');
                document               
@@ -1522,9 +1573,10 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 (2 rows)
 
 -- $sum and $avg together with collation strength 2 (case-insensitive, accent-sensitive)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } }, "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 2 } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:501: ERROR:  collation is not supported in $group stage yet.
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:553: ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } }, "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 2 } }');
                                               document                                               
@@ -1606,9 +1658,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- Test 23: Constant _id group with collation-sensitive expression
 -- =============================================================================
 -- $sum counting with _id: null (all docs in one group)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": null, "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } } ], "collation": { "locale": "en", "strength": 1 } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:524: ERROR:  collation is not supported in $group stage yet.
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:577: ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": null, "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } } ], "collation": { "locale": "en", "strength": 1 } }');
                         document                         
@@ -1617,6 +1670,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 (1 row)
 
 -- Without collation baseline on constant group
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": null, "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } } ] }');
                         document                         
@@ -1632,9 +1686,10 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 (1 row)
 
 -- $avg with constant _id: null
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": null, "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } } ], "collation": { "locale": "en", "strength": 1 } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:536: ERROR:  collation is not supported in $group stage yet.
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:591: ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": null, "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } } ], "collation": { "locale": "en", "strength": 1 } }');
                            document                            
@@ -1643,9 +1698,10 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 (1 row)
 
 -- With constant _id: 1
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": 1, "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } }, "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } } ], "collation": { "locale": "en", "strength": 1 } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:542: ERROR:  collation is not supported in $group stage yet.
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:598: ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": 1, "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } }, "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } } ], "collation": { "locale": "en", "strength": 1 } }');
                                                         document                                                        
@@ -1657,7 +1713,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 -- Test 24: Collation with $sum/$avg on mixed types
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_collation_mixed','{ "_id": 1, "group": "G", "val": "banana" }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:550: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:606: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1682,9 +1738,10 @@ SELECT documentdb_api.insert_one('db','sumavg_collation_mixed','{ "_id": 4, "gro
 (1 row)
 
 -- With collation: "CHERRY" case-insensitively equals "cherry" → count 1; number/null don't match
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_mixed", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$val", "cherry"] }, "then": 1, "else": 0 } } } } } ], "collation": { "locale": "en", "strength": 1 } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:557: ERROR:  collation is not supported in $group stage yet.
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:614: ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_mixed", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$val", "cherry"] }, "then": 1, "else": 0 } } } } } ], "collation": { "locale": "en", "strength": 1 } }');
                         document                        
@@ -1693,6 +1750,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 (1 row)
 
 -- Without collation baseline (binary: "CHERRY" != "cherry")
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_mixed", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$val", "cherry"] }, "then": 1, "else": 0 } } } } } ] }');
                         document                        
@@ -1712,7 +1770,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 -- With numericOrdering: "item10" > "item2" (numeric), without: "item10" < "item2" (lexical)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sumavg_numeric_order','{ "_id": 1, "cat": "A", "val": "item1" }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:572: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:630: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1750,9 +1808,10 @@ SELECT documentdb_api.insert_one('db','sumavg_numeric_order','{ "_id": 6, "cat":
 
 -- $sum counting items greater than "item2"
 -- numericOrdering=true: "item10">true, "item1">false, "item2">false for A; "item20">true, "item3">true, "item5">true for B
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_numeric_order", "pipeline": [ { "$group": { "_id": "$cat", "countAbove": { "$sum": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "numericOrdering": true } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:582: ERROR:  collation is not supported in $group stage yet.
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:641: ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_numeric_order", "pipeline": [ { "$group": { "_id": "$cat", "countAbove": { "$sum": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "numericOrdering": true } }');
                         document                        
@@ -1762,9 +1821,10 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_num
 (2 rows)
 
 -- numericOrdering=false (lexical): "item10"<"item2", "item20">"item2", "item3">"item2", "item5">"item2"
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_numeric_order", "pipeline": [ { "$group": { "_id": "$cat", "countAbove": { "$sum": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "numericOrdering": false } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:588: ERROR:  collation is not supported in $group stage yet.
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:648: ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_numeric_order", "pipeline": [ { "$group": { "_id": "$cat", "countAbove": { "$sum": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "numericOrdering": false } }');
                         document                        
@@ -1774,6 +1834,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_num
 (2 rows)
 
 -- Without collation baseline (same as numericOrdering=false)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_numeric_order", "pipeline": [ { "$group": { "_id": "$cat", "countAbove": { "$sum": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ] }');
                         document                        
@@ -1791,9 +1852,10 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_num
 (2 rows)
 
 -- $avg scoring: average 10 for items above threshold, 0 otherwise
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_numeric_order", "pipeline": [ { "$group": { "_id": "$cat", "avgScore": { "$avg": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": 10, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "numericOrdering": true } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:600: ERROR:  collation is not supported in $group stage yet.
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:662: ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_numeric_order", "pipeline": [ { "$group": { "_id": "$cat", "avgScore": { "$avg": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": 10, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "numericOrdering": true } }');
                                   document                                   
@@ -1805,10 +1867,11 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_num
 -- =============================================================================
 -- Test 26: Collation blocked when enableCollationWithNewGroupAccumulators is off
 -- =============================================================================
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:610: ERROR:  collation is not supported in $group stage yet.
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:673: ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableNewWithExprAccumulators TO on;
 SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 -- =============================================================================
@@ -1817,6 +1880,7 @@ SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 -- With enableCollation off and skipFailOnCollation on, collation is ignored and binary comparison applies.
 SET documentdb_core.enableCollation TO off;
 SET documentdb.skipFailOnCollation TO on;
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
                         document                        
@@ -1837,13 +1901,14 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 RESET documentdb.skipFailOnCollation;
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SET documentdb_core.enableCollation TO off;
-RESET documentdb.enableNewWithExprAccumulators;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 -- =============================================================================
 -- Test 28: enableSortGroupStage drops dead outer $sort for order-insensitive
 --          $group accumulators while preserving results
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','sortgroup_safe_test','{ "_id": 1, "g": "A", "seq": 30, "v": 10, "bonus": 2 }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:636: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:701: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1937,11 +2002,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- Even when the sort could be dropped, an invalid sort spec should still error.
 SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "myFoobar": "InvalidDirection" } }, { "$group": { "_id": null, "c": { "$max": "$v" } } } ] }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:655: ERROR:  Sort direction value "InvalidDirection" is not valid
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:720: ERROR:  Sort direction value "InvalidDirection" is not valid
 -- Test 30: Non-$ prefixed path in accumulator should fail in group validation
 SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": null, "c": { "notAnOperator": "$v" } } } ] }');
-psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:659: ERROR:  Unrecognized group operator notAnOperator
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:724: ERROR:  Unrecognized group operator notAnOperator
 -- Test 31: $push is order-sensitive — sort must be preserved
 SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_safe_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "vals": { "$push": "$v" } } }, { "$sort": { "_id": 1 } } ] }');

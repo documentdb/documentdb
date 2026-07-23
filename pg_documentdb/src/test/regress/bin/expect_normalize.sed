@@ -9,6 +9,9 @@
 # Replace the values of the $$NOW time system variable with a constant
 s/\"now\" : \{ \"\$date\" : \{ \"\$numberLong\" : \"[0-9]*\" \} \}/\"now\" : NOW_SYS_VARIABLE/g
 s/\"sn\" : \{ \"\$date\" : \{ \"\$numberLong\" : \"[0-9]*\" \} \}/\"sn\" : NOW_SYS_VARIABLE/g
+# Same as above but for BSON embedded in composite/record literals, where quotes are doubled
+s/""now"" : \{ ""\$date"" : \{ ""\$numberLong"" : ""[0-9]*"" \} \}/""now"" : NOW_SYS_VARIABLE/g
+s/""sn"" : \{ ""\$date"" : \{ ""\$numberLong"" : ""[0-9]*"" \} \}/""sn"" : NOW_SYS_VARIABLE/g
 s/coord_combine_agg\('[0-9]+'/coord_combine_agg\('xxxx'/g
 s/worker_partial_agg\('[0-9]+'/coord_combine_agg\('xxxx'/g
 s/Vacuum\[index=[0-9]+,vacuumCleanup=/Vacuum\[index=xxx,vacuumCleanup=/g
