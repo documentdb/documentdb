@@ -3,6 +3,8 @@ SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,pg_cata
 SET citus.next_shard_id TO 87100000;
 SET documentdb.next_collection_id TO 87100;
 SET documentdb.next_collection_index_id TO 87100;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 -- ============================================================================
 -- Project push-up before $unwind (with $group) — distributed tests
 --
@@ -33,7 +35,7 @@ SELECT documentdb_api.insert_one('proj_pushup_dist_db', 'orders_coll',
     '{ "_id": 1, "regionId": "north", "ownerId": "A",
        "noise": "wide-payload-aaaaa",
        "items": [ {"kind": "x", "qty": 1}, {"kind": "y", "qty": 2} ] }');
-psql:sql/project_pushup_before_unwind_distributed.sql:38: NOTICE:  creating collection
+psql:sql/project_pushup_before_unwind_distributed.sql:40: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -127,7 +129,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 34_1
+   ->  Distributed Subplan 33_1
          ->  HashAggregate
                Output: remote_scan.c1, remote_scan.c2
                Group Key: remote_scan.c2
@@ -152,18 +154,18 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2 FROM read_intermediate_result('34_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson)) agg_stage_4
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2 FROM read_intermediate_result('33_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson)) agg_stage_4
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2)
-               Function Call: read_intermediate_result('34_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('33_1'::text, 'binary'::citus_copy_format)
 (32 rows)
 
 -- D1.2 Sharded by ownerId (the group key) — co-located group. Each worker
 -- owns one group's full data; no cross-shard combine needed.
 SELECT documentdb_api.insert_one('proj_pushup_dist_db', 'orders_colocated',
     '{ "_id": 1, "ownerId": "A", "items": [ {"qty": 1}, {"qty": 2} ] }');
-psql:sql/project_pushup_before_unwind_distributed.sql:102: NOTICE:  creating collection
+psql:sql/project_pushup_before_unwind_distributed.sql:104: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -309,7 +311,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 71_1
+   ->  Distributed Subplan 70_1
          ->  HashAggregate
                Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson)
                Group Key: remote_scan.c2
@@ -332,11 +334,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('71_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_2
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('70_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_2
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4)
-               Function Call: read_intermediate_result('71_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('70_1'::text, 'binary'::citus_copy_format)
 (30 rows)
 
 -- D1.4 Sharded by _id, universal aggregate ($group _id: null). Every
@@ -457,7 +459,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- fire — no synthetic $project between scan and $unwind.
 SELECT documentdb_api.insert_one('proj_pushup_dist_db', 'lookup_target',
     '{ "_id": 1, "ownerId": "A", "name": "Alice" }');
-psql:sql/project_pushup_before_unwind_distributed.sql:244: NOTICE:  creating collection
+psql:sql/project_pushup_before_unwind_distributed.sql:246: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

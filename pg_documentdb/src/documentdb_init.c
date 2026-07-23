@@ -93,6 +93,10 @@ InstallDocumentDBApiPostgresHooks(void)
 	ExtensionPreviousIndexNameHook = explain_get_index_name_hook;
 	explain_get_index_name_hook = ExtensionExplainGetIndexName;
 
+	/* override the explain hook to enable extended explain plans by default */
+	ExtensionPreviousExplainOneQueryHook = ExplainOneQuery_hook;
+	ExplainOneQuery_hook = DocumentDBApiExplainOneQuery;
+
 	/* override planner paths hook for overriding indexed and non-indexed paths. */
 	ExtensionPreviousSetRelPathlistHook = set_rel_pathlist_hook;
 	set_rel_pathlist_hook = ExtensionRelPathlistHook;
@@ -157,6 +161,9 @@ UninstallDocumentDBApiPostgresHooks(void)
 
 	explain_get_index_name_hook = ExtensionPreviousIndexNameHook;
 	ExtensionPreviousIndexNameHook = NULL;
+
+	ExplainOneQuery_hook = ExtensionPreviousExplainOneQueryHook;
+	ExtensionPreviousExplainOneQueryHook = NULL;
 
 	set_rel_pathlist_hook = ExtensionPreviousSetRelPathlistHook;
 	ExtensionPreviousSetRelPathlistHook = NULL;

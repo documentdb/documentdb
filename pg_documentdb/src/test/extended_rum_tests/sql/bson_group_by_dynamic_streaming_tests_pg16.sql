@@ -1,0 +1,1 @@
+\i sql/bson_group_by_dynamic_streaming_tests.sql

@@ -108,7 +108,6 @@ extern bool UseLocalExecutionShardQueries;
 extern bool ForceLocalExecutionShardQueries;
 extern bool EnableSchemaValidation;
 extern int MaxSchemaValidatorSize;
-extern bool EnableOnlyCollectionCacheInvalidateOnCollectionChanges;
 extern bool EnableNewNamespaceValidation;
 
 /* user-defined functions */
@@ -610,7 +609,8 @@ TrySetCollectionShard(MongoCollection *collection)
 
 	/* Get shard table name (distributed) or original tableName (single node) */
 	const char *shardName = TryGetShardNameForUnshardedCollection(
-		collection->relationId, collection->collectionId, collection->tableName);
+		collection->relationId, collection->collectionId, collection->tableName,
+		&collection->isSingleShardTable);
 	RollbackGUCChange(savedGUCLevel);
 	if (shardName != NULL)
 	{
@@ -1482,14 +1482,7 @@ command_collection_table(PG_FUNCTION_ARGS)
 Datum
 command_invalidate_collection_cache(PG_FUNCTION_ARGS)
 {
-	if (EnableOnlyCollectionCacheInvalidateOnCollectionChanges)
-	{
-		InvalidateCollectionsCache();
-	}
-	else
-	{
-		CacheInvalidateRelcacheAll();
-	}
+	InvalidateCollectionsCache();
 
 	PG_RETURN_VOID();
 }

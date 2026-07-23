@@ -19,6 +19,7 @@
 #include <access/relscan.h>
 #include <utils/rel.h>
 #include "math.h"
+#include <optimizer/optimizer.h>
 #include <commands/explain.h>
 #include <access/gin.h>
 #include <parser/parsetree.h>
@@ -30,6 +31,7 @@
 #endif
 
 #include "api_hooks.h"
+#include "opclass/bson_index_support.h"
 #include "planner/mongo_query_operator.h"
 #include "opclass/bson_gin_index_mgmt.h"
 #include "index_am/documentdb_rum.h"
@@ -49,6 +51,8 @@ extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
 extern bool EnableIndexPathKeySummarization;
+extern bool EnableMergeSortForInPrefix;
+extern bool EnableDynamicCursorDedupTracking;
 
 bool RumHasMultiKeyPaths = false;
 
@@ -62,15 +66,6 @@ static bool loaded_documentdb_rum_routine = false;
 static IndexAmRoutine rum_index_routine = { 0 };
 
 static PGFunction rum_index_multi_key_update_func = NULL;
-
-typedef enum IndexMultiKeyStatus
-{
-	IndexMultiKeyStatus_Unknown = 0,
-
-	IndexMultiKeyStatus_HasArrays = 1,
-
-	IndexMultiKeyStatus_HasNoArrays = 2
-} IndexMultiKeyStatus;
 
 typedef struct DocumentDBRumIndexState
 {
@@ -712,9 +707,8 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 	if (isCompositeOpFamily)
 	{
 		bool canSupportIndexOnlyScan = false;
-		bool firstColumnSpecified = TraverseIndexPathForCompositeIndex(path, root,
-																	   &
-																	   canSupportIndexOnlyScan);
+		bool firstColumnSpecified = TraverseIndexPathForCompositeIndex(
+			path, root, &canSupportIndexOnlyScan);
 
 		/* Even if the first column was not specified and the index covers the query entirely we should consider doing
 		 * an index-only scan even though the cost will be set to INFINITY. This way we support index only scan when hinting is used and the first column is not part of the filters. */
@@ -822,22 +816,32 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 								   boundarySelectivity, numBoundaryQuals,
 								   dataPagesProportionFetched);
 	}
+
+	if (EnableMergeSortForInPrefix && isCompositeOpFamily)
+	{
+		MaybeMarkIndexPathForMergeSortInPrefix(root, path);
+	}
 }
 
 
-/* Check if the index supports index-only scans based on the index rel am. */
+/*
+ * Whether the index's access method / opclass structurally supports index-only
+ * scans (AM support, composite non-wildcard opclass). Multi-key gating is done by
+ * the caller from the shared opclass metadata. Truncated terms also block
+ * index-only scan; when skipTruncationCheck is true the caller has already
+ * accounted for truncation from the tracked metadata, so it is not re-read here.
+ */
 bool
-CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath)
+CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath, bool skipTruncationCheck)
 {
 	PGFunction getMultiKeyStatusFunc = NULL;
 	GetTruncationStatusFunc getTruncationStatusFunc = NULL;
-	PGFunction getOpclassMetadataFunc = NULL;
 
 	bool supports = GetIndexAmSupportsIndexOnlyScan(indexPath->indexinfo->relam,
 													indexPath->indexinfo->opfamily[0],
 													&getMultiKeyStatusFunc,
 													&getTruncationStatusFunc,
-													&getOpclassMetadataFunc);
+													NULL);
 
 	if (!supports || getMultiKeyStatusFunc == NULL || getTruncationStatusFunc == NULL)
 	{
@@ -871,34 +875,25 @@ CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath)
 		return false;
 	}
 
-	bool multiKeyStatus = false;
-	bool hasTruncatedTerms = false;
-	Relation indexRelation = index_open(indexPath->indexinfo->indexoid, NoLock);
+	/*
+	 * Multi-key gating and (when the opclass metadata is tracked) the truncation
+	 * status are supplied by the caller from the shared metadata read. Only when
+	 * the caller has no tracked metadata do we read the truncation status here.
+	 * Truncated terms are never full fidelity, so they always block index only scan.
+	 */
+	if (!skipTruncationCheck)
+	{
+		Relation indexRelation = index_open(indexPath->indexinfo->indexoid, NoLock);
+		bool hasTruncatedTerms = getTruncationStatusFunc(indexRelation);
+		index_close(indexRelation, NoLock);
 
-	if (compositeOptions->enableMetadataBasedTracking && getOpclassMetadataFunc != NULL)
-	{
-		uint32_t multiKeyPerPathStatus = 0;
-		bool hasReducedCorrelatedTerms = false;
-		uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
-													  getOpclassMetadataFunc,
-													  PointerGetDatum(indexRelation)));
-		DecodeCompositeOpClassQueryMetadata(options, opclassMetadata, &multiKeyStatus,
-											&multiKeyPerPathStatus,
-											&hasReducedCorrelatedTerms,
-											&hasTruncatedTerms);
-	}
-	else
-	{
-		multiKeyStatus = DatumGetBool(DirectFunctionCall1(getMultiKeyStatusFunc,
-														  PointerGetDatum(
-															  indexRelation)));
-		hasTruncatedTerms = getTruncationStatusFunc(indexRelation);
+		if (hasTruncatedTerms)
+		{
+			return false;
+		}
 	}
 
-	index_close(indexRelation, NoLock);
-
-	/* can only support index only scan if the index is not multikey and there are no truncated terms. */
-	return !multiKeyStatus && !hasTruncatedTerms;
+	return true;
 }
 
 
@@ -1244,6 +1239,7 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 			if (options->enableMetadataBasedTracking &&
 				getopclassMetadataFunc != NULL)
 			{
+				uint32_t truncatedPerPathStatus = 0;
 				bool hasReducedCorrelatedTerms = false;
 				bool indexHasArrays = false;
 				bool indexHasTruncation = false;
@@ -1255,7 +1251,8 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 													&indexHasArrays,
 													&outerScanState->multiKeyPerPathStatus,
 													&hasReducedCorrelatedTerms,
-													&indexHasTruncation);
+													&indexHasTruncation,
+													&truncatedPerPathStatus);
 				outerScanState->multiKeyStatus = indexHasArrays ?
 												 IndexMultiKeyStatus_HasArrays :
 												 IndexMultiKeyStatus_HasNoArrays;
@@ -1394,6 +1391,7 @@ extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nsc
 		{
 			bool indexHasArraysBool = false;
 			bool indexHasTruncation = false;
+			uint32_t truncatedPerPathStatus = 0;
 			uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
 														  getopclassMetadataFunc,
 														  PointerGetDatum(
@@ -1402,7 +1400,8 @@ extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nsc
 												&indexHasArraysBool,
 												&multiKeyPerPathStatus,
 												&hasCorrelatedReducedTerms,
-												&indexHasTruncation);
+												&indexHasTruncation,
+												&truncatedPerPathStatus);
 			indexHasArrays = indexHasArraysBool ? IndexMultiKeyStatus_HasArrays :
 							 IndexMultiKeyStatus_HasNoArrays;
 		}
@@ -2443,7 +2442,7 @@ ResetReportedIndexCosts(void)
 
 
 Datum
-DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan)
+DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan, bytea **dedupState)
 {
 	if (!IsCompositeOpClass(scan->indexRelation))
 	{
@@ -2466,10 +2465,29 @@ DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan)
 		scan->indexRelation->rd_indam->ambeginscan == extension_documentdb_rumbeginscan;
 	if (isPathSummarizationScan || pathKeySummarizationForced)
 	{
-		return DirectFunctionCall1(getCurrentIndexKey, PointerGetDatum(scan));
+		/* When dedup tracking is disabled, do not request the dedup state from
+		 * the index: call without the out-pointer and report none, so no dedup
+		 * state is serialized into the continuation. */
+		if (!EnableDynamicCursorDedupTracking)
+		{
+			if (dedupState != NULL)
+			{
+				*dedupState = NULL;
+			}
+
+			return DirectFunctionCall1(getCurrentIndexKey, PointerGetDatum(scan));
+		}
+
+		return DirectFunctionCall2(getCurrentIndexKey, PointerGetDatum(scan),
+								   PointerGetDatum(dedupState));
 	}
 	else
 	{
+		if (dedupState != NULL)
+		{
+			*dedupState = NULL;
+		}
+
 		DocumentDBRumIndexState *state = scan->opaque;
 		return DirectFunctionCall1(getCurrentIndexKey, PointerGetDatum(state->innerScan));
 	}

@@ -1,0 +1,220 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
+SET documentdb.next_collection_id TO 29400;
+SET documentdb.next_collection_index_id TO 29400;
+SET documentdb.enableCompositeIndexPlanner TO on;
+SET documentdb.enableIndexMetadataGlobalTracking TO on;
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.enableExplainScanIndexCosts TO off;
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+-- ============================================================================
+-- Index-only-scan lowering for a covered count over a NON-multi-key composite
+-- index. All paths here are scalar (no arrays), so the index is not multi-key and
+-- a count -- which never needs the document body -- can be answered from the
+-- index alone (an index-only scan) with no heap access.
+--
+-- Data shape:
+--   * zone / band are scalar strings, both covered by the composite index.
+-- ============================================================================
+-- Non-multi-key composite index over (zone, band).
+SELECT documentdb_api_internal.create_indexes_non_concurrently('orcount_db',
+    '{ "createIndexes": "records", "indexes": [ { "key": { "zone": 1, "band": 1 }, "name": "idx_zone_band", "enableOrderedIndex": 1 } ] }', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Seed data (scalar only -> the index stays non-multi-key). Wrapped in COUNT() to
+-- avoid per-row output spew.
+SELECT COUNT(documentdb_api.insert_one('orcount_db', 'records',
+    ('{ "_id": ' || i::text ||
+     ', "zone": "z' || (i % 4)::text || '"' ||
+     ', "band": "b' || (i % 3)::text || '" }')::bson))
+FROM generate_series(1, 200) i;
+ count 
+-------
+   200
+(1 row)
+
+-- VACUUM (ANALYZE) the collection heap we created (scoped, not a global bare
+-- ANALYZE) so the visibility map is populated alongside fresh statistics,
+-- keeping the index-only-scan vs. bitmap-heap-scan plan choice stable across
+-- PostgreSQL versions.
+VACUUM (ANALYZE) documentdb_data.documents_29401;
+-- ============================================================================
+-- 1. Baseline: a count whose filter is a SINGLE equality $and fully covered by
+--    the composite index IS lowered to an Index Only Scan (no heap access needed
+--    for the count). isMultiKey is false, so the index tuple is authoritative.
+--    (Heap Fetches are masked because they are environment-dependent.)
+-- ============================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('orcount_db',
+        '{ "count": "records", "query": { "$and": [ { "zone": "z1" }, { "band": "b1" } ] }, "hint": "idx_zone_band" }')
+$cmd$, p_ignore_heap_fetches => true);
+                                              run_explain_and_trim                                               
+-----------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
+         namespaceName: orcount_db.records
+         indexName: idx_zone_band
+         indexKey: {"zone": 1,"band": 1}
+         isMultiKey: false
+         indexBounds: ["zone": ["z1", "z1"], "band": ["b1", "b1"]]
+         innerScanLoops: 2 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 17)]
+         ->  Index Only Scan using idx_zone_band on documents_29401 collection (actual rows=17 loops=1)
+               Index Cond: ((document @= '{ "zone" : "z1" }'::bson) AND (document @= '{ "band" : "b1" }'::bson))
+               Heap Fetches: xxx
+(13 rows)
+
+SELECT document FROM bson_aggregation_count('orcount_db',
+    '{ "count": "records", "query": { "$and": [ { "zone": "z1" }, { "band": "b1" } ] }, "hint": "idx_zone_band" }');
+                               document                                
+-----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "17" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- ============================================================================
+-- 2. A count whose filter is an $or of TWO equality $and branches over the SAME
+--    non-multi-key composite index (an OR-of-ANDs). Every branch is fully covered
+--    by (zone, band), so the count could be answered without touching the heap.
+--    OBSERVED TODAY: the plan is a Bitmap Heap Scan (BitmapOr of two Bitmap Index
+--    Scans) with a heap Recheck Cond -- it fetches heap pages even though nothing
+--    but the count is needed.
+--    TODO: this SHOULD be lowered to an index-only scan. The index is not
+--    multi-key (isMultiKey: false) and every $or branch is fully covered by
+--    (zone, band), so the union of the two equality ranges can be served straight
+--    from the index with no heap access -- exactly as the single-branch count in
+--    section 1 already is. The OR-of-ANDs-on-one-index shape should lower to an
+--    index-only scan (a union / append of the two covered ranges) instead of a
+--    Bitmap Heap Scan.
+-- ============================================================================
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('orcount_db',
+        '{ "count": "records", "query": { "$or": [ { "$and": [ { "zone": "z1" }, { "band": "b1" } ] }, { "$and": [ { "zone": "z2" }, { "band": "b2" } ] } ] }, "hint": "idx_zone_band" }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                                                             run_explain_and_trim                                                                                             
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=34 loops=1)
+         namespaceName: orcount_db.records
+         indexName: idx_zone_band
+         indexKey: {"zone": 1,"band": 1}
+         isMultiKey: false
+         indexBounds: ["zone": ["z1", "z1"], "band": ["b1", "b1"]]
+         innerScanLoops: 17 loops
+         scanType: regular
+         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 17)]
+         indexName: idx_zone_band
+         indexKey: {"zone": 1,"band": 1}
+         isMultiKey: false
+         indexBounds: ["zone": ["z2", "z2"], "band": ["b2", "b2"]]
+         innerScanLoops: 17 loops
+         scanType: regular
+         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 17)]
+         ->  Bitmap Heap Scan on documents_29401 collection (actual rows=34 loops=1)
+               Recheck Cond: (((document @= '{ "zone" : "z1" }'::bson) AND (document @= '{ "band" : "b1" }'::bson)) OR ((document @= '{ "zone" : "z2" }'::bson) AND (document @= '{ "band" : "b2" }'::bson)))
+               Heap Blocks: exact=3
+               ->  BitmapOr (actual rows=0 loops=1)
+                     ->  Bitmap Index Scan on idx_zone_band (actual rows=17 loops=1)
+                           Index Cond: ((document @= '{ "zone" : "z1" }'::bson) AND (document @= '{ "band" : "b1" }'::bson))
+                     ->  Bitmap Index Scan on idx_zone_band (actual rows=17 loops=1)
+                           Index Cond: ((document @= '{ "zone" : "z2" }'::bson) AND (document @= '{ "band" : "b2" }'::bson))
+(25 rows)
+
+SELECT document FROM bson_aggregation_count('orcount_db',
+    '{ "count": "records", "query": { "$or": [ { "$and": [ { "zone": "z1" }, { "band": "b1" } ] }, { "$and": [ { "zone": "z2" }, { "band": "b2" } ] } ] }, "hint": "idx_zone_band" }');
+                               document                                
+-----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "34" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- ============================================================================
+-- FORCE ORDERED INDEX SCAN + CORRECTNESS VALIDATION
+-- Re-run every scenario above with documentdb_rum.forceRumOrderedIndexScan = on.
+-- This forces the extended-RUM access method onto its ordered (streaming) index
+-- scan path even where the natural plan chose a regular or bitmap index scan, so
+-- the ordered-scan code path is exercised directly. For each scenario the forced
+-- EXPLAIN shows the resulting plan (note where scanType flips from regular to
+-- ordered) and the query result is printed; each forced result MUST match the
+-- corresponding non-forced scenario's result above, validating that the ordered
+-- scan path returns identical rows.
+-- ============================================================================
+SET documentdb_rum.forceRumOrderedIndexScan TO on;
+-- Scenario 1 (forced ordered): plan + result must match section 1 above.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('orcount_db',
+        '{ "count": "records", "query": { "$and": [ { "zone": "z1" }, { "band": "b1" } ] }, "hint": "idx_zone_band" }')
+$cmd$, p_ignore_heap_fetches => true);
+                                              run_explain_and_trim                                               
+-----------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
+         namespaceName: orcount_db.records
+         indexName: idx_zone_band
+         indexKey: {"zone": 1,"band": 1}
+         isMultiKey: false
+         indexBounds: ["zone": ["z1", "z1"], "band": ["b1", "b1"]]
+         innerScanLoops: 2 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 17)]
+         ->  Index Only Scan using idx_zone_band on documents_29401 collection (actual rows=17 loops=1)
+               Index Cond: ((document @= '{ "zone" : "z1" }'::bson) AND (document @= '{ "band" : "b1" }'::bson))
+               Heap Fetches: xxx
+(13 rows)
+
+SELECT document FROM bson_aggregation_count('orcount_db',
+    '{ "count": "records", "query": { "$and": [ { "zone": "z1" }, { "band": "b1" } ] }, "hint": "idx_zone_band" }');
+                               document                                
+-----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "17" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Scenario 2 (forced ordered): plan + result must match section 2 above.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('orcount_db',
+        '{ "count": "records", "query": { "$or": [ { "$and": [ { "zone": "z1" }, { "band": "b1" } ] }, { "$and": [ { "zone": "z2" }, { "band": "b2" } ] } ] }, "hint": "idx_zone_band" }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                                                             run_explain_and_trim                                                                                             
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=34 loops=1)
+         namespaceName: orcount_db.records
+         indexName: idx_zone_band
+         indexKey: {"zone": 1,"band": 1}
+         isMultiKey: false
+         indexBounds: ["zone": ["z1", "z1"], "band": ["b1", "b1"]]
+         innerScanLoops: 2 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 17)]
+         indexName: idx_zone_band
+         indexKey: {"zone": 1,"band": 1}
+         isMultiKey: false
+         indexBounds: ["zone": ["z2", "z2"], "band": ["b2", "b2"]]
+         innerScanLoops: 2 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 17)]
+         ->  Bitmap Heap Scan on documents_29401 collection (actual rows=34 loops=1)
+               Recheck Cond: (((document @= '{ "zone" : "z1" }'::bson) AND (document @= '{ "band" : "b1" }'::bson)) OR ((document @= '{ "zone" : "z2" }'::bson) AND (document @= '{ "band" : "b2" }'::bson)))
+               Heap Blocks: exact=3
+               ->  BitmapOr (actual rows=0 loops=1)
+                     ->  Bitmap Index Scan on idx_zone_band (actual rows=17 loops=1)
+                           Index Cond: ((document @= '{ "zone" : "z1" }'::bson) AND (document @= '{ "band" : "b1" }'::bson))
+                     ->  Bitmap Index Scan on idx_zone_band (actual rows=17 loops=1)
+                           Index Cond: ((document @= '{ "zone" : "z2" }'::bson) AND (document @= '{ "band" : "b2" }'::bson))
+(25 rows)
+
+SELECT document FROM bson_aggregation_count('orcount_db',
+    '{ "count": "records", "query": { "$or": [ { "$and": [ { "zone": "z1" }, { "band": "b1" } ] }, { "$and": [ { "zone": "z2" }, { "band": "b2" } ] } ] }, "hint": "idx_zone_band" }');
+                               document                                
+-----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "34" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET documentdb_rum.forceRumOrderedIndexScan;

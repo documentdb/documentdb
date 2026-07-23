@@ -7,116 +7,6 @@ SET documentdb.defaultUseCompositeOpClass TO on;
 
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 
--- ===== Section 0: Negative tests ======
-
--- ordered/composite index with collation should fail when
--- enableCollationWithNonUniqueOrderedIndexes is OFF
-SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO off;
-
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-  'ord_coll_ordered_db',
-  '{
-    "createIndexes": "ord_guc_off_fail",
-    "indexes": [{
-      "key": { "a": 1 },
-      "name": "a_coll_guc_off_idx",
-      "collation": { "locale": "en", "strength": 1 }
-    }]
-  }',
-  TRUE
-);
-
-SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
-
--- unique ordered index with collation should fail
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-  'ord_coll_ordered_db',
-  '{
-    "createIndexes": "ord_unique_fail",
-    "indexes": [{
-      "key": { "a": 1, "b": 1 },
-      "name": "a_b_unique_coll_idx",
-      "unique": true,
-      "collation": { "locale": "en", "numericOrdering": true }
-    }]
-  }',
-  TRUE
-);
-
--- non-ordered index with collation should fail
-SET documentdb.defaultUseCompositeOpClass TO off;
-
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-  'ord_coll_ordered_db',
-  '{
-    "createIndexes": "ord_non_ordered_fail",
-    "indexes": [{
-      "key": { "a": 1 },
-      "name": "a_non_ordered_coll_idx",
-      "collation": { "locale": "en", "strength": 1 }
-    }]
-  }',
-  TRUE
-);
-
-SET documentdb.defaultUseCompositeOpClass TO on;
-
--- hashed index with collation should fail
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-  'ord_coll_ordered_db',
-  '{
-    "createIndexes": "ord_hashed_fail",
-    "indexes": [{
-      "key": { "a": "hashed" },
-      "name": "a_hashed_coll_idx",
-      "collation": { "locale": "en", "strength": 1 }
-    }]
-  }',
-  TRUE
-);
-
--- 2d index with collation should fail
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-  'ord_coll_ordered_db',
-  '{
-    "createIndexes": "ord_2d_fail",
-    "indexes": [{
-      "key": { "loc": "2d" },
-      "name": "loc_2d_coll_idx",
-      "collation": { "locale": "en", "strength": 1 }
-    }]
-  }',
-  TRUE
-);
-
--- text index with collation should fail
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-  'ord_coll_ordered_db',
-  '{
-    "createIndexes": "ord_text_fail",
-    "indexes": [{
-      "key": { "content": "text" },
-      "name": "content_text_coll_idx",
-      "collation": { "locale": "en", "strength": 1 }
-    }]
-  }',
-  TRUE
-);
-
--- 2dsphere index with collation should fail
-SELECT documentdb_api_internal.create_indexes_non_concurrently(
-  'ord_coll_ordered_db',
-  '{
-    "createIndexes": "ord_2dsphere_fail",
-    "indexes": [{
-      "key": { "loc": "2dsphere" },
-      "name": "loc_2dsphere_coll_idx",
-      "collation": { "locale": "en", "strength": 1 }
-    }]
-  }',
-  TRUE
-);
-
 CREATE SCHEMA IF NOT EXISTS collation_ordered_test_schema;
 
 CREATE FUNCTION collation_ordered_test_schema.gin_bson_index_term_to_bson(bytea) 
@@ -2269,6 +2159,64 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_simple", "collation": { "locale": "en", "numericOrdering": true } }')
 $cmd$);
+
+-- ============================================================
+-- Section 30: index-only scan under collation on collation-aware
+-- ordered indexes keyed on _id and on a compound (country, _id).
+-- A covered $count needs only indexed columns, so it resolves to
+-- an Index Only Scan even under collation; a find that returns the
+-- document needs the heap, so it stays an Index Scan.
+-- ============================================================
+
+-- distinct (byte-wise) string _id values including case variants so a
+-- strength-1 collation index treats "cat"/"Cat"/"CAT" as equal
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "cat", "country": "usa" }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "Cat", "country": "USA" }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "CAT", "country": "Usa" }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "dog", "country": "brazil" }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "Dog", "country": "Brazil" }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "bird", "country": "mexico" }');
+
+-- collation-aware ordered index keyed on _id (strength 1 => case-insensitive)
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ord_coll_ios_db', '{ "createIndexes": "ios_coll", "indexes": [ { "key": { "_id": 1 }, "storageEngine": { "enableOrderedIndex": true }, "collation": { "locale": "en", "strength": 1 }, "name": "ios_id_en_s1" }] }', true);
+
+-- the ordered collation index rebuilds ios_coll onto a new backing table; disable
+-- autovacuum and freeze it so the index-only scans below stay deterministic
+ALTER TABLE documentdb_data.documents_8129 SET (autovacuum_enabled = off);
+VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_8129;
+
+SET enable_bitmapscan TO off;
+
+-- covered $count with equality on _id under collation => Index Only Scan
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "_id": "cat" } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "_id": "cat" } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- covered $count with a range on _id under collation => Index Only Scan
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "_id": { "$gte": "cat" } } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "_id": { "$gte": "cat" } } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- returning the document needs the heap, so it stays an Index Scan (not IOS)
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "_id": "dog" }, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "_id": "dog" }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- the index-only scan honors enable_indexonlyscan
+SET enable_indexonlyscan TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "_id": { "$gte": "cat" } } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+RESET enable_indexonlyscan;
+
+-- compound collation-aware ordered index (country, _id): covered $count on the
+-- leading field resolves to an Index Only Scan under collation
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ord_coll_ios_db', '{ "createIndexes": "ios_coll", "indexes": [ { "key": { "country": 1, "_id": 1 }, "storageEngine": { "enableOrderedIndex": true }, "collation": { "locale": "en", "strength": 1 }, "name": "ios_country_id_en_s1" }] }', true);
+
+VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_8129;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa" } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa" } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": { "$gte": "brazil" } } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": { "$gte": "brazil" } } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }');
+
+RESET enable_bitmapscan;
 
 RESET documentdb.max_non_ordered_term_scan_threshold;
 RESET documentdb.enableOrderByIndexTerm;

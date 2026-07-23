@@ -33,4 +33,6 @@ void AddDistinctCustomScanWrapper(PlannerInfo *root, RelOptInfo *rel, RangeTblEn
 void AddReservoirSampleCustomPath(PlannerInfo *root, RelOptInfo *rel,
 								  FuncExpr *sampleExpr);
 
+int64 GetMaxReservoirSampleSize(void);
+
 #endif

@@ -22,10 +22,12 @@ SELECT documentdb_api.insert_one('db','sumavg_shard_types_test','{ "_id": 10, "g
 SET citus.enable_local_execution TO off;
 
 -- Pre-sharding results
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_shard_types_test", "pipeline": [ { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_shard_types_test", "pipeline": [ { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_shard_types_test", "pipeline": [ { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -35,10 +37,12 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
 SELECT documentdb_api.shard_collection('db', 'sumavg_shard_types_test', '{ "_id": "hashed" }', false);
 
 -- Post-sharding results (should be same as pre-sharding)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_shard_types_test", "pipeline": [ { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_shard_types_test", "pipeline": [ { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_shard_types_test", "pipeline": [ { "$group": { "_id": "$group", "total": { "$sum": "$val" }, "average": { "$avg": "$val" } } }, { "$sort": { "_id": 1 } } ] }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -63,12 +67,14 @@ SELECT documentdb_api.insert_one('db','sumavg_collation_test','{ "_id": 5, "grou
 SELECT documentdb_api.shard_collection('db', 'sumavg_collation_test', '{ "_id": "hashed" }', false);
 
 -- Post-sharding $sum counting with collation (should match pre-sharding results)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
 
 -- Post-sharding constant group with collation
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": null, "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } }, "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } } ], "collation": { "locale": "en", "strength": 1 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -77,12 +83,14 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 SET citus.enable_local_execution TO off;
 
 -- Post-sharding remote execution with collation
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
 
 -- Post-sharding remote constant group with collation
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": null, "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } }, "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } } ], "collation": { "locale": "en", "strength": 1 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -124,12 +132,14 @@ SET citus.enable_local_execution TO off;
 
 -- Post-shard remote execution: count items > "5" with numericOrdering
 -- numericOrdering=true: x has 6 items > 5 (9,10,20,50,100,200), y has 7 items > 5 (6,7,8,40,60,80,400,600,800)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_numord_dist_test", "pipeline": [ { "$group": { "_id": "$grp", "countAbove": { "$sum": { "$cond": { "if": { "$gt": ["$val", "5"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "numericOrdering": true } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_numord_dist_test", "pipeline": [ { "$group": { "_id": "$grp", "countAbove": { "$sum": { "$cond": { "if": { "$gt": ["$val", "5"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "numericOrdering": true } }');
 
 -- Post-shard remote execution: constant group
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_numord_dist_test", "pipeline": [ { "$group": { "_id": null, "countAbove": { "$sum": { "$cond": { "if": { "$gt": ["$val", "5"] }, "then": 1, "else": 0 } } } } } ], "collation": { "locale": "en", "numericOrdering": true } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -138,7 +148,8 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_num
 RESET citus.enable_local_execution;
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SET documentdb_core.enableCollation TO off;
-RESET documentdb.enableNewWithExprAccumulators;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- =============================================================================
 -- Test: enableSortGroupStage drops dead outer $sort for order-insensitive
@@ -188,3 +199,35 @@ WHERE query_plan LIKE '%Sort Key:%'
 RESET documentdb.enableSortGroupStage;
 RESET citus.enable_local_execution;
 SELECT documentdb_api.drop_collection('db', 'sortgroup_shard_test');
+
+-- =============================================================================
+-- Test: reshaping ($project) stage before $group on a sharded collection.
+-- The $project makes the accumulator's document argument a computed expression
+-- (not the raw stored column), and sharding forces two-phase distributed
+-- aggregation (partial aggregate on the shards, combined on the coordinator).
+-- The document argument must present a type that exactly matches the WithExpr
+-- aggregate signature or the distributed partial aggregation aborts.
+-- =============================================================================
+
+SELECT documentdb_api.insert_one('db','sumavg_project_group_test','{ "_id": 1, "g": "A", "a": 5, "b": 1 }');
+SELECT documentdb_api.insert_one('db','sumavg_project_group_test','{ "_id": 2, "g": "A", "a": 7, "b": 2 }');
+SELECT documentdb_api.insert_one('db','sumavg_project_group_test','{ "_id": 3, "g": "B", "a": 3, "b": 3 }');
+SELECT documentdb_api.insert_one('db','sumavg_project_group_test','{ "_id": 4, "g": "B", "a": 9, "b": 4 }');
+
+SELECT documentdb_api.shard_collection('db', 'sumavg_project_group_test', '{ "_id": "hashed" }', false);
+
+SET documentdb.enableNewWithExprAccumulators TO on;
+SET citus.enable_local_execution TO off;
+
+-- Global group after a $project: $sum/$avg on a projected field.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_project_group_test", "pipeline": [ { "$project": { "_id": 0, "a": 1, "b": 1 } }, { "$group": { "_id": null, "total": { "$sum": "$a" }, "average": { "$avg": "$a" } } } ] }');
+
+-- Grouped by a non shard-key field after a $project, with a following $sort.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_project_group_test", "pipeline": [ { "$project": { "_id": 0, "g": 1, "a": 1 } }, { "$group": { "_id": "$g", "total": { "$sum": "$a" }, "average": { "$avg": "$a" } } }, { "$sort": { "_id": 1 } } ] }');
+
+-- Accumulator taking an expression argument after a $project.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_project_group_test", "pipeline": [ { "$project": { "_id": 0, "a": 1, "b": 1 } }, { "$group": { "_id": null, "combined": { "$sum": { "$add": ["$a", "$b"] } } } } ] }');
+
+RESET citus.enable_local_execution;
+SET documentdb.enableNewWithExprAccumulators TO off;
+SELECT documentdb_api.drop_collection('db', 'sumavg_project_group_test');

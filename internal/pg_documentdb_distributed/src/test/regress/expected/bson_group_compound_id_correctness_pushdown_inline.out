@@ -17,6 +17,8 @@ SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extende
 
 set documentdb.defaultUseCompositeOpClass to on;
 set documentdb_core.enableWriteDocumentsInRepath to on;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 -- Clean up from any prior run
 SELECT documentdb_api.drop_collection('group_corr_db', 'group_push') IS NOT NULL;
  ?column? 
@@ -27,7 +29,7 @@ SELECT documentdb_api.drop_collection('group_corr_db', 'group_push') IS NOT NULL
 -- Setup: create collection, indexes, and insert data
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'group_corr_db', '{ "createIndexes": "group_push", "indexes": [ { "name": "a_1", "key": { "a": 1 } }, { "name": "b_c_1", "key": { "b": 1, "c": 1 } } ] }', TRUE);
-psql:sql/bson_group_compound_id_correctness_core.sql:16: NOTICE:  creating collection
+psql:sql/bson_group_compound_id_correctness_core.sql:18: NOTICE:  creating collection
                                                                                                    create_indexes_non_concurrently                                                                                                   
 ---------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }

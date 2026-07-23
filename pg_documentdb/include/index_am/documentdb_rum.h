@@ -104,7 +104,8 @@ void RecordCostEstimateForIndex(Oid indexOid, Oid relOid, Cost indexStartupCost,
 								int numBoundaryQuals, double
 								dataPagesProportionFetched);
 
-Datum DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan);
+Datum DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan, bytea **dedupState);
+
 void DocumentDBRumSkipTidsForCurrentEntry(IndexScanDesc scan, PGFunction
 										  skipTidsFunc, bool pathKeySummarizationForced,
 										  ItemPointer userContinuationState);

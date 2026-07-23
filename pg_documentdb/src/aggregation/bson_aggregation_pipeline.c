@@ -47,6 +47,7 @@
 #include <funcapi.h>
 
 #include "io/bson_core.h"
+#include "types/decimal128.h"
 #include "metadata/metadata_cache.h"
 #include "query/query_operator.h"
 #include "planner/documentdb_planner.h"
@@ -60,6 +61,7 @@
 #include "utils/version_utils.h"
 #include "aggregation/bson_query.h"
 #include "aggregation/bson_query_common.h"
+#include "customscan/bson_custom_query_scan.h"
 #include "metadata/index.h"
 
 #include "aggregation/bson_aggregation_pipeline_private.h"
@@ -96,7 +98,7 @@ extern bool EnableProjectPushUpBeforeUnwindWithGroup;
 extern bool EnableSortPushToAccumulatorWithPrefix;
 extern bool EnableSampleScanFixOnSharded;
 extern bool EnableDistinctIndexPushdown;
-extern bool EnableAddShardKeyOnlyOnPrimaryKeyFilters;
+extern bool EnableDistinctExistsFilterPushdown;
 extern bool EnableSubqueryPushdownForMatch;
 extern bool EnableDollarSampleReservoirScan;
 
@@ -376,6 +378,7 @@ static Query * HandleReplaceWith(const bson_value_t *existingValue, Query *query
 								 AggregationPipelineBuildContext *context);
 static Query * HandleSample(const bson_value_t *existingValue, Query *query,
 							AggregationPipelineBuildContext *context);
+static int64_t ParseSampleSize(const bson_value_t *sizeValue);
 static Query * HandleSkip(const bson_value_t *existingValue, Query *query,
 						  AggregationPipelineBuildContext *context);
 static Query * HandleSort(const bson_value_t *existingValue, Query *query,
@@ -474,7 +477,7 @@ static Query * ApplyFindSpec(const FindSpec *spec, MongoCollection *collection,
 static Query * ApplyFindSpecCore(const FindSpec *spec, Query *query, Query *baseQuery,
 								 QueryData *queryData, CursorParamKind cursorParamKind,
 								 AggregationPipelineBuildContext *context);
-static Const * AddCollationToSortSpec(pgbsonelement *sortElement,
+static Const * AddCollationToSortSpec(const pgbsonelement *sortElement,
 									  const char *collationString);
 
 #define COMPATIBLE_CHANGE_STREAM_STAGES_COUNT 8
@@ -866,6 +869,19 @@ static const AggregationStageDefinition StageDefinitions[] =
 		.pipelineCheckFunc = NULL,
 		.allowBaseShardTablePushdown = false,
 		.stageEnum = Stage_ListLocalSessions,
+	},
+	{
+		.stage = "$listSearchIndexes",
+		.mutateFunc = &HandleListExtendedIndexes,
+		.requiresPersistentCursor = &RequiresPersistentCursorTrue,
+		.canInlineLookupStageFunc = NULL,
+		.preservesStableSortOrder = false,
+		.canHandleAgnosticQueries = false,
+		.isProjectTransform = false,
+		.isOutputStage = false,
+		.pipelineCheckFunc = NULL,
+		.allowBaseShardTablePushdown = false,
+		.stageEnum = Stage_ListSearchIndexes,
 	},
 	{
 		.stage = "$listSessions",
@@ -1297,20 +1313,6 @@ CheckMaxAllowedAggregationStages(int numberOfStages)
 							"The pipeline length cannot exceed a maximum of %d stages.",
 							MaxAggregationStagesAllowed)));
 	}
-}
-
-
-inline static bool
-ShouldSkipShardKeyFilterOnBaseTable(AggregationPipelineBuildContext *context)
-{
-	if (!EnableAddShardKeyOnlyOnPrimaryKeyFilters)
-	{
-		return false;
-	}
-
-	return context->mongoCollection != NULL &&
-		   context->mongoCollection->shardKey == NULL &&
-		   context->allowShardBaseTable;
 }
 
 
@@ -4962,8 +4964,7 @@ AddShardKeyAndIdFilters(const bson_value_t *existingValue, Query *query,
 			context->isPointReadQuery = isPointRead;
 
 			/* If we skipped writing the shard key on the base table, write it now */
-			if (ShouldSkipShardKeyFilterOnBaseTable(context) &&
-				context->mongoCollection->shardKey == NULL)
+			if (ShouldSkipShardKeyFilterOnBaseTable(context))
 			{
 				Expr *zeroShardKeyFilter = CreateNonShardedShardKeyValueFilter(
 					var->varno,
@@ -5344,6 +5345,59 @@ CreateSingleArgAggregate(Oid aggregateFunctionId, Expr *argument, ParseState *pa
 }
 
 
+static List *
+AddFullScanQualsToJoinTreeForOrderByPushdown(List *currentQuals, Expr *documentExpr,
+											 const pgbsonelement *sortSpecElement,
+											 AggregationPipelineBuildContext *context,
+											 bool *addedShardKeyFilter)
+{
+	Const *sortConst = AddCollationToSortSpec(sortSpecElement,
+											  context->collationString);
+	List *rangeArgs = list_make2(documentExpr, sortConst);
+	Expr *fullScanExpr = (Expr *) makeFuncExpr(
+		BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
+		InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+	currentQuals = lappend(currentQuals, fullScanExpr);
+
+	if (sortSpecElement->pathLength == 3 && strncmp(sortSpecElement->path, "_id", 3) ==
+		0 &&
+		ShouldSkipShardKeyFilterOnBaseTable(context) && !*addedShardKeyFilter &&
+		IsA(documentExpr, Var))
+	{
+		Var *documentVar = (Var *) documentExpr;
+
+		/* If we are sorting on the _id for sort or group on an unsharded table,
+		 * and we haven't added the zero shard key filter, add it now.
+		 */
+		Expr *zeroShardKeyFilter = CreateNonShardedShardKeyValueFilter(
+			documentVar->varno,
+			context->mongoCollection);
+		currentQuals = lappend(currentQuals, zeroShardKeyFilter);
+		*addedShardKeyFilter = true;
+	}
+
+	return currentQuals;
+}
+
+
+static void
+AddFullScanQualsForOrderByPushdown(Query *query, Expr *documentExpr,
+								   const pgbsonelement *sortSpecElement,
+								   AggregationPipelineBuildContext *context)
+{
+	List *currentQuals = make_ands_implicit(
+		(Expr *) query->jointree->quals);
+
+	bool addedShardKeyFilter = false;
+	currentQuals = AddFullScanQualsToJoinTreeForOrderByPushdown(currentQuals,
+																documentExpr,
+																sortSpecElement, context,
+																&addedShardKeyFilter);
+	query->jointree->quals = (Node *) make_ands_explicit(
+		currentQuals);
+}
+
+
 static Query *
 HandleDistinct(const StringView *distinctKey, Query *query,
 			   AggregationPipelineBuildContext *context)
@@ -5395,17 +5449,38 @@ HandleDistinct(const StringView *distinctKey, Query *query,
 		sortSpecElement.bsonValue.value_type = BSON_TYPE_INT32;
 		sortSpecElement.bsonValue.value.v_int32 = 1;
 
-		Const *sortConst = AddCollationToSortSpec(&sortSpecElement,
-												  context->collationString);
-		List *rangeArgs = list_make2(currentProjection, sortConst);
-		Expr *fullScanExpr = (Expr *) makeFuncExpr(
-			BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
+		AddFullScanQualsForOrderByPushdown(query, currentProjection, &sortSpecElement,
+										   context);
+	}
+
+	/*
+	 * Append a distinct-exists filter (path >= MinKey once lowered) so that an
+	 * ordered index on the distinct path can restrict the scan to documents
+	 * that actually hold the path. The filter is trimmable when it is pushed to
+	 * the index, and is otherwise evaluated at runtime. Gated on the cluster
+	 * having the function installed (missingOk lookup returns InvalidOid on
+	 * older clusters).
+	 */
+	if (EnableDistinctExistsFilterPushdown &&
+		IsClusterVersionAtleast(DocDB_V0, 114, 1) &&
+		OidIsValid(BsonDollarDistinctExistsFunctionOid()))
+	{
+		pgbson_writer existsWriter;
+		PgbsonWriterInit(&existsWriter);
+		PgbsonWriterAppendBool(&existsWriter, distinctKey->string,
+							   distinctKey->length, true);
+		Const *existsSpecConst =
+			makeConst(BsonTypeId(), -1, InvalidOid, -1,
+					  PointerGetDatum(PgbsonWriterGetPgbson(&existsWriter)),
+					  false, false);
+		List *existsArgs = list_make2(currentProjection, existsSpecConst);
+		Expr *distinctExistsExpr = (Expr *) makeFuncExpr(
+			BsonDollarDistinctExistsFunctionOid(), BOOLOID, existsArgs,
 			InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
-		List *currentQuals = make_ands_implicit(
+		List *existsQuals = make_ands_implicit(
 			(Expr *) query->jointree->quals);
-		currentQuals = lappend(currentQuals, fullScanExpr);
-		query->jointree->quals = (Node *) make_ands_explicit(
-			currentQuals);
+		existsQuals = lappend(existsQuals, distinctExistsExpr);
+		query->jointree->quals = (Node *) make_ands_explicit(existsQuals);
 	}
 
 	query = MigrateQueryToSubQuery(query, context);
@@ -5715,11 +5790,11 @@ CanPushSortFilterToIndex(Query *query, AggregationPipelineBuildContext *context)
 
 
 static Const *
-AddCollationToSortSpec(pgbsonelement *sortElement, const char *collationString)
+AddCollationToSortSpec(const pgbsonelement *sortElement, const char *collationString)
 {
 	if (!IsCollationValid(collationString))
 	{
-		return MakeBsonConst(PgbsonElementToPgbson(sortElement));
+		return MakeBsonConst(PgbsonElementToPgbson((pgbsonelement *) sortElement));
 	}
 
 	pgbson_writer writer;
@@ -5928,17 +6003,8 @@ HandleSort(const bson_value_t *existingValue, Query *query,
 				 */
 				if (CanPushSortFilterToIndex(query, context))
 				{
-					Const *fullScanSortConst = AddCollationToSortSpec(
-						&element, context->collationString);
-					List *rangeArgs = list_make2(sortInput, fullScanSortConst);
-					Expr *fullScanExpr = (Expr *) makeFuncExpr(
-						BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
-						InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
-					List *currentQuals = make_ands_implicit(
-						(Expr *) query->jointree->quals);
-					currentQuals = lappend(currentQuals, fullScanExpr);
-					query->jointree->quals = (Node *) make_ands_explicit(
-						currentQuals);
+					AddFullScanQualsForOrderByPushdown(query, sortInput, &element,
+													   context);
 				}
 
 				/* If sort by is descending use the new operators: this allows for
@@ -6774,6 +6840,22 @@ GetDocumentExprForGroupAccumulatorValue(const bson_value_t *accumulatorValue,
 
 
 /*
+ * True when the document is read through the distributed table rather than
+ * directly off a local, unsharded shard base table: either the collection is
+ * sharded, or the shard base table wasn't usable for this query. In that case
+ * the document column is typed as core-schema bson and must be converted to the
+ * API bson type before being consumed by aggregates that expect it.
+ */
+inline static bool
+IsDistributedShardContext(AggregationPipelineBuildContext *context)
+{
+	return context->mongoCollection != NULL &&
+		   (context->mongoCollection->shardKey != NULL ||
+			!context->allowShardBaseTable);
+}
+
+
+/*
  * Simple helper method that has logic to insert a Group accumulator to a query.
  * This adds the group aggregate to the TargetEntry (for projection)
  * and also adds the necessary data to the bson_repath_and_build arguments.
@@ -6837,7 +6919,7 @@ AddSimpleGroupAccumulatorWithExpr(Query *query, const bson_value_t *accumulatorV
 								  List *repathArgs, Const *accumulatorText,
 								  ParseState *parseState, char *identifiers,
 								  Expr *documentExpr, Oid aggregateFunctionOid,
-								  Expr *variableSpec, const char *collationString,
+								  AggregationPipelineBuildContext *context,
 								  TargetEntry **createdAccumulatorEntry)
 {
 	Expr *exprConst = (Expr *) MakeBsonConst(BsonValueToDocumentPgbson(accumulatorValue));
@@ -6845,12 +6927,21 @@ AddSimpleGroupAccumulatorWithExpr(Query *query, const bson_value_t *accumulatorV
 	documentExpr = GetDocumentExprForGroupAccumulatorValue(accumulatorValue,
 														   documentExpr);
 
-	Const *collationConst = IsCollationApplicable(collationString) ?
-							MakeTextConst(collationString,
-										  strlen(collationString)) :
+	if (IsDistributedShardContext(context) &&
+		BsonTypeId() != DocumentDBCoreBsonTypeId())
+	{
+		documentExpr = (Expr *) makeFuncExpr(
+			DocumentDBCoreBsonToBsonFunctionOId(), BsonTypeId(), list_make1(documentExpr),
+			InvalidOid,
+			InvalidOid, COERCE_EXPLICIT_CALL);
+	}
+
+	Const *collationConst = IsCollationApplicable(context->collationString) ?
+							MakeTextConst(context->collationString,
+										  strlen(context->collationString)) :
 							makeNullConst(TEXTOID, -1, InvalidOid);
 
-	List *aggregateArgs = list_make4(documentExpr, exprConst, variableSpec,
+	List *aggregateArgs = list_make4(documentExpr, exprConst, context->variableSpec,
 									 collationConst);
 	List *argTypesList = list_make4_oid(BsonTypeId(), BsonTypeId(), BsonTypeId(),
 										TEXTOID);
@@ -6875,8 +6966,8 @@ inline static List *
 AddSumGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 					   List *repathArgs, Const *accumulatorText,
 					   ParseState *parseState, char *identifiers,
-					   Expr *documentExpr, Expr *variableSpec, const
-					   char *collationString, bool isGroupIdConst)
+					   Expr *documentExpr, bool isGroupIdConst,
+					   AggregationPipelineBuildContext *context)
 {
 	bool canUseBsonCountAggregate = isGroupIdConst;
 
@@ -6898,8 +6989,7 @@ AddSumGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 													 parseState, identifiers,
 													 documentExpr,
 													 BsonSumWithExprAggregateFunctionOid(),
-													 variableSpec,
-													 collationString,
+													 context,
 													 NULL);
 		}
 		else
@@ -6908,7 +6998,7 @@ AddSumGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 											 accumulatorText, parseState,
 											 identifiers, documentExpr,
 											 BsonSumAggregateFunctionOid(),
-											 variableSpec,
+											 context->variableSpec,
 											 NULL);
 		}
 	}
@@ -7590,9 +7680,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 				fieldGroupFunc = makeFuncExpr(
 					BsonExpressionGetWithLetFunctionOid(), BsonTypeId(),
 					fieldArgs, InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
-				if (context->mongoCollection != NULL &&
-					(context->mongoCollection->shardKey != NULL ||
-					 !context->allowShardBaseTable) &&
+				if (IsDistributedShardContext(context) &&
 					BsonTypeId() != DocumentDBCoreBsonTypeId())
 				{
 					fieldGroupFunc = makeFuncExpr(
@@ -7647,9 +7735,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 			groupFunc = makeFuncExpr(
 				bsonExpressionGetFunction, BsonTypeId(), groupArgs, InvalidOid,
 				InvalidOid, COERCE_EXPLICIT_CALL);
-			if (isGroupByValidForIndexPushdown && context->mongoCollection != NULL &&
-				(context->mongoCollection->shardKey != NULL ||
-				 !context->allowShardBaseTable) &&
+			if (isGroupByValidForIndexPushdown && IsDistributedShardContext(context) &&
 				BsonTypeId() != DocumentDBCoreBsonTypeId())
 			{
 				groupFunc = makeFuncExpr(
@@ -7736,8 +7822,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 					accumulatorText, parseState,
 					identifiers, origEntry->expr,
 					BsonAvgWithExprAggregateFunctionOid(),
-					context->variableSpec,
-					context->collationString,
+					context,
 					NULL);
 			}
 			else
@@ -7761,9 +7846,8 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 												accumulatorText, parseState,
 												identifiers,
 												origEntry->expr,
-												context->variableSpec,
-												context->collationString,
-												isGroupConstant);
+												isGroupConstant,
+												context);
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$max"))
 		{
@@ -7777,8 +7861,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 					accumulatorText, parseState,
 					identifiers, origEntry->expr,
 					BsonMaxWithExprAggregateFunctionOid(),
-					context->variableSpec,
-					context->collationString,
+					context,
 					NULL);
 			}
 			else
@@ -7806,8 +7889,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 					accumulatorText, parseState,
 					identifiers, origEntry->expr,
 					BsonMinWithExprAggregateFunctionOid(),
-					context->variableSpec,
-					context->collationString,
+					context,
 					NULL);
 			}
 			else
@@ -7873,8 +7955,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 						accumulatorText, parseState,
 						identifiers, origEntry->expr,
 						BsonFirstWithExprAggregateFunctionOid(),
-						context->variableSpec,
-						context->collationString,
+						context,
 						&accumulatorTle);
 				}
 				else
@@ -7923,8 +8004,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 						accumulatorText, parseState,
 						identifiers, origEntry->expr,
 						BsonLastWithExprAggregateFunctionOid(),
-						context->variableSpec,
-						context->collationString,
+						context,
 						NULL);
 				}
 				else
@@ -8285,6 +8365,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		List *currentQuals = make_ands_implicit(
 			(Expr *) query->jointree->quals);
 
+		bool addedShardKeyFilter = false;
 		for (int i = 0; i < numGroupByFields; i++)
 		{
 			pgbsonelement sortElement = { 0 };
@@ -8292,13 +8373,10 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 			sortElement.pathLength = groupByFieldPaths[i].length;
 			sortElement.bsonValue.value_type = BSON_TYPE_INT32;
 			sortElement.bsonValue.value.v_int32 = 1;
-			Const *sortConst = AddCollationToSortSpec(&sortElement,
-													  context->collationString);
-			List *rangeArgs = list_make2(origEntry->expr, sortConst);
-			Expr *fullScanExpr = (Expr *) makeFuncExpr(
-				BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
-				InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
-			currentQuals = lappend(currentQuals, fullScanExpr);
+
+			currentQuals = AddFullScanQualsToJoinTreeForOrderByPushdown(
+				currentQuals, origEntry->expr, &sortElement,
+				context, &addedShardKeyFilter);
 		}
 
 		/* When the group-by keys form a prefix of the sort spec, the suffix
@@ -8319,13 +8397,10 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 			{
 				pgbsonelement suffixSortElement;
 				BsonIterToPgbsonElement(&suffixSortIter, &suffixSortElement);
-				Const *suffixSortConst = AddCollationToSortSpec(
-					&suffixSortElement, context->collationString);
-				List *rangeArgs = list_make2(origEntry->expr, suffixSortConst);
-				Expr *fullScanExpr = (Expr *) makeFuncExpr(
-					BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
-					InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
-				currentQuals = lappend(currentQuals, fullScanExpr);
+
+				currentQuals = AddFullScanQualsToJoinTreeForOrderByPushdown(
+					currentQuals, origEntry->expr, &suffixSortElement,
+					context, &addedShardKeyFilter);
 			}
 		}
 
@@ -9320,6 +9395,41 @@ AddQualifierForTailableQuery(Query *query, Query *baseQuery,
 
 
 /*
+ * Parses the numeric $sample size into an int64. Out-of-range magnitudes
+ * saturate to the int64 bounds; NaN coerces to zero.
+ */
+static int64_t
+ParseSampleSize(const bson_value_t *sizeValue)
+{
+	/* Quiet conversion saturates an out-of-range magnitude to +/-infinity instead of throwing. */
+	double sizeDouble = BsonValueAsDoubleQuiet(sizeValue);
+
+	if (isnan(sizeDouble))
+	{
+		/* NaN coerces to zero, which the caller rejects as non positive. */
+		return 0;
+	}
+
+	if (sizeDouble >= (double) PG_INT64_MAX)
+	{
+		/* Oversized: clamp to maximum int64. */
+		return PG_INT64_MAX;
+	}
+
+	if (sizeDouble <= (double) PG_INT64_MIN)
+	{
+		/* Undersized: clamp to minimum int64. */
+		return PG_INT64_MIN;
+	}
+
+	/* In-range: Decimal128 rounds half to even; other numerics truncate toward zero. */
+	return sizeValue->value_type == BSON_TYPE_DECIMAL128 ?
+		   GetBsonDecimal128AsInt64(sizeValue, ConversionRoundingMode_NearestEven) :
+		   BsonValueAsInt64(sizeValue);
+}
+
+
+/*
  * Processes the Sample stage for the aggregation pipeline.
  * If the sample is against the base RTE - injects the Sample TSM.
  * If it's on a downstream stage, injects an ORDER BY Random().
@@ -9345,6 +9455,15 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 		if (strcmp(bson_iter_key(&sampleIter), "size") == 0)
 		{
 			sizeValue = *bson_iter_value(&sampleIter);
+
+			/* Validate the size type inline so a non-numeric size takes
+			 * precedence over any later unrecognized option. */
+			if (!BsonValueIsNumber(&sizeValue))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28746),
+								errmsg(
+									"size argument to $sample must be a number")));
+			}
 		}
 		else
 		{
@@ -9359,20 +9478,16 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 						errmsg("The $sample stage must explicitly define a size value")));
 	}
 
-	if (!BsonValueIsNumber(&sizeValue))
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28746),
-						errmsg(
-							"The size parameter provided to $sample must be a valid numeric value")));
-	}
-
-	double sizeDouble = BsonValueAsDouble(&sizeValue);
-
-	if (sizeDouble < 0 || isnan(sizeDouble) || isinf(sizeDouble))
+	/*
+	 * Coerce the size to an int64, then require a strictly positive value; a
+	 * zero, NaN, or fractional value that rounds to zero is rejected.
+	 */
+	int64_t sampleSize = ParseSampleSize(&sizeValue);
+	if (sampleSize <= 0)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28747),
 						errmsg(
-							"The size parameter provided to $sample must be a valid numeric value")));
+							"size argument to $sample must be a positive integer")));
 	}
 
 	/* If the sample is against the base RTE - convert to a sample CTE */
@@ -9394,7 +9509,7 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 
 			Const *constVal = (Const *) sampleArg;
 			int64_t finalSize = DatumGetInt64(constVal->constvalue);
-			finalSize = Min(finalSize, sizeDouble);
+			finalSize = Min(finalSize, sampleSize);
 			constVal->constvalue = Int64GetDatum(finalSize);
 		}
 		else
@@ -9404,7 +9519,7 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 
 			Node *rowCountArg = (Node *) makeConst(INT8OID, -1, InvalidOid,
 												   sizeof(int64_t),
-												   Int64GetDatum(sizeDouble), false,
+												   Int64GetDatum(sampleSize), false,
 												   true);
 
 			tablesample_sys_rows->args = list_make1(rowCountArg);
@@ -9414,7 +9529,8 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 	}
 	else if (EnableDollarSampleReservoirScan && rte->rtekind == RTE_RELATION &&
 			 context->mongoCollection != NULL &&
-			 context->mongoCollection->shardKey == NULL)
+			 context->mongoCollection->shardKey == NULL &&
+			 sampleSize <= GetMaxReservoirSampleSize())
 	{
 		/*
 		 * When reservoir sampling is enabled, the target is a base relation,
@@ -9424,23 +9540,21 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 		 * uses PostgreSQL's built-in reservoir sampling algorithm.
 		 * Sharded collections are excluded for now.
 		 *
+		 * The "sampleSize <= GetMaxReservoirSampleSize()" guard above keeps
+		 * oversized requests off this path: the reservoir buffers K HeapTuple
+		 * copies in a palloc'd array, so K is capped by the palloc size limit.
+		 * Larger sizes fall through to the ORDER BY random() path below.
+		 *
 		 * TODO: Handle reservoir sampling for upper paths as well (e.g.,
 		 * $unwind followed by $sample should still use reservoir instead of
-		 * the order-by-random() fallback).
+		 * the ORDER BY random() fallback).
 		 */
-
-		if (sizeDouble >= (double) PG_INT64_MAX)
-		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION28747),
-							errmsg(
-								"The size parameter provided to $sample must be a valid numeric value")));
-		}
 
 		pgbson_writer writer;
 		PgbsonWriterInit(&writer);
 		pgbson_writer rangeWriter;
 		PgbsonWriterStartDocument(&writer, "", 0, &rangeWriter);
-		PgbsonWriterAppendInt64(&rangeWriter, "sample", 6, (int64) sizeDouble);
+		PgbsonWriterAppendInt64(&rangeWriter, "sample", 6, sampleSize);
 		PgbsonWriterEndDocument(&writer, &rangeWriter);
 
 		Const *bsonConst = makeConst(BsonTypeId(), -1, InvalidOid, -1,
@@ -9502,7 +9616,7 @@ HandleSample(const bson_value_t *existingValue, Query *query,
 	query->sortClause = sortlist;
 
 	query->limitCount = (Node *) makeConst(INT8OID, -1, InvalidOid, sizeof(int64_t),
-										   Int64GetDatum(sizeDouble), false, true);
+										   Int64GetDatum(sampleSize), false, true);
 
 	/* Push next stage to a new subquery (since we did a sort) */
 	context->requiresSubQuery = true;

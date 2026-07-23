@@ -66,6 +66,7 @@ pub enum RequestType {
     CreateIndex,
     CreateIndexes,
     CreateRole,
+    CreateSearchIndexes,
     CreateUniqueOrCompoundIndexOnNestedPath,
     CreateUser,
     CurrentOp,
@@ -301,6 +302,7 @@ impl RequestType {
             Self::CreateIndex => "createIndex",
             Self::CreateIndexes => "createIndexes",
             Self::CreateRole => "createRole",
+            Self::CreateSearchIndexes => "createSearchIndexes",
             Self::CreateUniqueOrCompoundIndexOnNestedPath => {
                 "createUniqueOrCompoundIndexOnNestedPath"
             }
@@ -471,6 +473,7 @@ impl RequestType {
             Self::ReIndex
                 | Self::CreateIndex
                 | Self::CreateIndexes
+                | Self::CreateSearchIndexes
                 | Self::DropIndexes
                 | Self::RenameCollection
                 | Self::ListCollections
@@ -546,6 +549,7 @@ impl FromStr for RequestType {
             "createIndex" => Ok(Self::CreateIndex),
             "createIndexes" => Ok(Self::CreateIndexes),
             "createRole" => Ok(Self::CreateRole),
+            "createSearchIndexes" => Ok(Self::CreateSearchIndexes),
             "createUniqueOrCompoundIndexOnNestedPath" => {
                 Ok(Self::CreateUniqueOrCompoundIndexOnNestedPath)
             }

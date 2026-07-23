@@ -168,7 +168,6 @@ extern bool EnableCompositeUniqueHash;
 extern bool CreateTTLIndexAsCompositeByDefault;
 extern bool EnableCompositeShardDocumentTerms;
 extern bool EnablePerCollectionPlannerStatistics;
-extern bool EnablePlannerStatisticsNewCollections;
 extern bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath;
 extern bool EnableIndexMetadataGlobalTracking;
 extern bool EnableDottedValueTextIndexTerms;
@@ -7172,7 +7171,7 @@ UpdateIndexStatsForPostgresIndex(uint64 collectionId, List *indexIdList)
 	UpdateIndexStatsForPostgresIndexCore(collectionId, indexIdList);
 
 	bool shouldUpdatePlannerStatistics = EnablePerCollectionPlannerStatistics ||
-										 EnablePlannerStatisticsNewCollections;
+										 ShouldEnablePlannerStatisticsNewCollections();
 	if (shouldUpdatePlannerStatistics &&
 		IsClusterVersionAtleast(DocDB_V0, 111, 0))
 	{

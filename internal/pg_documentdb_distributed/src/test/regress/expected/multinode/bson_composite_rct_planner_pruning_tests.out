@@ -1,0 +1,127 @@
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
+SET citus.next_shard_id TO 2960000;
+SET documentdb.next_collection_id TO 29600;
+SET documentdb.next_collection_index_id TO 29600;
+SET documentdb.enableIndexMetadataGlobalTracking TO on;
+SET documentdb.enableCompositeReducedCorrelatedTermsOnCommonSubPath TO on;
+SET documentdb.enableExplainScanIndexCosts TO off;
+SET citus.propagate_set_commands TO 'local';
+SELECT documentdb_api.create_collection('rct_dist_db', 'items');
+NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.place_collection_on_node(
+    'rct_dist_db', 'items', 1);
+ place_collection_on_node 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'rct_dist_db',
+    '{ "createIndexes": "items", "indexes": [
+        {
+          "key": { "items.id": 1, "items.city": 1 },
+          "name": "idx_items",
+          "enableOrderedIndex": 1
+        }
+    ]}',
+    true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.drop_primary_key(
+    'rct_dist_db', 'items');
+ drop_primary_key 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'rct_dist_db', 'items',
+    '{"_id":1,"items":[{"id":"A","city":"seattle"}]}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'rct_dist_db', 'items',
+    '{"_id":2,"items":[{"id":"A","city":"portland"},{"id":"B","city":"seattle"}]}');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+BEGIN;
+SET LOCAL citus.enable_local_execution TO off;
+SET LOCAL documentdb.enable_composite_reduced_correlated_bounds_planning TO on;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+-- One $elemMatch retains both same-element bounds and excludes the
+-- cross-element document before the heap filter.
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_find(
+    'rct_dist_db',
+    '{"find":"items","filter":{"items":{"$elemMatch":{"id":"A","city":"seattle"}}}}');
+                                                                                                                                                                                                                                              QUERY PLAN                                                                                                                                                                                                                                               
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58081 dbname=postgres
+         ->  Index Scan using idx_items on documents_29601_2960002 collection
+               Index Cond: ((document OPERATOR(documentdb_api_catalog.@<>) '{ "items.id" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "A", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@<>) '{ "items.city" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "seattle", "isTopLevel" : false, "hasMultiSegmentSubpath" : false, "rctBoundsPlanApplied" : true } ] } }'::documentdb_core.bson))
+               Filter: (document OPERATOR(documentdb_api_catalog.@#?) '{ "items" : { "id" : "A", "city" : "seattle" } }'::documentdb_core.bson)
+(8 rows)
+
+SELECT document FROM bson_aggregation_find(
+    'rct_dist_db',
+    '{"find":"items","filter":{"items":{"$elemMatch":{"id":"A","city":"seattle"}}},"sort":{"_id":1}}');
+                                        document                                         
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ { "id" : "A", "city" : "seattle" } ] }
+(1 row)
+
+-- Plain dotted-path filters retain only the leading index bound. The
+-- cross-element document must remain visible to the runtime filter.
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_find(
+    'rct_dist_db',
+    '{"find":"items","filter":{"items.id":"A","items.city":"seattle"}}');
+                                                          QUERY PLAN                                                          
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58081 dbname=postgres
+         ->  Index Scan using idx_items on documents_29601_2960002 collection
+               Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "items.id" : "A" }'::documentdb_core.bson)
+               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "items.city" : "seattle" }'::documentdb_core.bson)
+(8 rows)
+
+SELECT document FROM bson_aggregation_find(
+    'rct_dist_db',
+    '{"find":"items","filter":{"items.id":"A","items.city":"seattle"},"sort":{"_id":1}}');
+                                                           document                                                           
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : [ { "id" : "A", "city" : "seattle" } ] }
+ { "_id" : { "$numberInt" : "2" }, "items" : [ { "id" : "A", "city" : "portland" }, { "id" : "B", "city" : "seattle" } ] }
+(2 rows)
+
+ROLLBACK;
+RESET citus.propagate_set_commands;
+SET documentdb.enableIndexMetadataGlobalTracking TO off;
+SELECT documentdb_api.drop_collection('rct_dist_db', 'items');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+

@@ -46,12 +46,14 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collati
 ROLLBACK;
 
 -- 1b. GUC OFF: collation with old accumulators → error
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$name" }, "l": { "$last": "$name" } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
 
 SET documentdb.enableCollationWithNewGroupAccumulators TO off;
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SET documentdb_core.enableCollation TO off;
 
@@ -78,6 +80,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_missing
 ROLLBACK;
 
 -- 2b. GUC OFF: $first and $last on missing nested field
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 set citus.propagate_set_commands to 'local';
@@ -118,6 +121,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "wfl_dist_t
 ROLLBACK;
 
 -- 3c. GUC OFF: $first/$last with sortBy - data correctness
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 set citus.propagate_set_commands to 'local';
@@ -141,6 +145,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "wfl_dist_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "output": { "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } } }], "cursor": {} }') $cmd$);
 
 -- 3g. GUC OFF: EXPLAIN $first/$last with sortBy → bsonfirst / bsonlast (sorted path)
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "wfl_dist_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "sortBy": { "v": 1 }, "output": { "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } } }], "cursor": {} }') $cmd$);
@@ -222,4 +227,40 @@ ROLLBACK;
 
 SELECT documentdb_api.drop_collection('db', 'fl_distinct_dist');
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
+
+-- =============================================================================
+-- Test 6: reshaping ($project) stage before $group on a sharded collection.
+-- The $project makes the $first/$last accumulator's document argument a
+-- computed expression (not the raw stored column), and sharding forces
+-- two-phase distributed aggregation. The document argument must present a type
+-- that exactly matches the WithExpr aggregate signature or the distributed
+-- partial aggregation aborts.
+-- =============================================================================
+
+SELECT documentdb_api.insert_one('db', 'fl_project_group_dist', '{ "_id": 1, "g": "A", "a": "alpha" }');
+SELECT documentdb_api.insert_one('db', 'fl_project_group_dist', '{ "_id": 2, "g": "A", "a": "apple" }');
+SELECT documentdb_api.insert_one('db', 'fl_project_group_dist', '{ "_id": 3, "g": "B", "a": "beta" }');
+SELECT documentdb_api.insert_one('db', 'fl_project_group_dist', '{ "_id": 4, "g": "B", "a": "berry" }');
+
+SELECT documentdb_api.shard_collection('db', 'fl_project_group_dist', '{ "_id": "hashed" }', false);
+
+set citus.propagate_set_commands to 'local';
+BEGIN;
+set local citus.max_adaptive_executor_pool_size to 1;
+set local citus.enable_local_execution to off;
+SET LOCAL documentdb.enableNewWithExprAccumulators TO on;
+
+-- Global group after a $project: $first/$last on a projected field.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_project_group_dist", "pipeline": [ { "$project": { "_id": 0, "a": 1 } }, { "$group": { "_id": null, "firstVal": { "$first": "$a" }, "lastVal": { "$last": "$a" } } } ], "cursor": {} }');
+
+-- Grouped by a non shard-key field after a $project, with a following $sort.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_project_group_dist", "pipeline": [ { "$project": { "_id": 0, "g": 1, "a": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$a" }, "lastVal": { "$last": "$a" } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
+
+ROLLBACK;
+
+SELECT documentdb_api.drop_collection('db', 'fl_project_group_dist');
+
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;

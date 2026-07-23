@@ -9,10 +9,6 @@
 /// Error type for cache operations
 #[derive(Debug, Clone)]
 pub enum CacheError {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "This may not be used in all configurations")
-    )]
     DuplicateKey,
     CapacityExceeded,
 }

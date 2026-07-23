@@ -204,10 +204,11 @@ PG_FUNCTION_INFO_V1(gin_bson_composite_rum_config);
 extern bool RumHasMultiKeyPaths;
 extern int MaxWildcardIndexKeySize;
 extern int MaxNonOrderedTermScanThreshold;
-extern bool EnableOrderedCompositeOperatorScan;
 extern bool EnableComparableTerms;
 extern bool EnablePartialMatchHasRecheck;
 extern bool EnableFailureOnParallelIndexArrays;
+extern bool EnableFailureOnParallelIndexArraysForMetadataTracking;
+extern bool EnableDynamicCursorDedupTracking;
 
 static void ValidateCompositePathSpec(const char *prefix);
 static Size FillCompositePathSpec(const char *prefix, void *buffer);
@@ -232,7 +233,10 @@ static void ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const
 											int32_t wildcardPathIndex,
 											ScanDirection *scanDirection,
 											VariableIndexBounds *variableBounds,
-											const char *indexCollation);
+											const char *indexCollation,
+											bool hasArrayPaths,
+											uint32_t multiKeyBitMask,
+											bool isGlobalIndexMetadataTracked);
 static bytea * BuildTermForBounds(CompositeQueryRunData *runData,
 								  IndexTermCreateMetadata *singlePathMetadata,
 								  IndexTermCreateMetadata *compositeMetadata,
@@ -554,7 +558,9 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 		ParseOperatorStrategy(indexPaths, indexPathLengths, sortOrders, numPaths,
 							  metaInfo->wildcardPathIndex, &singleElement, strategy,
 							  &scanDir, &variableBounds,
-							  metaInfo->collation);
+							  metaInfo->collation,
+							  hasArrayPaths, multiKeyBitMask,
+							  options->enableMetadataBasedTracking);
 	}
 	else
 	{
@@ -568,10 +574,19 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 										metaInfo->wildcardPathIndex,
 										&scanDir,
 										&variableBounds,
-										metaInfo->collation);
+										metaInfo->collation,
+										hasArrayPaths, multiKeyBitMask,
+										options->enableMetadataBasedTracking);
 	}
 
 	metaInfo->hasArrayPaths = hasArrayPaths;
+
+	/* Carry forward any serialized dedup state from the continuation so that
+	 * the ordered-scan dedup transform can hand it to the RUM scan for restore. */
+	if (variableBounds.dedupState.value_type == BSON_TYPE_BINARY)
+	{
+		metaInfo->dedupState = variableBounds.dedupState;
+	}
 	metaInfo->isOrderedScan = (*searchMode != GIN_SEARCH_MODE_DEFAULT);
 	metaInfo->isBackwardScan = (*searchMode == RUM_SEARCH_MODE_ORDERED_REVERSE);
 
@@ -688,7 +703,6 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	 */
 	Datum *entries;
 	if (supportsOrderedOperatorScans &&
-		EnableOrderedCompositeOperatorScan &&
 		MaxNonOrderedTermScanThreshold > 0 &&
 		totalPathTerms > MaxNonOrderedTermScanThreshold)
 	{
@@ -1020,9 +1034,10 @@ OptimizeVariableBoundsForOrderedScans(CompositeQueryRunData *runData,
 	{
 		/* Even if there's no array paths, we have to redo the check for
 		* ordered scans since there may be keys for other index paths */
-		PickVariableBoundsForOrderedScan(variableBounds, runData);
+		PickVariableBoundsForWildcardOrderedScan(variableBounds, runData);
 	}
-	else if (hasArrayPaths)
+
+	if (hasArrayPaths)
 	{
 		PickVariableBoundsForOrderedScan(variableBounds, runData);
 	}
@@ -1050,10 +1065,17 @@ OptimizeVariableBoundsForQuery(CompositeQueryRunData *runData,
 	}
 	else
 	{
-		if (isCorrelatedReducedScan && options->enableCompositeReducedCorrelatedTerms)
+		if (isCorrelatedReducedScan &&
+			options->enableCompositeReducedCorrelatedTerms &&
+			!variableBounds->isReducedCorrelatedBoundsPlanApplied)
 		{
-			/* In a reduced scan, we can't filter on any paths that's not the first path */
-			TrimSecondaryVariableBounds(variableBounds, runData, indexPaths);
+			Assert(hasArrayPaths);
+
+			/* Unplanned or cached pre-RCT scans retain the legacy fallback. */
+			TrimSecondaryVariableBounds(variableBounds, runData, indexPaths,
+										hasArrayPaths,
+										multiKeyBitMask,
+										options->enableMetadataBasedTracking);
 		}
 
 		if (!hasArrayPaths || options->enableMetadataBasedTracking)
@@ -1944,12 +1966,38 @@ RunCompareOnBounds(CompositeIndexBounds *bounds, SerializedCompositeTermPair *te
 
 		if (isWildCardMatch)
 		{
-			/* For equality scenarios, ensure that the paths match too */
+			/* The value matches. For a wildcard term the equality is a true
+			 * match only when the stored path also matches the queried path.
+			 * Index terms are ordered by (path, value), so when the value ties
+			 * the path is the tiebreaker: a smaller path sorts before the bound
+			 * (keep searching forward) while a larger path sorts after it (stop
+			 * for an ascending scan). Route the path comparison through the same
+			 * boundary helpers used for value ordering so the scan advances
+			 * correctly instead of returning a raw boolean. */
 			InitializeBsonIndexTermIfNeeded(termPair);
-			return strcmp(termPair->term.element.path,
-						  bounds->lowerBound.indexTermValue.element.path) == 0 &&
-				   termPair->term.element.pathLength ==
-				   bounds->lowerBound.indexTermValue.element.pathLength;
+			StringView termPath = {
+				.length = termPair->term.element.pathLength,
+				.string = termPair->term.element.path
+			};
+			StringView boundPath = {
+				.length = bounds->lowerBound.indexTermValue.element.pathLength,
+				.string = bounds->lowerBound.indexTermValue.element.path
+			};
+			int32_t pathCompare = CompareStringView(&termPath, &boundPath);
+			if (pathCompare < 0)
+			{
+				return SetBoundaryStoppingValueLessThan(hasEqualityPrefix,
+														termPair->serializedTerm,
+														isBackwardScan,
+														allowSkipScanBoundaries);
+			}
+			else if (pathCompare > 0)
+			{
+				return SetBoundaryStoppingValueGreaterThan(hasEqualityPrefix,
+														   termPair->serializedTerm,
+														   isBackwardScan,
+														   allowSkipScanBoundaries);
+			}
 		}
 
 		return 0;
@@ -2624,6 +2672,15 @@ gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
 
 		case RumIndexTransform_OrderedScanRequiresDedup:
 		{
+			/* Optional 5th out-arg: pointer to a bytea* that receives the
+			 * serialized dedup state to restore (NULL when none is supplied). */
+			bytea **outDedupState = NULL;
+			if (PG_NARGS() > 4)
+			{
+				outDedupState = (bytea **) PG_GETARG_POINTER(4);
+				*outDedupState = NULL;
+			}
+
 			/* Get Extra_data first */
 			CompositeQueryRunData *runData = (CompositeQueryRunData *) PG_GETARG_POINTER(
 				1);
@@ -2655,6 +2712,23 @@ gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
 											"Composite index strategy requires rundata for check but it was missing %d",
 											strategy)));
 				}
+			}
+
+			/* When the continuation carried a serialized dedup state, hand it
+			 * back so the ordered scan can restore its dedup tracker. The binary
+			 * payload is itself a complete varlena (bytea), so copy it verbatim.
+			 * When dedup tracking is disabled we still dedup within a page (so
+			 * batch sizing is honored), but we do not carry state across pages,
+			 * so skip the restore and let the tracker start empty each page. */
+			if (EnableDynamicCursorDedupTracking &&
+				outDedupState != NULL &&
+				runData->metaInfo->dedupState.value_type == BSON_TYPE_BINARY)
+			{
+				uint32_t len = runData->metaInfo->dedupState.value.v_binary.data_len;
+				bytea *serialized = (bytea *) palloc(len);
+				memcpy(serialized, runData->metaInfo->dedupState.value.v_binary.data,
+					   len);
+				*outDedupState = serialized;
 			}
 
 			/* If there's array paths, we need dedup for ordered scans */
@@ -3763,7 +3837,8 @@ SerializeCompositeIndexKeyForExplain(bytea *entry)
 void
 DecodeCompositeOpClassQueryMetadata(void *options, uint64_t opclassMetadata,
 									bool *hasMultiKey, uint32_t *multiKeyPathBitmask,
-									bool *hasCorrelatedReducedTerms, bool *hasTruncation)
+									bool *hasCorrelatedReducedTerms, bool *hasTruncation,
+									uint32_t *perPathTruncationBitmask)
 {
 	*hasMultiKey = (opclassMetadata & CompositeIndexMetadata_MultiKeyBitMask) != 0;
 	*multiKeyPathBitmask = (uint32_t) (opclassMetadata >>
@@ -3771,6 +3846,12 @@ DecodeCompositeOpClassQueryMetadata(void *options, uint64_t opclassMetadata,
 	*hasCorrelatedReducedTerms = (opclassMetadata &
 								  CompositeIndexMetadata_ReducedCorrelatedBitMask) != 0;
 	*hasTruncation = (opclassMetadata & CompositeIndexMetadata_TruncationBitMask) != 0;
+
+	/* Only the first 6 paths are tracked per-path */
+	*perPathTruncationBitmask =
+		(uint32_t) ((opclassMetadata >>
+					 CompositeIndexMetadata_PerPathTruncatedBitPosition) &
+					CompositeIndexMetadata_PerPathTruncatedBitMask);
 }
 
 
@@ -3796,9 +3877,10 @@ DecodeCompositeOpClassMetadata(void *options, uint64_t opclassMetadata, bool *ha
 		indexPaths, indexPathsLengths, sortOrders);
 
 	uint32_t multiKeyPerPathStatus = 0;
+	uint32_t truncatedPerPathStatus = 0;
 	DecodeCompositeOpClassQueryMetadata(options, opclassMetadata, hasMultiKey,
 										&multiKeyPerPathStatus, hasCorrelatedReducedTerms,
-										hasTruncation);
+										hasTruncation, &truncatedPerPathStatus);
 	*multiKeyPerPathList = NIL;
 	*multiKeyBitMask = multiKeyPerPathStatus;
 	for (int i = 0; i < numPaths; i++)
@@ -3811,10 +3893,6 @@ DecodeCompositeOpClassMetadata(void *options, uint64_t opclassMetadata, bool *ha
 
 	/* Per-path truncation is tracked only for the first 6 paths; truncation on
 	 * later paths is lossy and surfaces solely via the global truncated flag. */
-	uint32_t truncatedPerPathStatus =
-		(uint32_t) (opclassMetadata >>
-					CompositeIndexMetadata_PerPathTruncatedBitPosition) &
-		CompositeIndexMetadata_PerPathTruncatedBitMask;
 	int maxTruncatedPaths = numPaths < CompositeIndexMetadata_PerPathTruncatedBitCount ?
 							numPaths : CompositeIndexMetadata_PerPathTruncatedBitCount;
 	*truncatedPerPathList = NIL;
@@ -4699,6 +4777,16 @@ BuildSinglePathTermsForCompositeTerms(pgbson *bson,
 	context.options = (void *) termState;
 	context.traverseOptionsFunc = &GetCompositePathGenerateTraverseOption;
 	SetGenerateTermsContextFlags(&context);
+
+	/* Empty arrays make a path multi-key. This is surfaced when the index tracks
+	 * per-path multi-key status via opclass metadata (the "mkp" reloption). For a
+	 * composite wildcard index we surface it in the default term-based mode as
+	 * well: a wildcard column can match any path, so an empty array anywhere makes
+	 * the wildcard path multi-key, and the index must report that status
+	 * consistently regardless of whether metadata-based tracking is enabled. */
+	context.markEmptyArrayAsMultiKey = options->enableMetadataBasedTracking ||
+									   options->wildcardPathIndex >= 0;
+
 	GenerateTermsForPath(bson, &context);
 
 	/* We will have at least 1 term */
@@ -4709,7 +4797,8 @@ BuildSinglePathTermsForCompositeTerms(pgbson *bson,
 		entries[i].index = termState->pathData[i].terms.index;
 		entries[i].entryCapacity = termState->pathData[i].terms.entryCapacity;
 
-		if (termState->pathData[i].hasArrayValues)
+		if (termState->pathData[i].hasArrayValues ||
+			termState->pathData[i].hasArrayAncestors)
 		{
 			*pathMultiKeyBitMask |= (UINT32_C(1) << i);
 		}
@@ -4847,9 +4936,19 @@ GenerateCompositedTerms(GinEntrySet *entrySet,
 }
 
 
+inline static bool
+ShouldFailOnParallelIndexArrays(const BsonGinCompositePathOptions *options)
+{
+	return EnableFailureOnParallelIndexArrays ||
+		   (options->enableMetadataBasedTracking &&
+			EnableFailureOnParallelIndexArraysForMetadataTracking);
+}
+
+
 static uint32_t
 PreprocessMergedTermSet(MergedTermSet *mergedSet, GinEntrySet *entrySet,
-						uint32_t pathCount, GinEntryPathData *pathData)
+						uint32_t pathCount, GinEntryPathData *pathData,
+						bool failOnParallelIndexArrays)
 {
 	uint32_t currentTotalTermCount = 1;
 	for (int i = 0; i < (int) pathCount; i++)
@@ -4863,7 +4962,7 @@ PreprocessMergedTermSet(MergedTermSet *mergedSet, GinEntrySet *entrySet,
 			if (mergedSet->numTerms[i] > 1)
 			{
 				ReportFeatureUsage(FEATURE_INDEX_PARALLEL_ARRAYS_INDEXED);
-				if (EnableFailureOnParallelIndexArrays)
+				if (failOnParallelIndexArrays)
 				{
 					ereport(ERROR, (
 								errcode(ERRCODE_DOCUMENTDB_CANNOTINDEXPARALLELARRAYS),
@@ -4954,6 +5053,7 @@ GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
 		list_length(correlatedTerms) > 0)
 	{
 		ListCell *cell;
+		bool failOnParallelIndexArrays = ShouldFailOnParallelIndexArrays(options);
 
 		/* First pass, calculate num terms */
 		uint32_t computedTermCount = 0;
@@ -4961,7 +5061,8 @@ GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
 		{
 			MergedTermSet *mergedSet = (MergedTermSet *) lfirst(cell);
 			uint32_t termCount = PreprocessMergedTermSet(mergedSet, entrySet, pathCount,
-														 termState.pathData);
+														 termState.pathData,
+														 failOnParallelIndexArrays);
 			computedTermCount += termCount;
 		}
 
@@ -5017,6 +5118,7 @@ GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
 	else
 	{
 		bool hasMultipleTerms = false;
+		bool failOnParallelIndexArrays = ShouldFailOnParallelIndexArrays(options);
 		for (uint32_t i = 0; i < pathCount; i++)
 		{
 			if (entrySet[i].index > 1)
@@ -5024,7 +5126,7 @@ GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
 				if (hasMultipleTerms)
 				{
 					ReportFeatureUsage(FEATURE_INDEX_PARALLEL_ARRAYS_INDEXED);
-					if (EnableFailureOnParallelIndexArrays)
+					if (failOnParallelIndexArrays)
 					{
 						ereport(ERROR, (
 									errcode(ERRCODE_DOCUMENTDB_CANNOTINDEXPARALLELARRAYS),
@@ -5197,6 +5299,7 @@ GenerateCompositeExtractQueryUniqueEqual(pgbson *bson,
 		bool *partialMatchInner = palloc(sizeof(bool) * 1);
 		indexEntries = palloc(sizeof(Datum) * 1);
 		Pointer *extraDataInner = palloc(sizeof(Pointer) * 1);
+		bool failOnParallelIndexArrays = ShouldFailOnParallelIndexArrays(options);
 
 		/* First pass, calculate num terms */
 		uint32_t finalEntryCapacity = 0;
@@ -5204,7 +5307,8 @@ GenerateCompositeExtractQueryUniqueEqual(pgbson *bson,
 		{
 			MergedTermSet *mergedSet = (MergedTermSet *) lfirst(cell);
 			uint32_t termCount = PreprocessMergedTermSet(mergedSet, entrySet, pathCount,
-														 termState.pathData);
+														 termState.pathData,
+														 failOnParallelIndexArrays);
 			finalEntryCapacity += termCount;
 		}
 
@@ -5317,7 +5421,9 @@ ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const char **index
 								numPaths,
 								int32_t wildcardPathIndex, ScanDirection *scanDirection,
 								VariableIndexBounds *variableBounds,
-								const char *indexCollation)
+								const char *indexCollation,
+								bool hasArrayPaths, uint32_t multiKeyBitMask,
+								bool isGlobalIndexMetadataTracked)
 {
 	if (singleElement->bsonValue.value_type != BSON_TYPE_ARRAY)
 	{
@@ -5358,8 +5464,21 @@ ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const char **index
 			}
 		}
 
+		/*
+		 * An empty query path is only valid when the index has a root wildcard
+		 * column (an empty index path that matches every field). In that case the
+		 * empty path routes to the wildcard column - this is how a full/ordered
+		 * scan qual (e.g. an orderByScan on the leading column) is expressed for a
+		 * root wildcard index. Any other empty path is malformed.
+		 */
+		bool isRootWildcardEmptyPath =
+			queryElement.pathLength == 0 &&
+			wildcardPathIndex >= 0 &&
+			wildcardPathIndex < numPaths &&
+			indexPathsLengths[wildcardPathIndex] == 0;
+
 		if (queryStrategy == BSON_INDEX_STRATEGY_INVALID ||
-			queryElement.pathLength == 0 ||
+			(queryElement.pathLength == 0 && !isRootWildcardEmptyPath) ||
 			queryElement.bsonValue.value_type == BSON_TYPE_EOD)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR), errmsg(
@@ -5370,7 +5489,9 @@ ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const char **index
 		ParseOperatorStrategy(indexPaths, indexPathsLengths, sortOrders, numPaths,
 							  wildcardPathIndex,
 							  &queryElement, queryStrategy, scanDirection,
-							  variableBounds, indexCollation);
+							  variableBounds, indexCollation,
+							  hasArrayPaths, multiKeyBitMask,
+							  isGlobalIndexMetadataTracked);
 	}
 }
 

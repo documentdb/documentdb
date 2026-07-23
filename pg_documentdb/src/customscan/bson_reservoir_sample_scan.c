@@ -117,7 +117,7 @@ typedef struct ReservoirSampleState
 	 * needed a heap read. The rest were served from the visibility map.
 	 */
 	int64 sampleRowsSkipped;
-	int64 sampleHeapSkips;
+	int64 sampleHeapFetches;
 
 	int numCollected;
 	int returnIndex;
@@ -394,7 +394,7 @@ ReservoirSampleCreateScanState(CustomScan *cscan)
 	state->tupleReservoir = NULL;
 	state->vmBuffer = InvalidBuffer;
 	state->sampleRowsSkipped = 0;
-	state->sampleHeapSkips = 0;
+	state->sampleHeapFetches = 0;
 	state->numCollected = 0;
 	state->returnIndex = 0;
 	state->scanStarted = false;
@@ -546,7 +546,7 @@ TrySkipHeapEntry(ReservoirSampleState *state, Snapshot snapshot, bool *isVisible
 	 * must not count. btree never sets xs_recheck. We're on the skip path, so
 	 * this skip required a heap read.
 	 */
-	state->sampleHeapSkips++;
+	state->sampleHeapFetches++;
 
 	/* ss_ScanTupleSlot is always allocated by ExecInitIndexScan when the child
 	 * index scan is initialized, and index_fetch_heap fills it only when it
@@ -608,25 +608,15 @@ ReservoirSampleNext(CustomScanState *node)
 		}
 
 		/*
-		 * Reject sample sizes that exceed INT32_MAX (2 billion) since the
-		 * reservoir array is indexed by int. Also reject sizes that would
-		 * exceed palloc limits: this is a safety cap.
+		 * Defensive guard: the planner only routes sizes within
+		 * GetMaxReservoirSampleSize() here.
 		 */
-		if (sampleSize > PG_INT32_MAX)
+		if (sampleSize > GetMaxReservoirSampleSize())
 		{
-			ereport(ERROR, (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 							errmsg("$sample size " INT64_FORMAT
-								   " exceeds maximum supported value",
-								   sampleSize)));
-		}
-
-		int64 maxReservoirCapacity = (int64) (MaxAllocSize / sizeof(HeapTuple));
-		if (sampleSize > maxReservoirCapacity)
-		{
-			ereport(ERROR, (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-							errmsg("$sample size " INT64_FORMAT
-								   " exceeds maximum reservoir capacity",
-								   sampleSize)));
+								   " exceeds the maximum size allowed for a "
+								   "reservoir sample", sampleSize)));
 		}
 
 		int reservoirCapacity = (int) sampleSize;
@@ -858,8 +848,10 @@ ReservoirSampleExplain(CustomScanState *node, List *ancestors, ExplainState *es)
 	{
 		ExplainPropertyInteger("Sample Rows Skipped", NULL,
 							   state->sampleRowsSkipped, es);
-		ExplainPropertyInteger("Sample Heap Skips", NULL,
-							   state->sampleHeapSkips, es);
+
+		/* Heap reads incurred while skipping; excludes sampled row fetches. */
+		ExplainPropertyInteger("Sample Heap Fetches", NULL,
+							   state->sampleHeapFetches, es);
 	}
 }
 
@@ -867,6 +859,26 @@ ReservoirSampleExplain(CustomScanState *node, List *ancestors, ExplainState *es)
 /* --------------------------------------------------------- */
 /* Public: Wrap paths with ReservoirSample CustomPath        */
 /* --------------------------------------------------------- */
+
+/*
+ * GetMaxReservoirSampleSize returns the largest $sample size the reservoir scan
+ * services, capping it by work_mem and the palloc size limit.
+ */
+int64
+GetMaxReservoirSampleSize(void)
+{
+	/* work_mem is expressed in kilobytes. */
+	int64 workMemBytes = (int64) work_mem * 1024;
+	int64 capacity = workMemBytes / (int64) sizeof(HeapTuple);
+
+	/* Cap sample size so the reservoir array fits a single palloc. */
+	int64 allocCapacity = (int64) (MaxAllocSize / sizeof(HeapTuple));
+	capacity = Min(capacity, allocCapacity);
+
+	/* Always allow at least a single tuple reservoir. */
+	return Max(capacity, 1);
+}
+
 
 /*
  * AddReservoirSampleCustomPath wraps each non-parameterized path in the

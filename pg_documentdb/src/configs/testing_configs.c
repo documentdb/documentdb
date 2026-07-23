@@ -99,11 +99,19 @@ bool DisableExtendedRumExplainPlans = DEFAULT_DISABLE_EXTENDED_RUM_EXPLAIN_PLANS
 bool EnableDataTableWithoutCreationTime =
 	DEFAULT_ENABLE_DATA_TABLES_WITHOUT_CREATION_TIME;
 
+/* Left behind for long term testing of old (pre-composite-hash) unique indexes */
+#define DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH true
+bool EnableCompositeUniqueHash = DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH;
+
 #define DEFAULT_RUM_FAIL_ON_LOST_PATH false
 bool RumFailOnLostPath = DEFAULT_RUM_FAIL_ON_LOST_PATH;
 
 #define DEFAULT_FORCE_COLL_STATS_DATA_COLLECTION false
 bool ForceCollStatsDataCollection = DEFAULT_FORCE_COLL_STATS_DATA_COLLECTION;
+
+/* On by default; can be turned off in tests to exercise the non-live-tuples count path */
+#define DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT true
+bool UsePgStatsLiveTuplesForCount = DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT;
 
 #define DEFAULT_FORCE_BITMAP_SCAN_FOR_LOOKUP false
 bool ForceBitmapScanForLookup = DEFAULT_FORCE_BITMAP_SCAN_FOR_LOOKUP;
@@ -134,6 +142,16 @@ bool EnableExplainScanNamespaceName = DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME
  */
 #define DEFAULT_INDEX_BUILD_FAILURE_POINT 0
 int IndexBuildFailurePoint = DEFAULT_INDEX_BUILD_FAILURE_POINT;
+
+/*
+ * When set, the file-based persisted cursor drain path walks the planned
+ * statement and reports whether the plan uses a parallel scan in the cursor
+ * continuation document. Used only by tests to assert that parallel plans are
+ * exercised without relying on EXPLAIN.
+ */
+#define DEFAULT_REPORT_PARALLEL_PLAN_IN_CURSOR_CONTINUATION false
+bool ReportParallelPlanInCursorContinuation =
+	DEFAULT_REPORT_PARALLEL_PLAN_IN_CURSOR_CONTINUATION;
 
 void
 InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
@@ -390,6 +408,15 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
+		psprintf("%s.enableCompositeUniqueHash", newGucPrefix),
+		gettext_noop(
+			"Whether to enable new unique hash equality implementation. "
+			"Left behind for long term testing of old (pre-composite-hash) unique indexes."),
+		NULL, &EnableCompositeUniqueHash,
+		DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
 		psprintf("%s.rumFailOnLostPath", newGucPrefix),
 		gettext_noop(
 			"Whether or not to fail the query when a lost path is detected in RUM"),
@@ -402,6 +429,14 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		gettext_noop(
 			"Whether to force fetching metadata during collstats operations."),
 		NULL, &ForceCollStatsDataCollection, DEFAULT_FORCE_COLL_STATS_DATA_COLLECTION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.use_pg_stats_live_tuples_for_count", newGucPrefix),
+		gettext_noop(
+			"Whether to use pg_stat_all_tables live tuples for count in collStats."),
+		NULL, &UsePgStatsLiveTuplesForCount,
+		DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -463,4 +498,14 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		PGC_USERSET,
 		GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE,
 		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.reportParallelPlanInCursorContinuation", newGucPrefix),
+		gettext_noop(
+			"Whether the file-based persisted cursor drain path reports if the "
+			"plan uses a parallel scan in the cursor continuation document. For "
+			"testing only."),
+		NULL, &ReportParallelPlanInCursorContinuation,
+		DEFAULT_REPORT_PARALLEL_PLAN_IN_CURSOR_CONTINUATION,
+		PGC_USERSET, GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE, NULL, NULL, NULL);
 }

@@ -134,6 +134,9 @@ typedef struct
 	/* Whether or not the shard for the shardTableName is remote */
 	bool isShardRemote;
 
+	/* Whether the collection is a single-shard table */
+	bool isSingleShardTable;
+
 	/* Schema Validator if applicable */
 	SchemaValidatorInfo schemaValidator;
 

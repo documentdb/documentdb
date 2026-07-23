@@ -142,7 +142,3 @@ codegen-units = 1
 [profile.profiling]
 inherits = "release"
 debug = true
-
-## Patch section
-[patch.crates-io]
-tokio-postgres = { path = "libs/tokio-postgres" }

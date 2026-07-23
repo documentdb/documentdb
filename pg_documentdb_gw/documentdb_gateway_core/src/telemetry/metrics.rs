@@ -290,8 +290,7 @@ pub fn record_gateway_metrics(
     let response_size_bytes = match &response {
         Either::Left(resp) => resp
             .as_raw_document()
-            .map(|doc| doc.as_bytes().len() as u64)
-            .unwrap_or(0),
+            .map_or(0, |doc| doc.as_bytes().len() as u64),
         Either::Right((_, size)) => *size as u64,
     };
     metrics
@@ -351,8 +350,7 @@ fn record_document_counts(
                 let batch_len = cursor
                     .get_array("firstBatch")
                     .or_else(|_| cursor.get_array("nextBatch"))
-                    .map(|arr| arr.into_iter().count() as u64)
-                    .unwrap_or(0);
+                    .map_or(0, |arr| arr.into_iter().count() as u64);
                 if batch_len > 0 {
                     metrics.documents_returned.add(batch_len, attrs);
                 }

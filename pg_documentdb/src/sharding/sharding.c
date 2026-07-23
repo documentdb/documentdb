@@ -43,7 +43,6 @@ extern char *ApiGucPrefixV2;
 extern bool EnableRbacCompliantSchemas;
 extern bool EnablePrepareUnique;
 extern bool EnablePerCollectionPlannerStatistics;
-extern bool EnablePlannerStatisticsNewCollections;
 
 /* Metadata about shard keys - this is unchanged through
  * iterating though the query for the shard key.
@@ -1501,7 +1500,8 @@ ShardCollectionCore(ShardCollectionArgs *args)
 	}
 
 	bool isCollectionStatisticsEnabled = (EnablePerCollectionPlannerStatistics ||
-										  EnablePlannerStatisticsNewCollections) &&
+										  ShouldEnablePlannerStatisticsNewCollections())
+										 &&
 										 CollectionHasStatisticsEnabled(
 		collection->collectionId);
 

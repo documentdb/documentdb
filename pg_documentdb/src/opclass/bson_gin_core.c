@@ -1083,10 +1083,14 @@ GetPathDataDefault(void *state, int index)
 }
 
 
+/*
+ * A non-composite index stores its generated terms in one GinEntryPathData entry
+ * at slot 0. For an index on a.b, visiting array a returns Recurse because a.b may
+ * occur below it. That recursive match therefore belongs to slot 0. */
 static bool
-IsRecursivePathMatch(void *state, int index)
+IsNonCompositeRecursivePathMatch(void *state, int index)
 {
-	return false;
+	return index == 0;
 }
 
 
@@ -1176,7 +1180,7 @@ GenerateTerms(pgbson *bson, GenerateTermsContext *context, GinEntryPathData *pat
 {
 	context->pathDataState = pathData;
 	context->getPathDataFunc = GetPathDataDefault;
-	context->isRecursivePathMatch = IsRecursivePathMatch;
+	context->isRecursivePathMatch = IsNonCompositeRecursivePathMatch;
 	context->currentRecursivePathIndex = GetCurrentRecursivePaths;
 	context->maxPaths = 1;
 
@@ -1272,6 +1276,11 @@ GenerateArrayPath(bson_iter_t *bsonIter, const char *pathToInsert,
 
 	bool someArrayPathsHaveTerms[INDEX_MAX_KEYS] = { 0 };
 	bool someArrayPathsHaveNoTerms[INDEX_MAX_KEYS] = { 0 };
+
+	/* The all-undefined tuple is recorded at most once per array;
+	 * multiple no-term sub-documents (e.g. [ {}, {}, {} ]) would otherwise emit
+	 * identical tuples and inflate the term count. */
+	bool recordedAllUndefined = false;
 	while (bson_iter_next(&containerIter))
 	{
 		bson_iter_t containerCopy = containerIter;
@@ -1322,15 +1331,15 @@ GenerateArrayPath(bson_iter_t *bsonIter, const char *pathToInsert,
 						 isCheckForArrayTermsWithNestedDocumentInner,
 						 &pathBuilderBuffer);
 
-		bool someArrayPathsHaveTermsOuter = false;
 		int32_t originalTermCount[INDEX_MAX_KEYS] = { 0 };
+		bool elementProducedTerm = false;
 		for (int i = 0; i < context->maxPaths; i++)
 		{
 			GinEntryPathData *pathData = context->getPathDataFunc(context->pathDataState,
 																  i);
 			if (pathData->terms.index > termCount[i])
 			{
-				someArrayPathsHaveTermsOuter = true;
+				elementProducedTerm = true;
 				someArrayPathsHaveTerms[i] = true;
 			}
 			else
@@ -1344,17 +1353,37 @@ GenerateArrayPath(bson_iter_t *bsonIter, const char *pathToInsert,
 													i)->terms.index;
 		}
 
+		/* A position occupies a diagonal slot if it is a sub-document (an empty {}
+		 * yields an all-undefined tuple) or produced a term; scalar/null positions
+		 * do not. */
+		bool elementIsReducedCorrelatedCandidate =
+			BSON_ITER_HOLDS_DOCUMENT(&containerIter) || elementProducedTerm;
+		bool isAllUndefined = elementIsReducedCorrelatedCandidate &&
+							  !elementProducedTerm;
+
 		if (context->enableCompositeReducedCorrelatedTerms &&
 			context->currentRecursivePathIndex(context->pathDataState) ==
 			currentRecursivePathCount &&
-			considerNestedDocumentTerms && someArrayPathsHaveTermsOuter &&
+			considerNestedDocumentTerms &&
+			elementIsReducedCorrelatedCandidate &&
 			context->updateCorrelatedTermPaths)
 		{
-			/* We have multiple terms with a recursive match this means we should treat these terms
-			 * generated as a correlated in terms of terms
-			 */
-			context->updateCorrelatedTermPaths(context->pathDataState, originalTermCount,
-											   recursiveMatchStatus);
+			if (isAllUndefined && !recordedAllUndefined)
+			{
+				/* Record this position's correlated tuple. For a no-term sub-document
+				 * (e.g. {} or a sibling-only { c: 9 }) this emits an all-undefined slot,
+				 * so a null / $exists predicate on the sub-path still matches. */
+				context->updateCorrelatedTermPaths(context->pathDataState,
+												   originalTermCount,
+												   recursiveMatchStatus);
+				recordedAllUndefined = true;
+			}
+			else if (!isAllUndefined)
+			{
+				context->updateCorrelatedTermPaths(context->pathDataState,
+												   originalTermCount,
+												   recursiveMatchStatus);
+			}
 		}
 
 		currentRecursivePathCount = context->currentRecursivePathIndex(
@@ -1384,10 +1413,32 @@ GenerateArrayPath(bson_iter_t *bsonIter, const char *pathToInsert,
 
 
 static void
-NotifyHasArrayAncestors(GenerateTermsContext *context, int pathIndex)
+NotifyHasArrayAncestors(GenerateTermsContext *context, int pathIndex,
+						IndexTraverseOption option)
 {
-	context->getPathDataFunc(context->pathDataState,
-							 pathIndex)->hasArrayAncestors = true;
+	if ((option & IndexTraverse_Match) != 0)
+	{
+		/* For an exact match, pathIndex already identifies the corresponding GinEntryPathData
+		 * entry. For example, current path a.b matches an index on a.b. */
+		context->getPathDataFunc(context->pathDataState,
+								 pathIndex)->hasArrayAncestors = true;
+	}
+
+	if ((option & IndexTraverse_Recurse) != 0)
+	{
+		/* The current array can be an ancestor of multiple indexed paths. Ask the
+		 * configured callback which path-data entries match recursively, then mark
+		 * each one. For index paths a.x, a.y, and b.z, visiting array a marks the
+		 * entries for a.x and a.y, but not b.z. */
+		for (int i = 0; i < context->maxPaths; i++)
+		{
+			if (context->isRecursivePathMatch(context->pathDataState, i))
+			{
+				context->getPathDataFunc(context->pathDataState,
+										 i)->hasArrayAncestors = true;
+			}
+		}
+	}
 }
 
 
@@ -1482,7 +1533,7 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 			if (inArrayContext || BSON_ITER_HOLDS_ARRAY(bsonIter))
 			{
 				/* Mark the path as having array ancestors leading to the index path */
-				NotifyHasArrayAncestors(context, pathIndex);
+				NotifyHasArrayAncestors(context, pathIndex, option);
 			}
 
 			if (EnableSkipDottedFieldIndexTerms && !isArrayTerm &&
@@ -1523,6 +1574,7 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 
 			/* path is valid and a match */
 			bson_type_t type = bson_iter_type(bsonIter);
+			bool isEmptyArrayMatch = false;
 
 			/* Construct the { <path> : <typecode> <value> } BSON and add it to index entries */
 			pgbsonelement element = { 0 };
@@ -1540,6 +1592,7 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 				if (IsBsonValueEmptyArray(&element.bsonValue))
 				{
 					element.bsonValue.value_type = BSON_TYPE_UNDEFINED;
+					isEmptyArrayMatch = true;
 				}
 				else
 				{
@@ -1550,6 +1603,14 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 
 			GinEntryPathData *pathData = context->getPathDataFunc(context->pathDataState,
 																  pathIndex);
+
+			/* An empty array makes the path multi-key; record it when per-path
+			 * multi-key metadata tracking is enabled. */
+			if (isEmptyArrayMatch && context->markEmptyArrayAsMultiKey)
+			{
+				pathData->hasArrayValues = true;
+			}
+
 			if (pathData->skipGenerateTopLevelDocumentTerm &&
 				element.bsonValue.value_type == BSON_TYPE_DOCUMENT &&
 				option == IndexTraverse_MatchAndRecurse)
@@ -1597,7 +1658,7 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 			 option == IndexTraverse_MatchAndRecurse))
 		{
 			/* Mark the path as having array ancestors leading to the index path */
-			NotifyHasArrayAncestors(context, pathIndex);
+			NotifyHasArrayAncestors(context, pathIndex, option);
 		}
 
 		/*
@@ -1640,7 +1701,7 @@ GenerateTermPath(bson_iter_t *bsonIter, const char *basePath,
 				option == IndexTraverse_MatchAndRecurse)
 			{
 				/* Mark the path as having array ancestors leading to the index path */
-				NotifyHasArrayAncestors(context, pathIndex);
+				NotifyHasArrayAncestors(context, pathIndex, option);
 			}
 
 			bool isPathMatchedRecursively = option == IndexTraverse_MatchAndRecurse;

@@ -63,6 +63,7 @@ typedef enum
 	Stage_IndexStats,
 	Stage_Limit,
 	Stage_ListLocalSessions,
+	Stage_ListSearchIndexes,
 	Stage_ListSessions,
 	Stage_Lookup,
 	Stage_Match,
@@ -132,7 +133,7 @@ typedef void (*UnwindParseErrorHandler)(int errCode, const char *errMessage,
 /*
  * Shared context during aggregation pipeline build phase.
  */
-typedef struct
+typedef struct AggregationPipelineBuildContext
 {
 	/* *********************************************************************
 	 * Query Builder Fields
@@ -338,6 +339,8 @@ Query * HandleIndexStats(const bson_value_t *existingValue, Query *query,
 						 AggregationPipelineBuildContext *context);
 Query * HandleCurrentOp(const bson_value_t *existingValue, Query *query,
 						AggregationPipelineBuildContext *context);
+Query * HandleListExtendedIndexes(const bson_value_t *existingValue, Query *query,
+								  AggregationPipelineBuildContext *context);
 Query * HandleChangeStream(const bson_value_t *existingValue, Query *query,
 						   AggregationPipelineBuildContext *context);
 
@@ -377,6 +380,9 @@ Stage GetAggregationStageAtPosition(const List *aggregationStages, int position)
 
 /* Helper methods */
 
+/* GUC defined in feature_flag_configs.c; consumed by the inline helpers below. */
+extern bool EnableAddShardKeyOnlyOnPrimaryKeyFilters;
+
 /*
  * Helper function that creates a UNION ALL Set operation statement
  * that returns a single BSON field.
@@ -391,6 +397,20 @@ MakeBsonSetOpStatement(void)
 	setOpStatement->colTypes = list_make1_oid(BsonTypeId());
 	setOpStatement->colTypmods = list_make1_int(-1);
 	return setOpStatement;
+}
+
+
+inline static bool
+ShouldSkipShardKeyFilterOnBaseTable(AggregationPipelineBuildContext *context)
+{
+	if (!EnableAddShardKeyOnlyOnPrimaryKeyFilters)
+	{
+		return false;
+	}
+
+	return context->mongoCollection != NULL &&
+		   context->mongoCollection->shardKey == NULL &&
+		   context->mongoCollection->isSingleShardTable;
 }
 
 

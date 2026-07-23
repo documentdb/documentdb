@@ -56,8 +56,7 @@ pub trait PgDataClient: Send + Sync {
         let pool_connection = self.acquire_pool_connection().await?;
         let sql_commenter_enabled = self
             .connection_pool()
-            .map(ConnectionPool::sql_commenter_enabled)
-            .unwrap_or(false);
+            .is_ok_and(ConnectionPool::sql_commenter_enabled);
 
         Ok(Connection::new(
             pool_connection,
@@ -123,6 +122,7 @@ pub trait PgDataClient: Send + Sync {
         &self,
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
+        enable_write_procedures: bool,
     ) -> Result<Vec<Row>>;
 
     async fn execute_delete_when_readonly(
@@ -415,6 +415,29 @@ pub trait PgDataClient: Send + Sync {
         request_context: &RequestContext<'_>,
         connection_context: &ConnectionContext,
     ) -> Result<Response>;
+
+    async fn execute_create_search_indexes(
+        &self,
+        _request_context: &RequestContext<'_>,
+        _connection_context: &ConnectionContext,
+    ) -> Result<(bool, PgResponse)> {
+        Err(crate::error::DocumentDBError::documentdb_error(
+            crate::error::ErrorCode::CommandNotSupported,
+            "Command 'createSearchIndexes' not supported.".to_owned(),
+        ))
+    }
+
+    async fn execute_wait_for_search_index(
+        &self,
+        _request_context: &RequestContext<'_>,
+        _index_build_id: &PgDocument<'_>,
+        _connection_context: &ConnectionContext,
+    ) -> Result<(bool, bool, PgResponse)> {
+        Err(crate::error::DocumentDBError::documentdb_error(
+            crate::error::ErrorCode::CommandNotSupported,
+            "Command 'createSearchIndexes' not supported.".to_owned(),
+        ))
+    }
 
     /// Unified query execution that resolves a connection and dispatches to
     /// the retry loop.
