@@ -381,10 +381,12 @@ $cmd$);
 -- Array on the prefix field: a document whose prefix value is an array can
 -- satisfy several $in branches at once. Exploding into per-value point scans
 -- merged by a MergeAppend (which has no cross-child de-duplication) would emit
--- that document once per matching branch. The rewrite must therefore NOT fire
--- on a multi-key index: the result must match the feature-off result (the array
--- document appears exactly once) and the plan must fall back to a blocking Sort
--- rather than a MergeAppend.
+-- that document once per matching branch. On a multi-key index the rewrite
+-- therefore wraps the MergeAppend in a heap-TID de-dup CustomScan
+-- (DocumentDBApiTidDedup): the result must match the feature-off result (the
+-- array document appears exactly once) while the plan streams the sort order
+-- from the index (MergeAppend, no blocking Sort). The de-dup scan reports the
+-- repeats it dropped ("Duplicate Rows Removed").
 -- =====================================================================
 SET documentdb.forceDisableSeqScan TO on;
 
@@ -406,7 +408,8 @@ SET documentdb.enable_merge_sort_for_in_prefix TO on;
 SELECT document FROM bson_aggregation_find('msdb',
   '{ "find": "coll_arr", "filter": { "a": { "$in": [1, 4] } }, "sort": { "b": 1 } }');
 
--- Plan ON: multi-key index => no MergeAppend; falls back to a blocking Sort.
+-- Plan ON: multi-key index => MergeAppend wrapped in a heap-TID de-dup
+-- CustomScan; the array document's repeat is dropped ("Duplicate Rows Removed").
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT document FROM bson_aggregation_find('msdb',
@@ -1565,6 +1568,65 @@ RESET documentdb.enableIndexOnlyScanForFindProject;
 RESET documentdb.enable_merge_sort_for_in_prefix;
 
 -- =====================================================================
+-- Multi-key index (per-path tracked) whose array column is NOT referenced by
+-- the query, combined with index-only scans enabled. The index (a, b, c) is
+-- multi-key because c holds arrays, but the query only touches the scalar
+-- columns a ($in prefix) and b (sort) and projects {a, b}.
+--
+-- Because the index is multi-key the MergeAppend is wrapped in the heap-TID
+-- de-dup CustomScan, and that de-dup reads each row's heap ctid -- which an
+-- index-only scan cannot supply. The rewrite therefore keeps heap (ctid-bearing)
+-- Index Scan children here rather than converting them to Index Only Scans, so
+-- the de-dup always has a ctid to read. This must hold even with index-only
+-- scans enabled and a covered {a, b} projection. Results must match the
+-- feature-off result (a is scalar, so no document matches more than one branch;
+-- nothing is actually de-duplicated, but the wrap is present and correct).
+-- =====================================================================
+SELECT documentdb_api.create_collection('msdb','coll_ios_mk');
+SELECT documentdb_api.insert_one('msdb','coll_ios_mk','{ "_id": 1, "a": 1, "b": 2, "c": [100, 200] }');
+SELECT documentdb_api.insert_one('msdb','coll_ios_mk','{ "_id": 2, "a": 4, "b": 0, "c": [100] }');
+SELECT documentdb_api.insert_one('msdb','coll_ios_mk','{ "_id": 3, "a": 1, "b": 9, "c": [300] }');
+SELECT documentdb_api.insert_one('msdb','coll_ios_mk','{ "_id": 4, "a": 4, "b": 5, "c": [100, 400] }');
+SELECT documentdb_api.insert_one('msdb','coll_ios_mk','{ "_id": 5, "a": 2, "b": 1, "c": [100] }');
+SELECT documentdb_api.insert_one('msdb','coll_ios_mk','{ "_id": 6, "a": 1, "b": 3, "c": [500] }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "coll_ios_mk", "indexes": [ { "key": { "a": 1, "b": 1, "c": 1 }, "name": "ios_mk_a_1_b_1_c_1", "enableOrderedIndex": 1 } ] }', true);
+
+SET documentdb.forceDisableSeqScan TO on;
+SET enable_indexonlyscan TO on;
+SET documentdb.enableIndexOnlyScanForFindProject TO on;
+
+-- Correctness (covered projection {a,b}): identical rows feature off vs on.
+-- Expected b ascending: 0,2,3,5,9 (a in {1,4}).
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_ios_mk", "filter": { "a": { "$in": [1, 4] } }, "projection": { "a": 1, "b": 1, "_id": 0 }, "sort": { "b": 1 } }');
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_ios_mk", "filter": { "a": { "$in": [1, 4] } }, "projection": { "a": 1, "b": 1, "_id": 0 }, "sort": { "b": 1 } }');
+
+-- Plan (enable_sort off to isolate the path): a Merge Append wrapped in the
+-- de-dup CustomScan, whose children are heap Index Scans (NOT Index Only Scans)
+-- because the de-dup needs the heap ctid. No planner error despite index-only
+-- being enabled with a covered projection.
+SET enable_sort TO off;
+SELECT bool_or(line ~ 'Merge Append') AS has_merge_append,
+       bool_or(line ~ 'DocumentDBApiTidDedup') AS has_tid_dedup,
+       NOT bool_or(line ~ 'Index Only Scan') AS no_index_only_scan,
+       bool_or(line ~ 'Index Scan using') AS children_heap_index_scan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "coll_ios_mk", "filter": { "a": { "$in": [1, 4] } }, "projection": { "a": 1, "b": 1, "_id": 0 }, "sort": { "b": 1 } }')
+$cmd$) AS line;
+RESET enable_sort;
+
+RESET enable_indexonlyscan;
+RESET documentdb.enableIndexOnlyScanForFindProject;
+RESET documentdb.forceDisableSeqScan;
+RESET documentdb.enable_merge_sort_for_in_prefix;
+
+-- =====================================================================
 -- Parallel scan interaction: the merge-sort marking guard skips any index
 -- whose access method can produce parallel scans (amcanparallel). So when
 -- composite parallel index scans are enabled and forced, a $in-prefix + sort
@@ -1669,6 +1731,145 @@ $cmd$) AS line;
 RESET documentdb.enableDollarSampleReservoirScan;
 RESET documentdb.enable_merge_sort_for_in_prefix;
 
+-- =====================================================================
+-- Array on the SORT field (the trailing index column). The index (a, b) is
+-- multi-key because b holds arrays. A per-value ordered scan already returns
+-- each document once -- the ordered index emits a multi-key document at its
+-- best (min for ascending, max for descending) sort position -- so within a
+-- single $in branch there are no duplicates. Duplicates only arise ACROSS
+-- branches, when the $in prefix a is itself an array (_id 6 below): that
+-- document is reached through both the a=1 and a=4 branches and the heap-TID
+-- de-dup drops the repeat. Results must match the feature-off (blocking Sort)
+-- result: each document appears once, ordered by its min/max b element.
+-- =====================================================================
+SET documentdb.forceDisableSeqScan TO on;
+
+SELECT documentdb_api.create_collection('msdb','coll_mk_sort');
+SELECT documentdb_api.insert_one('msdb','coll_mk_sort','{ "_id": 1, "a": 1, "b": [2, 8] }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_sort','{ "_id": 2, "a": 4, "b": 5 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_sort','{ "_id": 3, "a": 1, "b": 6 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_sort','{ "_id": 4, "a": 4, "b": [1, 9] }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_sort','{ "_id": 5, "a": 2, "b": 3 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_sort','{ "_id": 6, "a": [1, 4], "b": [0, 20] }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "coll_mk_sort", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_1_b_1", "enableOrderedIndex": 1 } ] }', true);
+
+-- Ascending: order by the min b element. Expected _id 6,4,1,2,3 (min b 0,1,2,5,6).
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_sort", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_sort", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
+
+-- Descending: order by the max b element. Expected _id 6,4,1,3,2 (max b 20,9,8,6,5).
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_sort", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": -1 } }');
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_sort", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": -1 } }');
+
+-- A range filter on the multi-key sort field b combined with the $in prefix:
+-- feature off vs on must still agree.
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_sort", "filter": { "a": { "$in": [1, 4] }, "b": { "$gte": 6 } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_sort", "filter": { "a": { "$in": [1, 4] }, "b": { "$gte": 6 } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
+
+-- Plan (ascending): a Merge Append wrapped in the de-dup CustomScan. Only _id 6
+-- (a is [1,4]) reaches both branches, so exactly one duplicate is dropped; the
+-- multi-key sort column b needs no extra de-dup because each per-value ordered
+-- scan already emits a document once at its min b.
+SET enable_sort TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "coll_mk_sort", "filter": { "a": { "$in": [1, 4] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }')
+$cmd$);
+
+RESET documentdb.forceDisableSeqScan;
+RESET enable_sort;
+RESET documentdb.enable_merge_sort_for_in_prefix;
+
+-- =====================================================================
+-- High-duplication + LIMIT. Every document's prefix array a = [1,2,3,4,5]
+-- matches all five $in branches, so each document arrives through all five
+-- MergeAppend children: the raw merged stream has 5x as many rows as there are
+-- documents. This makes the de-dup work explicit (the plan reports a large
+-- "Duplicate Rows Removed"), so any regression that stopped de-duplicating, or
+-- did so inefficiently, would be obvious.
+--
+-- It also pins the key LIMIT invariant: because the copies of one document are
+-- adjacent in the sorted stream (they share its b value), a LIMIT that counted
+-- the RAW merged rows would return one document repeated (e.g. LIMIT 3 -> the
+-- first document three times = 1 unique). The de-dup CustomScan sits below the
+-- Limit, so the Limit counts UNIQUE emitted rows: LIMIT 3 returns 3 distinct
+-- documents, identical to the feature-off (blocking Sort) result.
+-- =====================================================================
+SET documentdb.forceDisableSeqScan TO on;
+
+SELECT documentdb_api.create_collection('msdb','coll_mk_dup');
+SELECT documentdb_api.insert_one('msdb','coll_mk_dup','{ "_id": 1, "a": [1, 2, 3, 4, 5], "b": 1 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_dup','{ "_id": 2, "a": [1, 2, 3, 4, 5], "b": 2 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_dup','{ "_id": 3, "a": [1, 2, 3, 4, 5], "b": 3 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_dup','{ "_id": 4, "a": [1, 2, 3, 4, 5], "b": 4 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_dup','{ "_id": 5, "a": [1, 2, 3, 4, 5], "b": 5 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_dup','{ "_id": 6, "a": [1, 2, 3, 4, 5], "b": 6 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_dup','{ "_id": 7, "a": [1, 2, 3, 4, 5], "b": 7 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_dup','{ "_id": 8, "a": [1, 2, 3, 4, 5], "b": 8 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_dup','{ "_id": 9, "a": [1, 2, 3, 4, 5], "b": 9 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk_dup','{ "_id": 10, "a": [1, 2, 3, 4, 5], "b": 10 }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "coll_mk_dup", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_1_b_1", "enableOrderedIndex": 1 } ] }', true);
+
+-- Correctness (no LIMIT): each of the 10 documents appears exactly once, in b
+-- order, identical feature off vs on -- despite the 5x raw duplication.
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_dup", "filter": { "a": { "$in": [1, 2, 3, 4, 5] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_dup", "filter": { "a": { "$in": [1, 2, 3, 4, 5] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
+
+-- Plan (no LIMIT): the Merge Append streams all 50 raw rows (10 documents x 5
+-- branches) and the de-dup CustomScan drops the 40 repeats, emitting 10.
+SET enable_sort TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "coll_mk_dup", "filter": { "a": { "$in": [1, 2, 3, 4, 5] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }')
+$cmd$);
+
+-- Correctness (LIMIT 3): the Limit counts UNIQUE emitted rows, so it returns 3
+-- distinct documents (_id 1,2,3), identical off vs on. If the Limit counted the
+-- raw merged rows it would return _id 1 three times.
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_dup", "filter": { "a": { "$in": [1, 2, 3, 4, 5] } }, "projection": { "_id": 1 }, "sort": { "b": 1 }, "limit": 3 }');
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk_dup", "filter": { "a": { "$in": [1, 2, 3, 4, 5] } }, "projection": { "_id": 1 }, "sort": { "b": 1 }, "limit": 3 }');
+
+-- Plan (LIMIT 3): the Limit sits above the de-dup CustomScan over the Merge
+-- Append. Only the plan shape is asserted (structurally) -- the exact
+-- short-circuit row counts depend on the MergeAppend pull scheduling and are not
+-- pinned here.
+SELECT bool_or(line ~ 'Limit') AS has_limit,
+       bool_or(line ~ 'DocumentDBApiTidDedup') AS has_tid_dedup,
+       bool_or(line ~ 'Merge Append') AS has_merge_append
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "coll_mk_dup", "filter": { "a": { "$in": [1, 2, 3, 4, 5] } }, "projection": { "_id": 1 }, "sort": { "b": 1 }, "limit": 3 }')
+$cmd$) AS line;
+
+RESET documentdb.forceDisableSeqScan;
+RESET enable_sort;
+RESET documentdb.enable_merge_sort_for_in_prefix;
+
 -- cleanup
 SELECT documentdb_api.drop_collection('msdb','coll');
 SELECT documentdb_api.drop_collection('msdb','coll_mc');
@@ -1698,5 +1899,8 @@ SELECT documentdb_api.drop_collection('msdb','coll_ios');
 SELECT documentdb_api.drop_collection('msdb','coll_ios_abc');
 SELECT documentdb_api.drop_collection('msdb','coll_par');
 SELECT documentdb_api.drop_collection('msdb','coll_sample');
+SELECT documentdb_api.drop_collection('msdb','coll_ios_mk');
+SELECT documentdb_api.drop_collection('msdb','coll_mk_sort');
+SELECT documentdb_api.drop_collection('msdb','coll_mk_dup');
 DROP SCHEMA mergesort_gm CASCADE;
 DROP SCHEMA mergesort_rt CASCADE;

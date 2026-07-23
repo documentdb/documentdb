@@ -3,7 +3,7 @@
  *
  * include/utils/roaring_bitmap_utils.h
  *
- * Adapter layer for 32-bit roaring bitmaps.
+ * Adapter layer for roaring bitmaps.
  * All consumers should use the RoaringBitmapAdapterFuncs instead
  * of the roaring library directly, restricting complete library exposure
  * and controlling what we use safely.
@@ -15,6 +15,7 @@
 #define ROARING_BITMAP_UTILS_H
 
 #include <postgres.h>
+#include <storage/itemptr.h>
 
 /*
  * Opaque handle for bitmap state. The full definition lives in the
@@ -71,6 +72,22 @@ typedef struct RoaringBitmapAdapterFuncs
 	/* Deserialize from buf; returns NULL on failure */
 	RoaringBitmapDeserializeFunc deserialize;
 } RoaringBitmapAdapterFuncs;
+
+
+/* Opaque 64-bit heap-TID de-duplication set. */
+typedef struct RoaringTidDedupState RoaringTidDedupState;
+
+RoaringTidDedupState * CreateRoaringTidDedup(void);
+
+/*
+ * Record a heap TID. Returns true if the TID was newly added (the row has not
+ * been emitted before and should be returned), or false if the TID was already
+ * present (a duplicate that should be dropped).
+ */
+bool RoaringTidDedupAddChecked(RoaringTidDedupState *state, ItemPointer tid);
+
+/* Free a heap-TID de-duplication set (no-op when state is NULL). */
+void FreeRoaringTidDedup(RoaringTidDedupState *state);
 
 
 #endif /* ROARING_BITMAP_UTILS_H */

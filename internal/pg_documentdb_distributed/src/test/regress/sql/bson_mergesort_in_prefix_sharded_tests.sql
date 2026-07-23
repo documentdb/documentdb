@@ -150,6 +150,85 @@ SELECT document FROM bson_aggregation_find('msdb',
   '{ "find": "coll_sk", "filter": { "a": { "$in": [1, 4] } }, "sort": { "b": 1 }, "limit": 3 }');
 RESET documentdb.enable_merge_sort_for_in_prefix;
 
+-- =====================================================================
+-- Multi-key coverage. Every document's prefix array a = [1,2,3,4,5] matches all
+-- five $in branches, so each document is reached through all five MergeAppend
+-- children: the per-shard raw merged stream has 5x as many rows as documents.
+-- Sharded on _id (hashed) so the $in spans shards and each document lives on a
+-- single shard -- its cross-branch duplicates therefore arise within that
+-- shard's scan and are removed by the shard-local heap-TID de-dup, so the
+-- coordinator merge introduces no new duplicates.
+--
+-- This pins the LIMIT invariant under sharding: the Limit must count UNIQUE
+-- emitted rows, not the raw merged rows. LIMIT 3 returns 3 distinct documents
+-- (b = 1,2,3), identical feature off vs on; if the Limit counted raw rows it
+-- would return one document repeated. With a LIMIT the engine pushes
+-- "ORDER BY b LIMIT 3" into each shard task, so the rewrite (and its de-dup)
+-- engages shard-locally.
+-- =====================================================================
+SELECT documentdb_api.insert_one('msdb','coll_mk','{ "_id": 1, "a": [1, 2, 3, 4, 5], "b": 1 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk','{ "_id": 2, "a": [1, 2, 3, 4, 5], "b": 2 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk','{ "_id": 3, "a": [1, 2, 3, 4, 5], "b": 3 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk','{ "_id": 4, "a": [1, 2, 3, 4, 5], "b": 4 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk','{ "_id": 5, "a": [1, 2, 3, 4, 5], "b": 5 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk','{ "_id": 6, "a": [1, 2, 3, 4, 5], "b": 6 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk','{ "_id": 7, "a": [1, 2, 3, 4, 5], "b": 7 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk','{ "_id": 8, "a": [1, 2, 3, 4, 5], "b": 8 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk','{ "_id": 9, "a": [1, 2, 3, 4, 5], "b": 9 }');
+SELECT documentdb_api.insert_one('msdb','coll_mk','{ "_id": 10, "a": [1, 2, 3, 4, 5], "b": 10 }');
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "coll_mk", "indexes": [ { "key": { "a": 1, "b": 1 }, "enableCompositeTerm": true, "name": "a_1_b_1" } ] }', true);
+
+SELECT documentdb_api.shard_collection('{ "shardCollection": "msdb.coll_mk", "key": { "_id": "hashed" }, "numInitialChunks": 2 }');
+
+ANALYZE documentdb_data.documents_79003;
+
+-- Correctness (no LIMIT): each of the 10 documents appears exactly once, in b
+-- order, identical feature off vs on -- despite the 5x raw duplication.
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk", "filter": { "a": { "$in": [1, 2, 3, 4, 5] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
+
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk", "filter": { "a": { "$in": [1, 2, 3, 4, 5] } }, "projection": { "_id": 1 }, "sort": { "b": 1 } }');
+RESET documentdb.enable_merge_sort_for_in_prefix;
+
+-- Correctness (LIMIT 3): the Limit counts UNIQUE emitted rows, so it returns 3
+-- distinct documents (_id 1,2,3), identical off vs on.
+SET documentdb.enable_merge_sort_for_in_prefix TO off;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk", "filter": { "a": { "$in": [1, 2, 3, 4, 5] } }, "projection": { "_id": 1 }, "sort": { "b": 1 }, "limit": 3 }');
+
+SET documentdb.enable_merge_sort_for_in_prefix TO on;
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "coll_mk", "filter": { "a": { "$in": [1, 2, 3, 4, 5] } }, "projection": { "_id": 1 }, "sort": { "b": 1 }, "limit": 3 }');
+RESET documentdb.enable_merge_sort_for_in_prefix;
+
+-- Plan shape with feature ON (LIMIT 3): each shard task produces a heap-TID
+-- de-dup CustomScan over an ordered "Limit -> Merge Append" (one index scan per
+-- $in value), so the shard-local de-dup drops the cross-branch repeats before
+-- the coordinator merge. The flag is SET LOCAL so citus.propagate_set_commands
+-- forwards it to the shard task connections.
+BEGIN;
+SET LOCAL citus.propagate_set_commands TO 'local';
+SET LOCAL documentdb.enable_merge_sort_for_in_prefix TO on;
+SET LOCAL citus.max_adaptive_executor_pool_size TO 1;
+SET LOCAL citus.enable_local_execution TO off;
+SET LOCAL citus.explain_analyze_sort_method TO taskId;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_sort TO off;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim(
+    $$ EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF)
+       SELECT document FROM bson_aggregation_find('msdb',
+         '{ "find": "coll_mk", "filter": { "a": { "$in": [1, 2, 3, 4, 5] } }, "sort": { "b": 1 }, "limit": 3 }') $$,
+    p_ignore_heap_fetches => true,
+    p_ignore_distributed_runtime_details => true);
+ROLLBACK;
+
 -- cleanup
 SELECT documentdb_api.drop_collection('msdb','coll');
 SELECT documentdb_api.drop_collection('msdb','coll_sk');
+SELECT documentdb_api.drop_collection('msdb','coll_mk');

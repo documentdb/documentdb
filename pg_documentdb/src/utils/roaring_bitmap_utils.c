@@ -3,10 +3,12 @@
  *
  * src/utils/roaring_bitmap_utils.c
  *
- * Adapter implementation for 32-bit roaring bitmaps
- * This file is the only compilation unit that includes the roaring library
- * header; all other code goes through the opaque API
- * declared in include/utils/roaring_bitmap_utils.h.
+ * Adapter implementation for roaring bitmaps: a 32-bit bitmap adapter for
+ * serializable uint32 sets, and a 64-bit heap-TID de-duplication set (used to
+ * drop already-emitted rows above an order-preserving merge). This file is the
+ * only compilation unit that includes the roaring library header; all other
+ * code goes through the opaque API declared in
+ * include/utils/roaring_bitmap_utils.h.
  *
  *-------------------------------------------------------------------------
  */
@@ -131,4 +133,66 @@ RoaringBitmapDeserialize(const char *buf, size_t length)
 	RoaringBitmapState *state = palloc(sizeof(RoaringBitmapState));
 	state->bitmap = bitmap;
 	return state;
+}
+
+
+/*
+ * Concrete definition of the opaque RoaringTidDedupState handle. Uses a 64-bit
+ * roaring bitmap so a full heap ItemPointer (block + offset) fits in a single
+ * key.
+ */
+struct RoaringTidDedupState
+{
+	roaring64_bitmap_t *bitmap;
+};
+
+
+/*
+ * Pack a heap ItemPointer into a 64-bit key: block number in the high bits,
+ * item offset in the low 16 bits.
+ *
+ * An ItemPointer has no relation/shard id, so (block, offset) is unique only
+ * within a single relation -- two shards can share the same value. That is safe
+ * here because each de-dup set is scoped to one scan over one relation (a single
+ * shard's heap in the distributed case) and is never shared across relations.
+ */
+#define ItemPointerToUint64(pointer) \
+	((((uint64) ItemPointerGetBlockNumber(pointer)) << 16) | \
+	 ItemPointerGetOffsetNumber(pointer))
+
+
+RoaringTidDedupState *
+CreateRoaringTidDedup(void)
+{
+	RoaringTidDedupState *state = palloc(sizeof(RoaringTidDedupState));
+	state->bitmap = roaring64_bitmap_create();
+	if (state->bitmap == NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY),
+						errmsg(
+							"failed to allocate roaring bitmap for TID de-duplication")));
+	}
+
+	return state;
+}
+
+
+bool
+RoaringTidDedupAddChecked(RoaringTidDedupState *state, ItemPointer tid)
+{
+	uint64 key = ItemPointerToUint64(tid);
+	return roaring64_bitmap_add_checked(state->bitmap, key);
+}
+
+
+void
+FreeRoaringTidDedup(RoaringTidDedupState *state)
+{
+	if (state == NULL)
+	{
+		return;
+	}
+
+	roaring64_bitmap_free(state->bitmap);
+	pfree(state);
 }
