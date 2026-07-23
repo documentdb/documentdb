@@ -1,0 +1,262 @@
+-- Tests for streaming dynamic cursors over $group queries whose group keys can
+-- be provided in order by a composite (ordered) index. With
+-- documentdb.enable_group_by_dynamic_streaming the planner produces a sorted
+-- GroupAggregate over an ordered index-only scan (no blocking Sort), which the
+-- dynamic cursor wraps and pages through incrementally instead of falling back
+-- to a persistent (materialized) cursor.
+
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documentdb_api_internal;
+
+SET documentdb.next_collection_id TO 9700;
+SET documentdb.next_collection_index_id TO 9700;
+
+-- Composite op class + compound-id index pushdown are what turn a $group into a
+-- GroupAggregate over an ordered index scan with no Sort.
+SET documentdb.defaultUseCompositeOpClass TO on;
+SET documentdb.enableGroupByCompoundIdIndexPushdown TO on;
+SET documentdb_core.enableWriteDocumentsInRepath TO on;
+
+SET documentdb.enableDynamicCursors TO on;
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+
+-- b = i % 10  -> 10 distinct values, 100 rows per group (multi-row groups)
+-- c = i       -> unique per row (single-row groups when grouping on {b,c})
+SELECT COUNT(documentdb_api.insert_one('dcgrp_db', 'grp',
+    bson_build_document('_id', i, 'b', i % 10, 'c', i)))
+FROM generate_series(1, 1000) AS i;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('dcgrp_db',
+    '{ "createIndexes": "grp", "indexes": [ { "key": { "b": 1, "c": 1 }, "name": "b_c_1" } ] }',
+    true);
+
+ANALYZE;
+
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+
+-- ===========================================================================
+-- Helper: drain an aggregate cursor and return the total row count, the cursor
+-- scan type from the first continuation (7 = streaming secondary index-only
+-- scan), and the number of round trips.
+-- ===========================================================================
+CREATE OR REPLACE FUNCTION dcgrp_drain(p_agg text, p_batch_size int)
+RETURNS TABLE(total bigint, first_type int, round_trips int) AS $$
+DECLARE
+    v_page documentdb_core.bson;
+    v_cont documentdb_core.bson;
+    v_batch bigint;
+BEGIN
+    total := 0;
+    round_trips := 0;
+    first_type := NULL;
+
+    SELECT fp.cursorPage, fp.continuation INTO v_page, v_cont
+    FROM aggregate_cursor_first_page(
+        database => 'dcgrp_db', commandSpec => p_agg::documentdb_core.bson,
+        cursorId => 7701) fp;
+    round_trips := round_trips + 1;
+
+    SELECT (bson_dollar_project(v_page,
+        '{ "c": { "$size": { "$ifNull": ["$cursor.firstBatch", []] } } }') ->> 'c')::bigint
+        INTO v_batch;
+    total := total + COALESCE(v_batch, 0);
+
+    IF v_cont IS NOT NULL THEN
+        SELECT (bson_dollar_project(v_cont, '{ "dc.type": 1 }') ->> 'dc.type')::int
+            INTO first_type;
+    END IF;
+
+    WHILE v_cont IS NOT NULL LOOP
+        SELECT gm.cursorPage, gm.continuation INTO v_page, v_cont
+        FROM cursor_get_more(
+            database => 'dcgrp_db',
+            getMoreSpec => FORMAT('{ "getMore": { "$numberLong": "7701" }, "collection": "grp", "batchSize": %s }', p_batch_size)::documentdb_core.bson,
+            continuationSpec => v_cont) gm;
+        round_trips := round_trips + 1;
+
+        SELECT (bson_dollar_project(v_page,
+            '{ "c": { "$size": { "$ifNull": ["$cursor.nextBatch", []] } } }') ->> 'c')::bigint
+            INTO v_batch;
+        total := total + COALESCE(v_batch, 0);
+    END LOOP;
+
+    RETURN NEXT;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ===========================================================================
+-- Compound-id $group ({b,c}): 1000 single-row groups. Verify every batch size
+-- returns exactly 1000 groups via a streaming cursor (type 7), and that paging
+-- actually happens (round trips scale with batch size).
+-- ===========================================================================
+SET documentdb.enable_group_by_dynamic_streaming TO on;
+
+SELECT total, first_type FROM dcgrp_drain(
+    '{ "aggregate": "grp", "hint": "b_c_1", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" } } } ], "cursor": { "batchSize": 100 } }',
+    100);
+
+DO $$
+DECLARE
+    v_bs int; v_total bigint; v_type int; v_rt int;
+BEGIN
+    FOREACH v_bs IN ARRAY ARRAY[1, 2, 3, 7, 50, 333, 999] LOOP
+        SELECT total, first_type, round_trips INTO v_total, v_type, v_rt FROM dcgrp_drain(
+            FORMAT('{ "aggregate": "grp", "hint": "b_c_1", "pipeline": [ { "$group": { "_id": { "b": "$b", "c": "$c" } } } ], "cursor": { "batchSize": %s } }', v_bs),
+            v_bs);
+        IF v_total <> 1000 THEN
+            RAISE EXCEPTION 'compound-id group batchSize=%: got % groups, expected 1000', v_bs, v_total;
+        END IF;
+        IF v_type IS DISTINCT FROM 7 THEN
+            RAISE EXCEPTION 'compound-id group batchSize=%: cursor type % (expected 7 streaming)', v_bs, v_type;
+        END IF;
+    END LOOP;
+    RAISE NOTICE 'compound-id group: all batch sizes stream 1000 groups (type 7)';
+END $$;
+
+-- ===========================================================================
+-- Multi-row groups ({b}): 10 groups of 100 rows each with a $sum accumulator.
+-- This exercises the sorted GroupAggregate read-ahead (one row is read past the
+-- emitted group to detect the boundary); the continuation must resume at the
+-- next group without dropping or duplicating any group across batch boundaries.
+-- ===========================================================================
+DO $$
+DECLARE
+    v_bs int; v_total bigint; v_type int;
+BEGIN
+    FOREACH v_bs IN ARRAY ARRAY[1, 2, 3, 4, 7, 10, 11] LOOP
+        SELECT total, first_type INTO v_total, v_type FROM dcgrp_drain(
+            FORMAT('{ "aggregate": "grp", "hint": "b_c_1", "pipeline": [ { "$group": { "_id": { "b": "$b" }, "n": { "$sum": 1 } } } ], "cursor": { "batchSize": %s } }', v_bs),
+            v_bs);
+        IF v_total <> 10 THEN
+            RAISE EXCEPTION 'multi-row group batchSize=%: got % groups, expected 10', v_bs, v_total;
+        END IF;
+        IF v_type IS DISTINCT FROM 7 AND v_type IS NOT NULL THEN
+            RAISE EXCEPTION 'multi-row group batchSize=%: cursor type % (expected 7 streaming)', v_bs, v_type;
+        END IF;
+    END LOOP;
+    RAISE NOTICE 'multi-row group: all batch sizes stream 10 groups (read-ahead correct)';
+END $$;
+
+-- Accumulator values are correct on the streamed groups (each b has 100 rows).
+SELECT bson_dollar_project(cursorPage, '{ "cursor.firstBatch": 1 }')
+FROM aggregate_cursor_first_page(
+    database => 'dcgrp_db',
+    commandSpec => '{ "aggregate": "grp", "hint": "b_c_1", "pipeline": [ { "$group": { "_id": { "b": "$b" }, "n": { "$sum": 1 } } }, { "$sort": { "_id.b": 1 } } ], "cursor": { "batchSize": 100 } }'::documentdb_core.bson,
+    cursorId => 7702);
+
+-- ===========================================================================
+-- Heap-fetching index scan: a $group whose accumulator references a field that
+-- is NOT covered by the ordering index forces a sorted GroupAggregate over a
+-- regular (heap-fetching) Index Scan (dc.type 3 = secondary index scan) rather
+-- than an index-only scan (dc.type 7). This must still stream under the dynamic
+-- cursor with the same read-ahead continuation handling.
+-- ===========================================================================
+SET documentdb.enable_group_by_dynamic_streaming TO on;
+
+SELECT documentdb_api.drop_collection('dcgrp_db', 'grp_heap');
+
+-- Same b/c layout as grp, plus a field d that is NOT indexed. Grouping on {b}
+-- (a prefix of the {b,c} index) is ordered by the index, but the $sum / $max on
+-- d must be read from the heap, so the scan is a plain Index Scan, not an
+-- index-only scan.
+SELECT COUNT(documentdb_api.insert_one('dcgrp_db', 'grp_heap',
+    bson_build_document('_id', i, 'b', i % 10, 'c', i, 'd', i * 2)))
+FROM generate_series(1, 1000) AS i;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('dcgrp_db',
+    '{ "createIndexes": "grp_heap", "indexes": [ { "key": { "b": 1, "c": 1 }, "name": "bh_c_1" } ] }',
+    true);
+
+ANALYZE;
+
+-- Helper: like dcgrp_drain but targets the grp_heap collection (cursor 7703).
+CREATE OR REPLACE FUNCTION dcgrp_drain_heap(p_agg text, p_batch_size int)
+RETURNS TABLE(total bigint, first_type int, round_trips int) AS $$
+DECLARE
+    v_page documentdb_core.bson;
+    v_cont documentdb_core.bson;
+    v_batch bigint;
+BEGIN
+    total := 0;
+    round_trips := 0;
+    first_type := NULL;
+
+    SELECT fp.cursorPage, fp.continuation INTO v_page, v_cont
+    FROM aggregate_cursor_first_page(
+        database => 'dcgrp_db', commandSpec => p_agg::documentdb_core.bson,
+        cursorId => 7703) fp;
+    round_trips := round_trips + 1;
+
+    SELECT (bson_dollar_project(v_page,
+        '{ "c": { "$size": { "$ifNull": ["$cursor.firstBatch", []] } } }') ->> 'c')::bigint
+        INTO v_batch;
+    total := total + COALESCE(v_batch, 0);
+
+    IF v_cont IS NOT NULL THEN
+        SELECT (bson_dollar_project(v_cont, '{ "dc.type": 1 }') ->> 'dc.type')::int
+            INTO first_type;
+    END IF;
+
+    WHILE v_cont IS NOT NULL LOOP
+        SELECT gm.cursorPage, gm.continuation INTO v_page, v_cont
+        FROM cursor_get_more(
+            database => 'dcgrp_db',
+            getMoreSpec => FORMAT('{ "getMore": { "$numberLong": "7703" }, "collection": "grp_heap", "batchSize": %s }', p_batch_size)::documentdb_core.bson,
+            continuationSpec => v_cont) gm;
+        round_trips := round_trips + 1;
+
+        SELECT (bson_dollar_project(v_page,
+            '{ "c": { "$size": { "$ifNull": ["$cursor.nextBatch", []] } } }') ->> 'c')::bigint
+            INTO v_batch;
+        total := total + COALESCE(v_batch, 0);
+    END LOOP;
+
+    RETURN NEXT;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Every batch size streams all 10 groups via a heap-fetching index scan. The
+-- first continuation reports scan type 3 (secondary index scan), except when
+-- the batch fully drains in the first page (batch >= group count) and there is
+-- no continuation at all.
+DO $$
+DECLARE
+    v_bs int; v_total bigint; v_type int;
+BEGIN
+    FOREACH v_bs IN ARRAY ARRAY[1, 2, 3, 4, 7, 10, 11] LOOP
+        SELECT total, first_type INTO v_total, v_type FROM dcgrp_drain_heap(
+            FORMAT('{ "aggregate": "grp_heap", "hint": "bh_c_1", "pipeline": [ { "$group": { "_id": { "b": "$b" }, "s": { "$sum": "$d" } } } ], "cursor": { "batchSize": %s } }', v_bs),
+            v_bs);
+        IF v_total <> 10 THEN
+            RAISE EXCEPTION 'heap-fetch group batchSize=%: got % groups, expected 10', v_bs, v_total;
+        END IF;
+        IF v_type IS DISTINCT FROM 3 AND v_type IS NOT NULL THEN
+            RAISE EXCEPTION 'heap-fetch group batchSize=%: cursor type % (expected 3 streaming)', v_bs, v_type;
+        END IF;
+    END LOOP;
+    RAISE NOTICE 'heap-fetch group: all batch sizes stream 10 groups (type 3, read-ahead correct)';
+END $$;
+
+-- Accumulator values over the heap-fetched field d are correct
+-- (d = 2*i, b = i % 10, i in 1..1000).
+SELECT bson_dollar_project(cursorPage, '{ "cursor.firstBatch": 1 }')
+FROM aggregate_cursor_first_page(
+    database => 'dcgrp_db',
+    commandSpec => '{ "aggregate": "grp_heap", "hint": "bh_c_1", "pipeline": [ { "$group": { "_id": { "b": "$b" }, "mx": { "$max": "$d" }, "sm": { "$sum": "$d" } } }, { "$sort": { "_id.b": 1 } } ], "cursor": { "batchSize": 100 } }'::documentdb_core.bson,
+    cursorId => 7704);
+
+DROP FUNCTION dcgrp_drain_heap(text, int);
+SELECT documentdb_api.drop_collection('dcgrp_db', 'grp_heap');
+
+-- ===========================================================================
+-- Feature gating: with the GUC off, the same $group falls back to a persistent
+-- (non-streaming) cursor - the continuation has no streaming scan type.
+-- ===========================================================================
+SET documentdb.enable_group_by_dynamic_streaming TO off;
+
+SELECT first_type AS gated_off_type FROM dcgrp_drain(
+    '{ "aggregate": "grp", "hint": "b_c_1", "pipeline": [ { "$group": { "_id": { "b": "$b" }, "n": { "$sum": 1 } } } ], "cursor": { "batchSize": 3 } }',
+    3);
+
+DROP FUNCTION dcgrp_drain(text, int);
+SET documentdb.enable_group_by_dynamic_streaming TO off;

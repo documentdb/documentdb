@@ -33,6 +33,9 @@ typedef struct ExtensionVersion
 
 const char * GetCurrentVersionForLogging(void);
 const char * GetCurrentShortVersionStringForLogging(void);
+const char * GetInitializedShortVersionStringForLogging(void);
+
+bool IsInitializedVersionAtLeast(MajorVersion major, int minor, int patch);
 
 bool IsExtensionVersionAtleast(ExtensionVersion extVersion, MajorVersion major, int minor,
 							   int

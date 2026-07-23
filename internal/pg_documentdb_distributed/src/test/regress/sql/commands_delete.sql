@@ -544,14 +544,19 @@ ROLLBACK;
 -- 5. Now shard collection and run all again to make sure we get index scan with delete pushdown on sharded collection as well
 select documentdb_api.shard_collection('db', 'deleteIndex', '{"_id":"hashed"}', false);
 
-BEGIN;
+-- Populate the sharded collection outside the explain transaction so its metadata/data
+-- writes run with local execution. The explain transaction below then disables local
+-- execution as its first statement, so it never has a local-execution-required op to
+-- conflict with (which would otherwise flakily fail with "cannot switch local
+-- execution status from local execution required to local execution disabled").
 select  documentdb_api.insert('db', '{"insert":"deleteIndex", "documents":[{"_id":1}]}');
 select  documentdb_api.insert('db', '{"insert":"deleteIndex", "documents":[{"_id":2}]}');
-
+select  documentdb_api.insert('db', '{"insert":"deleteIndex", "documents":[{"_id":3}]}');
+BEGIN;
+SET LOCAL citus.enable_local_execution TO off;
 SET LOCAL citus.log_remote_commands TO ON;
 SET local client_min_messages TO ERROR;
 SET LOCAL enable_seqscan TO OFF;
-SELECT  documentdb_api.insert('db', '{"insert":"deleteIndex", "documents":[{"_id":3}]}');
 SET LOCAL documentdb.useLocalExecutionShardQueries to off;
 SET LOCAL citus.log_remote_commands TO OFF;
 -- 6. bson_query_match with $lt, $lte, $gt, $gte, $eq and $in

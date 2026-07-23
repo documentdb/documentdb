@@ -103,9 +103,9 @@ ROLLBACK;
 -- ============================================================
 -- Test 6: EXPLAIN distinct on multikey field
 -- A multikey index cannot provide ordering for distinct, so the order-by
--- pushdown does NOT apply and the Sort remains. The multikey index is
--- still selected (without a hint) with an $exists: true filter pushed on
--- the distinct path to reduce the scanned data set.
+-- pushdown does NOT apply and the Sort remains. A multikey distinct also
+-- cannot push a filter on the distinct path, so the planner falls back to
+-- the _id index scan rather than the multikey index.
 -- ============================================================
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "dist_push_mk", "indexes": [ { "key": { "arr": 1 }, "name": "idx_arr" } ] }', true);
 SELECT documentdb_api.insert_one('db', 'dist_push_mk', '{ "arr": [1, 2, 3], "x": "a" }');
@@ -129,8 +129,8 @@ ROLLBACK;
 -- ============================================================
 -- Test 7: Multikey transition - insert array into non-multikey collection
 -- After inserting an array value into field "a", the index becomes multikey
--- and the order-by pushdown should NO LONGER eliminate the Sort. The index
--- is still used (with an $exists: true filter on "a") but the Sort reappears.
+-- and the order-by pushdown should NO LONGER eliminate the Sort. A multikey
+-- distinct cannot push a filter on "a", so the Sort reappears.
 -- ============================================================
 SELECT documentdb_api.insert_one('db', 'dist_push', '{ "_id": 999, "a": [100, 200, 300], "b": "Z" }');
 ANALYZE;
@@ -828,46 +828,6 @@ $cmd$, p_ignore_heap_fetches => true);
 ROLLBACK;
 
 -- ============================================================
--- Test 47: Multikey index exists-true pushdown - pushdown ON
--- When the chosen index is multikey and a distinct is present, the
--- order-by cannot be pushed down (Sort remains). However, an
--- $exists: true filter on the distinct path is still pushed into the
--- index clauses so the scan is restricted to documents that contain
--- the field. Force the multikey composite index via a hint so the
--- pushed clause is visible in the Index Cond.
--- Expect: Index Scan using idx_arr with an Index Cond containing
--- @> '{ "arr" : { "$minKey" : 1 } }' and a Sort node still present.
--- ============================================================
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
-
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push_mk", "key": "arr", "hint": "idx_arr" }')
-$cmd$);
-ROLLBACK;
-
--- ============================================================
--- Test 48: Multikey index exists-true pushdown - pushdown OFF
--- With pushdown OFF the order-by processing does not run, so no
--- $exists: true clause is pushed into the multikey index. Forcing the
--- multikey index via a hint should show a plain index scan (only the
--- orderByScan clause) with a Sort node, and no minKey exists clause.
--- ============================================================
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
-
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push_mk", "key": "arr", "hint": "idx_arr" }')
-$cmd$);
-ROLLBACK;
-
--- ============================================================
 -- Reinsert an array document into dist_push so that idx_a and idx_a_b
 -- carry a live multikey term for the following tests, rather than only
 -- the sticky metapage flag left behind by Test 7 (whose array doc was
@@ -911,10 +871,11 @@ ROLLBACK;
 -- ============================================================
 -- Test 50: Distinct on "a" with a filter on "b" over composite
 -- index { a: 1, b: 1 }. The distinct key "a" is multikey and has no
--- bound of its own, so an $exists: true (@>= minKey) clause is pushed
--- on "a"; the query filter on "b" is pushed as a separate index clause.
--- Expect the Index Cond to contain a clause on "a" (orderByScan +
--- $minKey exists) AND a clause on "b" (the $gte filter).
+-- bound of its own; a multikey distinct does not push an $exists bound
+-- on the distinct path. With the index hinted, the query filter on "b"
+-- is pushed and an orderByScan clause on "a" drives the ordered scan.
+-- Expect the Index Cond to contain a clause on "b" (the $gte filter)
+-- and the orderByScan clause on "a".
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
@@ -930,7 +891,8 @@ ROLLBACK;
 -- ============================================================
 -- Test 51: Same query as Test 50 with extended explain plans ON.
 -- The extended explain metadata should show the composite index
--- bounds for both "a" (with the $exists/$minKey lower bound) and "b".
+-- bound for "b" and the orderByScan clause on "a" (a multikey distinct
+-- pushes no $exists bound on "a").
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
@@ -946,9 +908,8 @@ ROLLBACK;
 
 -- ============================================================
 -- Test 52: Add a bound on the distinct key "a" (a > 5) alongside the
--- "b" filter. Because "a" now has its own (non-equality) bound, the
--- $exists: true (@>= minKey) clause should NO LONGER be pushed; the
--- Index Cond should contain the "a" > 5 bound and the "b" filter only.
+-- "b" filter. The Index Cond should contain the "a" > 5 bound and the
+-- "b" filter.
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
@@ -962,33 +923,11 @@ $cmd$, p_ignore_heap_fetches => true);
 ROLLBACK;
 
 -- ============================================================
--- Test 53: Feature flag gate - enable_distinct_multikey_filter_pushdown
--- OFF. With the flag disabled, the $exists: true (@>= minKey) clause is
--- NOT pushed into the multikey index even though distinct pushdown is on
--- and the index is multikey. The order-by still cannot be pushed (Sort
--- remains) and only the orderByScan clause appears in the Index Cond.
--- ============================================================
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
-SET LOCAL documentdb.enable_distinct_multikey_filter_pushdown TO off;
-
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "b": { "$gte": "C" } }, "hint": "idx_a_b" }')
-$cmd$);
-ROLLBACK;
-
--- ============================================================
--- Test 54: Same query as Test 50 (distinct on "a" with a filter on
--- "b" over composite index { a: 1, b: 1 }, where "a" is multikey) but
--- WITHOUT an explicit hint. The composite index idx_a_b should be
--- auto-selected: because a multikey distinct pushes an $exists: true
--- clause on the first index column instead of an order-by, the planner
--- treats the first column as satisfied and keeps this index path as a
--- candidate even without a hint. Expect an Index Scan using idx_a_b
--- (not a fallback _id scan) with the "a" and "b" clauses.
+-- Test 53: distinct on "a" with a filter on "b" over composite index
+-- { a: 1, b: 1 } where "a" is multikey, WITHOUT an explicit hint.
+-- A multikey distinct cannot push an order-by, so the composite index
+-- idx_a_b is not treated as satisfying the first column and the planner
+-- falls back to the _id scan.
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;

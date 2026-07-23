@@ -234,7 +234,7 @@ mod tests {
     #[test]
     fn short_retry_policy_returns_none_when_exhausted() {
         let mut policy =
-            ShortRetryPolicy::new(3, Duration::from_millis(100), Duration::from_millis(1000));
+            ShortRetryPolicy::new(3, Duration::from_millis(100), Duration::from_secs(1));
 
         assert!(policy.next_interval().is_some());
         assert!(policy.next_interval().is_some());
@@ -258,7 +258,7 @@ mod tests {
     #[test]
     fn long_retry_policy_returns_none_when_exhausted() {
         let mut policy =
-            LongRetryPolicy::new(3, Duration::from_millis(100), Duration::from_millis(1000));
+            LongRetryPolicy::new(3, Duration::from_millis(100), Duration::from_secs(1));
 
         assert!(policy.next_interval().is_some());
         assert!(policy.next_interval().is_some());
@@ -306,7 +306,7 @@ mod tests {
     #[test]
     fn builder_short_policy_respects_max_delay() {
         let mut policy = RetryPolicyBuilder::build_short();
-        let max_delay = Duration::from_millis(1000);
+        let max_delay = Duration::from_secs(1);
 
         for _ in 0..10 {
             if let Some(interval) = policy.next_interval() {

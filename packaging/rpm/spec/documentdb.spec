@@ -75,9 +75,44 @@ CRUD operations on BSON data types within a PostgreSQL framework.
 # Keep the internal directory out of the RPM package
 sed -i '/internal/d' Makefile
 
+# On older toolchains (RHEL 8 / binutils 2.30) the linker publishes ELF
+# section-boundary symbols (_end, _edata, __bss_start and their aarch64
+# aliases) in .dynsym as globals. The pg_documentdb_extended_rum export
+# duplication self-check then sees them in both RUM shared objects and fails
+# the build with "duplicate export(s)". Newer linkers (RHEL 9, Ubuntu, Azure
+# Linux) already hide them, so only the RHEL 8 RPM build breaks. Localize just
+# those linker-generated symbols via a version script so they drop out of
+# .dynsym on every toolchain. This is a package-build-only change; the
+# extension source and the validation script are untouched. COPT is PGXS's
+# supported flag hook (appended to CFLAGS and LDFLAGS), so it reaches the
+# MODULE_big link of both pg_documentdb_extended_rum_core.so and
+# pg_documentdb_extended_rum_core_builtin_rmgr.so.
+cat > %{_builddir}/documentdb-hide-linker-syms.map <<'EOF'
+{
+  local:
+    _end; __end__;
+    _edata; edata;
+    _etext; etext;
+    __bss_start; __bss_start__; __bss_end__; _bss_end__;
+};
+EOF
+
+# The map lists names that may be absent from a given object (e.g. the aarch64
+# aliases when linking x86_64). binutils < 2.42 silently ignores unmatched
+# version-script entries, but binutils >= 2.42 defaults to --no-undefined-version,
+# under which an unmatched (even local:) entry becomes a fatal link error. RHEL
+# 8/9 ship binutils 2.30/2.35 so this is not hit today; pass --undefined-version
+# when the linker supports it (that option only exists on binutils >= 2.42) so a
+# future base-image bump cannot silently reintroduce a version-dependent failure.
+UNDEF_VERSION_FLAG=""
+if echo 'int _documentdb_uvprobe;' | gcc -shared -fPIC -x c - -o %{_builddir}/.uvprobe.so -Wl,--undefined-version 2>/dev/null; then
+  UNDEF_VERSION_FLAG="-Wl,--undefined-version"
+fi
+rm -f %{_builddir}/.uvprobe.so
+
 # Build the extension
 # Ensure PG_CONFIG points to the correct pg_config for PGDG paths
-make %{?_smp_mflags} PG_CONFIG=/usr/pgsql-%{pg_version}/bin/pg_config PG_CFLAGS="-std=gnu99 -Wall -Wno-error" CFLAGS=""
+make %{?_smp_mflags} PG_CONFIG=/usr/pgsql-%{pg_version}/bin/pg_config PG_CFLAGS="-std=gnu99 -Wall -Wno-error" CFLAGS="" COPT="$UNDEF_VERSION_FLAG -Wl,--version-script=%{_builddir}/documentdb-hide-linker-syms.map"
 
 %install
 make install DESTDIR=%{buildroot}

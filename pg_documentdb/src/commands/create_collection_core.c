@@ -29,7 +29,6 @@
 extern bool EnableNativeColocation;
 extern bool EnableDataTableWithoutCreationTime;
 extern bool EnableRbacCompliantSchemas;
-extern bool EnablePlannerStatisticsNewCollections;
 
 static bool CanColocateAtDatabaseLevel(text *databaseDatum);
 static const char * CreatePostgresDataTable(uint64_t collectionId,
@@ -151,7 +150,7 @@ InsertMetadataIntoCollections(text *databaseDatum, text *collectionDatum,
 	 * take an ExclusiveLock on the Citus reference table shard.
 	 */
 	pgbson *volatile initialOptions = NULL;
-	if (EnablePlannerStatisticsNewCollections)
+	if (ShouldEnablePlannerStatisticsNewCollections())
 	{
 		pgbson_writer optionWriter;
 		PgbsonWriterInit(&optionWriter);

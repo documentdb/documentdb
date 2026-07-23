@@ -52,8 +52,9 @@ extern int32_t MaxWorkerCursorSize;
 extern bool EnablePrimaryKeyCursorScan;
 extern bool UseFileBasedPersistedCursors;
 extern bool EnableDebugQueryText;
-extern bool EnableDelayedHoldPortal;
 extern bool EnableDynamicCursorFastStartupScan;
+extern bool EnableDynamicCursorParallelPlans;
+extern bool EnableSingleResultQueryParallelPlans;
 
 
 /*
@@ -185,6 +186,25 @@ typedef struct DynamicStreamingTupleDestReceiver
 
 	/* The custom scan used for the core execution of the query */
 	PlanState *topLevelPlanState;
+
+	/*
+	 * True when a streaming grouping node (sorted GroupAggregate / Unique) sits
+	 * above the dynamic cursor scan. Such a node reads one input row past the
+	 * group it emits to detect the group boundary, so the underlying scan is
+	 * already positioned at the first row of the next group when a group is
+	 * handed to the receiver. In that case the continuation is snapshotted into
+	 * continuationDocument right after each emitted group and left untouched at
+	 * reject time, otherwise the resume position would be one group too far
+	 * ahead and a whole group would be skipped on the next page.
+	 */
+	bool isGroupedReadAhead;
+
+	/*
+	 * Dynamic streaming custom scan state, located once in
+	 * UpdateQueryDescriptionForDynamicCursor and reused so the plan tree is not
+	 * re-walked on every emitted row.
+	 */
+	CustomScanState *streamingCustomScanState;
 } DynamicStreamingTupleDestReceiver;
 
 
@@ -333,6 +353,11 @@ pgbson *
 DrainSingleResultQuery(Query *query)
 {
 	int cursorOptions = CURSOR_OPT_NO_SCROLL | CURSOR_OPT_BINARY;
+	if (EnableSingleResultQueryParallelPlans)
+	{
+		/* Allow the planner to consider parallel plans for the query. */
+		cursorOptions |= CURSOR_OPT_PARALLEL_OK;
+	}
 	MemoryContext currentContext = CurrentMemoryContext;
 
 	/* Deparse query text before planning since the planner may modify the query tree */
@@ -479,11 +504,16 @@ DrainStreamingQuery(HTAB *cursorMap, Query *query, int batchSize,
 }
 
 
-QueryCursorPlanResult *
-PlanDynamicQueryAndDetermineCursorType(Query *query, bool *isDynamicStreamable)
+bool
+PlanResultHasParallelPlan(QueryCursorPlanResult *planResult)
 {
-	/* Deparse query text before planning since the planner may modify the query tree */
-	char *sourceText = "";
+	return planResult->queryPlan->parallelModeNeeded;
+}
+
+
+int
+GetDynamicCursorCursorOptions(void)
+{
 	int cursorOptions = CURSOR_OPT_BINARY;
 	if (EnableDynamicCursorFastStartupScan)
 	{
@@ -493,6 +523,23 @@ PlanDynamicQueryAndDetermineCursorType(Query *query, bool *isDynamicStreamable)
 		cursorOptions |= CURSOR_OPT_FAST_PLAN;
 	}
 
+	if (EnableDynamicCursorParallelPlans)
+	{
+		/* Allow the planner to consider parallel plans for the cursor. */
+		cursorOptions |= CURSOR_OPT_PARALLEL_OK;
+	}
+
+	return cursorOptions;
+}
+
+
+QueryCursorPlanResult *
+PlanDynamicQueryAndDetermineCursorType(Query *query, bool *isDynamicStreamable)
+{
+	/* Deparse query text before planning since the planner may modify the query tree */
+	char *sourceText = "";
+
+	int cursorOptions = GetDynamicCursorCursorOptions();
 	if (EnableDebugQueryText)
 	{
 		bool pretty = false;
@@ -522,6 +569,25 @@ UpdateQueryDescriptionForDynamicCursor(PlanState *planState, DestReceiver *destR
 		(DynamicStreamingTupleDestReceiver *) destReceiver;
 
 	receiver->topLevelPlanState = planState;
+
+	/*
+	 * Locate the dynamic streaming custom scan once, up front, from the
+	 * freshly-initialized plan tree (this callback runs right after
+	 * ExecutorStart). The same downward walk also reports whether a sorted
+	 * GroupAggregate sits above the scan (group read-ahead), so both the cached
+	 * scan state and the read-ahead flag are derived from a single traversal
+	 * rather than re-walking the tree per emitted row.
+	 */
+	bool isGroupReadAhead = false;
+	receiver->streamingCustomScanState =
+		GetDynamicStreamingCustomScanState(planState, &isGroupReadAhead);
+	if (receiver->streamingCustomScanState == NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg(
+							"Failed to get dynamic streaming custom scan state")));
+	}
+	receiver->isGroupedReadAhead = isGroupReadAhead;
 }
 
 
@@ -750,7 +816,7 @@ CreateAndDrainPersistedQuery(const char *cursorName, QueryCursorPlanResult *resu
 	queryPortal->visible = true;
 	queryPortal->cursorOptions = cursorOptions;
 
-	if (!closeCursor && (!EnableDelayedHoldPortal || !isHoldCursor))
+	if (!closeCursor && !isHoldCursor)
 	{
 		/* Since this could be holdable, copy the query plan to the portal context
 		 * Note that this is cleared anyway when we call HoldPortal (portal->stmts is
@@ -785,11 +851,6 @@ CreateAndDrainPersistedQuery(const char *cursorName, QueryCursorPlanResult *resu
 		queryPortal->cleanup = CleanupPortalState;
 	}
 
-	if (!closeCursor && isHoldCursor && !EnableDelayedHoldPortal)
-	{
-		HoldPortal(queryPortal);
-	}
-
 	if (SPI_connect() != SPI_OK_CONNECT)
 	{
 		ereport(ERROR, (errmsg("could not connect to SPI manager")));
@@ -806,7 +867,7 @@ CreateAndDrainPersistedQuery(const char *cursorName, QueryCursorPlanResult *resu
 																  &currentAccumulatedSize,
 																  currentContext);
 
-	if (EnableDelayedHoldPortal && !closeCursor && isHoldCursor &&
+	if (!closeCursor && isHoldCursor &&
 		reason != TerminationReason_CursorCompletion)
 	{
 		/* There's more to this cursor and needs continuation, hold the portal */
@@ -1063,21 +1124,25 @@ DynamicStreamingDestReceiverReceive(TupleTableSlot *slot,
 	 * was fetched but NOT emitted. On resume, SkipWithUserContinuation uses
 	 * returnOnEquality=true so that the exact-match tuple is re-yielded
 	 * instead of skipped.
+	 *
+	 * For plans with a streaming grouping node on top (isGroupedReadAhead), the
+	 * grouping node has already read one row past the group being emitted, so
+	 * at this point the underlying scan sits at the start of the group *after*
+	 * the rejected one. Capturing here would skip the rejected group entirely.
+	 * Instead continuationDocument was already snapshotted right after the last
+	 * emitted group (below), which points at the first row of the rejected
+	 * group - exactly where the next page must resume - so we leave it as-is.
 	 */
 	if (sizeLimitReached ||
 		base->numRowsFetched >= (uint32_t) base->batchSize)
 	{
-		oldContext = MemoryContextSwitchTo(base->writerContext);
-		CustomScanState *customScanState = GetDynamicStreamingCustomScanState(
-			receiver->topLevelPlanState);
-		if (customScanState == NULL)
+		if (!receiver->isGroupedReadAhead)
 		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-							errmsg("Failed to get dynamic streaming custom scan state")));
+			oldContext = MemoryContextSwitchTo(base->writerContext);
+			receiver->continuationDocument = GetContinuationFromCustomScan(
+				receiver->streamingCustomScanState);
+			MemoryContextSwitchTo(oldContext);
 		}
-
-		receiver->continuationDocument = GetContinuationFromCustomScan(customScanState);
-		MemoryContextSwitchTo(oldContext);
 		receiver->terminationReason = sizeLimitReached ?
 									  TerminationReason_BatchSizeLimit :
 									  TerminationReason_BatchItemLimit;
@@ -1090,6 +1155,30 @@ DynamicStreamingDestReceiverReceive(TupleTableSlot *slot,
 
 	base->numRowsFetched++;
 	base->currentAccumulatedSize += (datumSize + PER_DOC_OVERHEAD);
+
+	/*
+	 * For grouped read-ahead plans, snapshot the continuation into
+	 * continuationDocument right after emitting each group. Because the grouping
+	 * node has already fetched the first row of the *next* group to complete the
+	 * one just written, the underlying scan is positioned exactly where the next
+	 * page should resume. We keep only the latest snapshot so that whichever
+	 * group turns out to be the last emitted one (whether the batch stops on an
+	 * item or size limit), the retained continuation resumes at the immediately
+	 * following group. On natural cursor completion this value is ignored
+	 * (GetContinuation returns NULL for TerminationReason_CursorCompletion).
+	 */
+	if (receiver->isGroupedReadAhead)
+	{
+		oldContext = MemoryContextSwitchTo(base->writerContext);
+		if (receiver->continuationDocument != NULL)
+		{
+			pfree(receiver->continuationDocument);
+		}
+		receiver->continuationDocument = GetContinuationFromCustomScan(
+			receiver->streamingCustomScanState);
+		MemoryContextSwitchTo(oldContext);
+	}
+
 	return true;
 }
 
@@ -1508,15 +1597,6 @@ HoldPortal(Portal portal)
 	 */
 	portal->cursorOptions = portal->cursorOptions | CURSOR_OPT_SCROLL;
 	PortalCreateHoldStore(portal);
-
-	/* Since we only serialize any results we haven't already collected in the
-	 * first batch, we tell the Persist logic to not rewind and redo the entire
-	 * query results. The way this is done is by removing SCROLL.
-	 */
-	if (!EnableDelayedHoldPortal)
-	{
-		portal->cursorOptions = portal->cursorOptions & ~CURSOR_OPT_SCROLL;
-	}
 
 	PersistHoldablePortal(portal);
 

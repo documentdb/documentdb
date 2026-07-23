@@ -192,9 +192,9 @@ ROLLBACK;
 -- ============================================================
 -- Test 6: EXPLAIN distinct on multikey field
 -- A multikey index cannot provide ordering for distinct, so the order-by
--- pushdown does NOT apply and the Sort remains. The multikey index is
--- still selected (without a hint) with an $exists: true filter pushed on
--- the distinct path to reduce the scanned data set.
+-- pushdown does NOT apply and the Sort remains. A multikey distinct also
+-- cannot push a filter on the distinct path, so the planner falls back to
+-- the _id index scan rather than the multikey index.
 -- ============================================================
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "dist_push_mk", "indexes": [ { "key": { "arr": 1 }, "name": "idx_arr" } ] }', true);
 NOTICE:  creating collection
@@ -247,17 +247,17 @@ $cmd$);
                Sort Key: (bson_distinct_unwind(collection.document, 'arr'::text))
                ->  ProjectSet
                      Output: bson_distinct_unwind(collection.document, 'arr'::text)
-                     ->  Index Scan using idx_arr on documentdb_data.documents_19901 collection
+                     ->  Index Scan using _id_ on documentdb_data.documents_19901 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: (collection.document @>= '{ "arr" : { "$minKey" : 1 } }'::bson)
+                           Index Cond: (collection.shard_key_value = '19901'::bigint)
 (12 rows)
 
 ROLLBACK;
 -- ============================================================
 -- Test 7: Multikey transition - insert array into non-multikey collection
 -- After inserting an array value into field "a", the index becomes multikey
--- and the order-by pushdown should NO LONGER eliminate the Sort. The index
--- is still used (with an $exists: true filter on "a") but the Sort reappears.
+-- and the order-by pushdown should NO LONGER eliminate the Sort. A multikey
+-- distinct cannot push a filter on "a", so the Sort reappears.
 -- ============================================================
 SELECT documentdb_api.insert_one('db', 'dist_push', '{ "_id": 999, "a": [100, 200, 300], "b": "Z" }');
                               insert_one                              
@@ -286,9 +286,9 @@ $cmd$);
                Sort Key: (bson_distinct_unwind(collection.document, 'a'::text))
                ->  ProjectSet
                      Output: bson_distinct_unwind(collection.document, 'a'::text)
-                     ->  Index Scan using idx_a on documentdb_data.documents_19900 collection
+                     ->  Index Scan using _id_ on documentdb_data.documents_19900 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+                           Index Cond: (collection.shard_key_value = '19900'::bigint)
 (12 rows)
 
 ROLLBACK;
@@ -1149,9 +1149,9 @@ $cmd$);
                Sort Key: (bson_distinct_unwind(collection.document, 'arr'::text))
                ->  ProjectSet
                      Output: bson_distinct_unwind(collection.document, 'arr'::text)
-                     ->  Index Scan using idx_arr on documentdb_data.documents_19904 collection
+                     ->  Index Scan using _id_ on documentdb_data.documents_19904 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: (collection.document @>= '{ "arr" : { "$minKey" : 1 } }'::bson)
+                           Index Cond: (collection.shard_key_value = '19904'::bigint)
 (12 rows)
 
 ROLLBACK;
@@ -1378,8 +1378,8 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a" }')
 $cmd$, p_ignore_heap_fetches => true);
-                                             run_explain_and_trim                                             
---------------------------------------------------------------------------------------------------------------
+                                            run_explain_and_trim                                             
+-------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Unique (actual rows=10 loops=1)
          ->  Sort (actual rows=200 loops=1)
@@ -1388,16 +1388,10 @@ $cmd$, p_ignore_heap_fetches => true);
                ->  ProjectSet (actual rows=200 loops=1)
                      ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=200 loops=1)
                            namespaceName: db.dist_push
-                           indexName: idx_a
-                           indexKey: {"a": 1}
-                           isMultiKey: false
-                           indexBounds: ["a": [MinKey, MaxKey]]
-                           innerScanLoops: 11 loops
-                           scanType: ordered
-                           scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 200)]
-                           ->  Index Scan using idx_a on documents_19900 collection (actual rows=200 loops=1)
-                                 Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
-(17 rows)
+                           indexName: _id_
+                           ->  Index Scan using _id_ on documents_19900 collection (actual rows=200 loops=1)
+                                 Index Cond: (shard_key_value = '19900'::bigint)
+(11 rows)
 
 ROLLBACK;
 -- ============================================================
@@ -1538,74 +1532,6 @@ $cmd$, p_ignore_heap_fetches => true);
 
 ROLLBACK;
 -- ============================================================
--- Test 47: Multikey index exists-true pushdown - pushdown ON
--- When the chosen index is multikey and a distinct is present, the
--- order-by cannot be pushed down (Sort remains). However, an
--- $exists: true filter on the distinct path is still pushed into the
--- index clauses so the scan is restricted to documents that contain
--- the field. Force the multikey composite index via a hint so the
--- pushed clause is visible in the Index Cond.
--- Expect: Index Scan using idx_arr with an Index Cond containing
--- @> '{ "arr" : { "$minKey" : 1 } }' and a Sort node still present.
--- ============================================================
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push_mk", "key": "arr", "hint": "idx_arr" }')
-$cmd$);
-                                          run_explain_and_trim                                           
----------------------------------------------------------------------------------------------------------
- Aggregate
-   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'arr'::text)))
-   ->  Unique
-         Output: (bson_distinct_unwind(collection.document, 'arr'::text))
-         ->  Sort
-               Output: (bson_distinct_unwind(collection.document, 'arr'::text))
-               Sort Key: (bson_distinct_unwind(collection.document, 'arr'::text))
-               ->  ProjectSet
-                     Output: bson_distinct_unwind(collection.document, 'arr'::text)
-                     ->  Index Scan using idx_arr on documentdb_data.documents_19901 collection
-                           Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: (collection.document @>= '{ "arr" : { "$minKey" : 1 } }'::bson)
-(12 rows)
-
-ROLLBACK;
--- ============================================================
--- Test 48: Multikey index exists-true pushdown - pushdown OFF
--- With pushdown OFF the order-by processing does not run, so no
--- $exists: true clause is pushed into the multikey index. Forcing the
--- multikey index via a hint should show a plain index scan (only the
--- orderByScan clause) with a Sort node, and no minKey exists clause.
--- ============================================================
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push_mk", "key": "arr", "hint": "idx_arr" }')
-$cmd$);
-                                           run_explain_and_trim                                            
------------------------------------------------------------------------------------------------------------
- Aggregate
-   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'arr'::text)))
-   ->  Unique
-         Output: (bson_distinct_unwind(collection.document, 'arr'::text))
-         ->  Sort
-               Output: (bson_distinct_unwind(collection.document, 'arr'::text))
-               Sort Key: (bson_distinct_unwind(collection.document, 'arr'::text))
-               ->  ProjectSet
-                     Output: bson_distinct_unwind(collection.document, 'arr'::text)
-                     ->  Index Scan using idx_arr on documentdb_data.documents_19901 collection
-                           Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: (collection.document @<> '{ "arr" : { "fullScan" : true } }'::bson)
-(12 rows)
-
-ROLLBACK;
--- ============================================================
 -- Reinsert an array document into dist_push so that idx_a and idx_a_b
 -- carry a live multikey term for the following tests, rather than only
 -- the sticky metapage flag left behind by Test 7 (whose array doc was
@@ -1635,8 +1561,8 @@ SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "hint": "idx_a_b" }')
 $cmd$);
-                                          run_explain_and_trim                                           
----------------------------------------------------------------------------------------------------------
+                                                     run_explain_and_trim                                                     
+------------------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
    ->  Unique
@@ -1648,7 +1574,7 @@ $cmd$);
                      Output: bson_distinct_unwind(collection.document, 'a'::text)
                      ->  Index Scan using idx_a_b on documentdb_data.documents_19900 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+                           Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
 (12 rows)
 
 ROLLBACK;
@@ -1661,8 +1587,8 @@ SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "hint": "idx_a" }')
 $cmd$);
-                                          run_explain_and_trim                                           
----------------------------------------------------------------------------------------------------------
+                                                     run_explain_and_trim                                                     
+------------------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
    ->  Unique
@@ -1674,17 +1600,18 @@ $cmd$);
                      Output: bson_distinct_unwind(collection.document, 'a'::text)
                      ->  Index Scan using idx_a on documentdb_data.documents_19900 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+                           Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
 (12 rows)
 
 ROLLBACK;
 -- ============================================================
 -- Test 50: Distinct on "a" with a filter on "b" over composite
 -- index { a: 1, b: 1 }. The distinct key "a" is multikey and has no
--- bound of its own, so an $exists: true (@>= minKey) clause is pushed
--- on "a"; the query filter on "b" is pushed as a separate index clause.
--- Expect the Index Cond to contain a clause on "a" (orderByScan +
--- $minKey exists) AND a clause on "b" (the $gte filter).
+-- bound of its own; a multikey distinct does not push an $exists bound
+-- on the distinct path. With the index hinted, the query filter on "b"
+-- is pushed and an orderByScan clause on "a" drives the ordered scan.
+-- Expect the Index Cond to contain a clause on "b" (the $gte filter)
+-- and the orderByScan clause on "a".
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
@@ -1694,8 +1621,8 @@ SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "b": { "$gte": "C" } }, "hint": "idx_a_b" }')
 $cmd$);
-                                                                   run_explain_and_trim                                                                    
------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                run_explain_and_trim                                                                                
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
    ->  Unique
@@ -1707,14 +1634,15 @@ $cmd$);
                      Output: bson_distinct_unwind(collection.document, 'a'::text)
                      ->  Index Scan using idx_a_b on documentdb_data.documents_19900 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: ((collection.document @>= '{ "b" : "C" }'::bson) AND (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson))
+                           Index Cond: ((collection.document @>= '{ "b" : "C" }'::bson) AND (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
 (12 rows)
 
 ROLLBACK;
 -- ============================================================
 -- Test 51: Same query as Test 50 with extended explain plans ON.
 -- The extended explain metadata should show the composite index
--- bounds for both "a" (with the $exists/$minKey lower bound) and "b".
+-- bound for "b" and the orderByScan clause on "a" (a multikey distinct
+-- pushes no $exists bound on "a").
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
@@ -1725,8 +1653,8 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "b": { "$gte": "C" } }, "hint": "idx_a_b" }')
 $cmd$, p_ignore_heap_fetches => true);
-                                                           run_explain_and_trim                                                            
--------------------------------------------------------------------------------------------------------------------------------------------
+                                                                        run_explain_and_trim                                                                        
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Unique (actual rows=9 loops=1)
          ->  Sort (actual rows=123 loops=1)
@@ -1738,21 +1666,20 @@ $cmd$, p_ignore_heap_fetches => true);
                            indexName: idx_a_b
                            indexKey: {"a": 1,"b": 1}
                            isMultiKey: true
-                           indexBounds: ["a": [MinKey, MaxKey], "b": ["C", { })]
+                           indexBounds: ["a": (MinKey, MaxKey), "b": ["C", { })]
                            numDuplicates: 2 entries
                            innerScanLoops: 13 loops
                            scanType: ordered
                            scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 123)]
                            ->  Index Scan using idx_a_b on documents_19900 collection (actual rows=121 loops=1)
-                                 Index Cond: ((document @>= '{ "b" : "C" }'::bson) AND (document @>= '{ "a" : { "$minKey" : 1 } }'::bson))
+                                 Index Cond: ((document @>= '{ "b" : "C" }'::bson) AND (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
 (18 rows)
 
 ROLLBACK;
 -- ============================================================
 -- Test 52: Add a bound on the distinct key "a" (a > 5) alongside the
--- "b" filter. Because "a" now has its own (non-equality) bound, the
--- $exists: true (@>= minKey) clause should NO LONGER be pushed; the
--- Index Cond should contain the "a" > 5 bound and the "b" filter only.
+-- "b" filter. The Index Cond should contain the "a" > 5 bound and the
+-- "b" filter.
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
@@ -1787,47 +1714,11 @@ $cmd$, p_ignore_heap_fetches => true);
 
 ROLLBACK;
 -- ============================================================
--- Test 53: Feature flag gate - enable_distinct_multikey_filter_pushdown
--- OFF. With the flag disabled, the $exists: true (@>= minKey) clause is
--- NOT pushed into the multikey index even though distinct pushdown is on
--- and the index is multikey. The order-by still cannot be pushed (Sort
--- remains) and only the orderByScan clause appears in the Index Cond.
--- ============================================================
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
-SET LOCAL documentdb.enable_distinct_multikey_filter_pushdown TO off;
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "b": { "$gte": "C" } }, "hint": "idx_a_b" }')
-$cmd$);
-                                                                                run_explain_and_trim                                                                                
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate
-   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
-   ->  Unique
-         Output: (bson_distinct_unwind(collection.document, 'a'::text))
-         ->  Sort
-               Output: (bson_distinct_unwind(collection.document, 'a'::text))
-               Sort Key: (bson_distinct_unwind(collection.document, 'a'::text))
-               ->  ProjectSet
-                     Output: bson_distinct_unwind(collection.document, 'a'::text)
-                     ->  Index Scan using idx_a_b on documentdb_data.documents_19900 collection
-                           Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: ((collection.document @>= '{ "b" : "C" }'::bson) AND (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-(12 rows)
-
-ROLLBACK;
--- ============================================================
--- Test 54: Same query as Test 50 (distinct on "a" with a filter on
--- "b" over composite index { a: 1, b: 1 }, where "a" is multikey) but
--- WITHOUT an explicit hint. The composite index idx_a_b should be
--- auto-selected: because a multikey distinct pushes an $exists: true
--- clause on the first index column instead of an order-by, the planner
--- treats the first column as satisfied and keeps this index path as a
--- candidate even without a hint. Expect an Index Scan using idx_a_b
--- (not a fallback _id scan) with the "a" and "b" clauses.
+-- Test 53: distinct on "a" with a filter on "b" over composite index
+-- { a: 1, b: 1 } where "a" is multikey, WITHOUT an explicit hint.
+-- A multikey distinct cannot push an order-by, so the composite index
+-- idx_a_b is not treated as satisfying the first column and the planner
+-- falls back to the _id scan.
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
@@ -1837,8 +1728,8 @@ SET LOCAL documentdb.enableDistinctIndexPushdown TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a", "query": { "b": { "$gte": "C" } } }')
 $cmd$);
-                                                                   run_explain_and_trim                                                                    
------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                          run_explain_and_trim                                           
+---------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
    ->  Unique
@@ -1848,10 +1739,11 @@ $cmd$);
                Sort Key: (bson_distinct_unwind(collection.document, 'a'::text))
                ->  ProjectSet
                      Output: bson_distinct_unwind(collection.document, 'a'::text)
-                     ->  Index Scan using idx_a_b on documentdb_data.documents_19900 collection
+                     ->  Index Scan using _id_ on documentdb_data.documents_19900 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: ((collection.document @>= '{ "b" : "C" }'::bson) AND (collection.document @>= '{ "a" : { "$minKey" : 1 } }'::bson))
-(12 rows)
+                           Index Cond: (collection.shard_key_value = '19900'::bigint)
+                           Filter: (collection.document @>= '{ "b" : "C" }'::bson)
+(13 rows)
 
 ROLLBACK;
 -- ============================================================

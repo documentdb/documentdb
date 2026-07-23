@@ -193,6 +193,13 @@ typedef Query *(*RewriteListCollectionsQueryForDistribution_HookType)(Query *que
 extern RewriteListCollectionsQueryForDistribution_HookType
 	rewrite_list_collections_query_hook;
 
+typedef struct AggregationPipelineBuildContext AggregationPipelineBuildContext;
+typedef Query *(*RewriteListExtendedIndexesQuery_HookType)(const bson_value_t *specValue,
+														   Query *query,
+														   AggregationPipelineBuildContext
+														   *context);
+extern RewriteListExtendedIndexesQuery_HookType rewrite_list_extended_indexes_query_hook;
+
 typedef Query *(*RewriteConfigQueryForDistribution_HookType)(Query *query);
 extern RewriteConfigQueryForDistribution_HookType rewrite_config_shards_query_hook;
 extern RewriteConfigQueryForDistribution_HookType rewrite_config_chunks_query_hook;
@@ -200,7 +207,9 @@ extern RewriteConfigQueryForDistribution_HookType rewrite_config_chunks_query_ho
 typedef const char *(*TryGetShardNameForUnshardedCollection_HookType)(Oid relationOid,
 																	  uint64 collectionId,
 																	  const char *
-																	  tableName);
+																	  tableName,
+																	  bool *
+																	  isSingleShardTable);
 extern TryGetShardNameForUnshardedCollection_HookType
 	try_get_shard_name_for_unsharded_collection_hook;
 
@@ -235,6 +244,9 @@ extern bool ShouldUpgradeDataTables;
 typedef char *(*TryGetExtendedVersionRefreshQuery_HookType)(void);
 extern TryGetExtendedVersionRefreshQuery_HookType
 	try_get_extended_version_refresh_query_hook;
+
+extern TryGetExtendedVersionRefreshQuery_HookType
+	try_get_extended_initialized_version_refresh_query_hook;
 
 typedef void (*GetShardIdsAndNamesForCollection_HookType)(Oid relationOid, const
 														  char *tableName,
@@ -277,6 +289,10 @@ extern GetOperationCancellationQuery_HookType get_operation_cancellation_query_h
 
 typedef bool (*DefaultEnableCompositeOpClass_HookType)(void);
 extern DefaultEnableCompositeOpClass_HookType default_enable_composite_op_class_hook;
+
+typedef bool (*DefaultEnableStatsCreationOnNewCollections_HookType)();
+extern DefaultEnableStatsCreationOnNewCollections_HookType
+	default_enable_stats_creation_on_new_collections_hook;
 
 /*
  * Hook for resolving a search operator definition by operator name.

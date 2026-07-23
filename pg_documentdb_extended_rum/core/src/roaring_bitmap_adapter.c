@@ -9,10 +9,21 @@
  */
 
 #include <postgres.h>
+#include <utils/varlena.h>
+#if PG_VERSION_NUM >= 160000
+#include <varatt.h>
+#endif
 #include <storage/itemptr.h>
 #include "roaring_bitmaps/roaring.h"
 #include "roaring_bitmap_adapter.h"
+#include "pg_documentdb_rum.h"
 #include "pg_documentdb_rum_dedup.h"
+
+
+typedef enum RoaringBitmapSerializeVersion
+{
+	RoaringBitmapSerializeVersion_V1 = 1
+} RoaringBitmapSerializeVersion;
 
 
 typedef struct RoaringBitmapState
@@ -22,13 +33,19 @@ typedef struct RoaringBitmapState
 
 static void * CreateRoaringBitmapState(void);
 static bool RoaringBitmapStateAddTuple(void *state, ItemPointer tuple);
+static void RoaringBitmapStateRemoveTuple(void *state, ItemPointer tuple);
 static void FreeRoaringBitmapState(void *state);
 static void InstallRoaringMemoryHooks(void);
+static bytea * SerializeRoaringBitmapState(void *state);
+static void * DeserializeRoaringBitmapState(bytea *data);
 
 const RumIndexArrayStateFuncs RoaringStateFuncs = {
 	.createState = CreateRoaringBitmapState,
 	.addItem = RoaringBitmapStateAddTuple,
+	.removeItem = RoaringBitmapStateRemoveTuple,
 	.freeState = FreeRoaringBitmapState,
+	.serializeState = SerializeRoaringBitmapState,
+	.deserializeState = DeserializeRoaringBitmapState,
 };
 
 void
@@ -43,17 +60,36 @@ CreateRoaringBitmapState(void)
 {
 	RoaringBitmapState *state = palloc(sizeof(RoaringBitmapState));
 	state->bitmap = roaring64_bitmap_create();
+	if (state->bitmap == NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY),
+						errmsg("Failed to allocate memory for Roaring Bitmap state")));
+	}
+
 	return state;
 }
+
+
+#define ItemPointerToUint64(pointer) \
+	((((uint64_t) ItemPointerGetBlockNumber(pointer)) << 16) \
+	 | ItemPointerGetOffsetNumber(pointer))
 
 
 static bool
 RoaringBitmapStateAddTuple(void *state, ItemPointer tuple)
 {
 	RoaringBitmapState *bitmapState = (RoaringBitmapState *) state;
-	uint64_t tupleValue = (((uint64_t) ItemPointerGetBlockNumber(tuple)) << 32) |
-						  ItemPointerGetOffsetNumber(tuple);
+	uint64_t tupleValue = ItemPointerToUint64(tuple);
 	return roaring64_bitmap_add_checked(bitmapState->bitmap, tupleValue);
+}
+
+
+static void
+RoaringBitmapStateRemoveTuple(void *state, ItemPointer tuple)
+{
+	RoaringBitmapState *bitmapState = (RoaringBitmapState *) state;
+	uint64_t tupleValue = ItemPointerToUint64(tuple);
+	roaring64_bitmap_remove(bitmapState->bitmap, tupleValue);
 }
 
 
@@ -63,6 +99,68 @@ FreeRoaringBitmapState(void *state)
 	RoaringBitmapState *bitmapState = (RoaringBitmapState *) state;
 	roaring64_bitmap_free(bitmapState->bitmap);
 	pfree(bitmapState);
+}
+
+
+static bytea *
+SerializeRoaringBitmapState(void *state)
+{
+	RoaringBitmapState *bitmapState = (RoaringBitmapState *) state;
+	if (roaring64_bitmap_is_empty(bitmapState->bitmap))
+	{
+		return NULL;
+	}
+
+	size_t serializedSize = roaring64_bitmap_portable_size_in_bytes(bitmapState->bitmap);
+
+	/*
+	 * run-optimize/shrink-to-fit cost time proportional to the bitmap
+	 * cardinality on every serialize (i.e. every page of an ordered dedup
+	 * scan), so only pay for them once the bitmap is large enough for the
+	 * space savings to be worthwhile. The threshold is configurable via
+	 * <prefix>.dedup_serialize_optimize_threshold_bytes (0 => always).
+	 */
+	if (serializedSize > (size_t) RumDedupSerializeOptimizeThresholdBytes)
+	{
+		roaring64_bitmap_run_optimize(bitmapState->bitmap);
+		roaring64_bitmap_shrink_to_fit(bitmapState->bitmap);
+		serializedSize = roaring64_bitmap_portable_size_in_bytes(bitmapState->bitmap);
+	}
+
+	bytea *result = (bytea *) palloc(VARHDRSZ + serializedSize + 1);
+	char *data = VARDATA(result);
+	data[0] = (char) RoaringBitmapSerializeVersion_V1;
+	size_t serializedBytes = roaring64_bitmap_portable_serialize(bitmapState->bitmap,
+																 (void *) (data + 1));
+	SET_VARSIZE(result, VARHDRSZ + serializedBytes + 1);
+	return result;
+}
+
+
+static void *
+DeserializeRoaringBitmapState(bytea *data)
+{
+	RoaringBitmapState *bitmapState = palloc(sizeof(RoaringBitmapState));
+	char *dataPtr = VARDATA(data);
+	size_t dataSize = VARSIZE_ANY_EXHDR(data);
+	if (dataSize < 2 || dataPtr[0] != (char) RoaringBitmapSerializeVersion_V1)
+	{
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("Unsupported Roaring Bitmap serialization version: %d",
+							   dataSize < 1 ? -1 : (int) dataPtr[0])));
+	}
+
+	dataPtr++;
+	bitmapState->bitmap = roaring64_bitmap_portable_deserialize_safe((void *) dataPtr,
+																	 dataSize - 1);
+
+	if (bitmapState->bitmap == NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY),
+						errmsg("Failed to deserialize for Roaring Bitmap state")));
+	}
+
+	return bitmapState;
 }
 
 

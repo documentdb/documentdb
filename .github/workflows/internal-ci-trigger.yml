@@ -1,0 +1,313 @@
+# Trigger internal ADO pipeline from GitHub PR comments.
+# Fork heads are supported, but checkout and status operations remain scoped to the base repository.
+name: Internal CI Trigger
+run-name: "Internal CI for PR #${{ github.event.issue.number }}"
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  trigger-internal-ci:
+    # Only run on PR comments, not issue comments, that are /test commands.
+    if: >-
+      github.event.issue.pull_request
+      && (
+        github.event.comment.body == '/test'
+        || startsWith(github.event.comment.body, '/test ')
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      statuses: write
+    steps:
+      - name: Validate test command
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          if [[ ! "$COMMENT_BODY" =~ ^/test([[:space:]]+force)?[[:space:]]*$ ]]; then
+            echo "::error::Unsupported internal CI command. Use /test or /test force."
+            exit 1
+          fi
+
+      - name: Check repository permission
+        env:
+          COMMENTER: ${{ github.event.comment.user.login }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          PERMISSION=$(gh api "repos/${REPOSITORY}/collaborators/${COMMENTER}/permission" \
+            --jq '.permission')
+
+          if [[ "$PERMISSION" != "admin" && "$PERMISSION" != "write" ]]; then
+            echo "::error::User ${COMMENTER} does not have write access (permission: ${PERMISSION})"
+            exit 1
+          fi
+
+          echo "User ${COMMENTER} has ${PERMISSION} repository permission"
+
+      - name: Create Microsoft membership App token
+        id: membership-app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.MS_ORG_MEMBERSHIP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MS_ORG_MEMBERSHIP_APP_PRIVATE_KEY }}
+          owner: microsoft
+          permission-members: read
+
+      - name: Check Microsoft organization membership
+        env:
+          COMMENTER: ${{ github.event.comment.user.login }}
+          GH_TOKEN: ${{ steps.membership-app-token.outputs.token }}
+          MICROSOFT_GITHUB_ORG: microsoft
+        run: |
+          if ! gh api "orgs/${MICROSOFT_GITHUB_ORG}/members/${COMMENTER}" --silent; then
+            echo "::error::User ${COMMENTER} is not a member of ${MICROSOFT_GITHUB_ORG}, or membership could not be verified"
+            exit 1
+          fi
+
+          echo "User ${COMMENTER} is a member of ${MICROSOFT_GITHUB_ORG}"
+
+      - name: React to comment
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content='eyes' --silent
+
+      - name: Get PR details and pinned SHA
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER="${{ github.event.issue.number }}"
+
+          PR_DATA=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}" \
+            --jq '{sha: (.head.sha // ""), branch: (.head.ref // ""), head_repo: (.head.repo.full_name // ""), base_repo: (.base.repo.full_name // ""), base_ref: (.base.ref // ""), author: (.user.login // "")}')
+
+          COMMIT_SHA=$(echo "$PR_DATA" | jq -r '.sha')
+          SOURCE_BRANCH=$(echo "$PR_DATA" | jq -r '.branch')
+          HEAD_REPO=$(echo "$PR_DATA" | jq -r '.head_repo')
+          BASE_REPO=$(echo "$PR_DATA" | jq -r '.base_repo')
+          BASE_BRANCH=$(echo "$PR_DATA" | jq -r '.base_ref')
+          PR_AUTHOR=$(echo "$PR_DATA" | jq -r '.author')
+          EVENT_REPO="${{ github.repository }}"
+
+          if [[ ! "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::PR head SHA is missing or invalid"
+            exit 1
+          fi
+
+          if [[ ! "$HEAD_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::PR head repository is unavailable or invalid; the fork may have been deleted"
+            exit 1
+          fi
+
+          if [[ "$BASE_REPO" != "$EVENT_REPO" ]]; then
+            echo "::error::PR base repository ${BASE_REPO} does not match workflow repository ${EVENT_REPO}"
+            exit 1
+          fi
+
+          if [[ -z "$SOURCE_BRANCH" || -z "$BASE_BRANCH" || -z "$PR_AUTHOR" ]]; then
+            echo "::error::PR branch or author metadata is missing"
+            exit 1
+          fi
+
+          echo "commit_sha=${COMMIT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "source_branch=${SOURCE_BRANCH}" >> "$GITHUB_OUTPUT"
+          echo "head_repo=${HEAD_REPO}" >> "$GITHUB_OUTPUT"
+          echo "base_branch=${BASE_BRANCH}" >> "$GITHUB_OUTPUT"
+          echo "pr_author=${PR_AUTHOR}" >> "$GITHUB_OUTPUT"
+          echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+
+          echo "PR #${PR_NUMBER} at SHA ${COMMIT_SHA} (head: ${HEAD_REPO}:${SOURCE_BRANCH} -> base: ${BASE_REPO}:${BASE_BRANCH})"
+
+      - name: Path filter - skip if only irrelevant files changed
+        id: pathfilter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if echo "$COMMENT_BODY" | grep -qiE '^/test[[:space:]]+force\b'; then
+            echo "Path filter bypassed via '/test force'"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          IGNORE_PATTERNS=(
+            '*.md'
+            '**/*.md'
+            'LICENSE'
+            'NOTICE'
+            'CODEOWNERS'
+            'MAINTAINERS.md'
+            '.gitignore'
+            '.gitattributes'
+            'docs/**'
+            '.github/**'
+            'rfcs/**'
+            'licenses/**'
+          )
+
+          mapfile -t FILES < <(gh api --paginate \
+            "repos/${REPOSITORY}/pulls/${PR_NUMBER}/files" \
+            --jq '.[].filename')
+
+          if [[ ${#FILES[@]} -eq 0 ]]; then
+            echo "::warning::No files reported changed; running CI anyway"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Changed files (${#FILES[@]}):"
+          printf '  %s\n' "${FILES[@]}"
+
+          shopt -s globstar extglob nullglob
+          RELEVANT=0
+          for f in "${FILES[@]}"; do
+            matched=0
+            for pat in "${IGNORE_PATTERNS[@]}"; do
+              # shellcheck disable=SC2053
+              if [[ "$f" == $pat ]]; then
+                matched=1
+                break
+              fi
+            done
+            if [[ $matched -eq 0 ]]; then
+              echo "Relevant file: $f"
+              RELEVANT=1
+              break
+            fi
+          done
+
+          if [[ $RELEVANT -eq 0 ]]; then
+            echo "All changed files match ignore patterns; skipping internal CI"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+
+            if ! gh api "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+                -f body="Internal CI skipped: PR only touches docs/CI/license files. Use \`/test force\` to override." \
+                --silent; then
+              echo "::warning::Internal CI was skipped, but the explanatory PR comment could not be posted"
+            fi
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set pending commit status
+        if: steps.pathfilter.outputs.skip != 'true'
+        env:
+          COMMIT_SHA: ${{ steps.pr.outputs.commit_sha }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          gh api "repos/${REPOSITORY}/statuses/${COMMIT_SHA}" \
+            -f state='pending' \
+            -f description='Internal CI triggered, waiting for results...' \
+            -f context='ms-internal-ci/oss-jstests' \
+            --silent
+
+      - name: POST webhook to ADO
+        if: steps.pathfilter.outputs.skip != 'true'
+        env:
+          BASE_BRANCH: ${{ steps.pr.outputs.base_branch }}
+          COMMENT_CREATED_AT: ${{ github.event.comment.created_at }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          COMMENT_URL: ${{ github.event.comment.html_url }}
+          COMMIT_SHA: ${{ steps.pr.outputs.commit_sha }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REPO: ${{ steps.pr.outputs.head_repo }}
+          MS_WEBHOOK_SECRET: ${{ secrets.MS_WEBHOOK_SECRET }}
+          PR_AUTHOR: ${{ steps.pr.outputs.pr_author }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_BRANCH: ${{ steps.pr.outputs.source_branch }}
+          TRIGGERER: ${{ github.event.comment.user.login }}
+        run: |
+          if [[ -z "${MS_WEBHOOK_SECRET:-}" ]]; then
+            echo "::error::MS_WEBHOOK_SECRET secret is required to trigger ADO"
+            exit 1
+          fi
+
+          PAYLOAD=$(jq -n \
+            --arg action "created" \
+            --arg pr_number "$PR_NUMBER" \
+            --arg sha "$COMMIT_SHA" \
+            --arg branch "$SOURCE_BRANCH" \
+            --arg head_repo "$HEAD_REPO" \
+            --arg base_branch "$BASE_BRANCH" \
+            --arg repo "$REPOSITORY" \
+            --arg pr_author "$PR_AUTHOR" \
+            --arg triggerer "$TRIGGERER" \
+            --arg comment_id "$COMMENT_ID" \
+            --arg comment_url "$COMMENT_URL" \
+            --arg comment_created_at "$COMMENT_CREATED_AT" \
+            '{
+              action: $action,
+              number: ($pr_number | tonumber),
+              triggerer: $triggerer,
+              comment: {
+                id: ($comment_id | tonumber),
+                html_url: $comment_url,
+                created_at: $comment_created_at,
+                user: {
+                  login: $triggerer
+                }
+              },
+              issue: {
+                number: ($pr_number | tonumber),
+                pull_request: {
+                  url: "https://api.github.com/repos/\($repo)/pulls/\($pr_number)"
+                }
+              },
+              repository: {
+                full_name: $repo
+              },
+              pull_request: {
+                html_url: "https://github.com/\($repo)/pull/\($pr_number)",
+                head: {
+                  sha: $sha,
+                  ref: $branch,
+                  repo: {
+                    full_name: $head_repo
+                  }
+                },
+                base: {
+                  ref: $base_branch,
+                  repo: {
+                    full_name: $repo
+                  }
+                },
+                user: {
+                  login: $pr_author
+                }
+              }
+            }')
+
+          SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha1 -hmac "$MS_WEBHOOK_SECRET" -binary | xxd -p -c 256)
+
+          HTTP_STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-GitHub-ADO-Signature: $SIGNATURE" \
+            -d "$PAYLOAD" \
+            "https://dev.azure.com/msdata/_apis/public/distributedtask/webhooks/documentdb-oss-external-ci-webhook?api-version=6.0-preview")
+
+          echo "ADO webhook response: HTTP ${HTTP_STATUS}"
+
+          if [[ "$HTTP_STATUS" -lt 200 || "$HTTP_STATUS" -ge 300 ]]; then
+            echo "::error::ADO webhook POST failed with HTTP ${HTTP_STATUS}"
+
+            gh api "repos/${REPOSITORY}/statuses/${COMMIT_SHA}" \
+              -f state='error' \
+              -f description='Failed to trigger internal CI pipeline' \
+              -f context='ms-internal-ci/oss-jstests' \
+              --silent
+            exit 1
+          fi
+
+          echo "Webhook triggered successfully"

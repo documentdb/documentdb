@@ -12,6 +12,7 @@ SELECT documentdb_api.create_collection('stats_db', 'planner_stats');
 SELECT documentdb_api_internal.create_indexes_non_concurrently('stats_db', '{ "createIndexes": "planner_stats", "indexes": [ { "key": { "b": 1, "c": 1 }, "name": "b_c_1" } ] }', TRUE);
 
 -- enable planner statistics for the collection (should fail)
+set documentdb.enablePerCollectionPlannerStatistics to off;
 SELECT documentdb_api.coll_mod('stats_db', 'planner_stats', '{ "collMod": "planner_stats", "enableStats": true }');
 
 -- enable the feature and try again (should succeed)

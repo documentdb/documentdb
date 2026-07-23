@@ -11,6 +11,8 @@ SET documentdb.enablePrimaryKeyCursorScan TO on;
 SET documentdb.enableDynamicCursors TO on;
 SET documentdb.enableSubqueryPushdownForMatch TO on;
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 SET enable_seqscan TO off;
 
 -- ===========================================================================

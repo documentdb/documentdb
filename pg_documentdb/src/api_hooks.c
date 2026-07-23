@@ -25,6 +25,7 @@
 
 extern bool DefaultUseCompositeOpClass;
 extern bool EnableExtendedIndexes;
+extern bool EnablePlannerStatisticsNewCollections;
 
 IsMetadataCoordinator_HookType is_metadata_coordinator_hook = NULL;
 IsClusterInitialized_HookType is_cluster_initialized_hook = NULL;
@@ -43,6 +44,7 @@ IsShardTableForDocumentDbTable_HookType is_shard_table_for_documentdb_table_hook
 HandleColocation_HookType handle_colocation_hook = NULL;
 RewriteListCollectionsQueryForDistribution_HookType rewrite_list_collections_query_hook =
 	NULL;
+RewriteListExtendedIndexesQuery_HookType rewrite_list_extended_indexes_query_hook = NULL;
 RewriteConfigQueryForDistribution_HookType rewrite_config_shards_query_hook = NULL;
 RewriteConfigQueryForDistribution_HookType rewrite_config_chunks_query_hook = NULL;
 TryGetShardNameForUnshardedCollection_HookType
@@ -56,6 +58,8 @@ TryCustomParseAndValidateVectorQuerySpec_HookType
 	try_custom_parse_and_validate_vector_query_spec_hook = NULL;
 TryGetExtendedVersionRefreshQuery_HookType try_get_extended_version_refresh_query_hook =
 	NULL;
+TryGetExtendedVersionRefreshQuery_HookType
+	try_get_extended_initialized_version_refresh_query_hook = NULL;
 GetShardIdsAndNamesForCollection_HookType get_shard_ids_and_names_for_collection_hook =
 	NULL;
 CreateUserWithExernalIdentityProvider_HookType
@@ -84,6 +88,9 @@ PasswordValidation_HookType
 
 DefaultEnableCompositeOpClass_HookType
 	default_enable_composite_op_class_hook = NULL;
+
+DefaultEnableStatsCreationOnNewCollections_HookType
+	default_enable_stats_creation_on_new_collections_hook = NULL;
 
 ExtendedSearchOperatorDefByName_HookType
 	extended_search_operator_def_by_name_hook = NULL;
@@ -438,6 +445,19 @@ MutateListCollectionsQueryForDistribution(Query *listCollectionsQuery)
 
 
 Query *
+RewriteListExtendedIndexesQuery(const bson_value_t *specValue, Query *query,
+								AggregationPipelineBuildContext *context)
+{
+	if (rewrite_list_extended_indexes_query_hook != NULL)
+	{
+		return rewrite_list_extended_indexes_query_hook(specValue, query, context);
+	}
+
+	return NULL;
+}
+
+
+Query *
 MutateShardsQueryForDistribution(Query *shardsQuery)
 {
 	if (rewrite_config_shards_query_hook != NULL)
@@ -463,15 +483,17 @@ MutateChunksQueryForDistribution(Query *chunksQuery)
 
 const char *
 TryGetShardNameForUnshardedCollection(Oid relationOid, uint64 collectionId, const
-									  char *tableName)
+									  char *tableName, bool *isSingleShardTable)
 {
 	if (try_get_shard_name_for_unsharded_collection_hook != NULL)
 	{
 		return try_get_shard_name_for_unsharded_collection_hook(relationOid, collectionId,
-																tableName);
+																tableName,
+																isSingleShardTable);
 	}
 
 	/* Single node: return tableName to enable direct Executor path */
+	*isSingleShardTable = true;
 	return tableName;
 }
 
@@ -573,6 +595,18 @@ TryGetExtendedVersionRefreshQuery(void)
 	if (try_get_extended_version_refresh_query_hook != NULL)
 	{
 		return try_get_extended_version_refresh_query_hook();
+	}
+
+	return NULL;
+}
+
+
+char *
+TryGetExtendedInitializedVersionRefreshQuery(void)
+{
+	if (try_get_extended_initialized_version_refresh_query_hook != NULL)
+	{
+		return try_get_extended_initialized_version_refresh_query_hook();
 	}
 
 	return NULL;
@@ -707,6 +741,18 @@ ShouldUseCompositeOpClassByDefault()
 	}
 
 	return DefaultUseCompositeOpClass;
+}
+
+
+bool
+ShouldEnablePlannerStatisticsNewCollections()
+{
+	if (default_enable_stats_creation_on_new_collections_hook != NULL)
+	{
+		return default_enable_stats_creation_on_new_collections_hook();
+	}
+
+	return EnablePlannerStatisticsNewCollections;
 }
 
 

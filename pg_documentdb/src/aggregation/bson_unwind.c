@@ -10,10 +10,33 @@
 
 #include <postgres.h>
 
+#include <nodes/makefuncs.h>
+#include <nodes/supportnodes.h>
+#include <optimizer/pathnode.h>
+
 #include "aggregation/bson_project.h"
 #include "aggregation/bson_projection_tree.h"
 #include "io/bson_set_returning_functions.h"
 #include "io/bson_traversal.h"
+#include "metadata/metadata_cache.h"
+#include "opclass/bson_index_support.h"
+#include "planner/mongo_query_operator.h"
+#include "query/bson_dollar_selectivity.h"
+#include "utils/string_view.h"
+
+/*
+ * Default row estimate for bson_distinct_unwind for a document whose unwound
+ * path holds an array. Driven by the documentdb.distinct_unwind_default_rows
+ * GUC (see system_configs.c); the extern below binds to that variable.
+ */
+extern int DistinctUnwindDefaultRows;
+
+/*
+ * Feature flag gating whether the distinct-unwind support function derives its
+ * row estimate from statistics of the unwound path. Defined in
+ * feature_flag_configs.c.
+ */
+extern bool EnableDistinctUnwindRowsFromStatistics;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -54,6 +77,7 @@ static bool DistinctVisitTopLevelField(pgbsonelement *element, const
 PG_FUNCTION_INFO_V1(bson_dollar_unwind);
 PG_FUNCTION_INFO_V1(bson_dollar_unwind_with_options);
 PG_FUNCTION_INFO_V1(bson_distinct_unwind);
+PG_FUNCTION_INFO_V1(bson_distinct_unwind_support);
 PG_FUNCTION_INFO_V1(bson_lookup_unwind);
 
 /*
@@ -190,6 +214,161 @@ bson_distinct_unwind(PG_FUNCTION_ARGS)
 	TraverseBson(&documentIterator, path, &traverseState, &distinctExecutionFuncs);
 
 	PG_RETURN_VOID();
+}
+
+
+/*
+ * Planner support function shared by bson_distinct_unwind and the
+ * distinct-exists filter (bson_dollar_distinct_exists).
+ *
+ * For bson_distinct_unwind it handles the SupportRequestRows request, returning
+ * a row estimate that matches the function's declared prorows (preserving the
+ * previous static behavior). When enable_distinct_unwind_rows_from_statistics is
+ * set, it inspects the invoking FuncExpr and derives a statistics-based estimate
+ * from the unwound field path.
+ *
+ * All other request types are delegated to HandleDistinctExistsSupportRequest,
+ * which lowers a distinct-exists filter to a "path >= MinKey" comparison for
+ * index pushdown and supplies matching selectivity and cost estimates. Requests
+ * that neither path handles are declined by returning NULL, in which case the
+ * planner falls back to the target function's defaults.
+ */
+Datum
+bson_distinct_unwind_support(PG_FUNCTION_ARGS)
+{
+	Node *supportRequest = (Node *) PG_GETARG_POINTER(0);
+
+	if (IsA(supportRequest, SupportRequestRows))
+	{
+		SupportRequestRows *req = (SupportRequestRows *) supportRequest;
+		double estimatedRows = (double) DistinctUnwindDefaultRows;
+
+		if (EnableDistinctUnwindRowsFromStatistics &&
+			req->node != NULL && IsA(req->node, FuncExpr))
+		{
+			FuncExpr *distinctUnwindExpr = (FuncExpr *) req->node;
+
+			/*
+			 * The support function is only attached to bson_distinct_unwind,
+			 * but the invoking node could be a different function in principle
+			 * (e.g. an inlined wrapper). If it is not bson_distinct_unwind,
+			 * fall through to the default estimate below.
+			 */
+			if (distinctUnwindExpr->funcid == BsonDistinctUnwindFunctionOid() &&
+				list_length(distinctUnwindExpr->args) == 2)
+			{
+				Node *documentArg = (Node *) linitial(distinctUnwindExpr->args);
+				Node *pathArg = (Node *) lsecond(distinctUnwindExpr->args);
+				if (req->root != NULL && IsA(documentArg, Var) &&
+					IsA(pathArg, Const) && !((Const *) pathArg)->constisnull)
+				{
+					Var *documentVar = (Var *) documentArg;
+					RelOptInfo *rel = find_base_rel(req->root, documentVar->varno);
+					text *pathText =
+						DatumGetTextPP(((Const *) pathArg)->constvalue);
+					StringView unwindPath = CreateStringViewFromText(pathText);
+
+					if (EnablePlannerCostSelectivityFromRelOptInfo(req->root, rel))
+					{
+						/*
+						 * Estimate how often the unwound path holds an array via
+						 * a type-bracketed "path >= []" comparison: only a field
+						 * whose value is an array is expanded by the distinct
+						 * unwind. This mirrors how an $exists filter is lowered
+						 * to "path >= MinKey" (see CreateExistsTrueOpExpr), but
+						 * brackets on the empty array instead. Absent statistics,
+						 * a default selectivity of 1.0 leaves the estimate
+						 * unchanged.
+						 */
+						pgbson_writer queryWriter;
+						pgbson_array_writer arrayWriter;
+						PgbsonWriterInit(&queryWriter);
+						PgbsonWriterStartArray(&queryWriter, unwindPath.string,
+											   unwindPath.length, &arrayWriter);
+						PgbsonWriterEndArray(&queryWriter, &arrayWriter);
+
+						Const *arrayBoundConst =
+							makeConst(BsonTypeId(), -1, InvalidOid, -1,
+									  PointerGetDatum(
+										  PgbsonWriterGetPgbson(&queryWriter)),
+									  false, false);
+
+						const MongoIndexOperatorInfo *gteOperator =
+							GetMongoIndexOperatorInfoByPostgresFuncId(
+								BsonGreaterThanEqualMatchIndexFunctionId());
+						List *selectivityArgs =
+							list_make2(documentVar, arrayBoundConst);
+						double arraySelectivity = GetDollarOperatorSelectivity(
+							req->root, GetMongoQueryOperatorOid(gteOperator),
+							selectivityArgs, InvalidOid, 0, 1.0);
+
+						/*
+						 * Estimate how often the unwound path is null via an
+						 * equality against null. A document whose path is null
+						 * (or, in the query semantics, absent) does not expand
+						 * into a distinct value, so it contributes no rows.
+						 * Absent statistics a default selectivity of 0.0 leaves
+						 * the estimate unchanged.
+						 */
+						pgbson_writer nullQueryWriter;
+						PgbsonWriterInit(&nullQueryWriter);
+						PgbsonWriterAppendNull(&nullQueryWriter, unwindPath.string,
+											   unwindPath.length);
+
+						Const *nullBoundConst =
+							makeConst(BsonTypeId(), -1, InvalidOid, -1,
+									  PointerGetDatum(
+										  PgbsonWriterGetPgbson(&nullQueryWriter)),
+									  false, false);
+
+						const MongoIndexOperatorInfo *eqOperator =
+							GetMongoIndexOperatorInfoByPostgresFuncId(
+								BsonEqualMatchIndexFunctionId());
+						List *nullSelectivityArgs =
+							list_make2(documentVar, nullBoundConst);
+						double nullSelectivity = GetDollarOperatorSelectivity(
+							req->root, GetMongoQueryOperatorOid(eqOperator),
+							nullSelectivityArgs, InvalidOid, 0, 0.0);
+
+						/*
+						 * The unwind expands only documents whose path holds an
+						 * array; a document with a non-null scalar at the path
+						 * yields a single row, while a null (or absent) path
+						 * yields none. Model the expected per-call output as a
+						 * mixture of these populations, using the default
+						 * expansion factor for the array case:
+						 *
+						 *   rows = (1 - s - n) * 1 + n * 0 + s * DEFAULT
+						 *
+						 * where s is the array selectivity and n the null
+						 * selectivity. Absent statistics s defaults to 1.0 and n
+						 * to 0.0, which leaves the estimate at DEFAULT and
+						 * preserves the prior static behavior. Clamp the scalar
+						 * population at zero (independent estimates can sum above
+						 * one) and the total at a single row.
+						 */
+						double scalarSelectivity =
+							Max(0.0, 1.0 - arraySelectivity - nullSelectivity);
+						estimatedRows = Max(1.0,
+											scalarSelectivity +
+											arraySelectivity *
+											(double) DistinctUnwindDefaultRows);
+					}
+				}
+			}
+		}
+
+		req->rows = estimatedRows;
+		PG_RETURN_POINTER(req);
+	}
+
+	/*
+	 * The distinct-exists filter (bson_dollar_distinct_exists) shares this
+	 * support function. Delegate its index-condition, selectivity and cost
+	 * requests to the index support layer, which lowers it to a
+	 * "path >= MinKey" comparison for index pushdown.
+	 */
+	PG_RETURN_POINTER(HandleDistinctExistsSupportRequest(supportRequest));
 }
 
 

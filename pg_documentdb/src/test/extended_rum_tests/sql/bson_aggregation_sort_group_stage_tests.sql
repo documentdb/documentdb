@@ -2,6 +2,8 @@ SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documen
 
 SET documentdb.next_collection_id TO 1800;
 SET documentdb.next_collection_index_id TO 1800;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- 1. Setup test data.
 set documentdb.defaultUseCompositeOpClass to on;
@@ -12,7 +14,7 @@ BEGIN;
 set LOCAL enable_seqscan to off;
 set LOCAL enable_bitmapscan to off;
 set LOCAL enable_hashagg to off;
-ANALYZE documentdb_data.documents_1800;
+ANALYZE documentdb_data.documents_1801;
 
 -- 2. Without enableSortGroupStage
 SET LOCAL documentdb.enableSortGroupStage TO off;

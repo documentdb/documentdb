@@ -7,6 +7,7 @@
  */
 
 use serde::Deserialize;
+use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct QueryCatalog {
@@ -69,6 +70,7 @@ pub struct QueryCatalog {
 
     // data_management.rs
     pub delete: String,
+    pub delete_txn_proc: String,
     pub find_cursor_first_page: String,
     pub insert: String,
     pub insert_txn_proc: String,
@@ -97,6 +99,8 @@ pub struct QueryCatalog {
     // indexing.rs
     pub create_indexes_background: String,
     pub check_build_index_status: String,
+    pub create_search_indexes_background: String,
+    pub check_build_search_index_status: String,
     pub re_index: String,
     pub drop_indexes: String,
     pub list_indexes_cursor_first_page: String,
@@ -118,6 +122,12 @@ pub struct QueryCatalog {
     pub create_db_user: String,
 
     pub scan_types: Vec<String>,
+
+    /// Maps a Custom Scan provider name to an explain stage name override.
+    /// Entries here take precedence over the default `"FETCH"` mapping
+    /// applied to providers listed in `scan_types`.
+    #[serde(default)]
+    pub scan_type_stage_overrides: HashMap<String, String>,
 }
 
 impl QueryCatalog {
@@ -300,6 +310,11 @@ impl QueryCatalog {
     }
 
     #[must_use]
+    pub fn delete_txn_proc(&self) -> &str {
+        &self.delete_txn_proc
+    }
+
+    #[must_use]
     pub fn set_allow_write(&self) -> &str {
         &self.set_allow_write
     }
@@ -313,6 +328,16 @@ impl QueryCatalog {
     #[must_use]
     pub fn check_build_index_status(&self) -> &str {
         &self.check_build_index_status
+    }
+
+    #[must_use]
+    pub fn create_search_indexes_background(&self) -> &str {
+        &self.create_search_indexes_background
+    }
+
+    #[must_use]
+    pub fn check_build_search_index_status(&self) -> &str {
+        &self.check_build_search_index_status
     }
 
     #[must_use]
@@ -505,6 +530,14 @@ impl QueryCatalog {
         &self.scan_types
     }
 
+    /// Returns the stage name override for a custom scan provider, if any.
+    #[must_use]
+    pub fn scan_type_stage_override(&self, provider: &str) -> Option<&str> {
+        self.scan_type_stage_overrides
+            .get(provider)
+            .map(String::as_str)
+    }
+
     #[must_use]
     pub fn unshard_collection(&self) -> &str {
         &self.unshard_collection
@@ -603,6 +636,7 @@ pub fn create_query_catalog() -> QueryCatalog {
 
             // data_management.rs
             delete: "SELECT * FROM documentdb_api.delete($1, $2, $3, NULL)".to_owned(),
+            delete_txn_proc: "CALL documentdb_api.delete_txn_proc($1, $2, $3, NULL)".to_owned(),
             find_cursor_first_page: "SELECT cursorPage, continuation, persistConnection, cursorId FROM documentdb_api.find_cursor_first_page($1, $2)".to_owned(),
             insert: "SELECT * FROM documentdb_api.insert($1, $2, $3, NULL)".to_owned(),
             insert_txn_proc: "CALL documentdb_api.insert_txn_proc($1, $2, $3, NULL)".to_owned(),

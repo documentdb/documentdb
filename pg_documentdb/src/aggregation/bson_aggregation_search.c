@@ -221,6 +221,7 @@ HandleSearch(const bson_value_t *existingValue, Query *query,
 
 	/* The top level $search spec, parsing and validating */
 	DocumentDBSearchOptions searchOptions = { 0 };
+	searchOptions.countOptions.threshold = -1;
 
 	bson_iter_t searchIterator;
 	BsonValueInitIterator(existingValue, &searchIterator);
@@ -243,6 +244,10 @@ HandleSearch(const bson_value_t *existingValue, Query *query,
 		}
 		else if (strcmp(key, "count") == 0)
 		{
+			/*
+			 * TODO: the count options are parsed and validated here, but the
+			 * resulting count metadata is not yet emitted in the results.
+			 */
 			if (!BSON_ITER_HOLDS_DOCUMENT(&searchIterator))
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
@@ -260,8 +265,14 @@ HandleSearch(const bson_value_t *existingValue, Query *query,
 
 				if (strcmp(countKey, "threshold") == 0)
 				{
-					EnsureTopLevelFieldType(countKey, &countIterator,
-											BSON_TYPE_INT32);
+					bool checkFixedInteger = true;
+					if (!IsBsonValue32BitInteger(countValue, checkFixedInteger))
+					{
+						ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+										errmsg(
+											"The option 'count.threshold' should always be a positive integer value.")));
+					}
+
 					searchOptions.countOptions.threshold =
 						BsonValueAsInt32(countValue);
 

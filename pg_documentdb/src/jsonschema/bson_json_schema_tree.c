@@ -40,6 +40,9 @@ static void ParseBsonType(const bson_value_t *value, SchemaNode *node);
 static void ParseEncryptMetadata(const bson_value_t *value, SchemaNode *node);
 static void ParseEncrypt(const bson_value_t *value, SchemaNode *node);
 
+static void ParseEnum(const bson_value_t *value, SchemaNode *node);
+static void ParseOneOf(const bson_value_t *value, SchemaNode *node);
+
 static void ParseItems(const bson_value_t *value, SchemaNode *node);
 static void ParseAdditionalItems(const bson_value_t *value, SchemaNode *node);
 
@@ -193,6 +196,14 @@ BuildSchemaTreeCoreOnNode(bson_iter_t *schemaIter, SchemaNode *node)
 			}
 
 			/* No validation needed for description field */
+		}
+		else if (strcmp(key, "enum") == 0)
+		{
+			ParseEnum(value, node);
+		}
+		else if (strcmp(key, "oneOf") == 0)
+		{
+			ParseOneOf(value, node);
 		}
 
 		/* TODO: Add other Common Validators here */
@@ -750,6 +761,106 @@ ParseEncryptMetadata(const bson_value_t *value, SchemaNode *node)
 								key)));
 		}
 	}
+}
+
+
+/*
+ * ParseEnum function reads the schema value for the "enum" keyword.
+ * The value must be a non-empty array of literals. Each element is copied
+ * into a single BSON array stored on the Node's common validations section.
+ */
+static void
+ParseEnum(const bson_value_t *value, SchemaNode *node)
+{
+	if (value->value_type != BSON_TYPE_ARRAY)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
+						errmsg(
+							"$jsonSchema keyword 'enum' must be an array")));
+	}
+
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	pgbson_array_writer arrayWriter;
+	PgbsonWriterStartArray(&writer, "", 0, &arrayWriter);
+
+	bson_iter_t iter;
+	BsonValueInitIterator(value, &iter);
+	int elementCount = 0;
+	while (bson_iter_next(&iter))
+	{
+		PgbsonArrayWriterWriteValue(&arrayWriter, bson_iter_value(&iter));
+		elementCount++;
+	}
+
+	if (elementCount == 0)
+	{
+		PgbsonWriterFree(&writer);
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+						errmsg(
+							"$jsonSchema keyword 'enum' cannot be an empty array")));
+	}
+
+	PgbsonWriterEndArray(&writer, &arrayWriter);
+	node->validations.common->enumValues =
+		(bson_value_t *) palloc0(sizeof(bson_value_t));
+	PgbsonArrayWriterCopyDataToBsonValue(&arrayWriter,
+										 node->validations.common->enumValues);
+	PgbsonWriterFree(&writer);
+	node->validationFlags.common |= CommonValidationTypes_Enum;
+}
+
+
+/*
+ * ParseOneOf function reads the schema value for the "oneOf" keyword.
+ * The value must be a non-empty array of sub-schemas. Each sub-schema becomes
+ * an independent SchemaNode subtree linked into the Node's common validations
+ * section. Runtime validation requires exactly one sub-schema to match.
+ */
+static void
+ParseOneOf(const bson_value_t *value, SchemaNode *node)
+{
+	if (value->value_type != BSON_TYPE_ARRAY)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
+						errmsg(
+							"$jsonSchema keyword 'oneOf' must be an array")));
+	}
+
+	bson_iter_t arrayIter;
+	BsonValueInitIterator(value, &arrayIter);
+
+	int elementCount = 0;
+	while (bson_iter_next(&arrayIter))
+	{
+		if (!BSON_ITER_HOLDS_DOCUMENT(&arrayIter))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
+							errmsg(
+								"$jsonSchema keyword 'oneOf' requires that each element of the array is an object, but found a %s",
+								BsonIterTypeName(&arrayIter))));
+		}
+
+		const bson_value_t *arrayElementValue = bson_iter_value(&arrayIter);
+		bson_iter_t docIter;
+		BsonValueInitIterator(arrayElementValue, &docIter);
+		SchemaKeywordNode *oneOfNode =
+			(SchemaKeywordNode *) BuildSchemaTreeCore(&docIter, "",
+													  SchemaNodeType_OneOf);
+
+		AppendKeywordNodeToLinkedList(&node->validations.common->oneOfNodes,
+									  oneOfNode);
+		elementCount++;
+	}
+
+	if (elementCount == 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+						errmsg(
+							"$jsonSchema keyword 'oneOf' cannot be an empty array")));
+	}
+
+	node->validationFlags.common |= CommonValidationTypes_OneOf;
 }
 
 

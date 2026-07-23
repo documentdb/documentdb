@@ -51,7 +51,7 @@ stop="false"
 distributed="false"
 allowExternalAccess="false"
 gatewayWorker="false"
-useDocumentdbExtendedRum="false"
+useDocumentdbExtendedRum="true"
 customAdminUser="docdb_admin"
 customAdminUserPassword="Admin100"
 valgrindMode="false"
@@ -139,7 +139,7 @@ BootstrapGatewayWorkerOnCoordinator() {
   fi
 }
 
-while getopts "d:p:u:a:hcsxegrvf:l:n:w:k" opt; do
+while getopts "a:cd:ef:ghkl:n:p:rsu:vw:x" opt; do
   case $opt in
     d) postgresDirectory="$OPTARG"
     ;;
@@ -158,7 +158,16 @@ while getopts "d:p:u:a:hcsxegrvf:l:n:w:k" opt; do
     ;;
     g) gatewayWorker="true"
     ;;
-    r) useDocumentdbExtendedRum="true"
+    r) # -r takes an OPTIONAL argument: "-r" alone means true, or "-r true"/"-r false".
+       # getopts can't express optional args directly, so look ahead at the next token
+       # and only consume it when it looks like a boolean value (not another option).
+       eval nextArg="\${$OPTIND:-}"
+       if [ "$nextArg" == "true" ] || [ "$nextArg" == "false" ]; then
+         useDocumentdbExtendedRum="$nextArg"
+         OPTIND=$((OPTIND + 1))
+       else
+         useDocumentdbExtendedRum="true"
+       fi
     ;;
     u) customAdminUser="$OPTARG"
     ;;
@@ -211,7 +220,7 @@ if [ "$help" == "true" ]; then
     echo "${green}[-u <user>] - optional argument. Specifies a custom admin user to connect to the database"
     echo "${green}[-a <password>] - optional argument. Specifies the password for the custom admin user"
     echo "${green}[-g] - optional argument. starts the gateway worker host along with the backend"
-    echo "${green}[-r] - optional argument. use the pg_documentdb_extended_rum extension instead of rum"
+    echo "${green}[-r [true|false]] - optional argument. use the pg_documentdb_extended_rum extension instead of rum. '-r', '-r true', or omitting the flag enables it; '-r false' disables it (default: true)${reset}"
     echo "${green}[-v] - optional argument. run via valgrind mode"
     echo "${green}[-f <file>] - optional argument. add this extra conf file to postgresql.conf"
     echo "${green}[-l <file>] - optional argument. log to this file for the postgres server logs"

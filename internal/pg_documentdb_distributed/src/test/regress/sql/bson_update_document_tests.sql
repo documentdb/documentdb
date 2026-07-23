@@ -149,15 +149,9 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[1],[2],3]
 -- same element pushed to set
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "set": [ "abc" ] }', '{ "": { "$addToSet" : {"set": "abc" }, "$set": { "x": true } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
 
--- $addToSet with empty $each and $set - test duplicate field fix
-SET documentdb.enableDuplicateFieldFix TO off;
+-- $addToSet with empty $each and $set - no duplicate fields
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "arr": [], "x": 0}', '{ "": {"$addToSet":{"arr":{"$each":[]}}, "$set":{"x":1}} }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "arr": [], "x": 0}', '{ "": {"$pullAll":{"arr": [] }, "$set":{"x":1}} }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
-
-SET documentdb.enableDuplicateFieldFix TO on;
-SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "arr": [], "x": 0}', '{ "": {"$addToSet":{"arr":{"$each":[]}}, "$set":{"x":1}} }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
-SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "arr": [], "x": 0}', '{ "": {"$pullAll":{"arr": [] }, "$set":{"x":1}} }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
-RESET documentdb.enableDuplicateFieldFix;
 
 -- update scenario negative tests: $inc
 SELECT documentdb_api_internal.update_bson_document('{"_id": 5, "a": [1,2] }', '{ "": { "$inc": { "a": 30 } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
@@ -493,6 +487,16 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5,
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5,6,7,8,9,10]}', '{ "": { "$push" : {"a": { "$each" : [], "$slice": -6 }} } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5,6,7,8,9,10]}', '{ "": { "$push" : {"a": { "$each" : [], "$slice": 20 }} } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5,6,7,8,9,10]}', '{ "": { "$push" : {"a": { "$each" : [], "$slice": -11 }} } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+
+-- $push with $slice: 0 must empty a previously non-empty array (not a no-op)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5]}', '{ "": { "$push" : {"a": { "$each" : [], "$slice": 0 }} } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5]}', '{ "": { "$push" : {"a": { "$each" : [6,7,8], "$sort": -1, "$slice": 0 }} } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- $push with $slice: 0 on an already-empty array is a no-op (result unchanged)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": []}', '{ "": { "$push" : {"a": { "$each" : [], "$slice": 0 }} } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- $push with $each and $slice: 0 on an empty array stays empty (result equals source, no-op)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": []}', '{ "": { "$push" : {"a": { "$each" : [1,2], "$slice": 0 }} } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- $push with $slice: 0 on a nested/dotted path empties the array
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "key": {"key2": {"key3": {"key4": [1,2,3,4,5]}}}}', '{ "": { "$push" : {"key.key2.key3.key4": { "$each" : [6,7,8], "$sort": -1, "$slice": 0 }} } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
 
 -- $push with $each & $position modifier in non-dotted path
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5,6,7,8,9,10]}', '{ "": { "$push" : {"a": { "$each" : [-1, 0], "$position": 20 }} } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);

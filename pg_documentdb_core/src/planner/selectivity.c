@@ -15,6 +15,7 @@
 #include <utils/selfuncs.h>
 
 #include "utils/type_cache.h"
+#include "planner/selectivity.h"
 
 #define BSON_DEFAULT_SELECTIVITY 0.01
 
@@ -37,6 +38,23 @@ PG_FUNCTION_INFO_V1(bson_scalarltsel);
 PG_FUNCTION_INFO_V1(bson_scalarlesel);
 PG_FUNCTION_INFO_V1(bson_neqsel);
 
+
+ShouldEnableBtreeBsonSelectivityFromStatsFunc
+	should_enable_btree_bson_selectivity_from_stats_hook = NULL;
+
+
+inline static bool
+ShouldEnableBtreeBsonSelectivityFromStats(void)
+{
+	if (should_enable_btree_bson_selectivity_from_stats_hook != NULL)
+	{
+		return should_enable_btree_bson_selectivity_from_stats_hook();
+	}
+
+	return EnableBsonSelectivityFromBtreeStats;
+}
+
+
 /*
  * bson_operator_selectivity returns the selectivity of a BSON operator
  * on a relation. It calls into PG selectivity functions if the operator is a well known btree operator.
@@ -46,7 +64,7 @@ bson_operator_selectivity(PG_FUNCTION_ARGS)
 {
 	/* default to 1% if not enabled to preerve the old behavior. */
 	double selectivity = BSON_DEFAULT_SELECTIVITY;
-	if (!EnableBsonSelectivityFromBtreeStats)
+	if (!ShouldEnableBtreeBsonSelectivityFromStats())
 	{
 		PG_RETURN_FLOAT8(selectivity);
 	}
@@ -128,7 +146,7 @@ bson_operator_selectivity(PG_FUNCTION_ARGS)
 Datum
 bson_eqsel(PG_FUNCTION_ARGS)
 {
-	if (!EnableBsonSelectivityFromBtreeStats)
+	if (!ShouldEnableBtreeBsonSelectivityFromStats())
 	{
 		PG_RETURN_FLOAT8(BSON_DEFAULT_SELECTIVITY);
 	}
@@ -145,7 +163,7 @@ bson_eqsel(PG_FUNCTION_ARGS)
 Datum
 bson_scalargtsel(PG_FUNCTION_ARGS)
 {
-	if (!EnableBsonSelectivityFromBtreeStats)
+	if (!ShouldEnableBtreeBsonSelectivityFromStats())
 	{
 		PG_RETURN_FLOAT8(BSON_DEFAULT_SELECTIVITY);
 	}
@@ -163,7 +181,7 @@ bson_scalargtsel(PG_FUNCTION_ARGS)
 Datum
 bson_scalargesel(PG_FUNCTION_ARGS)
 {
-	if (!EnableBsonSelectivityFromBtreeStats)
+	if (!ShouldEnableBtreeBsonSelectivityFromStats())
 	{
 		PG_RETURN_FLOAT8(BSON_DEFAULT_SELECTIVITY);
 	}
@@ -181,7 +199,7 @@ bson_scalargesel(PG_FUNCTION_ARGS)
 Datum
 bson_scalarltsel(PG_FUNCTION_ARGS)
 {
-	if (!EnableBsonSelectivityFromBtreeStats)
+	if (!ShouldEnableBtreeBsonSelectivityFromStats())
 	{
 		PG_RETURN_FLOAT8(BSON_DEFAULT_SELECTIVITY);
 	}
@@ -199,7 +217,7 @@ bson_scalarltsel(PG_FUNCTION_ARGS)
 Datum
 bson_scalarlesel(PG_FUNCTION_ARGS)
 {
-	if (!EnableBsonSelectivityFromBtreeStats)
+	if (!ShouldEnableBtreeBsonSelectivityFromStats())
 	{
 		PG_RETURN_FLOAT8(BSON_DEFAULT_SELECTIVITY);
 	}
@@ -217,7 +235,7 @@ bson_scalarlesel(PG_FUNCTION_ARGS)
 Datum
 bson_neqsel(PG_FUNCTION_ARGS)
 {
-	if (!EnableBsonSelectivityFromBtreeStats)
+	if (!ShouldEnableBtreeBsonSelectivityFromStats())
 	{
 		PG_RETURN_FLOAT8(BSON_DEFAULT_SELECTIVITY);
 	}
