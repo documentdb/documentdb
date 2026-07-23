@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Real-user E2E flagged (Gap #22): `command -v systemctl` returns true
+# `command -v systemctl` returns true
 # inside containers that have the binary but no running systemd, so the
 # subsequent systemctl calls emit "Failed to connect to bus: Host is down"
 # noise during apt purge/install. Gate on /run/systemd/system which is
@@ -92,9 +92,16 @@ case "$1" in
         fi
 
         if [ "${is_transitive_install}" = "true" ]; then
-            echo "DocumentDB Gateway installed (as a dependency of another"
-            echo "DocumentDB package). The pulling package's postinst will"
-            echo "print the recommended setup steps."
+            # Covers both a same-transaction pull (the stand-alone/meta
+            # postinst prints its steps right after us) and a gateway-only
+            # reinstall/upgrade on a host where documentdb-N/documentdb is
+            # ALREADY configured (status "installed" — no other postinst
+            # runs now, but that host follows the stand-alone workflow and
+            # this package's Workflow B banner would be noise). Keep the
+            # message accurate for both.
+            echo "DocumentDB Gateway installed (used by another DocumentDB"
+            echo "package on this host). For setup steps, see that package's"
+            echo "install output or run: documentdb-setup --help"
             exit 0
         fi
 
@@ -109,7 +116,7 @@ case "$1" in
         echo "                       /etc/documentdb/gateway/gateway.env"
         echo "  sudoedit /etc/documentdb/gateway/gateway.env"
         echo ""
-        # Reviewer-flagged (external review iter 17): when this package
+        # When this package
         # is pulled in transitively by `apt install documentdb`, the
         # documentdb-N standalone postinst is going to print its own
         # "Next steps" (run documentdb-setup, enable target). We do
@@ -118,7 +125,7 @@ case "$1" in
         # Workflow B steps that are specific to using this gateway
         # package on its own.
         #
-        # Reviewer-flagged (multi-model should-fix O): the prior 8-line
+        # The prior 8-line
         # numbered Workflow B recipe duplicated the design doc and aged
         # quickly. Keep this banner short and point at one canonical
         # reference (the design doc) for the full Workflow B steps.

@@ -86,6 +86,8 @@ jobs:
           mapfile -t EXT_DEBS < <(find downloaded-artifacts -maxdepth 1 -type f -name '*-documentdb_*.deb' ! -name '*dbgsym*' | sort)
           EXT_DEB="${EXT_DEBS[0]:-}"
           [ -n "$EXT_DEB" ] || { echo "Extension DEB not found"; exit 1; }
+          # Dockerfile_documentdb_local builds the gateway from source; it does
+          # not consume a prebuilt gateway .deb, so none is built or passed here.
           echo "Building documentdb-local image with ext=$EXT_DEB"
           docker build \
             --build-arg BASE_IMAGE=debian:trixie-slim \

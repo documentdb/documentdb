@@ -6,18 +6,44 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG POSTGRES_VERSION=17
 ARG DEB_PACKAGE_REL_PATH
 ARG GATEWAY_PACKAGE_PATH
+# Track 1 (packaging-design.md §4) ships four packages; Workflow C E2E
+# coverage in test-gateway-install-entrypoint.sh requires all of them
+# because the test runs `documentdb-setup` (in the per-major stand-alone
+# DEB) which in turn invokes `documentdb-register-gateway` (in the
+# tools DEB). The build orchestrator
+# (packaging/gateway/build_gateway_packages.sh) builds the extras via
+# packaging/build_extra_packages.sh before invoking `docker build`, so
+# both paths below must point at real .deb files.
+ARG TOOLS_PACKAGE_REL_PATH
+ARG COMMON_PACKAGE_REL_PATH
+ARG STANDALONE_PACKAGE_REL_PATH
 # Fail fast if caller did not pass the required deb path build arg.
 RUN [ -n "${DEB_PACKAGE_REL_PATH}" ] || (echo "ERROR: DEB_PACKAGE_REL_PATH build-arg is required. Example: --build-arg DEB_PACKAGE_REL_PATH=packaging/packages/ubuntu22.04-postgresql-16-documentdb_1.0.0_amd64.deb" >&2; exit 1)
+RUN [ -n "${GATEWAY_PACKAGE_PATH}" ] || (echo "ERROR: GATEWAY_PACKAGE_PATH build-arg is required. Example: --build-arg GATEWAY_PACKAGE_PATH=packaging/deb12-documentdb-gateway_1.0.0_amd64.deb" >&2; exit 1)
+RUN [ -n "${TOOLS_PACKAGE_REL_PATH}" ] || (echo "ERROR: TOOLS_PACKAGE_REL_PATH build-arg is required. Example: --build-arg TOOLS_PACKAGE_REL_PATH=packaging/ubuntu24.04-documentdb-postgresql-tools_1.0.0_all.deb" >&2; exit 1)
+RUN [ -n "${COMMON_PACKAGE_REL_PATH}" ] || (echo "ERROR: COMMON_PACKAGE_REL_PATH build-arg is required. Example: --build-arg COMMON_PACKAGE_REL_PATH=packaging/ubuntu24.04-documentdb-common_1.0.0_all.deb" >&2; exit 1)
+RUN [ -n "${STANDALONE_PACKAGE_REL_PATH}" ] || (echo "ERROR: STANDALONE_PACKAGE_REL_PATH build-arg is required. Example: --build-arg STANDALONE_PACKAGE_REL_PATH=packaging/ubuntu24.04-documentdb-18_1.0.0_all.deb" >&2; exit 1)
 
 # Base tools + locale (single layer)
+#
+# `systemd` is added (despite the test not running PID 1) so the test
+# entrypoint can call `systemd-analyze verify` against the unit files
+# the packages install. This statically validates the per-major target
+# tree (documentdb-postgresql@N.service, documentdb-gateway-local@N.service,
+# documentdb-local@N.target) without needing a real systemd host — see
+# verify_systemd_unit_files in test-gateway-install-entrypoint.sh.
+# `apt-get install systemd` does not start any services in a container
+# without PID 1; it just lays down the binaries.
 RUN apt-get update; \
     apt-get install -y --no-install-recommends \
         wget \
         gnupg2 \
+        jq \
         lsb-release \
         ca-certificates \
         locales \
-        sudo; \
+        sudo \
+        systemd; \
     echo "en_US.UTF-8 UTF-8" > /etc/locale.gen; \
     locale-gen; \
     rm -rf /var/lib/apt/lists/*
@@ -25,7 +51,7 @@ RUN apt-get update; \
 # Minimal locale env (others inherit)
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 
-# Add PostgreSQL upstream repo (modern keyring usage) + install extensions
+# Add PostgreSQL upstream repo so apt can resolve local package dependencies.
 RUN install -d -m 0755 /etc/apt/keyrings; \
     wget -qO /etc/apt/keyrings/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc; \
     echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main ${POSTGRES_VERSION}" \
@@ -44,29 +70,82 @@ RUN install -d -m 0755 /etc/apt/keyrings; \
     ; \
     rm -rf /var/lib/apt/lists/*
 
+# Stage all four packages from packaging-design.md §4 and install with
+# a single apt call so apt resolves the inter-package depends. Install
+# order would otherwise matter (documentdb-N → tools → gateway →
+# extension) and a wrong order would surface as a confusing dep error.
 RUN mkdir -p /tmp/install_setup
 COPY ${DEB_PACKAGE_REL_PATH} /tmp/install_setup/
-RUN dpkg -i /tmp/install_setup/$(basename "$DEB_PACKAGE_REL_PATH")
-
 COPY ${GATEWAY_PACKAGE_PATH} /tmp/install_setup/
-RUN dpkg -i /tmp/install_setup/$(basename "$GATEWAY_PACKAGE_PATH")
+COPY ${TOOLS_PACKAGE_REL_PATH} /tmp/install_setup/
+COPY ${COMMON_PACKAGE_REL_PATH} /tmp/install_setup/
+COPY ${STANDALONE_PACKAGE_REL_PATH} /tmp/install_setup/
 
-RUN useradd -ms /bin/bash documentdb -G sudo
+# Minimal Docker base images exclude package documentation to save space.
+# Ubuntu ships /etc/dpkg/dpkg.cfg.d/excludes; Debian "slim" ships
+# /etc/dpkg/dpkg.cfg.d/docker. Both carry a `/usr/share/doc/*` path-exclude,
+# but the directive is written `path-exclude=/usr/share/doc/*` (equals) on
+# some images and `path-exclude /usr/share/doc/*` (space) on others. Our
+# gateway package ships its env-var documentation sample at
+# /usr/share/doc/documentdb-gateway/examples/gateway.env.sample (PostgreSQL
+# .sample convention; see packaging-design.md §4.3 and the rationale in
+# build-gateway-deb.sh). The exclude strips that file on `apt install`, so
+# the test entrypoint's `assert_file .../gateway.env.sample` fails even
+# though `dpkg-deb -c` shows the file IS in the .deb. Real hosts do NOT carry
+# this exclude, so the test mirrors real-host behavior by dropping any
+# `/usr/share/doc` path-exclude (regardless of separator or config filename)
+# before installing the documentdb packages.
+RUN find /etc/dpkg/dpkg.cfg.d -type f \
+        -exec sed -i -E '/^[[:space:]]*path-exclude[[:space:]=]+\/usr\/share\/doc(\/|[[:space:]]|$)/d' {} +
+
+RUN ls -la /tmp/install_setup && \
+    apt-get install -y --no-install-recommends \
+        "/tmp/install_setup/$(basename "$DEB_PACKAGE_REL_PATH")" \
+        "/tmp/install_setup/$(basename "$GATEWAY_PACKAGE_PATH")" \
+        "/tmp/install_setup/$(basename "$TOOLS_PACKAGE_REL_PATH")" \
+        "/tmp/install_setup/$(basename "$COMMON_PACKAGE_REL_PATH")" \
+        "/tmp/install_setup/$(basename "$STANDALONE_PACKAGE_REL_PATH")" && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN useradd -ms /bin/bash documentdb || true
+RUN usermod -a -G sudo documentdb
 RUN echo "%sudo ALL=(ALL:ALL) NOPASSWD: ALL" >> /etc/sudoers.d/no-pass-ask
 
 # ----------- Final Gateway Image -----------
 FROM prebuild AS final
 ARG POSTGRES_VERSION
+# Propagate the PG major as a runtime env so the test entrypoint
+# can derive its per-major paths (PG_PORT, PG_SOCKET_DIR, data dir).
+# Before this, the test entrypoint died on the first line with
+# "POSTGRES_VERSION env must be set by the test Dockerfile" because
+# the ARG is only visible during build, not at `docker run` time.
+# The RPM gateway-test Dockerfiles set the same env (see
+# packaging/test_packages/rhel-{8,9}/Dockerfile-rhel*-gateway-test).
+ENV POSTGRES_VERSION=${POSTGRES_VERSION}
 
-RUN sudo groupmod -g 103 postgres && sudo usermod -u 105 -g 103 postgres
+# The postgres user's uid/gid are intentionally left at whatever the postgresql
+# package assigned. Nothing in the DocumentDB packages or this test depends on a
+# specific numeric id, and remapping them here (the old 105:103 normalization)
+# orphaned the files the postgresql package had already created as the original
+# uid/gid — the data directory, /etc/postgresql, and the logs — leaving them
+# owned by a now-vanished uid/gid so postgresql@N-main failed to start under
+# systemd. Removing the remap keeps every postgres-owned path consistent.
 RUN sudo apt-get update && \
     sudo apt-get install -y --no-install-recommends \
-    jq openssl lsof libc6 python3-venv netcat-openbsd && \
-    arch="$(dpkg --print-architecture)" && \
-    sudo wget -q "https://downloads.mongodb.com/compass/mongodb-mongosh_2.5.6_${arch}.deb" \
-        -O "/tmp/mongodb-mongosh_2.5.6_${arch}.deb" && \
-    sudo dpkg -i "/tmp/mongodb-mongosh_2.5.6_${arch}.deb" && \
-    sudo rm "/tmp/mongodb-mongosh_2.5.6_${arch}.deb" && \
+        jq openssl lsof libc6 wget gnupg netcat-openbsd iproute2 procps && \
+    . /etc/os-release && \
+    wget -qO- https://www.mongodb.org/static/pgp/server-8.0.asc | sudo tee /etc/apt/trusted.gpg.d/server-8.0.asc >/dev/null && \
+    if [ "$ID" = "ubuntu" ]; then \
+        echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu ${VERSION_CODENAME}/mongodb-org/8.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list; \
+    else \
+        MONGOSH_CODENAME="$VERSION_CODENAME"; \
+        if [ "$MONGOSH_CODENAME" = "trixie" ] || [ "$MONGOSH_CODENAME" = "bullseye" ]; then \
+            MONGOSH_CODENAME="bookworm"; \
+        fi; \
+        echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/debian ${MONGOSH_CODENAME}/mongodb-org/8.0 main" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list; \
+    fi && \
+    sudo apt-get update && \
+    sudo apt-get install -y --no-install-recommends mongodb-mongosh && \
     sudo rm -rf /var/lib/apt/lists/*
 
 ENV LANGUAGE=en_US.UTF-8 \
@@ -85,41 +164,22 @@ ENV CERT_PATH="" \
     OWNER="documentdb" \
     PG_VERSION_USED="${POSTGRES_VERSION}" \
     ALLOW_EXTERNAL_CONNECTIONS="false" \
-    TLS_MODE="allowTLS" \
-    INIT_DATA="" \
-    INIT_DATA_PATH="/init_doc_db.d" \
     PATH=/usr/lib/postgresql/${POSTGRES_VERSION}/bin:$PATH
 
-RUN sudo mkdir /home/documentdb/gateway
-RUN sudo mkdir -p /home/documentdb/gateway/pg_documentdb_gw/target/release-with-symbols
-RUN ln -s /usr/bin/documentdb-gateway /home/documentdb/gateway/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway
-
-# Create /var/run/postgresql directory with proper permissions
+# Ensure /var/run/postgresql exists and stays owned by postgres so the system
+# postgresql@N-main cluster can create its socket and lock file there. The
+# stand-alone gateway/setup under test uses its own private per-major socket
+# directory (/run/documentdb-local/N/postgresql), so the test user does NOT
+# need to own the shared system socket dir (doing so previously broke the
+# system cluster's startup).
 RUN sudo mkdir -p /var/run/postgresql && \
-    sudo chown -R documentdb:documentdb /var/run/postgresql && \
-    sudo chmod 755 /var/run/postgresql
+    sudo chown -R postgres:postgres /var/run/postgresql && \
+    sudo chmod 2775 /var/run/postgresql
 
-COPY pg_documentdb_gw/SetupConfiguration.json /home/documentdb/gateway/pg_documentdb_gw/SetupConfiguration.json
-COPY scripts/start_oss_server.sh /home/documentdb/gateway/scripts/start_oss_server.sh
-COPY scripts/build_and_start_gateway.sh /home/documentdb/gateway/scripts/build_and_start_gateway.sh
-COPY documentdb-local/scripts/emulator_entrypoint.sh /home/documentdb/gateway/scripts/emulator_entrypoint.sh
-COPY documentdb-local/scripts/documentdb_reserved_roles.sh /home/documentdb/gateway/scripts/documentdb_reserved_roles.sh
-COPY documentdb-local/scripts/documentdb_validate_username.sh /home/documentdb/gateway/scripts/documentdb_validate_username.sh
-COPY documentdb-local/scripts/documentdb_install_getparameter_stub.sh /home/documentdb/gateway/scripts/documentdb_install_getparameter_stub.sh
-COPY documentdb-local/scripts/init_documentdb_data.sh /home/documentdb/gateway/scripts/init_documentdb_data.sh
-COPY scripts/utils.sh /home/documentdb/gateway/scripts/utils.sh
-COPY scripts/preload_libraries.sh /home/documentdb/gateway/scripts/preload_libraries.sh
-COPY scripts/setup_psqlrc.sh /home/documentdb/gateway/scripts/setup_psqlrc.sh
-COPY documentdb-local/sample-data /home/documentdb/gateway/sample-data
-COPY packaging/test_packages/test_gateway.py /home/documentdb/gateway/scripts/test_gateway.py
-COPY packaging/test_packages/test-gateway-install-entrypoint.sh /home/documentdb/gateway/scripts/test-gateway-install-entrypoint.sh
-
-# Create default initialization directory for user-provided scripts
-RUN sudo mkdir -p /init_doc_db.d
+COPY packaging/test_packages/test-gateway-install-entrypoint.sh /usr/share/documentdb/scripts/test-gateway-install-entrypoint.sh
+RUN chmod +x /usr/share/documentdb/scripts/test-gateway-install-entrypoint.sh
 
 USER documentdb
-RUN sudo chown -R documentdb:documentdb /home/documentdb/gateway
-RUN sudo chmod +x /home/documentdb/gateway/scripts/init_documentdb_data.sh
 
-WORKDIR /home/documentdb/gateway/scripts
-ENTRYPOINT ["/bin/bash", "-c", "/home/documentdb/gateway/scripts/test-gateway-install-entrypoint.sh"]
+WORKDIR /usr/share/documentdb/scripts
+ENTRYPOINT ["/bin/bash", "-c", "/usr/share/documentdb/scripts/test-gateway-install-entrypoint.sh"]

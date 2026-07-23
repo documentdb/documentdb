@@ -233,6 +233,10 @@ build_documentdb_image() {
     echo "  Package:   $deb_rel"
     (
         cd "$REPO_ROOT"
+        # Dockerfile_documentdb_local builds the gateway from source (see its
+        # `stage` build stage); it does not consume a prebuilt gateway .deb, so
+        # none is built or passed here. The gateway package is built and
+        # clean-install tested separately in the packaging CI.
         docker build \
             --build-arg BASE_IMAGE="$DOCUMENTDB_BASE_IMAGE" \
             --build-arg POSTGRES_VERSION="$PG_VERSION" \

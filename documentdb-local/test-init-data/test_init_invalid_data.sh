@@ -15,7 +15,8 @@ IMAGE_NAME="documentdb-gateway-test"
 INVALID_DATA_DIR="$SCRIPT_DIR/sample-invalid-data"
 DOCKERFILE_PATH="$PROJECT_ROOT/packaging/gateway/docker/Dockerfile_documentdb_local"
 DOCUMENTDB_PORT="10260"
-PASSWORD="TestPassword123"
+# Runtime-generated so no credential literal lives in source (CredScan).
+PASSWORD="$(openssl rand -hex 12)Aa1!"
 TEST_TIMEOUT=300  # 5 minutes timeout for container to stop
 
 # Colors for output
@@ -79,8 +80,14 @@ build_image() {
     echo "Building image $IMAGE_NAME from $DOCKERFILE_PATH..."
     echo "=== Docker Build Output ==="
     
+    local ext_deb
+    ext_deb="$(cd "$PROJECT_ROOT" && find "packaging" -maxdepth 1 -name '*-postgresql-*-documentdb_*.deb' ! -name '*dbgsym*' | head -1 || true)"
+    [ -n "$ext_deb" ] || { echo "Error: extension DEB not found in packaging/"; exit 1; }
+    # Dockerfile_documentdb_local builds the gateway from source; no gateway .deb is needed.
+
     # Build with verbose output
-    if docker build -f "$DOCKERFILE_PATH" -t "$IMAGE_NAME" "$PROJECT_ROOT" --no-cache 2>&1 | tee /tmp/docker_build.log; then
+    if docker build -f "$DOCKERFILE_PATH" -t "$IMAGE_NAME" "$PROJECT_ROOT" --no-cache \
+        --build-arg DEB_PACKAGE_REL_PATH="$ext_deb" 2>&1 | tee /tmp/docker_build.log; then
         print_status "SUCCESS" "Docker image built successfully"
         echo "=== End of Docker Build Output ==="
     else

@@ -752,6 +752,26 @@ class ExternalPortBindingTests(_ContainerTestBase):
             f"unable to parse `docker port` output: {result.stdout!r}"
         )
 
+    def _container_ip(self) -> str:
+        # Emit one address PER LINE and take the first non-empty one. The
+        # obvious `{{range ...}}{{.IPAddress}}{{end}}` concatenates every
+        # network's address with no separator, so a container attached to two
+        # networks yields garbage like "172.17.0.2172.18.0.3" — which is
+        # truthy, so an emptiness check passes it through, mongosh then fails
+        # to resolve it, and the test blames the product ("the gateway is
+        # likely bound to the container loopback only") for a harness defect.
+        # An exited container, whose .IPAddress is empty, has the same shape.
+        result = _docker(
+            "inspect", "-f",
+            "{{range .NetworkSettings.Networks}}{{println .IPAddress}}{{end}}",
+            self.container, timeout=10,
+        )
+        for line in result.stdout.splitlines():
+            candidate = line.strip()
+            if candidate:
+                return candidate
+        return ""
+
     def test_published_host_port_accepts_mongosh_from_outside(self):
         host_port = self._published_host_port()
         result = _mongosh_sibling(
@@ -762,13 +782,41 @@ class ExternalPortBindingTests(_ContainerTestBase):
             username=self.USERNAME,
             password=self.password,
         )
-        self.assertEqual(
-            result.returncode, 0,
-            f"mongosh from sibling container (network=host) failed against "
-            f"127.0.0.1:{host_port}; the gateway is likely bound to the "
-            f"container loopback only.\n"
-            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
-        )
+
+        # `--network host` does not reach a `-p 127.0.0.1:...` publish on
+        # Docker Desktop (Mac/Windows/WSL): the sibling joins the Docker
+        # VM's network namespace while the publish is proxied to the
+        # client host's loopback, so the connection is refused there even
+        # though the gateway is bound correctly. Fall back to dialing the
+        # container's own bridge IP, which proves the SAME property this
+        # test exists for — the gateway accepts connections on a
+        # non-loopback address rather than binding container loopback
+        # only — without depending on host-network semantics.
+        if result.returncode != 0:
+            container_ip = self._container_ip()
+            self.assertTrue(
+                container_ip,
+                "host-network attempt failed and the container has no "
+                "bridge IP to fall back to.\n"
+                f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+            )
+            result = _mongosh_sibling(
+                self.image,
+                host=container_ip,
+                port=DEFAULT_PORT,
+                eval_code="db.runCommand({ping: 1}).ok",
+                username=self.USERNAME,
+                password=self.password,
+            )
+            self.assertEqual(
+                result.returncode, 0,
+                f"mongosh from a sibling container failed against both the "
+                f"published host port 127.0.0.1:{host_port} and the "
+                f"container address {container_ip}:{DEFAULT_PORT}; the "
+                f"gateway is likely bound to the container loopback only.\n"
+                f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+            )
+
         self.assertEqual(
             _last_nonempty_line(result.stdout), "1",
             f"expected ping ok=1 from external client\n"

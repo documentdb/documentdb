@@ -6,19 +6,23 @@
 # modifying the gateway crate's Cargo.toml.
 #
 # Usage:
-#   build-gateway-deb.sh --binary <path> --version <version> [--output-dir <dir>]
+#  build-gateway-deb.sh --binary <path> --version <version> [--output-dir <dir>]
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
+# Shared dpkg-deb scaffolding (emit_control / finalize_deb / deb_list_contents).
+# shellcheck source=../deb-common.sh
+source "${SCRIPT_DIR}/../deb-common.sh"
+
 BINARY_PATH=""
 VERSION=""
 OUTPUT_DIR="."
 ARCH=""
 
-die() { echo "ERROR: $*" >&2; exit 1; }
+# die comes from deb-common.sh (sourced above).
 
 usage() {
     cat <<'EOF'
@@ -72,18 +76,17 @@ install -d "${PKG_DIR}/usr/share/doc/${FILE_PKG_NAME}"
 install -d "${PKG_DIR}/usr/lib/documentdb-gateway"
 
 # ── Binary + wrapper ────────────────────────────────────────────────
-# Deliberate deviation from packaging-design.md section 4.3 (which specifies a
-# single binary at /usr/bin): the split daemon+wrapper layout below should be
-# reflected back into section 4.3 so the doc stays the source of truth.
-# Real-user E2E flagged (Gap #6): when an operator runs
-# `documentdb-gateway --check` from a shell, the binary reads only its
-# JSON config (which still encodes PostgresDataUser=documentdb-local
-# for back-compat) and ignores the per-major gateway.env, producing a
-# false-negative auth failure. The systemd path is fine because the
-# unit sets EnvironmentFile= — but a manual smoke test should give the
-# same result.
+# Wrapper+daemon split per packaging-design.md section 4.3. Rationale:
+# if the raw daemon lived at /usr/bin and an operator ran
+# `documentdb-gateway --check` from a shell, the binary would read only
+# its JSON compat config (whose connection-pinning fields, including
+# PostgresDataUser, are stripped at package build time by
+# strip-setup-config.sh) and ignore the per-major gateway.env,
+# producing a false-negative auth failure. The systemd path is fine
+# because the unit sets EnvironmentFile= — but a manual smoke test
+# should give the same result.
 #
-# Fix: install the Rust daemon at /usr/lib/documentdb-gateway/, ship a
+# So: install the Rust daemon at /usr/lib/documentdb-gateway/, ship a
 # thin wrapper at /usr/bin/documentdb-gateway that auto-sources the
 # right per-major or global env file before exec'ing the daemon, AND
 # (for manual --check) downgrades to the documentdb-gateway OS user via
@@ -91,6 +94,9 @@ install -d "${PKG_DIR}/usr/lib/documentdb-gateway"
 # is a pass-through for `run` so the systemd unit (which already sets
 # User= and EnvironmentFile=) sees identical behavior.
 install -m 0755 "${BINARY_PATH}" "${PKG_DIR}/usr/lib/documentdb-gateway/documentdb-gateway-daemon"
+command -v strip >/dev/null 2>&1 \
+    || die "strip not found on PATH; refusing to ship an unstripped gateway daemon"
+strip --strip-unneeded "${PKG_DIR}/usr/lib/documentdb-gateway/documentdb-gateway-daemon"
 
 # Install the shared wrapper (single source of truth; see
 # oss/packaging/gateway/documentdb-gateway-wrapper.sh). The RPM spec
@@ -98,7 +104,7 @@ install -m 0755 "${BINARY_PATH}" "${PKG_DIR}/usr/lib/documentdb-gateway/document
 install -m 0755 "${REPO_ROOT}/packaging/gateway/documentdb-gateway-wrapper.sh" \
     "${PKG_DIR}/usr/bin/documentdb-gateway"
 
-# ── Systemd / sysusers / tmpfiles ───────────────────────────────────
+# ── systemd / sysusers / tmpfiles ───────────────────────────────────
 # Install the systemd unit under /usr/lib/systemd/system (the canonical
 # usr-merged location), not the legacy /lib/systemd/system: systemd
 # searches /usr/lib on every supported target including split-usr Debian 11
@@ -124,7 +130,7 @@ install -d "${PKG_DIR}/usr/share/doc/${FILE_PKG_NAME}/examples"
 install -m 0644 "${REPO_ROOT}/packaging/gateway/config/gateway.env" \
     "${PKG_DIR}/usr/share/doc/${FILE_PKG_NAME}/examples/gateway.env.sample"
 install -d "${PKG_DIR}/etc/documentdb/gateway"
-# Reviewer-flagged (external review iter 18): the dev-tree
+# The dev-tree
 # SetupConfiguration.json carries PostgresPort: 9712 / GatewayListenPort:
 # 10260 for the local `cargo run` workflow. Shipping those values
 # verbatim into the package contradicts the design's per-major port
@@ -186,7 +192,7 @@ CTRL
     rm -rf "${PKG_DIR}/debian"
 fi
 
-# Append our explicit deps. Reviewer-flagged (Sonnet iter 7): jq is NOT
+# Append our explicit deps. jq is NOT
 # a gateway runtime dep — only documentdb-gateway-admin uses it, and
 # that ships in documentdb-postgresql-tools. Per packaging-design.md
 # §4.3 the gateway package has "no product-specific runtime dependency
@@ -202,54 +208,49 @@ fi
 # ── Copyright ───────────────────────────────────────────────────────
 # The gateway's own code is MIT (workspace Cargo.toml: license = "MIT").
 # The statically-linked Rust dependencies include Apache-2.0 licensed
-# components, so the package distributes code under both licenses. Ship
-# both license texts in the single Debian copyright file; this mirrors
-# the RPM spec, which %license-ships both LICENSE_MIT and
-# LICENSE_Apache-2.0, and matches the "MIT AND Apache-2.0" package tag.
+# components, so the package advertises both licenses. Debian systems already
+# ship Apache-2.0 in /usr/share/common-licenses; reference that canonical copy
+# instead of embedding the full common license text in the package metadata.
 MIT_LICENSE="${REPO_ROOT}/pg_documentdb_gw/licenses/LICENSE_MIT"
-APACHE_LICENSE="${REPO_ROOT}/pg_documentdb_gw/licenses/LICENSE_Apache-2.0"
 [[ -f "${MIT_LICENSE}" ]] || die "license file not found: ${MIT_LICENSE}"
-[[ -f "${APACHE_LICENSE}" ]] || die "license file not found: ${APACHE_LICENSE}"
 {
+    echo "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/"
     echo "Upstream-Name: documentdb-gateway"
     echo "Source: https://github.com/documentdb/documentdb"
     echo
+    echo "Files: *"
     echo "Copyright (c) 2015-present Microsoft Corporation"
+    echo "License: MIT"
     echo
-    echo "License: MIT AND Apache-2.0"
+    deb_emit_mit_permission_text "${MIT_LICENSE}"
     echo
-    echo "The gateway's own source is licensed under the MIT License. The"
-    echo "compiled binary statically links third-party Rust dependencies"
-    echo "licensed under the Apache License 2.0. Both license texts follow."
-    echo
-    echo "==================== MIT License (documentdb-gateway) ===================="
-    echo
-    cat "${MIT_LICENSE}"
-    echo
-    echo "============= Apache License 2.0 (bundled Rust dependencies) ============="
-    echo
-    cat "${APACHE_LICENSE}"
+    echo "Files: usr/lib/documentdb-gateway/documentdb-gateway-daemon"
+    echo "Copyright (c) 2015-present Microsoft Corporation"
+    echo "License: MIT and Apache-2.0"
+    echo " The daemon includes the gateway code above and statically linked Rust"
+    echo " dependencies that are licensed under the Apache License 2.0."
+    echo " On Debian systems, the complete text of the Apache License 2.0 is in"
+    echo " /usr/share/common-licenses/Apache-2.0."
 } > "${PKG_DIR}/usr/share/doc/${FILE_PKG_NAME}/copyright"
 
-# ── Control file ────────────────────────────────────────────────────
-INSTALLED_SIZE=$(du -sk "${PKG_DIR}" | cut -f1)
+deb_install_changelog "${PKG_DIR}" "${FILE_PKG_NAME}" "${VERSION}" \
+    "Initial documentdb-gateway runtime package."
 
-# Deliberate deviation from packaging-design.md section 4.3 (which specifies
-# per-major postgresql-N-documentdb): captured here so section 4.3 can be
-# updated to match and stay the source of truth for parts 2-4 of the series.
-# Reviewer-flagged (Sonnet iter 9): the previous Suggests included
-# postgresql-18-documentdb, the same misleading pattern iter-8 removed
-# from the tools package. On PG 15/16/17 hosts the gateway is
-# PG-major-agnostic at the binary level, but apt would suggest the wrong
-# extension. Suggest only documentdb-postgresql-tools (PG-agnostic admin
-# helpers); the postinst message points the operator at the right
-# per-major extension package.
-cat > "${PKG_DIR}/DEBIAN/control" <<CONTROL
+# ── Control file ────────────────────────────────────────────────────
+# Per packaging-design.md section 4.3, the gateway declares no
+# dependency of any kind on the per-major postgresql-N-documentdb
+# packages. A previous Suggests included postgresql-18-documentdb, the
+# same misleading pattern the tools package no longer uses: on PG
+# 15/16/17 hosts the gateway is PG-major-agnostic at the binary level,
+# but apt would suggest the wrong extension. Suggest only
+# documentdb-postgresql-tools (PG-agnostic admin helpers); the postinst
+# message points the operator at the right per-major extension package.
+emit_control "${PKG_DIR}" <<CONTROL
 Package: ${DEB_PKG_NAME}
 Version: ${VERSION}
 Architecture: ${ARCH}
-Maintainer: documentdb-packaging-maintainers@microsoft.com
-Installed-Size: ${INSTALLED_SIZE}
+Maintainer: ${DEB_MAINTAINER}
+Installed-Size: @INSTALLED_SIZE@
 Depends: ${DEPENDS}
 Suggests: documentdb-postgresql-tools
 Section: database
@@ -262,10 +263,6 @@ Description: DocumentDB wire-protocol gateway daemon
 CONTROL
 
 # ── Build ───────────────────────────────────────────────────────────
-mkdir -p "${OUTPUT_DIR}"
 DEB_FILE="${OUTPUT_DIR}/${FILE_PKG_NAME}_${VERSION}_${ARCH}.deb"
-dpkg-deb --build --root-owner-group "${PKG_DIR}" "${DEB_FILE}"
-
-echo "Built: ${DEB_FILE}"
-echo "Contents:"
-dpkg-deb -c "${DEB_FILE}" | awk '{print "  " $NF}' | grep -v '/$'
+finalize_deb "${PKG_DIR}" "${DEB_FILE}"
+deb_list_contents "${DEB_FILE}"

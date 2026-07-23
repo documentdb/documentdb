@@ -1,7 +1,28 @@
 #!/bin/bash
 
-# Cleanup function to handle container shutdown gracefully
+# Cleanup function to handle container shutdown gracefully.
+# Runs on BOTH shutdown paths: the SIGTERM/SIGINT trap (docker stop) and the
+# gateway self-exit path (crash/OOM) after the final `wait` returns — without
+# the latter, this script (PID 1) would simply exit and the kernel would
+# SIGKILL the daemonized postmaster, forcing WAL recovery on the next boot.
+# Takes an optional exit code (default 0) so the self-exit path can propagate
+# the gateway's status.
+configFile=""
+
+# Initialized up front so cleanup() — which can now also run from the gateway
+# self-exit path — never dereferences an unset PID var under the `set -u`
+# that sourcing utils.sh (CREATE_USER=true path) turns on.
+PG_LOG_TAIL_PID=""
+SYSTEM_PG_LOG_TAIL_PID=""
+OSS_LOG_TAIL_PID=""
+GATEWAY_LOG_TAIL_PID=""
+POSTGRES_STOPPED=false
+
 cleanup() {
+    # Mask further TERM/INT: a signal landing while the self-exit path is
+    # already running cleanup would re-enter it with NO argument and
+    # `exit "${1:-0}"` — discarding the gateway's real exit status.
+    trap '' TERM INT
     echo "Shutting down DocumentDB components..."
     
     # Kill log streaming processes if they exist
@@ -18,13 +39,42 @@ cleanup() {
         echo "Stopping gateway process (PID: $gateway_pid)"
         kill $gateway_pid 2>/dev/null || true
     fi
-    
+
+    # Gracefully stop PostgreSQL. It is daemonized via pg_ctl, so the
+    # container's SIGTERM never reaches the postmaster — without an explicit
+    # fast stop here every `docker stop` is an unclean shutdown that forces WAL
+    # recovery on the next boot. Only applies when this entrypoint started PG.
+    # The POSTGRES_STOPPED guard prevents a double stop when a signal arrives
+    # while the gateway self-exit path is already running this cleanup.
+    if [ "${POSTGRES_STOPPED:-false}" != "true" ]; then
+        POSTGRES_STOPPED=true
+        if [ "${START_POSTGRESQL:-true}" = "true" ] && [ -n "${DATA_PATH:-}" ] \
+                && [ -f "${DATA_PATH}/postmaster.pid" ]; then
+            pgctl_bin="$(command -v pg_ctl 2>/dev/null || true)"
+            if [ -n "$pgctl_bin" ]; then
+                echo "Stopping PostgreSQL (fast) at ${DATA_PATH}..."
+                "$pgctl_bin" stop -D "${DATA_PATH}" -m fast 2>/dev/null || true
+            else
+                echo "Warning: pg_ctl not found; cannot cleanly stop PostgreSQL at ${DATA_PATH}." >&2
+            fi
+        fi
+    fi
+
     echo "Cleanup completed"
-    exit 0
+    exit "${1:-0}"
+}
+
+cleanup_temp_config() {
+    # Only clean up files we created via mktemp; if the caller provided
+    # DOCUMENTDB_CONFIG_FILE, the caller owns the lifecycle.
+    if [ -z "${DOCUMENTDB_CONFIG_FILE:-}" ] && [ -n "${configFile:-}" ] && [ -f "$configFile" ]; then
+        rm -f "$configFile"
+    fi
 }
 
 # Set up signal handlers for graceful shutdown
 trap cleanup SIGTERM SIGINT
+trap cleanup_temp_config EXIT
 
 # Function to start log streaming
 start_log_streaming() {
@@ -71,7 +121,7 @@ Optional arguments:
   --documentdb-port     The port of the DocumentDB endpoint on the container. 
                         You still need to publish this port (e.g. -p 10260:10260).
                         Defaults to 10260
-                        Overrides PORT environment variable.
+                        Overrides DOCUMENTDB_PORT environment variable.
   --enable-telemetry    Enable telemetry data sent to the usage colletor (Azure Application Insights). 
                         Overrides ENABLE_TELEMETRY environment variable.
   --log-level           The verbosity of logs that will be emitted.
@@ -89,12 +139,16 @@ Optional arguments:
                         Defaults to true.
   --pg-port             Specify the port for the PostgreSQL server.
                         Defaults to 9712.
-                        Overrides PG_PORT environment variable.
+                        Overrides POSTGRESQL_PORT environment variable.
   --owner               Specify the owner of the DocumentDB.
                         Overrides OWNER environment variable.
                         defaults to documentdb.
-  --allow-external-connections
-                        Allow external connections to PostgreSQL.
+  --allow-external-connections [true|false]
+                        Open the container's internal PostgreSQL server to all
+                        interfaces (listen_addresses='*' + a permissive pg_hba
+                        entry). This does NOT affect the gateway, which always
+                        listens on all interfaces on the DocumentDB port; it
+                        only exposes the backend PostgreSQL port directly.
                         Defaults to false.
                         Overrides ALLOW_EXTERNAL_CONNECTIONS environment variable.
   --init-data [true|false]
@@ -127,6 +181,24 @@ Optional arguments:
                         When set to requireTLS, plain (non-TLS) connections are rejected.
                         Overrides TLS_MODE environment variable.
 EOF
+}
+
+# sanitize_uint VALUE DEFAULT NAME: echo VALUE when it is a non-negative
+# integer, otherwise warn on stderr and echo DEFAULT. Callers needing a lower
+# bound (e.g. a >=1 interval) apply that clamp separately, and callers feeding
+# the result into $(( )) should normalize a possible leading zero with
+# $((10#...)) at the arithmetic site. This script has no `set -e`, so validating
+# up front keeps a bad override from making downstream arithmetic/sleep loops
+# hang, busy-spin, or abort mid-way.
+sanitize_uint() {
+    local value="$1" default="$2" name="$3"
+    case "$value" in
+        ''|*[!0-9]*)
+            echo "Warning: invalid ${name}='${value}'; using ${default}." >&2
+            printf '%s' "$default" ;;
+        *)
+            printf '%s' "$value" ;;
+    esac
 }
 
 if [[ -f "/version.txt" ]]; then
@@ -240,7 +312,21 @@ do
   esac
 done
 
-# Set default values if not provided
+# Set default values if not provided.
+#
+# Track whether USERNAME / PASSWORD came from the operator (CLI flag or
+# explicit env var) vs. Fell back to the built-in default. The built-in
+# defaults exist for legacy / evaluation use, but a loud warning is
+# printed when they apply because anyone reachable on the published port
+# can authenticate with default_user / Admin100. A future major version
+# will refuse to start without --password / PASSWORD set explicitly.
+# A single flag suffices: the warning below fires when EITHER the username or
+# the password fell back to the built-in default, and the warning text is
+# static (it does not distinguish which one defaulted).
+USING_DEFAULT_CREDS=false
+if [ -z "${USERNAME:-}" ] || [ -z "${PASSWORD:-}" ]; then
+    USING_DEFAULT_CREDS=true
+fi
 export OWNER=${OWNER:-$(whoami)}
 export DATA_PATH=${DATA_PATH:-/data}
 export DOCUMENTDB_PORT=${DOCUMENTDB_PORT:-10260}
@@ -260,6 +346,31 @@ export POSTGRES_LOG_VERSION=${PG_VERSION_USED:-17}
 export SYSTEM_POSTGRES_LOG=${SYSTEM_POSTGRES_LOG:-/var/log/postgresql/postgresql-${POSTGRES_LOG_VERSION}-main.log}
 export DOCUMENTDB_RUNTIME_USER=${DOCUMENTDB_RUNTIME_USER:-documentdb}
 export DOCUMENTDB_RUNTIME_GROUP=${DOCUMENTDB_RUNTIME_GROUP:-$DOCUMENTDB_RUNTIME_USER}
+
+# Resolve script and data directories.
+# Package-installed paths take priority over the legacy Docker layout.
+# CONFIG_DIR can be overridden for testing.
+if [ -f "/usr/share/documentdb/scripts/start_oss_server.sh" ] \
+        && [ -f "/usr/share/documentdb/scripts/utils.sh" ]; then
+    # Prefer the package-installed layout only when the scripts this
+    # entrypoint actually sources/execs (start_oss_server.sh and utils.sh)
+    # are present there. The documentdb-common package creates
+    # /usr/share/documentdb/scripts but ships only a subset
+    # (documentdb_postgresql_service.sh, init_documentdb_data.sh), so keying
+    # off the directory alone would select a path missing start_oss_server.sh
+    # / utils.sh once that package is co-installed with this image.
+    SCRIPT_DIR="/usr/share/documentdb/scripts"
+    SAMPLE_DATA_DIR="/usr/share/documentdb/sample-data"
+    CONFIG_DIR="${CONFIG_DIR:-/etc/documentdb/gateway}"
+elif [ -n "${GATEWAY_HOME:-}" ]; then
+    SCRIPT_DIR="${GATEWAY_HOME}/scripts"
+    SAMPLE_DATA_DIR="${GATEWAY_HOME}/sample-data"
+    CONFIG_DIR="${CONFIG_DIR:-${GATEWAY_HOME}/pg_documentdb_gw}"
+else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    SAMPLE_DATA_DIR="$(dirname "$SCRIPT_DIR")/sample-data"
+    CONFIG_DIR="${CONFIG_DIR:-$(dirname "$SCRIPT_DIR")/pg_documentdb_gw}"
+fi
 
 # Setup centralized log directory structure
 echo "Setting up centralized log directory at $DOCUMENTDB_LOG_DIR..."
@@ -286,6 +397,42 @@ if [ -z "${PASSWORD:-}" ]; then
     exit 1
 fi
 
+# Loud, unmissable warning when the operator did NOT supply an explicit
+# username / password and we fell back to the built-in defaults. These
+# defaults are well-known, public, and not safe outside short-lived
+# evaluation. Refusing to start by default is the eventual goal; for now
+# we keep the legacy compatibility but make the noise hard to miss.
+# Operators who knowingly want the defaults (for example CI smoke tests
+# that depend on the historical defaults) can suppress with
+# DOCUMENTDB_ALLOW_DEFAULT_PASSWORD=true.
+if [ "${USING_DEFAULT_CREDS}" = "true" ]; then
+    if [ "${DOCUMENTDB_ALLOW_DEFAULT_PASSWORD:-false}" != "true" ]; then
+        cat >&2 <<'WARN'
+========================================================================
+WARNING: DocumentDB is starting with the BUILT-IN DEFAULT CREDENTIALS.
+========================================================================
+
+  Username: default_user   (because --username / USERNAME was not set)
+  Password: Admin100       (because --password / PASSWORD was not set)
+
+These credentials are PUBLIC and well-known. Any client that can reach
+the gateway port can authenticate as the admin user. Do NOT use this
+configuration outside short-lived local evaluation.
+
+To suppress this warning intentionally (for example in evaluation
+scripts), set DOCUMENTDB_ALLOW_DEFAULT_PASSWORD=true. To fix:
+
+  docker run ... --env USERNAME=<your-user> --env PASSWORD=<your-pw> ...
+  or
+  documentdb-local --username <your-user> --password <your-pw>
+
+In a future release the emulator will REFUSE to start when --password
+and --username are not provided, so please migrate now.
+========================================================================
+WARN
+    fi
+fi
+
 echo "Using username: $USERNAME"
 echo "Using owner: $OWNER"
 echo "Using data path: $DATA_PATH"
@@ -306,11 +453,17 @@ if ! [[ "$DOCUMENTDB_PORT" =~ $num ]]; then
     echo "Invalid port value $DOCUMENTDB_PORT, must be a number"
     exit 1
 fi
+# Normalize to base-10 so a zero-padded value (e.g. "010260") is not later
+# parsed as invalid octal by the jq ".GatewayListenPort = $DOCUMENTDB_PORT"
+# numeric assignment, which would error and — with no `set -e` — skip the
+# &&-chained config mv, silently leaving the gateway on the default port.
+DOCUMENTDB_PORT=$((10#$DOCUMENTDB_PORT))
 
 if ! [[ "$POSTGRESQL_PORT" =~ $num ]]; then
     echo "Invalid PostgreSQL port value $POSTGRESQL_PORT, must be a number"
     exit 1
 fi
+POSTGRESQL_PORT=$((10#$POSTGRESQL_PORT))
 
 if [ -n "$ENABLE_TELEMETRY" ] && \
    [ "$ENABLE_TELEMETRY" != "true" ] && \
@@ -341,6 +494,18 @@ if [ -n "$SKIP_INIT_DATA" ] && \
    [ "$SKIP_INIT_DATA" != "true" ] && \
    [ "$SKIP_INIT_DATA" != "false" ]; then
     echo "Invalid skip-init-data value $SKIP_INIT_DATA, must be true or false"
+    exit 1
+fi
+
+# Same strict true/false contract as the other booleans above. This matters
+# more than usual here: before the --allow-external-connections fix this
+# setting was accidentally always-on, so legacy users may be passing 1/yes/
+# TRUE and expecting an open PostgreSQL port — silently treating those as
+# false would close their port with nothing in the logs explaining why.
+if [ -n "${ALLOW_EXTERNAL_CONNECTIONS:-}" ] && \
+   [ "$ALLOW_EXTERNAL_CONNECTIONS" != "true" ] && \
+   [ "$ALLOW_EXTERNAL_CONNECTIONS" != "false" ]; then
+    echo "Invalid allow-external-connections value $ALLOW_EXTERNAL_CONNECTIONS, must be true or false"
     exit 1
 fi
 
@@ -384,7 +549,7 @@ if [ "$START_POSTGRESQL" = "true" ]; then
     echo "Setting permissions on $DATA_PATH"
     sudo chmod -R 750 "$DATA_PATH"
     
-    if ALLOW_EXTERNAL_CONNECTIONS="true"; then
+    if [ "${ALLOW_EXTERNAL_CONNECTIONS:-false}" = "true" ]; then
         echo "Allowing external connections to PostgreSQL..."
         export PGOPTIONS="-e"
     fi
@@ -408,7 +573,7 @@ if [ "$START_POSTGRESQL" = "true" ]; then
     fi
     start_oss_server_args+=(-d "$DATA_PATH" -p "$POSTGRESQL_PORT")
 
-    $GATEWAY_HOME/scripts/start_oss_server.sh "${start_oss_server_args[@]}" | tee -a "$OSS_SERVER_LOG"
+    "$SCRIPT_DIR/start_oss_server.sh" "${start_oss_server_args[@]}" | tee -a "$OSS_SERVER_LOG"
 
     echo "OSS server started."
     echo "[ENTRYPOINT] Setting up PostgreSQL log streaming..."
@@ -475,10 +640,9 @@ else
 fi
 
 # Setting up the configuration file
-mkdir -p "$GATEWAY_HOME/pg_documentdb_gw/target"
-configFile="$GATEWAY_HOME/pg_documentdb_gw/target/SetupConfiguration_temp.json"
-cp "$GATEWAY_HOME/pg_documentdb_gw/SetupConfiguration.json" "$configFile"
-sudo chmod 755 "$configFile"
+configFile="${DOCUMENTDB_CONFIG_FILE:-$(mktemp /tmp/SetupConfiguration_XXXXXX.json)}"
+cp "$CONFIG_DIR/SetupConfiguration.json" "$configFile"
+chmod 600 "$configFile"
 
 if [ -n "${DOCUMENTDB_PORT:-}" ]; then
     echo "Updating GatewayListenPort in the configuration file..."
@@ -528,10 +692,142 @@ mv "$configFile.tmp" "$configFile"
 echo "Starting gateway in the background..."
 if [ "$CREATE_USER" = "false" ]; then
     echo "Skipping user creation and starting the gateway..."
-    $GATEWAY_HOME/scripts/build_and_start_gateway.sh -s -d $configFile -P $POSTGRESQL_PORT -o $OWNER | tee -a "$GATEWAY_LOG" &
 else
-    $GATEWAY_HOME/scripts/build_and_start_gateway.sh -u $USERNAME -p $PASSWORD -d $configFile -P $POSTGRESQL_PORT -o $OWNER | tee -a "$GATEWAY_LOG" &
+    # Create the admin user before starting the gateway.
+    . "$SCRIPT_DIR/utils.sh"
+
+    # SECURITY: the stock SetupCustomAdminUser in utils.sh interpolates the
+    # raw password into psql's argv (inside the -c SQL string), where it is
+    # world-readable via /proc/<pid>/cmdline for as long as psql runs, and
+    # into the create_user JSON unescaped, where a double quote or backslash
+    # in the password corrupts the document and breaks user creation.
+    # utils.sh is shared with non-container callers (start_oss_server.sh,
+    # build_and_start_gateway.sh), so it is left untouched; instead, shadow
+    # ONLY its stock implementation here with a hardened same-signature
+    # variant that:
+    #   - JSON-encodes the password with jq --rawfile from a 0600 temp file
+    #     (jq is already a hard dependency of this entrypoint), and
+    #   - feeds all SQL to psql over stdin — never argv — embedding the
+    #     username via a psql variable and the create_user document as a
+    #     single-quote-doubled SQL literal.
+    # A non-stock definition sourced from utils.sh (a site override or test
+    # stub) is honored as-is; only the known-insecure implementation is
+    # replaced.
+    if declare -f SetupCustomAdminUser 2>/dev/null | grep -q 'documentdb_api\.create_user'; then
+        SetupCustomAdminUser() {
+            local user="$1" pass="$2" port="$3" owner="$4"
+            echo "Setting up custom user $user with owner $owner."
+            local role_probe
+            role_probe="$(printf '%s\n' "SELECT 1 FROM pg_roles WHERE rolname = :'u';" \
+                | psql -p "$port" -U "$owner" -d postgres -X -tA -v "u=${user}")"
+            if printf '%s' "$role_probe" | grep -q 1; then
+                echo "Role $user already exists."
+                return 0
+            fi
+            local pw_file create_user_doc jq_rc doc_sql
+            pw_file="$(mktemp /tmp/documentdb_admin_pw_XXXXXX)" || return 1
+            chmod 600 "$pw_file"
+            printf '%s' "$pass" > "$pw_file"
+            create_user_doc="$(jq -cn --rawfile pwd "$pw_file" --arg user "$user" \
+                '{createUser: $user, pwd: $pwd, roles: [{role: "readWriteAnyDatabase", db: "admin"}, {role: "clusterAdmin", db: "admin"}]}')"
+            jq_rc=$?
+            rm -f "$pw_file"
+            if [ "$jq_rc" -ne 0 ]; then
+                echo "Error: failed to build the create_user document." >&2
+                return 1
+            fi
+            # Embed the document as a SQL string literal (single quotes
+            # doubled) and pipe the statement on stdin so the password never
+            # appears in any process's argv.
+            doc_sql=${create_user_doc//\'/\'\'}
+            # ON_ERROR_STOP matters: for stdin-scripted input psql exits 0
+            # on SQL errors unless it is set (the stock -c form exited 1),
+            # so without it a failed create_user would slip past the
+            # caller's error guard and the container would report ready
+            # with no usable admin login.
+            printf '%s\n' "SELECT documentdb_api.create_user('${doc_sql}');" \
+                | psql -p "$port" -U "$owner" -d postgres -X -v ON_ERROR_STOP=1
+        }
+    fi
+
+    # Wait for PostgreSQL to accept connections before creating the admin
+    # user. With an external PostgreSQL (START_POSTGRESQL=false) the server
+    # may still be coming up; without this gate SetupCustomAdminUser would run
+    # against a not-yet-ready server and the admin user would silently never
+    # be created. Mirrors the readiness gate the previous
+    # build_and_start_gateway.sh path enforced. The timeout/interval are
+    # overridable so tests can exercise the timeout path without a long wait.
+    if command -v pg_isready >/dev/null 2>&1; then
+        pg_ready_timeout="$(sanitize_uint "${DOCUMENTDB_PG_READY_TIMEOUT:-600}" 600 DOCUMENTDB_PG_READY_TIMEOUT)"
+        pg_ready_interval="$(sanitize_uint "${DOCUMENTDB_PG_READY_INTERVAL:-5}" 5 DOCUMENTDB_PG_READY_INTERVAL)"
+        # Interval needs a >=1 lower bound (a 0 would busy-spin forever since
+        # elapsed never advances), then base-10 normalization so a zero-padded
+        # value (e.g. "08") is not parsed as invalid octal by the $(( )) below.
+        [ "$pg_ready_interval" -ge 1 ] || pg_ready_interval=1
+        pg_ready_interval=$((10#$pg_ready_interval))
+        pg_ready_elapsed=0
+        echo "Waiting for PostgreSQL to be ready on localhost:$POSTGRESQL_PORT before creating the admin user..."
+        while ! pg_isready -h localhost -p "$POSTGRESQL_PORT" >/dev/null 2>&1; do
+            if [ "$pg_ready_elapsed" -ge "$pg_ready_timeout" ]; then
+                echo "Error: PostgreSQL did not become ready on localhost:$POSTGRESQL_PORT within ${pg_ready_timeout}s; cannot create the admin user." >&2
+                exit 1
+            fi
+            sleep "$pg_ready_interval"
+            pg_ready_elapsed=$((pg_ready_elapsed + pg_ready_interval))
+        done
+        echo "PostgreSQL is ready."
+    else
+        echo "Warning: pg_isready not found; creating the admin user without a readiness wait." >&2
+    fi
+
+    # Fail loudly if the admin user cannot be created instead of launching the
+    # gateway with no usable login.
+    if ! SetupCustomAdminUser "$USERNAME" "$PASSWORD" "$POSTGRESQL_PORT" "$OWNER"; then
+        echo "Error: failed to create the admin user '$USERNAME'." >&2
+        exit 1
+    fi
 fi
+
+# Launch the gateway binary directly. Prefer the package-installed wrapper at
+# /usr/bin/documentdb-gateway; when the gateway is not installed as a system
+# package (e.g. the documentdb-local image stages the binary under
+# $GATEWAY_HOME instead), fall back to that staged binary.
+gateway_bin="/usr/bin/documentdb-gateway"
+if [ ! -x "$gateway_bin" ]; then
+    gateway_bin="$GATEWAY_HOME/pg_documentdb_gw/target/release-with-symbols/documentdb_gateway"
+fi
+
+# Re-apply the restrictive mode HERE rather than trusting the `chmod 600`
+# at creation time: every `jq ... > "$configFile.tmp" && mv` above replaces
+# the inode, so the surviving file carries the umask-derived mode of the
+# last temp file, not the one we set.
+chmod 600 "$configFile"
+
+# The packaged /usr/bin/documentdb-gateway wrapper drops root to the
+# documentdb-gateway user (runuser) before exec'ing the daemon, so a
+# root-owned 0600 config becomes unreadable to the process that has to
+# parse it: the daemon fails with EACCES, never binds, and the readiness
+# loop below reports the misleading "Gateway failed to start". Hand the
+# config to that user when — and only when — the wrapper will actually
+# perform the drop (root, wrapper in use, gateway user present, not under
+# systemd, mirroring _maybe_runuser_down's own conditions). The shipped
+# emulator image runs as USER documentdb, so this is a no-op there.
+if [ "$gateway_bin" = "/usr/bin/documentdb-gateway" ] \
+        && [ "$(id -u)" -eq 0 ] \
+        && [ -z "${INVOCATION_ID:-}" ] \
+        && id -u documentdb-gateway >/dev/null 2>&1; then
+    echo "Handing gateway configuration to the documentdb-gateway user (wrapper will drop privileges)."
+    chown documentdb-gateway "$configFile"
+fi
+# Redirect through a process substitution rather than a pipeline. With
+# `... | tee -a "$GATEWAY_LOG" &`, $! is the LAST element of the pipeline —
+# tee — so cleanup() killed the logger and left the gateway running: on
+# `docker stop` the gateway kept serving connections against a PostgreSQL
+# that was already fast-stopping, and only died at the container SIGKILL.
+# With `> >(tee ...)` the gateway itself is the backgrounded job, so $!,
+# the cleanup kill, and the `wait` at the end of this script all refer to
+# the process we actually mean.
+"$gateway_bin" "$configFile" > >(tee -a "$GATEWAY_LOG") 2>&1 &
 
 gateway_pid=$! # Capture the PID of the gateway process
 
@@ -596,10 +892,10 @@ elif [ -d "$INIT_DATA_PATH" ] && [ "$(ls -A "$INIT_DATA_PATH"/*.js 2>/dev/null)"
     echo "Initializing database with custom data from: $INIT_DATA_PATH"
     
     # Use the dedicated initialization script
-    init_script="$GATEWAY_HOME/scripts/init_documentdb_data.sh"
+    init_script="$SCRIPT_DIR/init_documentdb_data.sh"
     if [ -f "$init_script" ]; then
         echo "Using custom initialization data from: $INIT_DATA_PATH"
-        if "$init_script" -H localhost -P "$DOCUMENTDB_PORT" -u "$USERNAME" -p "$PASSWORD" -d "$INIT_DATA_PATH" --attempt-marker "$custom_attempt_marker" -v; then
+        if DOCUMENTDB_PASSWORD="$PASSWORD" "$init_script" -H localhost -P "$DOCUMENTDB_PORT" -u "$USERNAME" -d "$INIT_DATA_PATH" --attempt-marker "$custom_attempt_marker" -v; then
             echo "Custom data initialization completed."
             write_init_marker "$custom_success_marker"
             custom_data_initialized=true
@@ -623,12 +919,12 @@ elif [ "$INIT_DATA" = "true" ]; then
     echo "Initializing database with built-in sample data..."
     
     # Use the sample data directory
-    sample_data_path="$GATEWAY_HOME/sample-data"
-    init_script="$GATEWAY_HOME/scripts/init_documentdb_data.sh"
+    sample_data_path="$SAMPLE_DATA_DIR"
+    init_script="$SCRIPT_DIR/init_documentdb_data.sh"
     
     if [ -f "$init_script" ] && [ -d "$sample_data_path" ]; then
         echo "Loading sample data from: $sample_data_path"
-        if "$init_script" -H localhost -P "$DOCUMENTDB_PORT" -u "$USERNAME" -p "$PASSWORD" -d "$sample_data_path" -v; then
+        if DOCUMENTDB_PASSWORD="$PASSWORD" "$init_script" -H localhost -P "$DOCUMENTDB_PORT" -u "$USERNAME" -d "$sample_data_path" -v; then
             echo "Sample data initialization completed."
             write_init_marker "$sample_init_marker"
         else
@@ -671,6 +967,13 @@ fi
 echo "Gateway started with PID: $gateway_pid"
 echo ""
 echo "=== DocumentDB is ready ==="
+echo ""
+echo "Connect with mongosh (replace <password> with the password you set):"
+echo "  mongosh 'mongodb://${USERNAME}:<password>@localhost:${DOCUMENTDB_PORT}/mydb?tls=true&tlsAllowInvalidCertificates=true'"
+echo "  (Replace mydb with any DB name; a fresh DB is created on first insert.)"
+echo ""
+echo "Data is stored in ${DATA_PATH}; mount a volume there (docker run -v <host-dir>:/data ...) to persist it across container recreation."
+echo ""
 echo "All logs are being streamed to docker logs with prefixes:"
 echo "  [POSTGRES] - PostgreSQL database logs ($PG_LOG_FILE)"
 echo "  [POSTGRES-SYSTEM] - System PostgreSQL logs ($SYSTEM_POSTGRES_LOG)"
@@ -695,5 +998,20 @@ echo "=========================="
 echo ""
 
 # Wait for the gateway process to keep the container alive
-# The wait will be interrupted by signals, allowing cleanup to run
-wait $gateway_pid
+# The wait will be interrupted by signals, allowing cleanup to run.
+# The `|| gateway_rc=$?` capture matters: sourcing utils.sh above (the
+# CREATE_USER=true path) turns on `set -e` plus an ERR trap, so a bare
+# `wait` on a gateway that crashed with a nonzero status would abort the
+# script right here — skipping the clean PostgreSQL stop below, which is
+# the exact crash path it exists for.
+gateway_rc=0
+wait $gateway_pid || gateway_rc=$?
+
+# Gateway self-exit path (crash/OOM/normal exit): no signal was delivered, so
+# the SIGTERM/SIGINT trap never ran. Run the same cleanup the trap uses —
+# including the pg_ctl fast stop — otherwise this script would simply exit as
+# PID 1 and the daemonized postmaster would be SIGKILLed, forcing the WAL
+# recovery on next boot that the clean stop exists to prevent. cleanup exits
+# with the gateway's status so the container reports the real failure.
+echo "Gateway process exited with status ${gateway_rc}."
+cleanup "$gateway_rc"

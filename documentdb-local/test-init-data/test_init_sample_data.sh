@@ -11,7 +11,8 @@ CONTAINER_NAME="documentdb-init-data-test"
 IMAGE_NAME="documentdb-init-data-test"
 DOCKERFILE_PATH="$PROJECT_ROOT/packaging/gateway/docker/Dockerfile_documentdb_local"
 DOCUMENTDB_PORT="10261"  # Use different port to avoid conflicts
-PASSWORD="TestPassword123"
+# Runtime-generated so no credential literal lives in source (CredScan).
+PASSWORD="$(openssl rand -hex 12)Aa1!"
 
 echo "=== DocumentDB --init-data Feature Test ==="
 echo "Project Root: $PROJECT_ROOT"
@@ -55,7 +56,12 @@ build_image() {
     echo
     
     echo "Building image $IMAGE_NAME from $DOCKERFILE_PATH..."
-    docker build -f "$DOCKERFILE_PATH" -t "$IMAGE_NAME" "$PROJECT_ROOT"
+    local ext_deb
+    ext_deb="$(cd "$PROJECT_ROOT" && find "packaging" -maxdepth 1 -name '*-postgresql-*-documentdb_*.deb' ! -name '*dbgsym*' | head -1 || true)"
+    [ -n "$ext_deb" ] || { echo "Error: extension DEB not found in packaging/"; exit 1; }
+    # Dockerfile_documentdb_local builds the gateway from source; no gateway .deb is needed.
+    docker build -f "$DOCKERFILE_PATH" -t "$IMAGE_NAME" "$PROJECT_ROOT" \
+        --build-arg DEB_PACKAGE_REL_PATH="$ext_deb"
     echo "✅ Image built successfully"
     echo
 }
@@ -737,8 +743,8 @@ main() {
     echo "✅ Containers stopped and removed successfully"
     echo
     echo "To manually explore the sample data:"
-    echo "1. Start container: docker run -d --name documentdb-manual -p 10260:10260 -e PASSWORD=mypass $IMAGE_NAME --password mypass --init-data true"
-    echo "2. Connect: mongosh localhost:10260 -u default_user -p mypass --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates"
+    echo "1. Start container: docker run -d --name documentdb-manual -p 10260:10260 -e PASSWORD=<PASSWORD> $IMAGE_NAME --password <PASSWORD> --init-data true"
+    echo "2. Connect: mongosh localhost:10260 -u default_user -p <PASSWORD> --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates"
     echo "3. Use database: use('sampledb')"
     echo "4. Explore: db.users.find(), db.products.find(), db.orders.find(), db.analytics.find()"
     echo

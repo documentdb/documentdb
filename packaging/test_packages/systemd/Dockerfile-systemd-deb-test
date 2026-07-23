@@ -1,0 +1,74 @@
+# Systemd-as-PID-1 test image for the DocumentDB stand-alone packages.
+#
+# Why this exists
+# ---------------
+# The regular gateway E2E image (packaging/gateway/test/Dockerfile_deb_gateway_test)
+# installs systemd only so the suite can run `systemd-analyze verify` against
+# the shipped unit files -- it never runs systemd as PID 1, so the wizard falls
+# back to its nohup path and the ENTIRE production lifecycle goes untested:
+# unit activation, Wants=/Requires= ordering between the private PostgreSQL and
+# the gateway, `documentdb-local.target` boot enablement, and whether the stack
+# actually comes back after a reboot.
+#
+# packaging-design.md's §"What done looks like" is written in terms of
+# `sudo systemctl enable --now documentdb-local.target`, and a real lifecycle
+# test otherwise "requires a VM". A privileged container
+# running /sbin/init with a host cgroup namespace is close enough to that VM for
+# unit-level behavior, and it runs anywhere Docker does.
+#
+# Run it with:
+#   docker run -d --privileged --cgroupns=host \
+#       -v /sys/fs/cgroup:/sys/fs/cgroup:rw --tmpfs /run --tmpfs /run/lock \
+#       <image>
+# then drive it with `docker exec`. `docker restart` doubles as a reboot.
+ARG BASE_IMAGE=ubuntu:24.04
+FROM ${BASE_IMAGE}
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG POSTGRES_VERSION=18
+
+# systemd-sysv provides /sbin/init. dbus is needed for systemctl to talk to
+# PID 1 over the system bus.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        systemd systemd-sysv dbus \
+        wget gnupg2 ca-certificates lsb-release locales sudo \
+        jq openssl lsof netcat-openbsd iproute2 procps python3 && \
+    echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && locale-gen && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+
+# PGDG for postgresql-N, and the MongoDB repo for mongosh (the client used to
+# prove the gateway actually serves the wire protocol).
+RUN install -d -m 0755 /etc/apt/keyrings && \
+    wget -qO /etc/apt/keyrings/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc && \
+    echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main ${POSTGRES_VERSION}" \
+        > /etc/apt/sources.list.d/pgdg.list && \
+    . /etc/os-release && \
+    wget -qO- https://www.mongodb.org/static/pgp/server-8.0.asc \
+        > /etc/apt/trusted.gpg.d/server-8.0.asc && \
+    echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu ${VERSION_CODENAME}/mongodb-org/8.0 multiverse" \
+        > /etc/apt/sources.list.d/mongodb-org-8.0.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends mongodb-mongosh && \
+    rm -rf /var/lib/apt/lists/*
+
+# Units that are meaningless (or actively fail) inside a container. Masking
+# them keeps `systemctl is-system-running` from going "degraded" for reasons
+# unrelated to what we are testing.
+RUN systemctl mask \
+        systemd-udevd.service systemd-udev-trigger.service \
+        systemd-modules-load.service sys-kernel-config.mount \
+        sys-kernel-debug.mount sys-kernel-tracing.mount \
+        systemd-journald-audit.socket || true
+
+# The packages under test. The driver stages them into pkgs/ next to this file.
+COPY pkgs/ /opt/documentdb-pkgs/
+# The lifecycle suite itself.
+COPY test-systemd-lifecycle.sh /usr/local/bin/test-systemd-lifecycle.sh
+RUN chmod 0755 /usr/local/bin/test-systemd-lifecycle.sh
+
+# systemd wants this signal for a clean shutdown.
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

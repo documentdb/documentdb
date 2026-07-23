@@ -47,6 +47,14 @@ jobs:
           '{"os":["deb11","deb12","deb13","ubuntu22.04","ubuntu24.04"],"arch":["amd64","arm64"],"include":[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}],"pg_version":["16","17","18"]}'
         ) }}
 
+    # Single-source the "does the gateway build run in this matrix cell?"
+    # predicate so the gateway build, gateway upload, and (negated) extras
+    # steps cannot drift out of sync (a desync would double-build or skip the
+    # extras, and the unguarded Upload Extra step's if-no-files-found: error
+    # would then hard-fail CI). matrix/github contexts are valid in job env.
+    env:
+      GATEWAY_CELL: ${{ (github.event_name == 'pull_request' && !inputs.use_full_matrix) || matrix.pg_version == '18' }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -64,13 +72,12 @@ jobs:
           fi
           echo "DOCUMENTDB_VERSION=$DOCUMENTDB_VERSION" >> $GITHUB_ENV
 
-          GATEWAY_VERSION=$(grep '^version' pg_documentdb_gw/Cargo.toml | head -n1 | sed 's/version *= *"\(.*\)"/\1/')
-          echo "Extracted Gateway Version: $GATEWAY_VERSION"
-          echo "GATEWAY_VERSION=$GATEWAY_VERSION" >> $GITHUB_ENV
-
       - name: Build Debian Package
         run: |
-          ./packaging/build_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }}
+          # --test-clean-install installs the built extension .deb in a clean
+          # container of the target OS, so every matrix cell is install-tested
+          # (parity with the RPM workflow's equivalent step).
+          ./packaging/build_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }} --test-clean-install
 
       - name: Upload Debian Package as Artifact
         uses: actions/upload-artifact@v4
@@ -83,20 +90,100 @@ jobs:
           compression-level: 0
 
 
+      # Gate the gateway build/test/upload to the paved-road default major
+      # (PG 18 per packaging-design.md §9.1) when the full matrix is in use.
+      # The PR-reduced matrix runs always so PR review still exercises the
+      # gateway path. The full matrix gate must follow the paved-road major
+      # so main/release pushes exercise the supported default combination.
       - name: Build Gateway Debian Package
-        # Just to avoid building gateway packages twice for pg version.
-        # keep pg version when building gateway in case we need it for gateway build process in the future.
-        if: matrix.pg_version == '17'
+        if: ${{ fromJSON(env.GATEWAY_CELL) }}
         run: |
-          ./packaging/gateway/build_gateway_packages.sh --os ${{ matrix.os }} --pg 17 --version ${{ env.DOCUMENTDB_VERSION }} --test-clean-install
+          ./packaging/gateway/build_gateway_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }} --test-clean-install
 
       - name: Upload Gateway Debian Package as Artifact
-        if: matrix.pg_version == '17'
+        if: ${{ fromJSON(env.GATEWAY_CELL) }}
         uses: actions/upload-artifact@v4
         with:
-          name: archive-${{ matrix.os }}-${{ matrix.arch }}-documentdb-gateway-${{ env.GATEWAY_VERSION }}
+          # Keep artifact names unique across the full matrix even though the gateway package filename is PG-agnostic.
+          name: archive-${{ matrix.os }}-${{ matrix.arch }}-pg${{ matrix.pg_version }}-documentdb-gateway-${{ env.DOCUMENTDB_VERSION }}
           path: |
             packaging/*gateway*.deb
           retention-days: 7
           if-no-files-found: error
           compression-level: 0
+
+      # Build the remaining three packages from packaging-design.md §4:
+      # documentdb-postgresql-tools (admin helpers, arch:all),
+      # documentdb-<N> (per-major stand-alone, arch:all), and
+      # documentdb (meta, arch:all, pinned to the paved-road default major).
+      # These are lightweight pure-shell builders. Skip this step in the cells
+      # where the gateway step ran: its --test-clean-install already built the
+      # identical extras (same build_extra_packages.sh invocation, same
+      # packaging/ output dir), so rebuilding here would be redundant. The
+      # condition is the exact negation of the gateway step's condition above;
+      # the upload steps below still find the artifacts either way.
+      - name: Build Extra Debian Packages (tools + stand-alone + meta)
+        if: ${{ !fromJSON(env.GATEWAY_CELL) }}
+        run: |
+          ./packaging/build_extra_packages.sh \
+            --type deb \
+            --pg ${{ matrix.pg_version }} \
+            --version ${{ env.DOCUMENTDB_VERSION }} \
+            --output-dir "$(pwd)/packaging" \
+            --default-pg-major 18 \
+            --os-prefix ${{ matrix.os }}
+
+      # tools + per-major stand-alone are produced by every matrix cell.
+      - name: Upload Extra Debian Packages as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-extras-${{ matrix.os }}-${{ matrix.arch }}-pg${{ matrix.pg_version }}-${{ env.DOCUMENTDB_VERSION }}
+          path: |
+            packaging/*documentdb-postgresql-tools*.deb
+            packaging/*documentdb-common_*.deb
+            packaging/*documentdb-${{ matrix.pg_version }}_*.deb
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+      # The meta package pins to the paved-road default major and is only
+      # built when this matrix cell matches that major — gating both the
+      # build (in build_extra_packages.sh) and the upload here keeps the
+      # artifact set honest: a "deb-extras-...-pg17" archive should not
+      # claim to ship a meta that is identical to the pg18 one.
+      # The glob is intentionally narrow ("${OS}-documentdb_VER_all.deb"
+      # only): an earlier broader glob "*documentdb_VER_*.deb" also
+      # matched the extension package
+      # ("${OS}-postgresql-N-documentdb_VER_amd64.deb"), so the upload
+      # would silently succeed even when build-meta-deb.sh produced nothing.
+      - name: Upload Meta Debian Package as Artifact
+        if: matrix.pg_version == '18'
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-meta-${{ matrix.os }}-${{ matrix.arch }}-${{ env.DOCUMENTDB_VERSION }}
+          path: |
+            packaging/${{ matrix.os }}-documentdb_${{ env.DOCUMENTDB_VERSION }}_all.deb
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+  # Behavioral regression for the documentdb-common shared-payload split: build
+  # documentdb-common + documentdb-17 + documentdb-18, co-install them, remove
+  # one major, and assert the shared payload (documentdb-setup, template units,
+  # …) survives for the surviving major — plus the pre-split → split upgrade
+  # takeover. Runs once (not per matrix cell) in a clean Debian container so the
+  # dpkg install/remove lifecycle is isolated from the runner.
+  documentdb-common-coinstall-deb:
+    name: documentdb-common DEB co-install regression
+    runs-on: ubuntu-24.04
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: documentdb-common co-install lifecycle (DEB)
+        run: |
+          docker run --rm -v "$PWD:/repo" debian:12 bash -c '
+            set -e
+            apt-get update -qq
+            apt-get install -y -qq dpkg-dev >/dev/null
+            bash /repo/packaging/test_packages/test-documentdb-common-coinstall.sh --type deb'

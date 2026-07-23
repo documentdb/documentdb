@@ -37,6 +37,14 @@ jobs:
       # Use reduced matrix for PRs, full matrix for pushes/releases
       matrix: ${{ fromJson((github.event_name == 'pull_request' && !inputs.use_full_matrix) && '{"include":[{"os":"rhel9","arch":"amd64","runner":"ubuntu-24.04","pg_version":"17"},{"os":"rhel9","arch":"arm64","runner":"ubuntu-24.04-arm","pg_version":"18"}]}' || '{"os":["rhel8","rhel9"],"arch":["amd64","arm64"],"include":[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}],"pg_version":["16","17","18"]}') }}
 
+    # Single-source the "does the gateway build run in this matrix cell?"
+    # predicate so the gateway build, gateway upload, and (negated) extras
+    # steps cannot drift out of sync (a desync would double-build or skip the
+    # extras, and the unguarded Upload Extra step's if-no-files-found: error
+    # would then hard-fail CI). matrix/github contexts are valid in job env.
+    env:
+      GATEWAY_CELL: ${{ (github.event_name == 'pull_request' && !inputs.use_full_matrix) || matrix.pg_version == '18' }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -67,3 +75,100 @@ jobs:
           retention-days: 7
           if-no-files-found: error
           compression-level: 0
+      # Gate the gateway build/test/upload to the paved-road default major
+      # (PG 18 per packaging-design.md §9.1) when the full matrix is in use.
+      # The PR-reduced matrix runs always so PR review still exercises the
+      # gateway path. The full matrix gate must follow the paved-road major
+      # so main/release pushes exercise the supported default combination.
+      # rpmbuild must be present before the gateway clean-install test, which
+      # exercises the RPM extras path (build_extra_packages.sh --type rpm) on
+      # the runner. It is also reused by the noarch extras build below.
+      - name: Install rpmbuild
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpm
+
+      - name: Build Gateway RPM Package
+        if: ${{ fromJSON(env.GATEWAY_CELL) }}
+        run: |
+          ./packaging/gateway/build_gateway_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }} --test-clean-install
+
+      - name: Upload Gateway RPM Package as Artifact
+        if: ${{ fromJSON(env.GATEWAY_CELL) }}
+        uses: actions/upload-artifact@v4
+        with:
+          # Keep artifact names unique across the full matrix even though the gateway package filename is PG-agnostic.
+          name: archive-${{ matrix.os }}-${{ matrix.arch }}-pg${{ matrix.pg_version }}-documentdb-gateway-${{ env.DOCUMENTDB_VERSION }}
+          path: |
+            packaging/*gateway*.rpm
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+      # Build the remaining three packages from packaging-design.md §4:
+      # documentdb-postgresql-tools (admin helpers, noarch),
+      # documentdb-<N> (per-major stand-alone, noarch), and
+      # documentdb (meta, noarch, only built when pg_version == default major).
+      # All three are pure-shell/noarch — no compilation — so rpmbuild runs
+      # directly on the Ubuntu runner (installed above, before the gateway
+      # clean-install) rather than spinning up a RHEL Docker container the
+      # way the extension RPM build does. Skip this step in the cells where the
+      # gateway step ran: its --test-clean-install already built the identical
+      # extras (same build_extra_packages.sh invocation, same packaging/ output
+      # dir). The condition is the exact negation of the gateway step's
+      # condition above; the upload steps below still find the artifacts.
+      - name: Build Extra RPM Packages (tools + stand-alone + meta)
+        if: ${{ !fromJSON(env.GATEWAY_CELL) }}
+        run: |
+          ./packaging/build_extra_packages.sh \
+            --type rpm \
+            --pg ${{ matrix.pg_version }} \
+            --version ${{ env.DOCUMENTDB_VERSION }} \
+            --output-dir "$(pwd)/packaging" \
+            --default-pg-major 18
+
+      - name: Upload Extra RPM Packages as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-extras-${{ matrix.os }}-${{ matrix.arch }}-pg${{ matrix.pg_version }}-${{ env.DOCUMENTDB_VERSION }}
+          path: |
+            packaging/documentdb-postgresql-tools-*.rpm
+            packaging/documentdb-common-*.rpm
+            packaging/documentdb-${{ matrix.pg_version }}-*.rpm
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+      # The meta RPM (Name: documentdb) is only produced for the paved-road
+      # default major — gating both the build (in build_extra_packages.sh)
+      # and the upload keeps the artifact set honest.
+      - name: Upload Meta RPM Package as Artifact
+        if: matrix.pg_version == '18'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-meta-${{ matrix.os }}-${{ matrix.arch }}-${{ env.DOCUMENTDB_VERSION }}
+          path: |
+            packaging/documentdb-${{ env.DOCUMENTDB_VERSION }}-*.noarch.rpm
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+  # Behavioral regression for the documentdb-common shared-payload split: build
+  # documentdb-common + documentdb-17 + documentdb-18, co-install them, remove
+  # one major, and assert the shared payload survives for the surviving major —
+  # plus the pre-split → split upgrade takeover. Runs once (not per matrix cell)
+  # in a clean RHEL-family container so the rpm install/remove lifecycle is
+  # isolated from the runner.
+  documentdb-common-coinstall-rpm:
+    name: documentdb-common RPM co-install regression
+    runs-on: ubuntu-24.04
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: documentdb-common co-install lifecycle (RPM)
+        run: |
+          docker run --rm -v "$PWD:/repo" rockylinux:9 bash -c '
+            set -e
+            dnf -q install -y rpm-build findutils >/dev/null 2>&1
+            bash /repo/packaging/test_packages/test-documentdb-common-coinstall.sh --type rpm'

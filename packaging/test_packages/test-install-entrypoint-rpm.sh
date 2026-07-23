@@ -14,6 +14,32 @@ dnf install -y /tmp/documentdb.rpm
 
 echo "RPM package installed successfully!"
 
+# Assert the package installed what it claims to, BEFORE running anything that
+# could accidentally pass against a different tree.
+for f in /usr/pgsql-${POSTGRES_VERSION}/lib/pg_documentdb.so \
+         /usr/pgsql-${POSTGRES_VERSION}/share/extension/documentdb.control; do
+    if [ ! -e "$f" ]; then
+        echo "✗ expected packaged file missing: $f"
+        rpm -ql postgresql${POSTGRES_VERSION}-documentdb | head -40
+        exit 1
+    fi
+done
+echo "✓ packaged extension artifacts present"
+
+# The RPM no longer ships a source tree (see the note in the spec's %install).
+# `make check` below therefore runs against the REPO COPY this test image was
+# built from — /usr/src/documentdb comes from the test Dockerfile's
+# `COPY . /usr/src/documentdb`, not from the package. That was already true
+# before the source tree was dropped: once the spec moved its copy to
+# /usr/src/documentdb-<major>, this `cd` silently stopped touching packaged
+# content while still being described as validating it. Name it explicitly so
+# nobody reads the result as evidence about the package payload.
+if [ ! -d /usr/src/documentdb ]; then
+    echo "✗ /usr/src/documentdb not found; the test image must COPY the repo there"
+    exit 1
+fi
+echo "NOTE: running the regression suite against the repo copy at" \
+     "/usr/src/documentdb (test-image COPY). The package ships no source tree."
 cd /usr/src/documentdb
 
 # Set up environment for make check

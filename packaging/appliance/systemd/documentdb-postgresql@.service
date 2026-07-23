@@ -1,0 +1,72 @@
+# Why this is a package-owned unit rather than the distro's
+# postgresql@V-C.service (Debian/Ubuntu) or postgresql-N.service (RHEL):
+# the greenfield instance is a raw-initdb cluster outside
+# postgresql-common's registry, so Debian's pg_ctlcluster-based unit
+# cannot address it, and registering it would expose the appliance to
+# fleet tooling (umbrella postgresql.service autostart,
+# pg_upgradecluster) that must not manage it; RHEL's per-major unit is
+# a non-template singleton that belongs to the administrator's own
+# PostgreSQL; the data-dir owner / superuser must be documentdb-local
+# for 1:1 peer auth (distro units run as postgres); and documentdb-setup
+# --yes may only auto-restart units the package owns. Brownfield mode
+# reuses the distro units instead. Full rationale: packaging-design.md
+# section 4.4, "Why a dedicated documentdb-postgresql@.service".
+[Unit]
+Description=DocumentDB PostgreSQL %i
+Documentation=https://github.com/documentdb/documentdb
+After=network.target
+PartOf=documentdb-local@%i.target
+ConditionPathExists=/etc/documentdb/local/%i/setup.conf
+
+[Service]
+# Run the helper as documentdb-local so the postmaster lives in this
+# unit's cgroup (a child started via runuser would otherwise be tracked
+# as "does not belong to service" by systemd). The per-major
+# runtime/socket directories live under /run, which only root can
+# create; ExecStartPre=+ runs as root regardless of User= and creates
+# them before the main ExecStart drops privileges naturally via User=.
+# We intentionally do NOT set PIDFile=: systemd 245+'s PIDFile policy
+# refuses to track a PID file unless it's owned by root or by the
+# resolved unit User=, and on some kernels the resolution races with
+# ExecStartPre=+ such that systemd thinks the unit is still effectively
+# root when it reads the postmaster.pid (owned by documentdb-local).
+# Dropping PIDFile= lets GuessMainPID= (default) walk the unit's cgroup
+# to find the postmaster process, which is robust against the runuser
+# / forking dance.
+Type=forking
+User=documentdb-local
+Group=documentdb-local
+ExecStartPre=+/usr/share/documentdb/scripts/documentdb_postgresql_service.sh prepare-runtime %i
+ExecStart=/usr/share/documentdb/scripts/documentdb_postgresql_service.sh start %i
+ExecReload=/usr/share/documentdb/scripts/documentdb_postgresql_service.sh reload %i
+ExecStop=/usr/share/documentdb/scripts/documentdb_postgresql_service.sh stop %i
+TimeoutStartSec=120
+TimeoutStopSec=120
+Restart=on-failure
+RestartSec=10
+
+# Sandboxing: use a PostgreSQL-specific hardening profile derived from the
+# gateway unit. This unit intentionally omits ProtectSystem=strict because
+# documentdb-setup supports custom --data-dir values outside
+# /var/lib/documentdb-local and this template has no per-data-dir
+# ReadWritePaths drop-in today. It also omits PrivateDevices=yes pending
+# PostgreSQL-specific device-namespace runtime validation, omits
+# MemoryDenyWriteExecute=yes because JIT/extensions can require executable
+# memory mappings, and omits SystemCallFilter=@system-service pending
+# PostgreSQL-specific runtime validation. AF_NETLINK is intentionally allowed
+# here because PostgreSQL/libc use getifaddrs()/NETLINK_ROUTE for local
+# interface enumeration, including brownfield or user-added pg_hba.conf
+# samehost/samenet matching; the gateway units intentionally stay tighter
+# because they do not need it.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+ReadWritePaths=/var/lib/documentdb-local /run/documentdb-local /var/log/documentdb-local
+
+[Install]
+WantedBy=documentdb-local@%i.target

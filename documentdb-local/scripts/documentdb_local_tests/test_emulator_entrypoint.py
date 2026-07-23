@@ -1,12 +1,17 @@
 import json
 import os
 import re
+import secrets
 import subprocess
 import tempfile
 import textwrap
 import time
 import unittest
 from pathlib import Path
+
+# Test-only password, generated at runtime so no credential literal lives in
+# source (the entrypoint tests assert on return codes / config, never the value).
+_TEST_PW = secrets.token_hex(8) + "Aa1!"
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ENTRYPOINT = REPO_ROOT / "documentdb-local" / "scripts" / "emulator_entrypoint.sh"
@@ -66,6 +71,10 @@ exec "$@"
         )
         self._write_exec(self.bin_dir / "nc", "#!/bin/sh\nexit 0\n")
         self._write_exec(self.bin_dir / "tail", "#!/bin/sh\nexit 0\n")
+        # Default readiness probe reports "ready" immediately so the admin-user
+        # wait (CREATE_USER=true path) does not block; individual tests override
+        # this to exercise the timeout path.
+        self._write_exec(self.bin_dir / "pg_isready", "#!/bin/sh\nexit 0\n")
         self._write_exec(
             self.bin_dir / "jq",
             """#!/usr/bin/env python3
@@ -135,12 +144,38 @@ json.dump(data, sys.stdout)
             "#!/bin/sh\necho gateway-stub-started\n",
         )
         self._write_exec(
+            self.gateway_scripts / "utils.sh",
+            '#!/bin/sh\nSetupCustomAdminUser() { echo "stub-user-created"; }\n',
+        )
+        self._write_exec(
             self.gateway_scripts / "start_oss_server.sh",
             "#!/bin/sh\necho oss-server-stub-started\n",
         )
         self._write_exec(
             self.gateway_scripts / "init_documentdb_data.sh",
             "#!/bin/sh\necho init-script-stub-started\n",
+        )
+        # Stub the gateway binary so the entrypoint can exec it.
+        #
+        # The entrypoint invokes an ABSOLUTE path -- /usr/bin/documentdb-gateway
+        # when the package is installed, else the staged
+        # $GATEWAY_HOME/pg_documentdb_gw/target/release-with-symbols/... binary
+        # -- so a stub on PATH alone is never reached. It has to live at the
+        # staged path for the launch to actually happen. This was masked until
+        # the launch stopped going through `| tee`: with a pipeline, $! (and so
+        # the script's final `wait`) referred to tee rather than the gateway, so
+        # the gateway failing with 127 "No such file or directory" was silently
+        # discarded and every test here passed without ever running a gateway.
+        # Keep the PATH copy too, for anything that resolves it by name.
+        self.gateway_release_dir = self.gateway_target_dir / "release-with-symbols"
+        self.gateway_release_dir.mkdir(parents=True, exist_ok=True)
+        # Exits immediately: the entrypoint ends with `wait $gateway_pid`, which
+        # now genuinely waits on the gateway, so a long-lived stub would hang
+        # the test until its subprocess timeout.
+        gateway_stub = "#!/bin/sh\necho gateway-daemon-stub-started\nexit 0\n"
+        self._write_exec(self.bin_dir / "documentdb_gateway", gateway_stub)
+        self._write_exec(
+            self.gateway_release_dir / "documentdb_gateway", gateway_stub
         )
 
     def tearDown(self):
@@ -161,10 +196,13 @@ json.dump(data, sys.stdout)
                 "START_POSTGRESQL": "false",
                 "SKIP_INIT_DATA": "true",
                 "CREATE_USER": "false",
-                "PASSWORD": "mypassword",
+                "PASSWORD": _TEST_PW,
                 "DATA_PATH": str(self.data_dir),
                 "USERNAME": "default_user",
                 "OWNER": "documentdb",
+                "DOCUMENTDB_CONFIG_FILE": str(
+                    self.gateway_target_dir / "test_config.json"
+                ),
             }
         )
         if extra_env:
@@ -179,9 +217,8 @@ json.dump(data, sys.stdout)
         )
 
     def _read_config(self):
-        with (self.gateway_target_dir / "SetupConfiguration_temp.json").open(
-            "r", encoding="utf-8"
-        ) as file:
+        config_path = self.gateway_target_dir / "test_config.json"
+        with config_path.open("r", encoding="utf-8") as file:
             return json.load(file)
 
     def _configure_postgres_stubs(self, psql_exit_code=0):
@@ -260,8 +297,120 @@ exit 1
         self.assertFalse(psql_called.exists())
         self.assertIn("Skipping PostgreSQL server start", result.stdout)
 
+    def test_admin_user_is_created_after_waiting_for_postgres(self):
+        # CREATE_USER=true against an external PostgreSQL: the entrypoint must
+        # wait for pg_isready to report ready, then create the admin user
+        # (regression: the inlined gateway launch previously dropped the
+        # readiness wait, so the admin user could silently never be created).
+        result = self._run_entrypoint(extra_env={"CREATE_USER": "true"})
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("PostgreSQL is ready", result.stdout)
+        self.assertIn("stub-user-created", result.stdout)
+
+    def test_admin_user_creation_times_out_when_postgres_never_ready(self):
+        # If PostgreSQL never accepts connections the entrypoint must fail
+        # loudly rather than launch the gateway with no admin user.
+        self._write_exec(self.bin_dir / "pg_isready", "#!/bin/sh\nexit 1\n")
+        result = self._run_entrypoint(
+            extra_env={
+                "CREATE_USER": "true",
+                "DOCUMENTDB_PG_READY_TIMEOUT": "0",
+                "DOCUMENTDB_PG_READY_INTERVAL": "1",
+            }
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("did not become ready", result.stdout + result.stderr)
+        self.assertNotIn("stub-user-created", result.stdout)
+
+    def test_admin_user_creation_failure_aborts_startup(self):
+        # A SetupCustomAdminUser failure must abort the entrypoint instead of
+        # being silently swallowed.
+        self._write_exec(
+            self.gateway_scripts / "utils.sh",
+            "#!/bin/sh\nSetupCustomAdminUser() { echo boom >&2; return 1; }\n",
+        )
+        result = self._run_entrypoint(extra_env={"CREATE_USER": "true"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "failed to create the admin user", result.stdout + result.stderr
+        )
+
+    def test_admin_user_wait_rejects_invalid_readiness_overrides(self):
+        # Non-integer DOCUMENTDB_PG_READY_TIMEOUT/_INTERVAL overrides must fall
+        # back to the defaults (with a warning) rather than making the wait loop
+        # error out or busy-spin — the entrypoint has no `set -e`. pg_isready
+        # reports ready immediately (setUp stub) so the flow still completes.
+        result = self._run_entrypoint(
+            extra_env={
+                "CREATE_USER": "true",
+                "DOCUMENTDB_PG_READY_TIMEOUT": "foo",
+                "DOCUMENTDB_PG_READY_INTERVAL": "bar",
+            }
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn(
+            "invalid DOCUMENTDB_PG_READY_TIMEOUT", result.stdout + result.stderr
+        )
+        self.assertIn(
+            "invalid DOCUMENTDB_PG_READY_INTERVAL", result.stdout + result.stderr
+        )
+        self.assertIn("stub-user-created", result.stdout)
+
+    def test_admin_user_wait_clamps_zero_interval(self):
+        # DOCUMENTDB_PG_READY_INTERVAL=0 must be clamped to >=1 so a never-ready
+        # PostgreSQL times out instead of busy-spinning forever (elapsed would
+        # never advance past 0). A failing pg_isready + a short timeout proves
+        # the loop terminates; without the clamp this would hang until the
+        # subprocess timeout.
+        self._write_exec(self.bin_dir / "pg_isready", "#!/bin/sh\nexit 1\n")
+        result = self._run_entrypoint(
+            extra_env={
+                "CREATE_USER": "true",
+                "DOCUMENTDB_PG_READY_INTERVAL": "0",
+                "DOCUMENTDB_PG_READY_TIMEOUT": "2",
+            }
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("did not become ready", result.stdout + result.stderr)
+
+    def test_admin_user_wait_handles_zero_padded_interval(self):
+        # A zero-padded interval like "08"/"09" must be treated as base-10, not
+        # octal — otherwise the $(( )) arithmetic in the wait loop aborts fatally
+        # with "value too great for base". A failing pg_isready + an instant
+        # sleep stub + short timeout proves the loop counts and times out
+        # cleanly instead of dying mid-wait.
+        self._write_exec(self.bin_dir / "pg_isready", "#!/bin/sh\nexit 1\n")
+        self._write_exec(self.bin_dir / "sleep", "#!/bin/sh\nexit 0\n")
+        result = self._run_entrypoint(
+            extra_env={
+                "CREATE_USER": "true",
+                "DOCUMENTDB_PG_READY_INTERVAL": "08",
+                "DOCUMENTDB_PG_READY_TIMEOUT": "2",
+            }
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn(
+            "value too great for base", result.stdout + result.stderr
+        )
+        self.assertIn("did not become ready", result.stdout + result.stderr)
+
+    def test_zero_padded_ports_are_normalized_to_base10(self):
+        # A zero-padded DOCUMENTDB_PORT / POSTGRESQL_PORT passes the ^[0-9]+$
+        # check but would break the later jq numeric assignment (leading zero =
+        # invalid JSON/octal). Normalizing with $((10#...)) must strip the pad
+        # so the config carries the decimal port and startup succeeds.
+        result = self._run_entrypoint(
+            "--password",
+            _TEST_PW,
+            extra_env={"DOCUMENTDB_PORT": "010260", "POSTGRESQL_PORT": "09712"},
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        config = self._read_config()
+        self.assertEqual(config["GatewayListenPort"], 10260)
+        self.assertEqual(config["PostgresPort"], 9712)
+
     def test_default_mode_sets_allowTLS_in_config(self):
-        result = self._run_entrypoint("--password", "mypassword")
+        result = self._run_entrypoint("--password", _TEST_PW)
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         config = self._read_config()
         self.assertEqual(config["TlsMode"], "allowTLS")
@@ -272,7 +421,7 @@ exit 1
 
     def test_tlsMode_requireTLS_flag_sets_requireTLS_in_config(self):
         result = self._run_entrypoint(
-            "--password", "mypassword", "--tlsMode", "requireTLS"
+            "--password", _TEST_PW, "--tlsMode", "requireTLS"
         )
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         config = self._read_config()
@@ -281,7 +430,7 @@ exit 1
 
     def test_tlsMode_disabled_flag_sets_disabled_in_config(self):
         result = self._run_entrypoint(
-            "--password", "mypassword", "--tlsMode", "disabled"
+            "--password", _TEST_PW, "--tlsMode", "disabled"
         )
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         config = self._read_config()
@@ -292,7 +441,7 @@ exit 1
     def test_tlsMode_env_var_sets_mode_in_config(self):
         result = self._run_entrypoint(
             "--password",
-            "mypassword",
+            _TEST_PW,
             extra_env={"TLS_MODE": "requireTLS"},
         )
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
@@ -303,7 +452,7 @@ exit 1
     def test_tlsMode_env_var_allowTLS_does_not_enforce_tls(self):
         result = self._run_entrypoint(
             "--password",
-            "mypassword",
+            _TEST_PW,
             extra_env={"TLS_MODE": "allowTLS"},
         )
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
@@ -314,7 +463,7 @@ exit 1
     def test_system_postgres_log_defaults_to_runtime_pg_version(self):
         result = self._run_entrypoint(
             "--password",
-            "mypassword",
+            _TEST_PW,
             extra_env={"PG_VERSION_USED": "18", "SYSTEM_POSTGRES_LOG": ""},
         )
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
@@ -326,7 +475,7 @@ exit 1
     def test_invalid_tlsMode_value_fails_fast(self):
         result = self._run_entrypoint(
             "--password",
-            "mypassword",
+            _TEST_PW,
             extra_env={"TLS_MODE": "maybe"},
         )
         self.assertNotEqual(result.returncode, 0)
@@ -398,7 +547,7 @@ else:
 json.dump(data, sys.stdout)
 """
         self._write_exec(self.bin_dir / "jq", failing_jq)
-        result = self._run_entrypoint("--password", "mypassword")
+        result = self._run_entrypoint("--password", _TEST_PW)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
             "failed to write EnforceTls to the gateway configuration file",
@@ -408,7 +557,7 @@ json.dump(data, sys.stdout)
     def test_pem_certificate_and_key_are_written_to_config(self):
         result = self._run_entrypoint(
             "--password",
-            "mypassword",
+            _TEST_PW,
             "--cert-path",
             "/tmp/documentdb-local.pem",
             "--key-file",
@@ -428,7 +577,7 @@ json.dump(data, sys.stdout)
     def test_pfx_certificate_without_key_file_is_rejected(self):
         result = self._run_entrypoint(
             "--password",
-            "mypassword",
+            _TEST_PW,
             "--cert-path",
             "/tmp/documentdb-local.pfx",
         )
@@ -441,7 +590,7 @@ json.dump(data, sys.stdout)
     def test_key_file_without_certificate_is_rejected(self):
         result = self._run_entrypoint(
             "--password",
-            "mypassword",
+            _TEST_PW,
             "--key-file",
             "/tmp/documentdb-local.key",
         )
@@ -710,7 +859,7 @@ json.dump(data, sys.stdout)
         # prefix the default test config blocks. Either must fail fast at startup
         # rather than letting the container report ready with an unusable user.
         result = self._run_entrypoint(
-            "--password", "mypassword", extra_env={"USERNAME": "documentdb_user"}
+            "--password", _TEST_PW, extra_env={"USERNAME": "documentdb_user"}
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
@@ -720,7 +869,7 @@ json.dump(data, sys.stdout)
 
     def test_blocked_username_prefix_is_case_insensitive(self):
         result = self._run_entrypoint(
-            "--password", "mypassword", extra_env={"USERNAME": "DocumentDBAdmin"}
+            "--password", _TEST_PW, extra_env={"USERNAME": "DocumentDBAdmin"}
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
@@ -730,7 +879,7 @@ json.dump(data, sys.stdout)
 
     def test_allowed_username_passes_validation(self):
         result = self._run_entrypoint(
-            "--password", "mypassword", extra_env={"USERNAME": "docdb_admin"}
+            "--password", _TEST_PW, extra_env={"USERNAME": "docdb_admin"}
         )
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertNotIn("reserved prefix", result.stdout + result.stderr)
@@ -742,7 +891,7 @@ json.dump(data, sys.stdout)
             username = f"{prefix}_service"
             with self.subTest(username=username):
                 result = self._run_entrypoint(
-                    "--password", "mypassword", extra_env={"USERNAME": username}
+                    "--password", _TEST_PW, extra_env={"USERNAME": username}
                 )
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(
@@ -757,7 +906,7 @@ json.dump(data, sys.stdout)
         for username in self._gateway_reserved_role_names():
             with self.subTest(username=username):
                 result = self._run_entrypoint(
-                    "--password", "mypassword", extra_env={"USERNAME": username}
+                    "--password", _TEST_PW, extra_env={"USERNAME": username}
                 )
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(
@@ -772,7 +921,7 @@ json.dump(data, sys.stdout)
         # authenticate -- even for an otherwise-allowed username.
         self._set_blocked_role_prefixes([""])
         result = self._run_entrypoint(
-            "--password", "mypassword", extra_env={"USERNAME": "docdb_admin"}
+            "--password", _TEST_PW, extra_env={"USERNAME": "docdb_admin"}
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("contains an empty entry", result.stdout + result.stderr)
@@ -783,7 +932,7 @@ json.dump(data, sys.stdout)
         # false-success-startup bug), it must fail fast.
         (self.gateway_config_dir / "SetupConfiguration.json").unlink()
         result = self._run_entrypoint(
-            "--password", "mypassword", extra_env={"USERNAME": "docdb_admin"}
+            "--password", _TEST_PW, extra_env={"USERNAME": "docdb_admin"}
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("not found", result.stdout + result.stderr)
@@ -792,7 +941,7 @@ json.dump(data, sys.stdout)
         config_path = self.gateway_config_dir / "SetupConfiguration.json"
         config_path.write_text("{not valid json", encoding="utf-8")
         result = self._run_entrypoint(
-            "--password", "mypassword", extra_env={"USERNAME": "docdb_admin"}
+            "--password", _TEST_PW, extra_env={"USERNAME": "docdb_admin"}
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
@@ -810,7 +959,7 @@ json.dump(data, sys.stdout)
         config["BlockedRolePrefixes"] = "documentdb"
         config_path.write_text(json.dumps(config), encoding="utf-8")
         result = self._run_entrypoint(
-            "--password", "mypassword", extra_env={"USERNAME": "docdb_admin"}
+            "--password", _TEST_PW, extra_env={"USERNAME": "docdb_admin"}
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("must be a JSON array", result.stdout + result.stderr)
@@ -827,7 +976,7 @@ json.dump(data, sys.stdout)
         # skipping and letting the gateway fail later.
         self._write_raw_config(lambda c: c.pop("BlockedRolePrefixes", None))
         result = self._run_entrypoint(
-            "--password", "mypassword", extra_env={"USERNAME": "docdb_admin"}
+            "--password", _TEST_PW, extra_env={"USERNAME": "docdb_admin"}
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("must be a JSON array", result.stdout + result.stderr)
@@ -837,7 +986,7 @@ json.dump(data, sys.stdout)
             lambda c: c.__setitem__("BlockedRolePrefixes", None)
         )
         result = self._run_entrypoint(
-            "--password", "mypassword", extra_env={"USERNAME": "docdb_admin"}
+            "--password", _TEST_PW, extra_env={"USERNAME": "docdb_admin"}
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("must be a JSON array", result.stdout + result.stderr)
@@ -849,7 +998,7 @@ json.dump(data, sys.stdout)
             lambda c: c.__setitem__("BlockedRolePrefixes", ["documentdb", 123])
         )
         result = self._run_entrypoint(
-            "--password", "mypassword", extra_env={"USERNAME": "docdb_admin"}
+            "--password", _TEST_PW, extra_env={"USERNAME": "docdb_admin"}
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("must contain only strings", result.stdout + result.stderr)
@@ -860,7 +1009,7 @@ json.dump(data, sys.stdout)
         # would block must pass validation.
         self._set_blocked_role_prefixes([])
         result = self._run_entrypoint(
-            "--password", "mypassword", extra_env={"USERNAME": "documentdb_service"}
+            "--password", _TEST_PW, extra_env={"USERNAME": "documentdb_service"}
         )
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertNotIn("reserved prefix", result.stdout + result.stderr)
@@ -886,8 +1035,9 @@ class InitDataAttemptMarkerTests(unittest.TestCase):
         self.bin_dir.mkdir()
         self.init_dir.mkdir()
         (self.init_dir / "00-data.js").write_text("// data\n", encoding="utf-8")
-        # Records each `mongosh --file` execution so a test can assert whether any user
-        # script actually ran. The readiness ping (`--eval`) is treated as a no-op.
+        # Records each user-script (load-mode) execution so a test can assert
+        # whether any user script actually ran. The readiness ping (empty
+        # DOCUMENTDB_INIT_FILE) is treated as a no-op.
         self.file_runs = self.root / "mongosh_file_runs"
         # Records whether the attempt marker already existed at the moment the first user
         # script was invoked, so a test can prove the marker is written BEFORE (not after)
@@ -896,17 +1046,17 @@ class InitDataAttemptMarkerTests(unittest.TestCase):
         mongosh = self.bin_dir / "mongosh"
         mongosh.write_text(
             "#!/bin/sh\n"
-            'for a in "$@"; do\n'
-            '  if [ "$a" = "--file" ]; then\n'
-            '    if [ -f "$ATTEMPT_MARKER_PATH" ]; then\n'
-            f'      echo present >> "{self.marker_state}"\n'
-            "    else\n"
-            f'      echo missing >> "{self.marker_state}"\n'
-            "    fi\n"
-            f'    echo ran >> "{self.file_runs}"\n'
-            "    exit 0\n"
+            # The init script passes the user script path in DOCUMENTDB_INIT_FILE
+            # (load mode); the readiness probe passes an empty value (ping mode),
+            # which must stay a no-op here.
+            'if [ -n "$DOCUMENTDB_INIT_FILE" ]; then\n'
+            '  if [ -f "$ATTEMPT_MARKER_PATH" ]; then\n'
+            f'    echo present >> "{self.marker_state}"\n'
+            "  else\n"
+            f'    echo missing >> "{self.marker_state}"\n'
             "  fi\n"
-            "done\n"
+            f'  echo ran >> "{self.file_runs}"\n'
+            "fi\n"
             "exit 0\n",
             encoding="utf-8",
         )
@@ -920,6 +1070,9 @@ class InitDataAttemptMarkerTests(unittest.TestCase):
         env["PATH"] = f"{self.bin_dir}{os.pathsep}{env['PATH']}"
         env["ENTRYPOINT_LOG"] = str(self.root / "entrypoint.log")
         env["ATTEMPT_MARKER_PATH"] = str(attempt_marker)
+        # The init script reads the password only from DOCUMENTDB_PASSWORD; the
+        # -p/--password flag was removed so the secret never lands on the argv.
+        env["DOCUMENTDB_PASSWORD"] = "p"
         return subprocess.run(
             [
                 "bash",
@@ -927,7 +1080,6 @@ class InitDataAttemptMarkerTests(unittest.TestCase):
                 "-H", "localhost",
                 "-P", "10260",
                 "-u", "u",
-                "-p", "p",
                 "-d", str(init_dir or self.init_dir),
                 "--attempt-marker", str(attempt_marker),
                 "-v",
@@ -979,14 +1131,14 @@ class InitDataAttemptMarkerTests(unittest.TestCase):
         mongosh = self.bin_dir / "mongosh"
         mongosh.write_text(
             "#!/bin/sh\n"
-            'for a in "$@"; do\n'
-            '  if [ "$a" = "--file" ]; then\n'
-            f'    echo ran >> "{self.file_runs}"\n'
-            f'    n=$(wc -l < "{self.file_runs}")\n'
-            '    if [ "$n" -ge 2 ]; then exit 1; fi\n'
-            "    exit 0\n"
-            "  fi\n"
-            "done\n"
+            # Only user-script runs carry DOCUMENTDB_INIT_FILE; the readiness
+            # probe (empty value) stays a no-op. Fail the second script to
+            # exercise a partial failure.
+            'if [ -n "$DOCUMENTDB_INIT_FILE" ]; then\n'
+            f'  echo ran >> "{self.file_runs}"\n'
+            f'  n=$(wc -l < "{self.file_runs}")\n'
+            '  if [ "$n" -ge 2 ]; then exit 1; fi\n'
+            "fi\n"
             "exit 0\n",
             encoding="utf-8",
         )
@@ -1166,97 +1318,42 @@ raise SystemExit('Unsupported jq expression: ' + expr)
         self.assertIn("uses reserved prefix 'citus'", result.stdout + result.stderr)
 
 
-class GatewayPackageImageContractTests(unittest.TestCase):
-    def test_clean_install_image_copies_entrypoint_script_dependencies(self):
-        scripts_dir = REPO_ROOT / "documentdb-local" / "scripts"
-        dockerfile = (
-            REPO_ROOT
-            / "packaging"
-            / "gateway"
-            / "test"
-            / "Dockerfile_deb_gateway_test"
-        ).read_text(encoding="utf-8")
-        copied_scripts = set(
-            re.findall(
-                r"^COPY documentdb-local/scripts/(\S+) ",
-                dockerfile,
-                re.MULTILINE,
-            )
+class EntrypointUxTextTests(unittest.TestCase):
+    """Round-4 UX review fixes to the emulator entrypoint: honest help text,
+    a clean PostgreSQL shutdown on container stop, and a connect string."""
+
+    def _text(self):
+        return ENTRYPOINT.read_text(encoding="utf-8")
+
+    def test_help_documents_real_env_var_names(self):
+        text = self._text()
+        self.assertIn("Overrides DOCUMENTDB_PORT environment variable.", text)
+        self.assertIn("Overrides POSTGRESQL_PORT environment variable.", text)
+        # The old, wrong names must be gone from the override help lines.
+        self.assertNotIn("Overrides PORT environment variable.", text)
+        self.assertNotIn("Overrides PG_PORT environment variable.", text)
+
+    def test_cleanup_stops_postgresql(self):
+        # docker stop must cleanly stop the daemonized PostgreSQL (pg_ctl fast
+        # stop) instead of leaving it to be SIGKILLed with WAL recovery next boot.
+        text = self._text()
+        match = re.search(
+            r"cleanup\(\)\s*\{(?P<body>.*?)\n\}",
+            text,
+            flags=re.DOTALL,
         )
+        self.assertIsNotNone(match)
+        body = match.group("body")
+        self.assertIn('stop -D "${DATA_PATH}" -m fast', body,
+                      "cleanup must issue a pg_ctl fast stop for the data dir")
 
-        required_scripts = {ENTRYPOINT.name}
-        pending_scripts = [ENTRYPOINT.name]
-        while pending_scripts:
-            script_name = pending_scripts.pop()
-            script_path = scripts_dir / script_name
-            self.assertTrue(script_path.is_file(), f"missing script: {script_path}")
-            script = script_path.read_text(encoding="utf-8")
-            for dependency in re.findall(r"\b([a-z][a-z0-9_-]*\.sh)\b", script):
-                if (scripts_dir / dependency).is_file() and dependency not in required_scripts:
-                    required_scripts.add(dependency)
-                    pending_scripts.append(dependency)
-
-        self.assertEqual(set(), required_scripts - copied_scripts)
-
-
-class GatewayPackageReadinessTests(unittest.TestCase):
-    WAITER = (
-        REPO_ROOT
-        / "packaging"
-        / "test_packages"
-        / "test-gateway-install-entrypoint.sh"
-    )
-
-    def _run_waiter(self, entrypoint, ready_timeout_seconds, shutdown_timeout_seconds):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            entrypoint_path = root / "entrypoint.sh"
-            entrypoint_path.write_text(entrypoint, encoding="utf-8")
-            entrypoint_path.chmod(0o755)
-            log_path = root / "entrypoint.log"
-            command = """
-source "$1"
-"$2" > "$3" 2>&1 &
-entrypoint_pid=$!
-wait_for_gateway_ready "$entrypoint_pid" "$3" "$4" "$5"
-"""
-            return subprocess.run(
-                [
-                    "bash",
-                    "-c",
-                    command,
-                    "_",
-                    str(self.WAITER),
-                    str(entrypoint_path),
-                    str(log_path),
-                    str(ready_timeout_seconds),
-                    str(shutdown_timeout_seconds),
-                ],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-
-    def test_waiter_reports_entrypoint_exit(self):
-        result = self._run_waiter("#!/bin/bash\nexit 42\n", 5, 1)
-
-        self.assertNotEqual(result.returncode, 0)
+    def test_ready_banner_prints_mongosh_connection_string(self):
+        text = self._text()
         self.assertIn(
-            "Gateway entrypoint exited with status 42 before becoming ready.",
-            result.stderr,
+            "mongosh 'mongodb://${USERNAME}:<password>@localhost:${DOCUMENTDB_PORT}",
+            text,
+            "the ready banner must print a working mongosh connection string",
         )
-
-    def test_waiter_force_terminates_hung_entrypoint(self):
-        started_at = time.monotonic()
-        result = self._run_waiter(
-            "#!/bin/bash\ntrap '' TERM\nwhile :; do :; done\n",
-            0,
-            1,
-        )
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertLess(time.monotonic() - started_at, 5)
-        self.assertIn("Gateway did not become ready within 0 seconds.", result.stderr)
 
 
 if __name__ == "__main__":

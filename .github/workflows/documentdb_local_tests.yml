@@ -29,8 +29,10 @@ jobs:
 
       - name: Run documentdb-local Python unit tests
         # Single discovery run so a newly added test_*.py module is picked up
-        # automatically (no per-file YAML edit needed). test_image.py self-skips
-        # when DOCUMENTDB_LOCAL_IMAGE is unset, so it is a no-op here.
+        # automatically (no per-file YAML edit needed) and every test_*.py in
+        # documentdb_local_tests runs -- not just the emulator tests, but the
+        # setup/admin/package-contract suites too. test_image.py self-skips when
+        # DOCUMENTDB_LOCAL_IMAGE is unset, so it is a no-op here.
         run: python3 -m unittest discover -s documentdb-local/scripts/documentdb_local_tests -p 'test_*.py' -v
 
       - name: Run internal CI trigger contract tests

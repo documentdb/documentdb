@@ -131,7 +131,10 @@ RUN apt-get update && \
     postgresql-${POSTGRES_VERSION}-pgvector \
     postgresql-${POSTGRES_VERSION}-postgis-3 \
     $RUM_PKG && \
-    groupmod -g 103 postgres && usermod -u 105 -g 103 postgres && \
+    { gid_owner="$(getent group 103 | cut -d: -f1)"; uid_owner="$(getent passwd 105 | cut -d: -f1)"; \
+      if getent passwd postgres >/dev/null 2>&1 && { [ -z "$gid_owner" ] || [ "$gid_owner" = postgres ]; } && { [ -z "$uid_owner" ] || [ "$uid_owner" = postgres ]; }; then \
+          groupmod -g 103 postgres && usermod -u 105 -g 103 postgres; \
+      else echo "postgres uid/gid normalization skipped (uid 105 or gid 103 held by another account)"; fi; } && \
     dpkg -i /tmp/install_setup/$(basename "$DEB_PACKAGE_REL_PATH") && \
     useradd -ms /bin/bash documentdb -G sudo && \
     echo "%sudo ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/no-pass-ask && \
@@ -214,4 +217,15 @@ RUN sudo chown -R documentdb:documentdb /home/documentdb/gateway
 RUN sudo chmod +x /home/documentdb/gateway/scripts/init_documentdb_data.sh
 
 WORKDIR /home/documentdb/gateway/scripts
+# Declare /data as a volume mount point for the PostgreSQL data directory.
+# This does NOT persist by itself: without an explicit `-v host_path:/data`
+# (or a named volume), each `docker run` gets a fresh anonymous volume and
+# `docker rm` can strand it. Its purpose is to (a) follow the official
+# postgres/mysql image convention so `-v` mounts land on the right path and
+# (b) keep the heavy data dir out of the container's writable layer. Runtime
+# initialization happens in the entrypoint (not at build time), so declaring
+# the volume does not discard any baked-in state. See the container's "ready"
+# banner (printed by the entrypoint) for the `-v` guidance users must follow
+# to persist.
+VOLUME ["/data"]
 ENTRYPOINT ["/bin/bash", "-c", "/home/documentdb/gateway/scripts/emulator_entrypoint.sh \"$@\"", "--"]

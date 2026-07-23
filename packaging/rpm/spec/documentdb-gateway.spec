@@ -8,7 +8,7 @@ Summary:        DocumentDB Gateway - wire protocol daemon
 License:        MIT AND Apache-2.0
 URL:            https://github.com/documentdb/documentdb
 
-# Reviewer-flagged (Sonnet iter 7): jq is NOT a gateway runtime dep —
+# jq is NOT a gateway runtime dep —
 # only documentdb-gateway-admin uses it, and that ships in
 # documentdb-postgresql-tools. Per packaging-design.md §4.3 the gateway
 # package has "no product-specific runtime dependency beyond the OS/
@@ -20,16 +20,15 @@ Requires:       openssl
 # (directly on EL8, or through the build-time-baked sysusers_create_compat
 # macro on EL9), both of which come from shadow-utils.
 Requires(pre):  shadow-utils
-# Deliberate deviation from packaging-design.md section 4.3 (which specifies
-# per-major postgresql-N-documentdb): captured here so section 4.3 can be
-# updated to match and stay the source of truth for parts 2-4 of the series.
-# Reviewer-flagged (Sonnet iter 9): the gateway binary is PG-major-agnostic,
-# but the previous Suggests: postgresql18-documentdb misled operators on
-# PG 15/16/17 hosts (dnf would suggest the wrong package). The %post
-# message below points the operator at the right per-major extension
-# explicitly. Suggest only the PG-agnostic tools package so dnf's
-# behavior is correct across all majors. Matches the iter-8 fix that
-# removed the same pattern from documentdb-postgresql-tools.
+# Per packaging-design.md section 4.3, the gateway declares no
+# dependency of any kind on the per-major postgresql-N-documentdb
+# packages. The gateway binary is PG-major-agnostic, and a previous
+# Suggests: postgresql18-documentdb misled operators on PG 15/16/17
+# hosts (dnf would suggest the wrong package). The %post message below
+# points the operator at the right per-major extension explicitly.
+# Suggest only the PG-agnostic tools package so dnf's behavior is
+# correct across all majors. Matches the legacy fix that removed the
+# same pattern from documentdb-postgresql-tools.
 Suggests:       documentdb-postgresql-tools
 
 # systemd-rpm-macros provides the _unitdir / _sysusersdir / _tmpfilesdir
@@ -66,10 +65,8 @@ install -d -m 0750 -o documentdb-gateway -g documentdb-gateway /run/documentdb-g
 %install
 install -Dpm 0644 %{_sourcedir}/LICENSE_Apache-2.0 %{buildroot}%{_licensedir}/%{name}/LICENSE_Apache-2.0
 install -Dpm 0644 %{_sourcedir}/LICENSE_MIT %{buildroot}%{_licensedir}/%{name}/LICENSE_MIT
-# Deliberate deviation from packaging-design.md section 4.3 (which specifies a
-# single binary at /usr/bin): the split daemon+wrapper layout below should be
-# reflected back into section 4.3 so the doc stays the source of truth.
-# Real-user E2E flagged (Gap #5 from cross-platform coverage round):
+# Wrapper+daemon split per packaging-design.md section 4.3.
+#
 # DEB ships the daemon at /usr/lib/documentdb-gateway/documentdb-gateway-daemon
 # with a thin wrapper at /usr/bin/documentdb-gateway that auto-loads
 # the per-major or global gateway.env and runuser-downgrades to the
@@ -93,7 +90,7 @@ install -Dpm 0644 %{_sourcedir}/documentdb-gateway-tmpfiles.conf %{buildroot}%{_
 # is still shipped at the historical /etc/documentdb/gateway/ path for
 # back-compat with pre-Phase-3 deployments.
 install -Dpm 0644 %{_sourcedir}/gateway.env %{buildroot}/usr/share/doc/%{name}/examples/gateway.env.sample
-# Reviewer-flagged (external review iter 18): strip dev-tree
+# Strip dev-tree
 # PostgresPort/GatewayListenPort/PostgresDataUserPassword fields so the
 # packaged JSON does not contradict the per-major port promise or the
 # Track 1 passwordless policy. Done via the shared strip-setup-config.sh
@@ -110,6 +107,20 @@ chmod 0644 %{buildroot}/etc/documentdb/gateway/SetupConfiguration.json
 # Apply the systemd preset for the gateway service and reload units on the
 # initial install (replaces a hand-written daemon-reload).
 %systemd_post documentdb-gateway.service
+# Note: the DEB postinst suppresses this guidance on a transitive install
+# (is_transitive_install / dpkg-query). This %post scriptlet cannot do the
+# same: dpkg unpacks the whole transaction before running any postinst, so
+# at the gateway's postinst the parent documentdb-N/meta is already
+# queryable, whereas RPM runs each package's %post right after that single
+# package installs (dependencies first) -- so here the parent is not yet in
+# the rpmdb and `rpm -q documentdb`/`rpm -q documentdb-N` reports "not
+# installed". The viable RPM equivalent is a %posttrans check: it runs once
+# after the whole transaction commits, where `rpm -q` reliably reflects the
+# parent's presence (this spec already uses %posttrans for its per-major
+# unit restarts below). Deferred as cosmetic -- the Workflow-C line below
+# already leads with the recommended documentdb-setup, so the extra
+# Workflow-B block is verbose, not contradictory. See packaging-design.md
+# 11.4 item (t).
 echo "DocumentDB Gateway installed."
 echo ""
 echo "Configuration is taken from the environment first; the systemd unit"
@@ -158,8 +169,8 @@ fi
 # pg_ident.conf, postgresql.conf, gateway PG role). That cleanup belongs
 # to documentdb-postgresql-tools (operator-invoked via
 # documentdb-register-gateway --restore) and to documentdb-N's %postun
-# (Issue 8 from the second-pass review). We only sweep the gateway's
-# own /run/documentdb-gateway tmpfs state and the env file at
+# path. The gateway package only sweeps its own
+# /run/documentdb-gateway tmpfs state and the env file at
 # /etc/documentdb/gateway/gateway.env.
 #
 # This full-erase cleanup intentionally mirrors the `purge` case of the DEB

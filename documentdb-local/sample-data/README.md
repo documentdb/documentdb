@@ -39,10 +39,10 @@ All sample data is inserted into the `sampledb` database to keep it separate fro
 
 ## Usage
 
-These files are executed when the DocumentDB container starts only if built-in sample data is explicitly enabled with `--init-data true` or `INIT_DATA=true`. Seeding runs once per data volume (on a fresh volume) and is skipped on subsequent restarts; the scripts are idempotent, so a re-run is a no-op. To seed again, start with a fresh data volume. They can also be run manually using mongosh:
+These files are executed when the DocumentDB container starts only if built-in sample data is explicitly enabled with `--init-data true` or `INIT_DATA=true`. Seeding runs once per data volume (on a fresh volume) and is skipped on subsequent restarts; the scripts are idempotent, so a re-run is a no-op. To seed again, start with a fresh data volume. Packaged installs likewise keep sample data optional: use `documentdb-setup --load-sample-data` to load it. `--load-sample-data` requires `mongosh` to be installed on the host. These files can also be run manually using mongosh:
 
 ```bash
-mongosh localhost:10260 -u username -p mypassword --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --file 01-users.js
+mongosh localhost:10260 -u username -p <password> --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --file 01-users.js
 ```
 
 ## Data Overview

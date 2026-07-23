@@ -1,3 +1,7 @@
+# Single RHEL-family build image for the documentdb-gateway RPM, shared by the
+# rhel8 and rhel9 build targets. build_gateway_packages.sh selects the EL major
+# by passing --build-arg BASE_IMAGE (rockylinux:8 or rockylinux:9); the default
+# below is only used for a bare `docker build` without that argument.
 ARG BASE_IMAGE=rockylinux:9
 FROM ${BASE_IMAGE}
 

@@ -74,11 +74,18 @@ jobs:
     - name: Build ${{ matrix.arch }} Image
       run: |
         TAG=${{ env.IMAGE_TAG }}-pg${{ matrix.pg_version }}-${{ matrix.arch }}
+        mapfile -t EXT_DEBS < <(find downloaded-artifacts -maxdepth 1 -type f -name 'deb13-postgresql-*-documentdb_*.deb' ! -name '*dbgsym*' | sort)
+        [ "${#EXT_DEBS[@]}" -eq 1 ] || { echo 'Expected exactly one extension DEB artifact'; exit 1; }
+        EXT_DEB=$(basename "${EXT_DEBS[0]}")
+        # Dockerfile_documentdb_local builds the gateway from source (see its
+        # `stage` build stage); it does not consume a prebuilt gateway .deb, so
+        # none is built or passed here. The gateway *package* is built and
+        # clean-install tested separately in build_deb_packages.yml.
         docker build \
           --platform linux/${{ matrix.arch }} \
           --build-arg BASE_IMAGE=debian:trixie-slim \
           --build-arg POSTGRES_VERSION=${{ matrix.pg_version }} \
-          --build-arg DEB_PACKAGE_REL_PATH=downloaded-artifacts/$(ls downloaded-artifacts | grep -v 'dbgsym')  \
+          --build-arg DEB_PACKAGE_REL_PATH=downloaded-artifacts/$EXT_DEB \
           -t ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:$TAG \
           -f packaging/gateway/docker/Dockerfile_documentdb_local .
     - name: Smoke test ${{ matrix.arch }} Image
@@ -125,12 +132,14 @@ jobs:
         smokeDb.image_smoke.insertOne({ name: 'documentdb-local-smoke', ok: true });
         EOF
 
-        docker run -d --name "$CONTAINER_NAME" --mount "type=bind,source=$SMOKE_DIR,target=/init_doc_db.d,readonly" "$IMAGE" --username docdb_admin --password 123456 --init-data-path /init_doc_db.d
+        # Runtime-generated smoke credential so no password literal lives in source.
+        SMOKE_PW="$(openssl rand -hex 12)Aa1!"
+        docker run -d --name "$CONTAINER_NAME" --mount "type=bind,source=$SMOKE_DIR,target=/init_doc_db.d,readonly" "$IMAGE" --username docdb_admin --password "$SMOKE_PW" --init-data-path /init_doc_db.d
 
         wait_for_log "=== DocumentDB is ready ===" 240
         wait_for_log "Custom data initialization completed." 180
 
-        docker exec "$CONTAINER_NAME" mongosh "localhost:10260" -u docdb_admin -p 123456 --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --quiet --eval 'const count = db.getSiblingDB("gateway_smoke").image_smoke.countDocuments({ name: "documentdb-local-smoke", ok: true }); if (count !== 1) { print(`expected 1 document, found ${count}`); quit(1); }'
+        docker exec "$CONTAINER_NAME" mongosh "localhost:10260" -u docdb_admin -p "$SMOKE_PW" --authenticationMechanism SCRAM-SHA-256 --tls --tlsAllowInvalidCertificates --quiet --eval 'const count = db.getSiblingDB("gateway_smoke").image_smoke.countDocuments({ name: "documentdb-local-smoke", ok: true }); if (count !== 1) { print(`expected 1 document, found ${count}`); quit(1); }'
 
         # Backend-contract gate (issue #650). The smoke above drives the gateway
         # end to end, including the getParameter discovery probe mongosh issues

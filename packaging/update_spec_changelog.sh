@@ -57,7 +57,7 @@ awk -v ver="$RPM_VER" -v rel="$RPM_REL" 'BEGIN{v=ver;r=rel} /^Version:/{printf "
 mv "$spec_tmp_ver" "$SPEC"
 
 
-# Find header lines that look like: ### documentdb v0.106-0 ...
+# Find header lines that look like: ### documentdb v0.106-0...
 # We'll search for the header that contains the target version and then
 # extract from that header through EOF (so target + older entries).
 
