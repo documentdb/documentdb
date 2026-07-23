@@ -98,21 +98,12 @@ SELECT document FROM bson_aggregation_find('unit_db',
     '{ "find": "coll", "filter": { "arr": { "$elemMatch": { "k": "k1", "v": "v1" } } }, "sort": { "s": -1 }, "hint": "idx_arr_kv_s" }');
 
 -- ============================================================================
--- 3. Two $elemMatch in an $and over idx_arr_kv_s. Both branches' k values become
---    arr.k bounds (two ranges: ["k1","k1"] and ["k2","k2"]). arr.v is left at
---    (MinKey, MaxKey) and BOTH $elemMatch are re-applied as recheck Filters;
---    scanType is regular and an explicit Sort is added. Correctness: only _id 2
---    and _id 6 carry both { k1, v1 } and { k2, v2 } (actual rows=2).
---    TODO: arr.v SHOULD be bounded here. Each $elemMatch correlates its k with its
---    v on the SAME array element (k1<->v1, k2<->v2), so the composite bounds should
---    be the per-element pairs ["k1","k1"]/["v1","v1"] and ["k2","k2"]/["v2","v2"]
---    rather than dropping arr.v to the fully-unbounded (MinKey, MaxKey). Root cause:
---    the reduced-correlated bounds plan is NOT applied to this $and-of-two-$elemMatch
---    intersection -- note the arr.k Index Cond here lacks the "rctBoundsPlanApplied"
---    marker that the single-$elemMatch scenarios (2, 4, 5) carry, even though
---    EnableCompositeReducedCorrelatedBoundsPlanning is on and both paths are mkp.
---    Leaving arr.v unbounded forces every k1/k2 index entry to be heap-rechecked;
---    the correlated v bound should be pushed into the scan.
+-- 3. Two $elemMatch in an $and over idx_arr_kv_s. Both owners constrain arr.k,
+--    so the planner retains the first owner's correlated (k1, v1) bounds and
+--    evaluates the second { k2, v2 } owner as a runtime recheck. Correctness:
+--    only _id 2 and _id 6 carry both pairs (actual rows=2).
+--    Owner selection among equally ranked predicates is intentionally
+--    query-order-dependent for now.
 -- ============================================================================
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)

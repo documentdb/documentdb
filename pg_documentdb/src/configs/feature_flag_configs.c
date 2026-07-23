@@ -162,6 +162,11 @@ bool EnableCompositeReducedCorrelatedPrefixTrim =
 bool EnableCompositeReducedCorrelatedBoundsPlanning =
 	DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_BOUNDS_PLANNING;
 
+/* Added in v117, Pending stabilization, enable in v123 */
+#define DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_FIRST_OWNER_FALLBACK false
+bool EnableCompositeReducedCorrelatedFirstOwnerFallback =
+	DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_FIRST_OWNER_FALLBACK;
+
 /* Added in v115, Pending stabilization, enable in v121 */
 #define DEFAULT_ENABLE_INDEX_METADATA_GLOBAL_TRACKING false
 bool EnableIndexMetadataGlobalTracking = DEFAULT_ENABLE_INDEX_METADATA_GLOBAL_TRACKING;
@@ -1101,6 +1106,15 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to prune reduced-correlated composite index quals during planning when per-path multi-key metadata is available."),
 		NULL, &EnableCompositeReducedCorrelatedBoundsPlanning,
 		DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_BOUNDS_PLANNING,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_composite_reduced_correlated_first_owner_fallback",
+				 newGucPrefix),
+		gettext_noop(
+			"Whether to select the first eligible $elemMatch owner when multiple owners constrain the leading reduced-correlated index path and none has an equality bound."),
+		NULL, &EnableCompositeReducedCorrelatedFirstOwnerFallback,
+		DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_FIRST_OWNER_FALLBACK,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

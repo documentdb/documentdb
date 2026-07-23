@@ -205,23 +205,6 @@ typedef struct FieldCoverageState
 	const IndexOnlyScanMultiKeyState *multiKeyState;
 } FieldCoverageState;
 
-/*
- * Planner state for one derived composite-index qual.
- *
- * For items: {$elemMatch: {x: 1, y: 2}}, the derived items.x and items.y
- * quals have the same owner and may both remain.
- * For independent items.x and items.y predicates, each qual has a
- * different owner, so the secondary qual is trimmed.
- */
-typedef struct ReducedCorrelatedQualInfo
-{
-	IndexClause *ownerClause;
-	RestrictInfo *derivedRestrictInfo;
-	StringView pathPrefix;
-	int32_t columnNumber;
-	bool isElemMatchQual;
-	bool hasMultiSegmentSubpath;
-} ReducedCorrelatedQualInfo;
 
 /* Per-$in metadata used to expand a $in (@*=) filter on an equality-prefix column of a composite index into one point-equality (@=) clause per value */
 typedef struct InPrefixOpInfo
@@ -279,28 +262,51 @@ typedef struct MergeSortInPrefixPlan
 	int numChildren;
 } MergeSortInPrefixPlan;
 
-/*
- * State tracking for the lowest column bound in a composite index.
- */
-typedef struct LowestColumnBoundState
+/* The state for the owning clause of a lowest column. */
+typedef struct RctLowestColumnOwnerState
 {
-	/* Original predicate that produced the bound on this column. */
 	IndexClause *ownerClause;
+	bool isElemMatch;
+	bool lowestColumnHasMultiSegmentSubpath;
+	bool lowestColumnHasEquality;
 
-	/*
-	 * Whether multiple original predicates constrain this column. For index
-	 * (a.x, a.y, a.z), this query gives a.x two $elemMatch owners:
-	 *
-	 *   {$and: [
-	 *     {a: {$elemMatch: {x: 1, y: 2}}},
-	 *     {a: {$elemMatch: {x: 3, z: 4}}}
-	 *   ]}
-	 *
-	 */
-	bool hasMultipleOwners;
+	/* This can happen if there is a wildcard index. */
+	bool hasMultipleLowestColumnQuals;
+} RctLowestColumnOwnerState;
 
+/*
+ * State that tracks, for each prefix, what is the lowest column and how many clauses refer to it.
+ */
+typedef struct RctPrefixState
+{
+	/* Must be first: hash key*/
+	StringView prefix;
+	int32_t lowestColumn;
+	List *lowestColumnOwners;
+	RctLowestColumnOwnerState *selectedOwnerState;
+	bool retainOnlySelectedOwner;
+} RctPrefixState;
+
+
+/*
+ * Planner state for one derived composite-index qual.
+ *
+ * For items: {$elemMatch: {x: 1, y: 2}}, the derived items.x and items.y
+ * quals have the same owner and may both remain.
+ * For independent items.x and items.y predicates, each qual has a
+ * different owner, so the secondary qual is trimmed.
+ */
+typedef struct RctQualInfo
+{
+	IndexClause *ownerClause;
+	RestrictInfo *derivedRestrictInfo;
+	StringView pathPrefix;
+	int32_t columnNumber;
+	bool isElemMatchQual;
 	bool hasMultiSegmentSubpath;
-} LowestColumnBoundState;
+	bool hasEqualityOperator;
+} RctQualInfo;
+
 
 extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
@@ -316,6 +322,7 @@ extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool EnablePerPathMultiKeySortPushdown;
 extern bool EnableCompositeReducedCorrelatedPrefixTrim;
 extern bool EnableCompositeReducedCorrelatedBoundsPlanning;
+extern bool EnableCompositeReducedCorrelatedFirstOwnerFallback;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -5912,47 +5919,52 @@ MarkReducedCorrelatedIndexQualPlanned(RestrictInfo *indexQual)
 
 
 /*
- * Reduced-correlated index terms pair values from one array element. For an
- * index on (items.x, items.y), one $elemMatch on items may retain both bounds
- * because x and y must match the same element. Independent predicates on
- * items.x and items.y may match different elements,
- * so only the lower index column may remain as an index bound.
- *
- * Group derived quals by dotted prefix and retain secondary bounds only when
- * they and the lowest index column come from the same $elemMatch whose element
- * scope directly covers both paths. Deeper descendants may cross another array
- * boundary and are therefore pruned.
- *
- * Only paths marked multikey participate. A shared array ancestor marks every
- * indexed descendant multikey even when its leaf is missing; for example, an
- * array at "a" marks "a.x" multikey. Independent leaf arrays at "a.b" and
- * "a.c" do not mark "a.x", but they also do not produce reduced correlation at
- * prefix "a".
- *
- * Prune before costing so selectivity reflects the bounds the scan executes.
+ * PruneReducedCorrelatedIndexQuals trims some index quals for reduced-correlated terms indexes.
+ * For an index on (items.x, items.y), and items: [{x: 1, y: 2}, {x: 5, y: 3}], the
+ * reduced-correlated index terms are (items.x = 1, items.y = 2) and (items.x = 5, items.y = 3),
+ * not a full cross-product.
+ * Plain dotted predicates can match different elements, so all bounds under one correlated
+ * prefix cannot be safely applied together.
+ * For example, if the query is items.x = 1 and items.y = 3, the index terms
+ * (items.x = 1, items.y = 2) and (items.x = 5, items.y = 3) do not match any element in the
+ * array, so they cannot be used to filter the scan. Instead, the scan must be executed with
+ * only the first bound, and the second bound must be rechecked on each document.
+ * On the other hand, for $elemMatch queries, the predicates are correlated and must match
+ * index terms, so we don't always want to trim the bounds for $elemMatch clauses.
  */
 static void
 PruneReducedCorrelatedIndexQuals(IndexPath *indexPath, bytea *indexOptions,
 								 uint32_t multiKeyPathBitMask)
 {
-	HTAB *mapPrefixToLowestColumn = CreatePgbsonElementHashSet();
-	LowestColumnBoundState lowestBoundStateByColumn[INDEX_MAX_KEYS] = { 0 };
-
+	/* This method has four steps:
+	 *
+	 * 1. Collect quals and find the minimum column for each prefix.
+	 * 2. Classify the owning clauses of the finalized lowest column for each prefix.
+	 * 3. Select an owner for each prefix.
+	 * 4. Construct the new index path based on the selected owners.
+	 *
+	 * mapPrefixToPrefixState maps a prefix (e.g., for "a.b", the prefix is "a") to an
+	 * RctPrefixState that tracks the lowest column number for that prefix and the owning clause.
+	 *
+	 * qualInfos is a list of every qual that is a candidate for trimming or maintaining. Not every qual is added
+	 * to this list (e.g., if the qual is not an OpExpr or not multikey, it is not considered because we never trim those).
+	 */
+	HTAB *mapPrefixToPrefixState = CreateStringViewHashMap(sizeof(RctPrefixState));
 	List *qualInfos = NIL;
 	ListCell *clauseCell;
+	ListCell *qualInfoCell;
 	foreach(clauseCell, indexPath->indexclauses)
 	{
 		IndexClause *owner = (IndexClause *) lfirst(clauseCell);
 
-		ListCell *qualCell;
-		foreach(qualCell, owner->indexquals)
+		foreach(qualInfoCell, owner->indexquals)
 		{
 			/* The index quals are derived from the original restrict info during query planning.
 			 * e.g., if the original restrict info was "a: $elemMatch {x: 1, y: 2}", then
 			 * the derived restrict info represents the individual quals for "a.x = 1" and "a.y = 2".
 			 */
 			RestrictInfo *derivedRestrictInfo =
-				(RestrictInfo *) lfirst(qualCell);
+				(RestrictInfo *) lfirst(qualInfoCell);
 			if (!IsA(derivedRestrictInfo->clause, OpExpr))
 			{
 				continue;
@@ -6002,7 +6014,6 @@ PruneReducedCorrelatedIndexQuals(IndexPath *indexPath, bytea *indexOptions,
 
 			StringView queryPathView = CreateStringViewFromString(queryPath);
 			StringView pathPrefix = StringViewFindPrefix(&queryPathView, '.');
-
 			if (pathPrefix.length == 0)
 			{
 				continue;
@@ -6013,16 +6024,26 @@ PruneReducedCorrelatedIndexQuals(IndexPath *indexPath, bytea *indexOptions,
 				&rangeParams,
 				&hasMultiSegmentSubpath);
 
-			ReducedCorrelatedQualInfo *qualInfo =
-				palloc0(sizeof(ReducedCorrelatedQualInfo));
+			RctQualInfo *qualInfo = palloc0(sizeof(RctQualInfo));
 			qualInfo->ownerClause = owner;
 			qualInfo->derivedRestrictInfo = derivedRestrictInfo;
 			qualInfo->pathPrefix = pathPrefix;
 			qualInfo->columnNumber = columnNumber;
 			qualInfo->isElemMatchQual = rangeParams.isElemMatch;
+			bool hasEquality = false;
 
-			/* The current metadata can identify multikey index paths, but not their exact array ancestor,
-			 * for now, we take a conservative approach when it comes to handling deeper subpaths, even if
+			if (rangeParams.isElemMatch)
+			{
+				bool hasNonEqualityIgnore = false;
+				int32_t queryStrategyIgnore = BSON_INDEX_STRATEGY_INVALID;
+				ElemMatchIndexOpStrategyClassify(&rangeParams, &queryStrategyIgnore,
+												 &hasEquality, &hasNonEqualityIgnore);
+			}
+
+			qualInfo->hasEqualityOperator = hasEquality;
+
+			/* The current metadata can identify multikey index paths, but not their exact array ancestor.
+			 * For now, we take a conservative approach when it comes to handling deeper subpaths, even if
 			 * their intermediate paths happen to be scalar.
 			 *
 			 * e.g.,
@@ -6050,42 +6071,189 @@ PruneReducedCorrelatedIndexQuals(IndexPath *indexPath, bytea *indexOptions,
 											   hasMultiSegmentSubpath;
 			qualInfos = lappend(qualInfos, qualInfo);
 
-			pgbsonelement key = { 0 };
-			key.path = qualInfo->pathPrefix.string;
-			key.pathLength = qualInfo->pathPrefix.length;
-
 			bool found = false;
-			pgbsonelement *entry = hash_search(mapPrefixToLowestColumn, &key, HASH_ENTER,
-											   &found);
-			if (!found || qualInfo->columnNumber < entry->bsonValue.value.v_int32)
+			RctPrefixState *state = hash_search(mapPrefixToPrefixState,
+												&qualInfo->pathPrefix, HASH_ENTER,
+												&found);
+
+			if (!found)
 			{
-				/* Update the map if the prefix was either not found, or the current
-				 * column number is lower than the one already stored. */
-				entry->bsonValue.value_type = BSON_TYPE_INT32;
-				entry->bsonValue.value.v_int32 = qualInfo->columnNumber;
-				LowestColumnBoundState *lowestBoundState =
-					&lowestBoundStateByColumn[qualInfo->columnNumber];
-				lowestBoundState->ownerClause = qualInfo->ownerClause;
-				lowestBoundState->hasMultiSegmentSubpath =
-					qualInfo->hasMultiSegmentSubpath;
-				lowestBoundState->hasMultipleOwners = false;
+				state->prefix = qualInfo->pathPrefix;
+				state->lowestColumn = qualInfo->columnNumber;
+				state->lowestColumnOwners = NIL;
+				state->selectedOwnerState = NULL;
+				state->retainOnlySelectedOwner = false;
 			}
-			else if (qualInfo->columnNumber == entry->bsonValue.value.v_int32 &&
-					 lowestBoundStateByColumn[qualInfo->columnNumber].ownerClause !=
-					 qualInfo->ownerClause)
+			else if (qualInfo->columnNumber < state->lowestColumn)
 			{
-				/* Multiple original predicates constrain this prefix's lowest index column. */
-				lowestBoundStateByColumn[qualInfo->columnNumber].hasMultipleOwners = true;
+				state->lowestColumn = qualInfo->columnNumber;
 			}
 		}
 	}
 
 	if (qualInfos == NIL)
 	{
-		hash_destroy(mapPrefixToLowestColumn);
+		hash_destroy(mapPrefixToPrefixState);
 		return;
 	}
 
+	/*
+	 * Now that we have the lowest column for each prefix, we can classify the owning clauses for each
+	 * finalized lowest column.
+	 */
+	foreach(qualInfoCell, qualInfos)
+	{
+		RctQualInfo *qualInfo = (RctQualInfo *) lfirst(qualInfoCell);
+		bool found = false;
+		RctPrefixState *prefixState = hash_search(mapPrefixToPrefixState,
+												  &qualInfo->pathPrefix,
+												  HASH_FIND,
+												  &found);
+		Assert(found);
+
+		if (qualInfo->columnNumber != prefixState->lowestColumn)
+		{
+			continue;
+		}
+
+		RctLowestColumnOwnerState *ownerState = NULL;
+
+		ListCell *ownerCell;
+		foreach(ownerCell, prefixState->lowestColumnOwners)
+		{
+			RctLowestColumnOwnerState *candidateOwner =
+				(RctLowestColumnOwnerState *) lfirst(ownerCell);
+
+			if (candidateOwner->ownerClause == qualInfo->ownerClause)
+			{
+				ownerState = candidateOwner;
+				break;
+			}
+		}
+
+		/*
+		 * At this point, qualInfo is for the lowest column for this prefix. The ownerState
+		 * tracks the owning clause for the lowest column in this prefix.
+		 * e.g., for a query like "a: {$elemMatch: {b: 1, c: 2}}", the lowest column for prefix
+		 * "a" is "b", and the ownerState tracks the owning clause for "b".
+		 * The qualInfo here would represent the qual for "b" since it is the lowest column.
+		 */
+		if (ownerState == NULL)
+		{
+			ownerState = palloc0(sizeof(RctLowestColumnOwnerState));
+			ownerState->ownerClause = qualInfo->ownerClause;
+			ownerState->isElemMatch = qualInfo->isElemMatchQual;
+			ownerState->lowestColumnHasEquality = qualInfo->hasEqualityOperator;
+			ownerState->lowestColumnHasMultiSegmentSubpath =
+				qualInfo->hasMultiSegmentSubpath;
+			prefixState->lowestColumnOwners = lappend(prefixState->lowestColumnOwners,
+													  ownerState);
+		}
+		else
+		{
+			/* Wildcard index case, most likely. We will not handle this at this layer.
+			 * TODO: handle this.
+			 */
+			ownerState->hasMultipleLowestColumnQuals = true;
+		}
+	}
+
+	/*
+	 * Now, we have a map from prefix to the lowest column and the clauses that reference the lowest column.
+	 * We can select an owner clause for each prefix and rewrite the index path to only include the selected owners.
+	 * We will loop iterate the prefix hash and handle all prefixes that have multiple owners.
+	 */
+	HASH_SEQ_STATUS status;
+	RctPrefixState *prefixStateIterator;
+	hash_seq_init(&status, mapPrefixToPrefixState);
+	while ((prefixStateIterator = (RctPrefixState *) hash_seq_search(&status)) != NULL)
+	{
+		int ownerCount = list_length(prefixStateIterator->lowestColumnOwners);
+
+		if (ownerCount == 1)
+		{
+			prefixStateIterator->selectedOwnerState =
+				(RctLowestColumnOwnerState *) linitial(
+					prefixStateIterator->lowestColumnOwners);
+			continue;
+		}
+
+		/*
+		 * Ordered execution chooses bounds independently per index column and does not preserve
+		 * $elemMatch owner identity. Allowing multiple complete owners to reach execution could therefore
+		 * combine a leading bound from one owner with a secondary bound from another.
+		 *
+		 * Select at most one complete owner here and remove every bound belonging to
+		 * competing owners. If no owner is selected, retain only the leading bounds for each owner;
+		 * secondary bounds remain pruned and runtime-rechecked. If an ordered scan is chosen, only
+		 * one leading bound will be chosen during execution.
+		 *
+		 * Preserving multiple complete owner groups for regular scans requires owner-aware grouping
+		 * and TID intersection in execution. TODO: handle this
+		 *
+		 * Therefore, if there are multiple clauses that own the lowest column for this prefix, we
+		 * trim all the other bounds UNLESS all of the following are true:
+		 * 1. All owners are from $elemMatch clauses.
+		 * 2. None of the owners have multi-segment subpaths.
+		 * 3. None of the owners have multiple lowest column quals (wildcard).
+		 *
+		 * If all of the above are true, prefer the first owner with an equality
+		 * operator on the lowest column. When the first-owner fallback GUC is
+		 * enabled, select the first eligible owner if no equality owner exists.
+		 * Otherwise, preserve the conservative all-leading-bounds fallback.
+		 * This is a heuristic, but it's safe because all owners are $elemMatch clauses, so one will
+		 * drive the index selection and the other will be handled during runtime recheck.
+		 */
+		bool prefixHasUnsupportedOwner = false;
+		RctLowestColumnOwnerState *firstEligibleOwner = NULL;
+		RctLowestColumnOwnerState *firstEqualityCandidate = NULL;
+		ListCell *ownerCell;
+		foreach(ownerCell, prefixStateIterator->lowestColumnOwners)
+		{
+			RctLowestColumnOwnerState *ownerState = (RctLowestColumnOwnerState *) lfirst(
+				ownerCell);
+
+			if (!ownerState->isElemMatch ||
+				ownerState->lowestColumnHasMultiSegmentSubpath ||
+				ownerState->hasMultipleLowestColumnQuals)
+			{
+				prefixHasUnsupportedOwner = true;
+				break;
+			}
+
+			if (firstEligibleOwner == NULL)
+			{
+				firstEligibleOwner = ownerState;
+			}
+
+			if (firstEqualityCandidate == NULL && ownerState->lowestColumnHasEquality)
+			{
+				firstEqualityCandidate = ownerState;
+			}
+		}
+
+		if (prefixHasUnsupportedOwner)
+		{
+			continue;
+		}
+
+		RctLowestColumnOwnerState *selectedOwner = firstEqualityCandidate;
+		if (selectedOwner == NULL &&
+			EnableCompositeReducedCorrelatedFirstOwnerFallback)
+		{
+			selectedOwner = firstEligibleOwner;
+		}
+
+		if (selectedOwner == NULL)
+		{
+			continue;
+		}
+
+		prefixStateIterator->retainOnlySelectedOwner = true;
+		prefixStateIterator->selectedOwnerState = selectedOwner;
+	}
+
+	/* Finally, construct the new index path. */
 	List *newIndexClauses = NIL;
 	bool indexPathChanged = false;
 	ListCell *nextQualInfoCell = list_head(qualInfos);
@@ -6101,14 +6269,14 @@ PruneReducedCorrelatedIndexQuals(IndexPath *indexPath, bytea *indexOptions,
 		{
 			RestrictInfo *derivedRestrictInfo =
 				(RestrictInfo *) lfirst(qualCell);
-			ReducedCorrelatedQualInfo *qualInfo = NULL;
+			RctQualInfo *qualInfo = NULL;
 
 			/* qualInfos contains only RCT-relevant quals in the same order as this traversal. Leave
 			 * cursor unchanged for unrelated quals. */
 			if (nextQualInfoCell != NULL)
 			{
-				ReducedCorrelatedQualInfo *qualInfoCandidate =
-					(ReducedCorrelatedQualInfo *) lfirst(nextQualInfoCell);
+				RctQualInfo *qualInfoCandidate =
+					(RctQualInfo *) lfirst(nextQualInfoCell);
 
 				if (qualInfoCandidate->derivedRestrictInfo == derivedRestrictInfo)
 				{
@@ -6119,31 +6287,51 @@ PruneReducedCorrelatedIndexQuals(IndexPath *indexPath, bytea *indexOptions,
 
 			if (qualInfo != NULL)
 			{
-				pgbsonelement key = { 0 };
-				key.path = qualInfo->pathPrefix.string;
-				key.pathLength = qualInfo->pathPrefix.length;
-
+				/* This qualInfo is for the same derivedRestrictInfo as the current qual.
+				 * Look up the prefix to find the lowest column. If this qual is not for the
+				 * lowest column, it may need to be trimmed. We trim it if ANY of the following are true:
+				 *   - it is not from an $elemMatch clause
+				 *   - it is from a different clause than the selected owner clause for the lowest column
+				 *   - it has a multi-segment subpath
+				 *
+				 * If none of the above are true, we retain the bound.
+				 * Evidently, this means we only retain secondary bounds when they are from the same
+				 * $elemMatch clause as the lowest column, and neither bound has a multi-segment subpath.
+				 */
 				bool found = false;
-				pgbsonelement *entry = hash_search(mapPrefixToLowestColumn, &key,
-												   HASH_FIND,
-												   &found);
+				RctPrefixState *prefixState = hash_search(mapPrefixToPrefixState,
+														  &qualInfo->pathPrefix,
+														  HASH_FIND,
+														  &found);
 				Assert(found);
 
-				int32_t lowestColumn = entry->bsonValue.value.v_int32;
+				bool isLowestColumn = qualInfo->columnNumber == prefixState->lowestColumn;
+				bool isOwnerClauseSelected = prefixState->selectedOwnerState != NULL &&
+											 prefixState->selectedOwnerState->ownerClause
+											 == qualInfo->ownerClause;
 
-				LowestColumnBoundState *lowestBoundState =
-					&lowestBoundStateByColumn[lowestColumn];
+				bool isBoundInSelectedElemMatchScope =
+					isOwnerClauseSelected &&
+					prefixState->selectedOwnerState->isElemMatch &&
+					!prefixState->selectedOwnerState->
+					lowestColumnHasMultiSegmentSubpath &&
+					qualInfo->isElemMatchQual &&
+					!qualInfo->hasMultiSegmentSubpath;
+				bool isSafeSelectedSecondary =
+					!isLowestColumn && isBoundInSelectedElemMatchScope;
 
-				bool isLowestColumn = qualInfo->columnNumber == lowestColumn;
-				bool isBoundInSameElemMatchScopeAsLowestColumn =
-					!lowestBoundState->hasMultipleOwners &&
-					lowestBoundState->ownerClause == qualInfo->ownerClause &&
-					!lowestBoundState->hasMultiSegmentSubpath &&
-					!qualInfo->hasMultiSegmentSubpath &&
-					qualInfo->isElemMatchQual;
+				bool shouldTrim = false;
 
-				bool shouldTrim = !(isLowestColumn ||
-									isBoundInSameElemMatchScopeAsLowestColumn);
+				if (prefixState->retainOnlySelectedOwner && !isOwnerClauseSelected)
+				{
+					/* Remove every bound from other owner clauses, including their lowest column. */
+					shouldTrim = true;
+				}
+				else if (!isLowestColumn && !isSafeSelectedSecondary)
+				{
+					shouldTrim = true;
+				}
+
 				if (shouldTrim)
 				{
 					clauseChanged = true;
@@ -6151,7 +6339,7 @@ PruneReducedCorrelatedIndexQuals(IndexPath *indexPath, bytea *indexOptions,
 					continue;
 				}
 
-				if (isBoundInSameElemMatchScopeAsLowestColumn)
+				if (isBoundInSelectedElemMatchScope)
 				{
 					derivedRestrictInfo = MarkReducedCorrelatedIndexQualPlanned(
 						derivedRestrictInfo);
@@ -6185,7 +6373,17 @@ PruneReducedCorrelatedIndexQuals(IndexPath *indexPath, bytea *indexOptions,
 	}
 
 	Assert(nextQualInfoCell == NULL);
-	hash_destroy(mapPrefixToLowestColumn);
+
+	HASH_SEQ_STATUS cleanupStatus;
+	RctPrefixState *prefixStateToFree;
+	hash_seq_init(&cleanupStatus, mapPrefixToPrefixState);
+	while ((prefixStateToFree = (RctPrefixState *) hash_seq_search(&cleanupStatus)) !=
+		   NULL)
+	{
+		list_free_deep(prefixStateToFree->lowestColumnOwners);
+	}
+
+	hash_destroy(mapPrefixToPrefixState);
 	list_free_deep(qualInfos);
 
 	if (indexPathChanged)

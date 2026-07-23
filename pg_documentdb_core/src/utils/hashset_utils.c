@@ -94,19 +94,31 @@ PgbsonElementHashEntryCompareFunc(const void *obj1, const void *obj2, Size objsi
 
 
 /*
+ * Creates a hash map that maps StringView to arbitrary data using a hash and search based on the StringView.
+ * StringView is required to be the first field of the entry.
+ */
+HTAB *
+CreateStringViewHashMap(Size entrySize)
+{
+	Assert(entrySize >= sizeof(StringView));
+	HASHCTL hashInfo = CreateExtensionHashCTL(
+		sizeof(StringView),
+		entrySize,
+		StringViewHashEntryCompareFunc,
+		StringViewHashEntryHashFunc
+		);
+	return hash_create("StringView Hash Value", 32, &hashInfo, DefaultExtensionHashFlags);
+}
+
+
+/*
  * Creates a hash table that stores StringView using
  * a hash and search based on the StringView.
  */
 HTAB *
 CreateStringViewHashSet()
 {
-	HASHCTL hashInfo = CreateExtensionHashCTL(
-		sizeof(StringView),
-		sizeof(StringView),
-		StringViewHashEntryCompareFunc,
-		StringViewHashEntryHashFunc
-		);
-	return hash_create("StringView Hash Value", 32, &hashInfo, DefaultExtensionHashFlags);
+	return CreateStringViewHashMap(sizeof(StringView));
 }
 
 

@@ -1,5 +1,6 @@
 ### documentdb v0.117-0 (Unreleased) ###
 * Default the RUM index library (`documentdb.rum_library_load_option`) to `require_documentdb_extended_rum` on all supported PostgreSQL versions, instead of only on PG 18+. The option can still be set to `none` to opt out. *[Refactor]*
+* Prefer an equality `$elemMatch` owner when multiple predicates constrain the leading reduced-correlated composite-index path, retaining its same-element secondary bounds while runtime-rechecking competing owners. A default-off first-owner fallback for predicates without a leading equality is available through `documentdb.enable_composite_reduced_correlated_first_owner_fallback`. *[Bugfix/Perf]*
 
 ### documentdb v0.116-0 (Unreleased) ###
 * Rename the `$sample` EXPLAIN metric `Sample Heap Skips` to `Sample Heap Fetches`. *[Refactor]*

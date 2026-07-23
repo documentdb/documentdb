@@ -139,8 +139,8 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
         '{"find":"items","filter":{"items":{"$elemMatch":{"id":"A","role":{"$regex":"^CUSTOMER$","$options":"i"}}}},"hint":"idx_items_profile"}')
 $cmd$);
 
--- Two multi-field $elemMatch groups both constrain the leader. The leader is
--- ambiguous, so neither group may extend into secondary bounds.
+-- Two multi-field $elemMatch groups both constrain the leader. Retain the first
+-- owner's same-scope bounds and recheck the other owner at runtime.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
     SELECT document FROM bson_aggregation_find(
@@ -151,6 +151,64 @@ SELECT document
 FROM bson_aggregation_find(
     'rct_prune_db',
     '{"find":"items","filter":{"$and":[{"items":{"$elemMatch":{"id":"A","role":"lawyer"}}},{"items":{"$elemMatch":{"id":"B","city":"seattle"}}}]},"sort":{"_id":1},"hint":"idx_items_profile"}');
+
+-- Prefer an equality owner over an earlier $in owner. The $in owner remains a
+-- runtime recheck, while the equality owner's city bound stays on the index.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"$and":[{"items":{"$elemMatch":{"id":{"$in":["A","B"]},"role":"lawyer"}}},{"items":{"$elemMatch":{"id":"B","city":"seattle"}}}]},"hint":"idx_items_profile"}')
+$cmd$);
+SELECT document
+FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"items","filter":{"$and":[{"items":{"$elemMatch":{"id":{"$in":["A","B"]},"role":"lawyer"}}},{"items":{"$elemMatch":{"id":"B","city":"seattle"}}}]},"sort":{"_id":1},"hint":"idx_items_profile"}');
+
+-- Reversing the query order must still select the equality owner.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"$and":[{"items":{"$elemMatch":{"id":"B","city":"seattle"}}},{"items":{"$elemMatch":{"id":{"$in":["A","B"]},"role":"lawyer"}}}]},"hint":"idx_items_profile"}')
+$cmd$);
+
+-- When no owner has a lowest-column equality, preserve the conservative
+-- fallback: keep both leading bounds and trim both secondary bounds.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"$and":[{"items":{"$elemMatch":{"id":{"$in":["A","C"]},"role":"lawyer"}}},{"items":{"$elemMatch":{"id":{"$gt":"A"},"city":"seattle"}}}]},"hint":"idx_items_profile"}')
+$cmd$);
+SELECT document
+FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"items","filter":{"$and":[{"items":{"$elemMatch":{"id":{"$in":["A","C"]},"role":"lawyer"}}},{"items":{"$elemMatch":{"id":{"$gt":"A"},"city":"seattle"}}}]},"sort":{"_id":1},"hint":"idx_items_profile"}');
+
+-- The optional first-owner fallback selects the first eligible $elemMatch when
+-- no owner has a lowest-column equality.
+SET documentdb.enable_composite_reduced_correlated_first_owner_fallback TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"$and":[{"items":{"$elemMatch":{"id":{"$in":["A","C"]},"role":"lawyer"}}},{"items":{"$elemMatch":{"id":{"$gt":"A"},"city":"seattle"}}}]},"hint":"idx_items_profile"}')
+$cmd$);
+SELECT document
+FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"items","filter":{"$and":[{"items":{"$elemMatch":{"id":{"$in":["A","C"]},"role":"lawyer"}}},{"items":{"$elemMatch":{"id":{"$gt":"A"},"city":"seattle"}}}]},"sort":{"_id":1},"hint":"idx_items_profile"}');
+RESET documentdb.enable_composite_reduced_correlated_first_owner_fallback;
+
+-- A mixed plain/$elemMatch owner set must preserve the conservative fallback
+-- regardless of query order: keep both id bounds and trim city.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"$and":[{"items":{"$elemMatch":{"id":"B","city":"seattle"}}},{"items.id":"A"}]},"hint":"idx_items_profile"}')
+$cmd$);
 
 -- $or branches use separate bitmap index scans, so each $elemMatch can retain
 -- the safe correlated bounds within its own branch.
@@ -165,6 +223,20 @@ SELECT document
 FROM bson_aggregation_find(
     'rct_prune_db',
     '{"find":"items","filter":{"$or":[{"items":{"$elemMatch":{"id":"A","role":"lawyer"}}},{"items":{"$elemMatch":{"id":"A","city":"seattle"}}}]},"sort":{"_id":1},"hint":"idx_items_profile"}');
+
+-- A broad $in cover adds a second owner inside each bitmap branch. Prefer each
+-- branch's equality owner so id/city/role remain exact index bounds; recheck the
+-- cover at runtime.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"items","filter":{"$and":[{"items":{"$elemMatch":{"id":{"$in":["A","B"]},"city":{"$in":["portland","seattle"]},"role":{"$in":["lawyer","customer"]}}}},{"$or":[{"items":{"$elemMatch":{"id":"A","city":"portland","role":"lawyer"}}},{"items":{"$elemMatch":{"id":"B","city":"seattle","role":"customer"}}}]}]},"hint":"idx_items_profile"}')
+$cmd$);
+SELECT document
+FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"items","filter":{"$and":[{"items":{"$elemMatch":{"id":{"$in":["A","B"]},"city":{"$in":["portland","seattle"]},"role":{"$in":["lawyer","customer"]}}}},{"$or":[{"items":{"$elemMatch":{"id":"A","city":"portland","role":"lawyer"}}},{"items":{"$elemMatch":{"id":"B","city":"seattle","role":"customer"}}}]}]},"sort":{"_id":1},"hint":"idx_items_profile"}');
 SET enable_bitmapscan TO off;
 
 -- Per-path metadata proves these dotted siblings are scalar, so both bounds
@@ -341,8 +413,58 @@ SELECT document FROM bson_aggregation_find(
     'rct_prune_db',
     '{"find":"nested_arrays","filter":{"a.b":{"$elemMatch":{"c":1,"d":2}}},"hint":"idx_nested_arrays"}');
 
+-- If any lowest-column owner has an unsupported multisegment path, preserve
+-- the conservative fallback even when an eligible owner appears first.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"nested_arrays","filter":{"$and":[{"a.b":{"$elemMatch":{"c":1,"d":2}}},{"a":{"$elemMatch":{"b.c":1,"b.d":2}}}]},"hint":"idx_nested_arrays"}')
+$cmd$);
+SELECT document FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"nested_arrays","filter":{"$and":[{"a.b":{"$elemMatch":{"c":1,"d":2}}},{"a":{"$elemMatch":{"b.c":1,"b.d":2}}}]},"hint":"idx_nested_arrays"}');
+
+-- Wildcard indexes cannot be compounded, so they remain outside reduced-
+-- correlated owner selection. Verify that multiple logical paths mapped to the
+-- one physical wildcard column retain their existing behavior.
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'rct_prune_db',
+    '{"createIndexes":"wildcard_items","indexes":[{"key":{"items.$**":1},"name":"idx_items_wildcard","enableOrderedIndex":1}]}',
+    true);
+SELECT documentdb_api.insert_one(
+    'rct_prune_db', 'wildcard_items',
+    '{"_id":1,"score":1,"items":[{"id":"A","city":"seattle"},{"id":"B","role":"customer"}]}');
+SELECT documentdb_api.insert_one(
+    'rct_prune_db', 'wildcard_items',
+    '{"_id":2,"score":2,"items":[{"id":"A","city":"portland","role":"lawyer"}]}');
+
+-- One owner with multiple wildcard-mapped quals retains its existing bounds.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"wildcard_items","filter":{"items":{"$elemMatch":{"id":"A","city":"seattle"}}},"hint":"idx_items_wildcard"}')
+$cmd$);
+SELECT document FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"wildcard_items","filter":{"items":{"$elemMatch":{"id":"A","city":"seattle"}}},"hint":"idx_items_wildcard"}');
+
+-- Multiple owners on a wildcard-only index preserve all wildcard bounds and
+-- runtime rechecks without invoking reduced-correlated owner selection.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find(
+        'rct_prune_db',
+        '{"find":"wildcard_items","filter":{"$and":[{"items":{"$elemMatch":{"id":"A","city":"seattle"}}},{"items":{"$elemMatch":{"id":"B","role":"customer"}}}]},"hint":"idx_items_wildcard"}')
+$cmd$);
+SELECT document FROM bson_aggregation_find(
+    'rct_prune_db',
+    '{"find":"wildcard_items","filter":{"$and":[{"items":{"$elemMatch":{"id":"A","city":"seattle"}}},{"items":{"$elemMatch":{"id":"B","role":"customer"}}}]},"hint":"idx_items_wildcard"}');
+
 SELECT documentdb_api.drop_collection('rct_prune_db', 'items');
 SELECT documentdb_api.drop_collection('rct_prune_db', 'full_terms');
 SELECT documentdb_api.drop_collection('rct_prune_db', 'legacy_terms');
 SELECT documentdb_api.drop_collection('rct_prune_db', 'metadata_growth');
 SELECT documentdb_api.drop_collection('rct_prune_db', 'nested_arrays');
+SELECT documentdb_api.drop_collection('rct_prune_db', 'wildcard_items');

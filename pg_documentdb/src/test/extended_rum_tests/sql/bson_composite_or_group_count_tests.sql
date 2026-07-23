@@ -118,20 +118,11 @@ SELECT document FROM bson_aggregation_pipeline('grpq_db',
 -- ============================================================================
 -- 3. COUNT: ord range AND an $and of two $elemMatch over the multi-key tags array,
 --    each with case-insensitive $regex on name and val (hint idx_tags_ord).
---    OBSERVED: a single ordered Index Scan (scanType: regular). BOTH $elemMatch name
---    predicates are pushed onto tags.name, but each is a union of its anchored /i
---    $regex AND the all-strings range ["", { }) -- a /i $regex cannot lower to a
---    tight equality -- so the effective tags.name bound is the whole string range.
---    tags.val collapses to the fully-unbounded (MinKey, MaxKey) for both. Both
---    $elemMatch are then re-applied in full as a recheck Filter (the actual $and
---    intersection). Note the tags.name Index Cond lacks the "rctBoundsPlanApplied"
---    marker that the single-$elemMatch $or branches in section 4 carry.
---    TODO: (a) tags.val should be bounded to the correlated per-element string range
---    ["", { )) rather than dropped to (MinKey, MaxKey); (b) the /i $regex should
---    lower to an equality on a case-insensitive index so tags.name/tags.val form
---    tight bounds instead of widening to the all-strings range and forcing the
---    full recheck. (Section 6 hints idx_tags_ord_ci and confirms (b) is not done yet;
---    section 8 shows equality alone achieves the tight tags.name bound.)
+--    Neither owner has a lowest-column equality, so the planner preserves both
+--    leading name bounds and trims both val bounds. Both complete predicates are
+--    re-applied as runtime filters.
+--    TODO: anchored /i regex should lower to a collation equality on a matching
+--    case-insensitive index rather than the all-strings range.
 -- ============================================================================
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
@@ -225,18 +216,10 @@ SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }');
 
 -- ============================================================================
--- 8. COUNT (EQUALITY companion to section 3): the same $and of two $elemMatch, but
---    each name/val predicate is a plain string equality instead of a /i regex
---    (hint idx_tags_ord). Confirms the /i regex -- not the $elemMatch shape -- was the
---    thing blocking a tight bound.
---    OBSERVED: a single ordered Index Scan (scanType: regular). tags.name now lowers to
---    a UNION of two point equalities ["NAME1", "NAME1"], ["NAME2", "NAME2"] -- exactly
---    the tight bound the /i regex could not produce in section 3. tags.val still
---    collapses to (MinKey, MaxKey) (the $and of two $elemMatch does not get the
---    per-element correlated bound; there is no "rctBoundsPlanApplied" marker), so both
---    $elemMatch are re-applied in full as a recheck Filter.
---    TODO: tags.val should also be bounded to the correlated per-element equality for
---    the $and-of-two-$elemMatch form (the single-$elemMatch $or form in section 9 does).
+-- 8. COUNT (EQUALITY companion to section 3): both owners have a lowest-column
+--    equality, so the planner retains the first owner's correlated
+--    (NAME1, V1) point bounds and evaluates the second owner as a runtime
+--    recheck. This demonstrates the current first-owner tie-break behavior.
 -- ============================================================================
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
