@@ -13,7 +13,7 @@ check_directory=$2
 aggregateCollectionIdStr=""
 maxCollectionIdStr=""
 
-validationExceptions="/sql/documentdb_test_helpers.sql /sql/public_api_schema.sql"
+validationExceptions="/sql/documentdb_test_helpers.sql /sql/public_api_schema.sql /sql/documentdb_guc_naming_conventions.sql /sql/documentdb_rum_guc_naming_conventions.sql"
 
 echo "Validating test file output"
 for validationFile in $(ls $check_directory/expected/*.out); do

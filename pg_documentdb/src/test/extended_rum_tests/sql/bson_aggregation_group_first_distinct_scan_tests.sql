@@ -12,6 +12,8 @@ SELECT documentdb_api.drop_collection('db', 'setup_sentinel_first');
 -- bson_aggregation_group_distinct_scan_tests.sql (which uses 20000-range).
 SET documentdb.next_collection_id TO 21000;
 SET documentdb.next_collection_index_id TO 21000;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- Primary collection: 8 documents with three distinct values of x in
 -- insertion order. The first y-value seen per x (and thus what $first
@@ -790,6 +792,7 @@ SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
 SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
+SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO off;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_first", "hint": "idx_x", "pipeline": [

@@ -960,7 +960,11 @@ TraverseBsonCore(bson_iter_t *documentIterator, const StringView *traversePath,
 		{
 			if (executionFunctions->SetTraverseResult != NULL)
 			{
-				executionFunctions->SetTraverseResult(state,
+				/* A miss while resolving an array index (inArrayContext) is an
+				 * out-of-bounds positional index, distinct from a missing field. */
+				executionFunctions->SetTraverseResult(state, inArrayContext ?
+													  TraverseBsonResult_ArrayIndexNotFound
+													  :
 													  TraverseBsonResult_PathNotFound);
 			}
 
@@ -1013,7 +1017,11 @@ TraverseBsonCore(bson_iter_t *documentIterator, const StringView *traversePath,
 	{
 		if (executionFunctions->SetTraverseResult != NULL)
 		{
-			executionFunctions->SetTraverseResult(state, TraverseBsonResult_PathNotFound);
+			/* A miss while resolving an array index (inArrayContext) is an
+			 * out-of-bounds positional index, distinct from a missing field. */
+			executionFunctions->SetTraverseResult(state, inArrayContext ?
+												  TraverseBsonResult_ArrayIndexNotFound :
+												  TraverseBsonResult_PathNotFound);
 		}
 
 		return true;
@@ -1036,6 +1044,13 @@ TraverseBsonCore(bson_iter_t *documentIterator, const StringView *traversePath,
 
 		/* if the field is an array, there's 2 possibilities, it could be an array index so try finding it as is.
 		 * Don't bother looking at it as an array index if the first character is not a digit.
+		 *
+		 * A digit-led component is treated as a positional index attempt (even non-canonical forms
+		 * like "00" or "0abc"): a miss here yields ArrayIndexNotFound (see the SetTraverseResult calls
+		 * below with inArrayContext), which the null-equality family treats as a non-match rather than
+		 * a missing field. Any refactor must keep this the ONLY branch that sets inArrayContext for an
+		 * array, and must not narrow it to canonical integers -- doing so would make an out-of-bounds
+		 * index over a scalar array incorrectly match { path: null }.
 		 */
 		if (SkipBsonArrayTraverseOptimization ||
 			(remainingPath.string[0] >= '0' && remainingPath.string[0] <= '9'))
@@ -1140,9 +1155,14 @@ TraverseBsonCore(bson_iter_t *documentIterator, const StringView *traversePath,
 	{
 		if (executionFunctions->SetTraverseResult != NULL)
 		{
+			/* A scalar reached while resolving an array index (inArrayContext), with the path
+			 * continuing past it, blocks the positional descent - distinct from a missing field. */
+			TraverseBsonResult scalarResult = inArrayContext ?
+											  TraverseBsonResult_ArrayIndexNotFound :
+											  TraverseBsonResult_PathNotFound;
 			executionFunctions->SetTraverseResult(state, dotKeyStr.string == NULL ?
 												  TraverseBsonResult_TypeMismatch :
-												  TraverseBsonResult_PathNotFound);
+												  scalarResult);
 		}
 
 		return false;

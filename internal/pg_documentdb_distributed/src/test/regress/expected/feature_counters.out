@@ -175,6 +175,8 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_co
 (0 rows)
 
 -- $group
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
  document 
 ---------------------------------------------------------------------
@@ -186,6 +188,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_co
 ---------------------------------------------------------------------
 (0 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 -- $group with $count with non-empty arg (tracks group_count_with_arg feature counter)
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": null, "e": { "$count": 1 } } }], "cursor": {} }');
@@ -193,6 +196,7 @@ ERROR:  $count:{} accumulator requires 0 arguments
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$sum": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
 ERROR:  $count:{} accumulator requires 0 arguments
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 -- $group with first/last
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$first": "$_id" }, "e": { "$last":  "$_id" } } }], "cursor": {} }');
@@ -839,6 +843,18 @@ SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
                                                                                       get_feature_counter_pretty                                                                                      
 ---------------------------------------------------------------------
  {"Feature_usage":[{"command_update" : 4}, {"command_update_one" : 4}, {"update_operator_bit" : 1}, {"update_operator_currentdate" : 1}, {"update_operator_mul" : 1}, {"update_operator_unset" : 1}]}
+(1 row)
+
+CALL documentdb_api.delete_txn_proc('db', '{"delete":"writeFC", "deletes":[{"q":{"_id":{"$eq":4}},"limit":0}]}');
+                               p_result                               | p_success 
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } } | t
+(1 row)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                         get_feature_counter_pretty                         
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_delete_proc" : 1}, {"query_operator_eq" : 1}]}
 (1 row)
 
 -- Test: Feature counter for list_databases command

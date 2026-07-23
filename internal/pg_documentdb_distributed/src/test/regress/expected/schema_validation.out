@@ -201,4 +201,29 @@ SELECT bson_dollar_project(cursorpage, '{"cursor.firstBatch.info": 0, "cursor.fi
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "schema_validation.$cmd.ListCollections", "firstBatch" : [ { "name" : "col7", "type" : "collection", "options" : { "validator" : { "$jsonSchema" : { "bsonType" : "object", "properties" : { "a" : { "bsonType" : "int", "description" : "This is field a" } } } }, "validationLevel" : "strict", "validationAction" : "error" } } ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
 (1 row)
 
+-- oneOf: two disjoint sub-schemas
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_oneof1", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"v": {"oneOf": [{"bsonType": "int"}, {"bsonType": "string"}]}}}}}');
+NOTICE:  creating collection
+         create_collection_view         
+---------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- oneOf: nested properties / required
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_oneof2", "validator": {"$jsonSchema": {"oneOf": [{"bsonType": "object", "required": ["a"]}, {"bsonType": "object", "required": ["b"]}]}}}');
+NOTICE:  creating collection
+         create_collection_view         
+---------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- oneOf invalid: not an array
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_oneof_bad1", "validator": {"$jsonSchema": {"oneOf": {"bsonType": "int"}}}}');
+ERROR:  $jsonSchema keyword 'oneOf' must be an array
+-- oneOf invalid: empty array
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_oneof_bad2", "validator": {"$jsonSchema": {"oneOf": []}}}');
+ERROR:  $jsonSchema keyword 'oneOf' cannot be an empty array
+-- oneOf invalid: element is not an object
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_oneof_bad3", "validator": {"$jsonSchema": {"oneOf": [{"bsonType": "int"}, "string"]}}}');
+ERROR:  $jsonSchema keyword 'oneOf' requires that each element of the array is an object, but found a string
    

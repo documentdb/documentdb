@@ -45,6 +45,19 @@ int ShardingMaxChunks = DEFAULT_SHARDING_MAX_CHUNKS;
 #define DEFAULT_QUERY_PLAN_CACHE_SIZE_LIMIT 100
 int QueryPlanCacheSizeLimit = DEFAULT_QUERY_PLAN_CACHE_SIZE_LIMIT;
 
+/* Cap on the number of ordered scans merged for an $in prefix. */
+#define DEFAULT_MAX_MERGE_SORT_IN_VALUES 200
+
+/*
+ * Hard upper bound for the max_merge_sort_in_values GUC. The cap governs how many
+ * ordered index scans are fanned out into a single MergeAppend, which costs
+ * O(N) planner and executor memory/CPU, so the configurable value is bounded
+ * well below INT_MAX to keep a misconfiguration from building a pathologically
+ * large plan.
+ */
+#define MAX_MERGE_SORT_IN_VALUES_LIMIT SHRT_MAX
+int MaxMergeSortInValues = DEFAULT_MAX_MERGE_SORT_IN_VALUES;
+
 /* TODO: Raise this back to 100,000 once we can optimize sub-transaction */
 /* handling with multi-node clusters. */
 #define DEFAULT_MAX_WRITE_BATCH_SIZE 25000
@@ -56,6 +69,14 @@ int BatchWriteSubTransactionCount = DEFAULT_BATCH_WRITE_SUB_TRANSACTION_COUNT;
 
 #define DEFAULT_BATCH_UPDATE_LOCK_TIMEOUT_MS 20
 int BatchUpdateLockTimeoutMs = DEFAULT_BATCH_UPDATE_LOCK_TIMEOUT_MS;
+
+/*
+ * Default per-call row estimate the distinct-unwind planner support function
+ * uses for a document whose unwound path holds an array. Exposed as a GUC so
+ * the expansion factor can be tuned without a code change.
+ */
+#define DEFAULT_DISTINCT_UNWIND_DEFAULT_ROWS 10
+int DistinctUnwindDefaultRows = DEFAULT_DISTINCT_UNWIND_DEFAULT_ROWS;
 
 /*
  * Default maxAwaitTimeMS for tailable cursors on getMore when the client
@@ -145,6 +166,9 @@ bool EnableGeonearForceIndexPushdown = DEFAULT_ENABLE_GEONEAR_FORCE_INDEX_PUSHDO
 
 #define DEFAULT_ENABLE_EXTENDED_EXPLAIN_PLANS false
 bool EnableExtendedExplainPlans = DEFAULT_ENABLE_EXTENDED_EXPLAIN_PLANS;
+
+#define DEFAULT_ENABLE_DEFAULT_EXTENDED_EXPLAIN true
+bool EnableDefaultExtendedExplain = DEFAULT_ENABLE_DEFAULT_EXTENDED_EXPLAIN;
 
 /* Note that this is explicitly left disabled
  * This is primarily because the operator that sets default_transaction_readonly
@@ -244,6 +268,22 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.max_merge_sort_in_values", newGucPrefix),
+		gettext_noop(
+			"The maximum number of ordered index scans (product of $in array lengths) that may be merged for an $in-prefixed sort. Above this the optimization is skipped."),
+		NULL, &MaxMergeSortInValues,
+		DEFAULT_MAX_MERGE_SORT_IN_VALUES, 1, MAX_MERGE_SORT_IN_VALUES_LIMIT,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.distinct_unwind_default_rows", newGucPrefix),
+		gettext_noop(
+			"The per-call row estimate the distinct-unwind planner support function uses for a document whose unwound path holds an array."),
+		NULL, &DistinctUnwindDefaultRows,
+		DEFAULT_DISTINCT_UNWIND_DEFAULT_ROWS, 1, INT_MAX,
+		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.forceUseIndexIfAvailable", prefix),
@@ -465,6 +505,16 @@ InitializeSystemConfigurations(const char *prefix, const char *newGucPrefix)
 			"Enables extended explain plans for queries. "
 			"This will include additional information in the explain plans."),
 		NULL, &EnableExtendedExplainPlans, DEFAULT_ENABLE_EXTENDED_EXPLAIN_PLANS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_default_extended_explain", newGucPrefix),
+		gettext_noop(
+			"Enables extended explain plans by default when running EXPLAIN. "
+			"When enabled, the extended explain hook turns on extended explain "
+			"plans for the duration of the explain so the additional annotations "
+			"are always produced."),
+		NULL, &EnableDefaultExtendedExplain, DEFAULT_ENABLE_DEFAULT_EXTENDED_EXPLAIN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomIntVariable(

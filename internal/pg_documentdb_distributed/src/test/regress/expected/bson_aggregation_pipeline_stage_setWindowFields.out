@@ -2,6 +2,8 @@ SET search_path TO documentdb_api_catalog;
 SET citus.next_shard_id TO 455000;
 SET documentdb.next_collection_id TO 4550;
 SET documentdb.next_collection_index_id TO 4550;
+SET documentdb.enableNewMinMaxAccumulators TO off;
+SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT 1 from documentdb_api.drop_collection('db','setWindowFields');
  ?column? 
 ---------------------------------------------------------------------
@@ -348,7 +350,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 74_1
+   ->  Distributed Subplan 79_1
          ->  WindowAgg
                Output: remote_scan.document, bsonsum(documentdb_api_internal.bson_expression_get(remote_scan.total, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)) OVER (?), remote_scan."?partitionBy?"
                ->  Sort
@@ -366,11 +368,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('total'::text, total), false) AS document FROM (SELECT intermediate_result.document, intermediate_result.total FROM read_intermediate_result('74_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, total documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('total'::text, total), false) AS document FROM (SELECT intermediate_result.document, intermediate_result.total FROM read_intermediate_result('79_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, total documentdb_core.bson)) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                Output: documentdb_api_internal.bson_dollar_merge_documents(intermediate_result.document, documentdb_core.bson_repath_and_build('total'::text, intermediate_result.total), false)
-               Function Call: read_intermediate_result('74_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('79_1'::text, 'binary'::citus_copy_format)
 (25 rows)
 
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
@@ -441,7 +443,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 93_1
+   ->  Distributed Subplan 99_1
          ->  WindowAgg
                Output: remote_scan.document, bsonsum(documentdb_api_internal.bson_expression_get(remote_scan.total, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)) OVER (?), remote_scan."?partitionBy?"
                ->  Sort
@@ -459,11 +461,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('total'::text, total), false) AS document FROM (SELECT intermediate_result.document, intermediate_result.total FROM read_intermediate_result('93_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, total documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('total'::text, total), false) AS document FROM (SELECT intermediate_result.document, intermediate_result.total FROM read_intermediate_result('99_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, total documentdb_core.bson)) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                Output: documentdb_api_internal.bson_dollar_merge_documents(intermediate_result.document, documentdb_core.bson_repath_and_build('total'::text, intermediate_result.total), false)
-               Function Call: read_intermediate_result('93_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('99_1'::text, 'binary'::citus_copy_format)
 (25 rows)
 
 ---------------------------------------------------------------------
@@ -1292,6 +1294,7 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
  { "_id" : { "$numberInt" : "12" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "512" }, "date" : { "$date" : { "$numberLong" : "1718842600000" } }, "totalInGroup" : { "$numberInt" : "1" } }
 (13 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 ---------------------------------------------------------------------
 -- $count accumulator tests
@@ -2088,6 +2091,7 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
  { "_id" : { "$numberInt" : "12" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "512" }, "date" : { "$date" : { "$numberLong" : "1718842600000" } }, "totalInGroup" : { "$numberDouble" : "512.0" } }
 (13 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 ---------------------------------------------------------------------
 -- $push accumulator tests
@@ -8829,6 +8833,7 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
  { "_id" : { "$numberInt" : "12" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "512" }, "date" : { "$date" : { "$numberLong" : "1718842600000" } }, "totalInGroup" : { "$numberInt" : "512" } }
 (13 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 ---------------------------------------------------------------------
 -- $max accumulator tests
@@ -9656,6 +9661,7 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db',
  { "_id" : { "$numberInt" : "12" }, "a" : "ghi", "cost" : { "$numberInt" : "4" }, "quantity" : { "$numberInt" : "512" }, "date" : { "$date" : { "$numberLong" : "1718842600000" } }, "totalInGroup" : { "$numberInt" : "512" } }
 (13 rows)
 
+SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 -- Tests for $last
 SELECT documentdb_api.insert_one('db','lastSetWindowFields','{ "_id": 1, "storeId": 1, "area": "Delhi", "company": "ABC Cares", "lastUpdated": { "$date" : { "$numberLong" : "1756720800000" } }, "status": "open" }', NULL);

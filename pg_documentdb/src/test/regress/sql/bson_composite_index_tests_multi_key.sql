@@ -54,6 +54,35 @@ SELECT * FROM multi_key_tests.gin_bson_get_composite_path_generated_terms('{ "a"
 SELECT * FROM multi_key_tests.gin_bson_get_composite_path_generated_terms('{ "a": [ { "b": 2 }, { "d": 2 } ] }', '[ "a.b", "a.c" ]', 2000, false);
 SELECT * FROM multi_key_tests.gin_bson_get_composite_path_generated_terms('{ "a": [ { "b": 2 }, { "d": 2, "c": 5 } ] }', '[ "a.b", "a.c" ]', 2000, false);
 
+-- Reduced-correlated all-undefined dedup: sub-document array positions that
+-- produce no terms for any composite path (an empty {} or a document lacking the
+-- leaf fields) contribute the single all-undefined diagonal tuple. Multiple such
+-- positions must collapse to ONE all-undefined tuple so the reduced term set does
+-- not grow with the number of no-leaf sub-documents (which would regress write
+-- cost). Each of the following emits exactly one { "$": [ undefined, undefined ] }
+-- tuple regardless of how many empty / no-leaf sub-documents are present.
+SELECT * FROM multi_key_tests.gin_bson_get_composite_path_generated_terms('{ "a": [ { }, { }, { } ] }', '[ "a.b", "a.c" ]', 2000, false);
+SELECT * FROM multi_key_tests.gin_bson_get_composite_path_generated_terms('{ "a": [ { }, { }, { }, { }, { }, { "b": 5 } ] }', '[ "a.b", "a.c" ]', 2000, false);
+SELECT * FROM multi_key_tests.gin_bson_get_composite_path_generated_terms('{ "a": [ { "d": 1 }, { "d": 2 }, { "d": 3 }, { "b": 5 } ] }', '[ "a.b", "a.c" ]', 2000, false);
+-- A single empty sub-document alongside a valued one still keeps its all-undefined
+-- diagonal tuple (the regression guard for the original dropped-position bug).
+SELECT * FROM multi_key_tests.gin_bson_get_composite_path_generated_terms('{ "a": [ { }, { "b": 5 } ] }', '[ "a.b", "a.c" ]', 2000, false);
+-- Scalar / null array positions do NOT occupy a diagonal slot (they cannot reach
+-- the composite leaf sub-paths); only the valued sub-document tuple is emitted.
+SELECT * FROM multi_key_tests.gin_bson_get_composite_path_generated_terms('{ "a": [ 5, { "b": 5 } ] }', '[ "a.b", "a.c" ]', 2000, false);
+SELECT * FROM multi_key_tests.gin_bson_get_composite_path_generated_terms('{ "a": [ null, { "b": 5 } ] }', '[ "a.b", "a.c" ]', 2000, false);
+
+-- Deeper leaf (a.b.c, a.b.d) with a { b: null } sub-document position. A
+-- { b: null } element at the "a" array level is a no-leaf position (b is null, so
+-- the leaf sub-paths a.b.c / a.b.d cannot be reached), so it occupies the single
+-- all-undefined diagonal tuple; the populated sibling { b: { c: 5, d: 6 } } emits
+-- the [ 5, 6 ] tuple. A nested b-array whose null lives INSIDE b
+-- ({ b: [ { c, d }, null ] }) does NOT add a diagonal slot at the "a" level, so
+-- when that is the only "a" element only the [ 5, 6 ] tuple is produced.
+SELECT * FROM multi_key_tests.gin_bson_get_composite_path_generated_terms('{ "a": [ { "b": null }, { "b": { "c": 5, "d": 6 } } ] }', '[ "a.b.c", "a.b.d" ]', 2000, false);
+SELECT * FROM multi_key_tests.gin_bson_get_composite_path_generated_terms('{ "a": [ { "b": null }, { "b": [ { "c": 5, "d": 6 }, null ] } ] }', '[ "a.b.c", "a.b.d" ]', 2000, false);
+SELECT * FROM multi_key_tests.gin_bson_get_composite_path_generated_terms('{ "a": [ { "b": [ { "c": 5, "d": 6 }, null ] } ] }', '[ "a.b.c", "a.b.d" ]', 2000, false);
+
 -- try with many dotted paths
 SELECT * FROM multi_key_tests.gin_bson_get_composite_path_generated_terms('{ "a": [ { "b": { "c": [ { "d": [ 3, 4 ], "e": 5 }, { "d": 6, "e": 7 } ] } }, { "b": { "c": { "d": [ 1, 2 ], "e": 3 } } } ] }', '[ "a.b.c.d", "a.b.c.e" ]', 2000, false);
 

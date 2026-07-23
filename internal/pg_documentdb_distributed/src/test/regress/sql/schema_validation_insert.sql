@@ -221,3 +221,48 @@ SELECT * FROM aggregate_cursor_first_page('schema_validation_insertion', '{ "agg
 SELECT shard_key_value, object_id, document from documentdb_api.collection('schema_validation_insertion','col_out_tar') ORDER BY shard_key_value, object_id;
 SELECT * FROM aggregate_cursor_first_page('schema_validation_insertion', '{ "aggregate": "col_source", "pipeline": [ { "$match": { "_id": "1" }}, {"$out" : "col_out_tar" } ], "cursor": { "batchSize": 1 } }', 4294967294);
 SELECT shard_key_value, object_id, document from documentdb_api.collection('schema_validation_insertion','col_out_tar') ORDER BY shard_key_value, object_id;
+
+---------------------------------------------oneOf keyword------------------------------------------------------
+-- Top-level oneOf with two disjoint sub-schemas; a document must match exactly one.
+-- A: object with required "a" of type int
+-- B: object with required "b" of type string
+SELECT documentdb_api.create_collection_view('schema_validation_insertion', '{ "create": "col_oneof", "validator": {"$jsonSchema": {"oneOf": [ {"bsonType": "object", "required": ["a"], "properties": {"a": {"bsonType": "int"}}}, {"bsonType": "object", "required": ["b"], "properties": {"b": {"bsonType": "string"}}} ]}}}');
+-- matches only sub-schema A -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_oneof", "documents":[{"_id":"1", "a":1}]}');
+-- matches only sub-schema B -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_oneof", "documents":[{"_id":"2", "b":"hello"}]}');
+-- matches both sub-schemas -> fail (oneOf requires exactly one match)
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_oneof", "documents":[{"_id":"3", "a":1, "b":"hello"}]}');
+-- matches neither: "a" has wrong type and "b" is absent -> fail
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_oneof", "documents":[{"_id":"4", "a":"not-int"}]}');
+-- matches neither: no relevant fields present -> fail
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_oneof", "documents":[{"_id":"5", "c":1}]}');
+SELECT shard_key_value, object_id, document from documentdb_api.collection('schema_validation_insertion','col_oneof') ORDER BY shard_key_value, object_id;
+
+-- Field-level oneOf: property "v" must match exactly one of {int, string}.
+-- This exercises the property-recursion validation path, which is distinct from the top-level oneOf path above.
+SELECT documentdb_api.create_collection_view('schema_validation_insertion', '{ "create": "col_oneof_field", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"v": {"oneOf": [ {"bsonType": "int"}, {"bsonType": "string"} ]}}}}}');
+-- v is int -> matches only the int sub-schema -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_oneof_field", "documents":[{"_id":"1", "v":1}]}');
+-- v is string -> matches only the string sub-schema -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_oneof_field", "documents":[{"_id":"2", "v":"hello"}]}');
+-- v is double -> matches neither int nor string -> fail
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_oneof_field", "documents":[{"_id":"3", "v":1.5}]}');
+-- v is bool -> matches neither int nor string -> fail
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_oneof_field", "documents":[{"_id":"4", "v":true}]}');
+-- v absent -> the property schema is not evaluated -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_oneof_field", "documents":[{"_id":"5", "w":1}]}');
+SELECT shard_key_value, object_id, document from documentdb_api.collection('schema_validation_insertion','col_oneof_field') ORDER BY shard_key_value, object_id;
+
+-- oneOf combined with a sibling keyword (properties) at the same level; both constraints must hold (AND).
+-- oneOf requires exactly one of {has "a", has "b"}; the sibling properties requires "n" to be int when present.
+SELECT documentdb_api.create_collection_view('schema_validation_insertion', '{ "create": "col_oneof_and", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"n": {"bsonType": "int"}}, "oneOf": [ {"required": ["a"]}, {"required": ["b"]} ]}}}');
+-- sibling properties holds (n is int) AND oneOf holds (only "a") -> succeed
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_oneof_and", "documents":[{"_id":"1", "n":1, "a":1}]}');
+-- oneOf holds (only "a") but sibling properties fails (n is string) -> fail
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_oneof_and", "documents":[{"_id":"2", "n":"x", "a":1}]}');
+-- sibling properties holds (n is int) but oneOf fails (matches both "a" and "b") -> fail
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_oneof_and", "documents":[{"_id":"3", "n":1, "a":1, "b":2}]}');
+-- sibling properties holds (n is int) but oneOf fails (matches neither "a" nor "b") -> fail
+SELECT documentdb_api.insert('schema_validation_insertion', '{"insert":"col_oneof_and", "documents":[{"_id":"4", "n":1, "c":1}]}');
+SELECT shard_key_value, object_id, document from documentdb_api.collection('schema_validation_insertion','col_oneof_and') ORDER BY shard_key_value, object_id;

@@ -105,6 +105,10 @@ bool RumFailOnLostPath = DEFAULT_RUM_FAIL_ON_LOST_PATH;
 #define DEFAULT_FORCE_COLL_STATS_DATA_COLLECTION false
 bool ForceCollStatsDataCollection = DEFAULT_FORCE_COLL_STATS_DATA_COLLECTION;
 
+/* On by default; can be turned off in tests to exercise the non-live-tuples count path */
+#define DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT true
+bool UsePgStatsLiveTuplesForCount = DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT;
+
 #define DEFAULT_FORCE_BITMAP_SCAN_FOR_LOOKUP false
 bool ForceBitmapScanForLookup = DEFAULT_FORCE_BITMAP_SCAN_FOR_LOOKUP;
 
@@ -402,6 +406,14 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 		gettext_noop(
 			"Whether to force fetching metadata during collstats operations."),
 		NULL, &ForceCollStatsDataCollection, DEFAULT_FORCE_COLL_STATS_DATA_COLLECTION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.use_pg_stats_live_tuples_for_count", newGucPrefix),
+		gettext_noop(
+			"Whether to use pg_stat_all_tables live tuples for count in collStats."),
+		NULL, &UsePgStatsLiveTuplesForCount,
+		DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

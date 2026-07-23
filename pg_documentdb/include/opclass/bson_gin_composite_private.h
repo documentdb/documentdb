@@ -29,6 +29,13 @@ typedef struct IndexRecheckArgs
 	Pointer queryDatum;
 
 	BsonIndexStrategy queryStrategy;
+
+	/*
+	 * Multi-key status of the queried path. On a HasNoArrays path the $ne/$nin null
+	 * recheck is exact (an undefined term can only be missing/literal null);
+	 * otherwise it defers to the heap recheck (empty array matches $ne null).
+	 */
+	IndexMultiKeyStatus pathMultiKeyState;
 } IndexRecheckArgs;
 
 typedef struct CompositeIndexBounds
@@ -211,7 +218,9 @@ void ParseOperatorStrategy(const char **indexPaths, uint32_t *indexPathLengths,
 						   BsonIndexStrategy queryStrategy,
 						   ScanDirection *scanDirection,
 						   VariableIndexBounds *indexBounds,
-						   const char *indexCollation);
+						   const char *indexCollation,
+						   bool hasArrayPaths, uint32_t multiKeyBitMask,
+						   bool isGlobalIndexMetadataTracked);
 
 void UpdateRunDataForVariableBounds(CompositeQueryRunData *runData,
 									PathScanTermMap *termMap,

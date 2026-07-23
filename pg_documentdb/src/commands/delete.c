@@ -16,6 +16,8 @@
 #include "executor/spi.h"
 #include "lib/stringinfo.h"
 #include "utils/builtins.h"
+#include "utils/portal.h"
+#include "utils/snapmgr.h"
 
 #include "io/bson_core.h"
 #include "io/bsonvalue_utils.h"
@@ -35,6 +37,7 @@
 #include "utils/error_utils.h"
 #include "utils/documentdb_errors.h"
 #include "utils/feature_counter.h"
+#include "utils/index_utils.h"
 #include "utils/version_utils.h"
 #include "utils/query_utils.h"
 #include "api_hooks.h"
@@ -94,11 +97,15 @@ typedef struct
 
 	/* list of write errors for each deletion, or NIL */
 	List *writeErrors;
+
+	/* Memory context to write results/errors to */
+	MemoryContext resultMemoryContext;
 } BatchDeletionResult;
 
 PG_FUNCTION_INFO_V1(command_delete);
 PG_FUNCTION_INFO_V1(command_delete_one);
 PG_FUNCTION_INFO_V1(command_delete_worker);
+PG_FUNCTION_INFO_V1(command_delete_txn_proc);
 
 
 static BatchDeletionSpec * BuildBatchDeletionSpec(bson_iter_t *deleteCommandIter,
@@ -113,7 +120,18 @@ static DeletionSpec * BuildDeletionSpec(bson_iter_t *deletionIterator,
 static void ProcessBatchDeletion(MongoCollection *collection,
 								 BatchDeletionSpec *batchSpec,
 								 bool forceInline, text *transactionId,
-								 BatchDeletionResult *batchResult);
+								 BatchDeletionResult *batchResult,
+								 WriteMode writeMode);
+static bool DoSingleDeletion(MongoCollection *collection,
+							 DeletionSpec *deletionSpec,
+							 bool forceInline, text *transactionId,
+							 BatchDeletionResult *batchResult,
+							 int deleteIndex);
+static bool DoSingleDeletionWithSubTxn(MongoCollection *collection,
+									   DeletionSpec *deletionSpec,
+									   bool forceInline, text *transactionId,
+									   BatchDeletionResult *batchResult,
+									   int deleteIndex);
 
 static pgbson * ProcessBatchDeleteUnsharded(MongoCollection *collection,
 											BatchDeletionSpec *batchSpec,
@@ -157,6 +175,8 @@ static void DeserializeDeleteWorkerSpecForUnsharded(const
 													bson_value_t *deleteInternalSpec,
 													BatchDeletionSpec *batchDeletionSpec);
 static pgbson * SerializeDeleteWorkerSpecForUnsharded(BatchDeletionSpec *batchSpec);
+static Datum CommandDeleteCore(PG_FUNCTION_ARGS, WriteMode writeMode,
+							   MemoryContext allocContext);
 
 
 /*
@@ -164,6 +184,42 @@ static pgbson * SerializeDeleteWorkerSpecForUnsharded(BatchDeletionSpec *batchSp
  */
 Datum
 command_delete(PG_FUNCTION_ARGS)
+{
+	ReportFeatureUsage(FEATURE_COMMAND_DELETE);
+	PG_RETURN_DATUM(CommandDeleteCore(fcinfo, WriteMode_Txn_Func, CurrentMemoryContext));
+}
+
+
+/*
+ * command_delete_txn_proc handles the delete command invocation through a PostgreSQL procedure.
+ * Skips subtransactions for single-document deletes, reducing WAL overhead.
+ * Cannot be used inside an explicit client transaction block.
+ */
+Datum
+command_delete_txn_proc(PG_FUNCTION_ARGS)
+{
+	ReportFeatureUsage(FEATURE_COMMAND_DELETE_PROC);
+
+	bool isTopLevel = true;
+	if (IsInTransactionBlock(isTopLevel))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_OPERATIONNOTSUPPORTEDINTRANSACTION),
+						errmsg("the delete procedure cannot be used in transactions."
+							   " Please use the delete function instead")));
+	}
+
+	/* Use function context as a stable memory context to store errors across transaction aborts */
+	PG_RETURN_DATUM(CommandDeleteCore(fcinfo, WriteMode_Txn_Proc,
+									  fcinfo->flinfo->fn_mcxt));
+}
+
+
+/*
+ * CommandDeleteCore is the shared implementation for both
+ * command_delete (function) and command_delete_txn_proc (procedure).
+ */
+static Datum
+CommandDeleteCore(PG_FUNCTION_ARGS, WriteMode writeMode, MemoryContext allocContext)
 {
 	if (PG_ARGISNULL(1))
 	{
@@ -180,8 +236,6 @@ command_delete(PG_FUNCTION_ARGS)
 	{
 		transactionId = PG_GETARG_TEXT_P(3);
 	}
-
-	ReportFeatureUsage(FEATURE_COMMAND_DELETE);
 
 	/* fetch TupleDesc for return value, not interested in resultTypeId */
 	Oid *resultTypeId = NULL;
@@ -224,9 +278,10 @@ command_delete(PG_FUNCTION_ARGS)
 			collection->shardKey != NULL || collection->shardTableName[0] != '\0')
 		{
 			BatchDeletionResult batchResult = { 0 };
+			batchResult.resultMemoryContext = allocContext;
 			bool forceInline = false;
 			ProcessBatchDeletion(collection, batchSpec, forceInline, transactionId,
-								 &batchResult);
+								 &batchResult, writeMode);
 			batchResponse = BuildResponseMessage(&batchResult);
 		}
 		else
@@ -239,6 +294,7 @@ command_delete(PG_FUNCTION_ARGS)
 	else
 	{
 		BatchDeletionResult batchResult = { 0 };
+		batchResult.resultMemoryContext = allocContext;
 		StringView collectionView = {
 			.length = VARSIZE_ANY_EXHDR(collectionNameDatum),
 			.string = VARDATA_ANY(collectionNameDatum)
@@ -606,95 +662,179 @@ BuildDeletionSpec(bson_iter_t *deletionIter, const bson_value_t *variableSpec)
 
 /*
  * ProcessBatchDeletion iterates over the deletes array and executes each
- * deletion in a subtransaction, to allow us to continue after an error.
+ * deletion, handling errors appropriately based on the WriteMode.
  *
- * If batchSpec->isOrdered is false, we continue with remaining tasks an
+ * If batchSpec->isOrdered is false, we continue with remaining tasks on
  * error.
  *
- * We Use subtransactions which effectively
- * does each delete operation in a separate transaction.
+ * When writeMode is WriteMode_Txn_Proc and there is a single delete without
+ * a transactionId, subtransactions are skipped: the whole transaction is
+ * aborted and restarted on error, reducing WAL overhead.
+ * Otherwise, each delete runs in its own subtransaction.
  */
 static void
 ProcessBatchDeletion(MongoCollection *collection, BatchDeletionSpec *batchSpec,
 					 bool forceInline, text *transactionId,
-					 BatchDeletionResult *batchResult)
+					 BatchDeletionResult *batchResult,
+					 WriteMode writeMode)
 {
 	PostProcessDeleteBatchSpec(batchSpec);
 	List *deletions = batchSpec->deletionsProcessed;
 	bool isOrdered = batchSpec->isOrdered;
 
-	/*
-	 * Execute the query inside a sub-transaction, so we can restore order
-	 * after a failure.
-	 */
-	MemoryContext oldContext = CurrentMemoryContext;
-	ResourceOwner oldOwner = CurrentResourceOwner;
-
 	batchResult->ok = 1;
 	batchResult->rowsDeleted = 0;
 	batchResult->writeErrors = NIL;
 
-	/* declared volatile because of the longjmp in PG_CATCH */
-	volatile int deleteIndex = 0;
+	if (list_length(deletions) == 1)
+	{
+		int deleteIndex = 0;
+		DeletionSpec *deletionSpec = linitial(deletions);
+		if (writeMode == WriteMode_Txn_Proc && transactionId == NULL)
+		{
+			DoSingleDeletion(collection, deletionSpec, forceInline,
+							 transactionId, batchResult, deleteIndex);
+		}
+		else
+		{
+			DoSingleDeletionWithSubTxn(collection, deletionSpec, forceInline,
+									   transactionId, batchResult, deleteIndex);
+		}
+		return;
+	}
 
+	/* Multiple deletions: always use subtransactions for each */
+	int deleteIndex = 0;
 	ListCell *deletionCell = NULL;
 	foreach(deletionCell, deletions)
 	{
 		CHECK_FOR_INTERRUPTS();
 
 		DeletionSpec *deletionSpec = lfirst(deletionCell);
-
-		/* declared volatile because of the longjmp in PG_CATCH */
-		volatile uint64 rowsDeleted = 0;
-		volatile bool isSuccess = false;
-
-		/* use a subtransaction to correctly handle failures */
-		BeginInternalSubTransaction(NULL);
-
-		PG_TRY();
-		{
-			rowsDeleted = ProcessDeletion(collection, deletionSpec, forceInline,
-										  transactionId);
-
-			/* Commit the inner transaction, return to outer xact context */
-			ReleaseCurrentSubTransaction();
-			MemoryContextSwitchTo(oldContext);
-			CurrentResourceOwner = oldOwner;
-
-			isSuccess = true;
-		}
-		PG_CATCH();
-		{
-			MemoryContextSwitchTo(oldContext);
-			ErrorData *errorData = CopyErrorDataAndFlush();
-
-			/* Abort inner transaction */
-			RollbackAndReleaseCurrentSubTransaction();
-			MemoryContextSwitchTo(oldContext);
-			CurrentResourceOwner = oldOwner;
-
-			if (IsOperatorInterventionError(errorData))
-			{
-				ReThrowError(errorData);
-			}
-
-			batchResult->writeErrors = lappend(batchResult->writeErrors,
-											   GetWriteErrorFromErrorData(errorData,
-																		  deleteIndex));
-
-			isSuccess = false;
-		}
-		PG_END_TRY();
+		bool isSuccess = DoSingleDeletionWithSubTxn(collection, deletionSpec,
+													forceInline, transactionId,
+													batchResult, deleteIndex);
+		deleteIndex++;
 
 		if (!isSuccess && isOrdered)
 		{
 			/* stop trying delete operations after a failure if using ordered:true */
 			break;
 		}
+	}
+}
+
+
+/*
+ * Performs a single deletion without a subtransaction.
+ * On failure, aborts the current transaction and starts a new one.
+ * Applicable only for deletes invoked via a procedure (WriteMode_Txn_Proc).
+ */
+static bool
+DoSingleDeletion(MongoCollection *collection,
+				 DeletionSpec *deletionSpec,
+				 bool forceInline, text *transactionId,
+				 BatchDeletionResult *batchResult,
+				 int deleteIndex)
+{
+	/* declared volatile because of the longjmp in PG_CATCH */
+	volatile bool isSuccess = false;
+	volatile uint64 rowsDeleted = 0;
+
+	PG_TRY();
+	{
+		rowsDeleted = ProcessDeletion(collection, deletionSpec, forceInline,
+									  transactionId);
+		batchResult->rowsDeleted += rowsDeleted;
+		isSuccess = true;
+	}
+	PG_CATCH();
+	{
+		MemoryContext oldContext = MemoryContextSwitchTo(
+			batchResult->resultMemoryContext);
+		ErrorData *errorData = CopyErrorDataAndFlush();
+		MemoryContextSwitchTo(oldContext);
+
+		if (IsOperatorInterventionError(errorData))
+		{
+			ReThrowError(errorData);
+		}
+
+		PopAllActiveSnapshots();
+		AbortCurrentTransaction();
+		StartTransactionCommand();
+
+		oldContext = MemoryContextSwitchTo(batchResult->resultMemoryContext);
+		batchResult->writeErrors = lappend(batchResult->writeErrors,
+										   GetWriteErrorFromErrorData(errorData,
+																	  deleteIndex));
+		MemoryContextSwitchTo(oldContext);
+		FreeErrorData(errorData);
+		isSuccess = false;
+	}
+	PG_END_TRY();
+	return isSuccess;
+}
+
+
+/*
+ * Performs a single deletion in a subtransaction, to allow us to continue
+ * after an error.
+ */
+static bool
+DoSingleDeletionWithSubTxn(MongoCollection *collection,
+						   DeletionSpec *deletionSpec,
+						   bool forceInline, text *transactionId,
+						   BatchDeletionResult *batchResult,
+						   int deleteIndex)
+{
+	/* declared volatile because of the longjmp in PG_CATCH */
+	volatile bool isSuccess = false;
+	volatile uint64 rowsDeleted = 0;
+
+	/* use a subtransaction to correctly handle failures */
+	MemoryContext oldContext = CurrentMemoryContext;
+	ResourceOwner oldOwner = CurrentResourceOwner;
+	BeginInternalSubTransaction(NULL);
+
+	PG_TRY();
+	{
+		rowsDeleted = ProcessDeletion(collection, deletionSpec, forceInline,
+									  transactionId);
+
+		/* Commit the inner transaction, return to outer xact context */
+		ReleaseCurrentSubTransaction();
+		MemoryContextSwitchTo(oldContext);
+		CurrentResourceOwner = oldOwner;
 
 		batchResult->rowsDeleted += rowsDeleted;
-		deleteIndex++;
+		isSuccess = true;
 	}
+	PG_CATCH();
+	{
+		MemoryContextSwitchTo(oldContext);
+		ErrorData *errorData = CopyErrorDataAndFlush();
+
+		/* Abort inner transaction */
+		RollbackAndReleaseCurrentSubTransaction();
+		MemoryContextSwitchTo(oldContext);
+		CurrentResourceOwner = oldOwner;
+
+		if (IsOperatorInterventionError(errorData))
+		{
+			ReThrowError(errorData);
+		}
+
+		MemoryContextSwitchTo(batchResult->resultMemoryContext);
+		batchResult->writeErrors = lappend(batchResult->writeErrors,
+										   GetWriteErrorFromErrorData(errorData,
+																	  deleteIndex));
+		MemoryContextSwitchTo(oldContext);
+		FreeErrorData(errorData);
+		isSuccess = false;
+	}
+	PG_END_TRY();
+	return isSuccess;
 }
 
 
@@ -1219,6 +1359,7 @@ command_delete_worker(PG_FUNCTION_ARGS)
 	{
 		BatchDeletionSpec batchDeletionSpec = { 0 };
 		BatchDeletionResult result = { 0 };
+		result.resultMemoryContext = CurrentMemoryContext;
 		DeserializeDeleteWorkerSpecForUnsharded(&commandElement.bsonValue,
 												&batchDeletionSpec);
 		batchDeletionSpec.deletionSequence = specDocuments;
@@ -1228,7 +1369,7 @@ command_delete_worker(PG_FUNCTION_ARGS)
 
 		bool forceInline = true;
 		ProcessBatchDeletion(&mongoCollection, &batchDeletionSpec, forceInline,
-							 transactionId, &result);
+							 transactionId, &result, WriteMode_Txn_Func);
 		serializedResult = BuildResponseMessage(&result);
 	}
 	else

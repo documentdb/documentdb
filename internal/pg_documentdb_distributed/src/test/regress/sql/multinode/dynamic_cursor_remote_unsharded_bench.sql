@@ -15,7 +15,6 @@ SET citus.next_shard_id TO 4300000;
 SET documentdb.next_collection_index_id TO 43000;
 
 SET documentdb.enableDynamicCursors TO on;
-SET documentdb.enableIndexOnlyScan TO on;
 SET documentdb.enableIndexOnlyScanForFindProject TO on;
 SET enable_seqscan TO off;
 

@@ -32,6 +32,7 @@
 #include "collation/collation.h"
 
 extern bool EnableAddToSetAggregationRewrite;
+extern bool EnableMinMaxSkipNullValues;
 extern bool BsonTextUseJsonRepresentation;
 
 /* --------------------------------------------------------- */
@@ -105,6 +106,7 @@ static Datum ParseAndReturnMergeObjectsTree(BsonObjectAggState *state);
 static Datum bson_maxminn_transition(PG_FUNCTION_ARGS, bool isMaxN);
 static void BsonArrayAggFinalCore(BsonArrayAggState *state,
 								  pgbson_array_writer *arrayWriter);
+static bool CanSkipNullInMinMax(void);
 
 void DeserializeBinaryHeapState(bytea *byteArray, DynamicHeapState *state);
 bytea * SerializeBinaryHeapState(MemoryContext aggregateContext, DynamicHeapState *state,
@@ -764,6 +766,18 @@ bson_avg_final(PG_FUNCTION_ARGS)
 
 
 /*
+ * Gate null-skipping on the cluster version so all nodes change behavior together
+ * during a rolling upgrade.
+ */
+static bool
+CanSkipNullInMinMax(void)
+{
+	return EnableMinMaxSkipNullValues &&
+		   IsClusterVersionAtleast(DocDB_V0, 115, 0);
+}
+
+
+/*
  * Applies the "final calculation" (FINALFUNC) for min and max.
  * This takes the final value fills in a null bson for empty sets
  */
@@ -801,6 +815,22 @@ bson_max_transition(PG_FUNCTION_ARGS)
 {
 	pgbson *left = PG_GETARG_MAYBE_NULL_PGBSON(0);
 	pgbson *right = PG_GETARG_MAYBE_NULL_PGBSON(1);
+
+	/*
+	 * Treat an explicit null candidate as a skipped value so only non-null,
+	 * non-missing values are considered. Missing values already arrive as null
+	 * here (projected with isNullOnEmpty), so this covers both cases.
+	 */
+	if (right != NULL && CanSkipNullInMinMax())
+	{
+		pgbsonelement candidateElement;
+		PgbsonToSinglePgbsonElement(right, &candidateElement);
+		if (candidateElement.bsonValue.value_type == BSON_TYPE_NULL)
+		{
+			right = NULL;
+		}
+	}
+
 	if (left == NULL)
 	{
 		if (right == NULL)
@@ -837,6 +867,22 @@ bson_min_transition(PG_FUNCTION_ARGS)
 {
 	pgbson *left = PG_GETARG_MAYBE_NULL_PGBSON(0);
 	pgbson *right = PG_GETARG_MAYBE_NULL_PGBSON(1);
+
+	/*
+	 * Treat an explicit null candidate as a skipped value so only non-null,
+	 * non-missing values are considered. Missing values already arrive as null
+	 * here (projected with isNullOnEmpty), so this covers both cases.
+	 */
+	if (right != NULL && CanSkipNullInMinMax())
+	{
+		pgbsonelement candidateElement;
+		PgbsonToSinglePgbsonElement(right, &candidateElement);
+		if (candidateElement.bsonValue.value_type == BSON_TYPE_NULL)
+		{
+			right = NULL;
+		}
+	}
+
 	if (left == NULL)
 	{
 		if (right == NULL)
@@ -2201,8 +2247,14 @@ BsonMinMaxWithExprTransitionCore(PG_FUNCTION_ARGS, bool isMax)
 									  &expressionResult, false /* isNullOnEmpty */);
 	bson_value_t evaluatedValue = expressionResult.value;
 
-	/* Check for empty/missing property in document with BSON_TYPE_EOD */
-	if (evaluatedValue.value_type == BSON_TYPE_EOD)
+	/*
+	 * Skip missing values (BSON_TYPE_EOD), and explicit null values when
+	 * null-skipping is enabled, so only non-null, non-missing values are
+	 * considered. If all values are skipped the state stays NULL and the final
+	 * function returns null.
+	 */
+	if (evaluatedValue.value_type == BSON_TYPE_EOD ||
+		(evaluatedValue.value_type == BSON_TYPE_NULL && CanSkipNullInMinMax()))
 	{
 		if (PG_ARGISNULL(0))
 		{

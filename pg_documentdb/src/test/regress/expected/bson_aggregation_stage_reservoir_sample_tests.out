@@ -279,20 +279,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                      Sampling: system_rows ('10'::bigint)
 (11 rows)
 
--- Plan: $sample with size 0 (edge case)
+-- Plan: $sample with size 0 is rejected during planning (error 28747, must be positive)
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$sample": { "size": 0 } } ] }');
-                                QUERY PLAN                                
---------------------------------------------------------------------------
- Limit
-   Output: document, (random())
-   ->  Sort
-         Output: document, (random())
-         Sort Key: (random())
-         ->  Sample Scan on documentdb_data.documents_25712001 collection
-               Output: document, random()
-               Sampling: system_rows ('0'::bigint)
-(8 rows)
-
+ERROR:  size argument to $sample must be a positive integer
 -- Plan: $match on _id + $sample - verifies bson_dollar_range marker qual is stripped from IndexScan filter
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "_id": { "$gt": 1, "$lte": 15 } } }, { "$sample": { "size": 3 } } ] }');
                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                      
@@ -387,12 +376,9 @@ SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "e
 ----------
 (0 rows)
 
--- $match + $sample with size 0 exercises the reservoir path returning no rows
+-- $match + $sample with size 0 is rejected (error 28747, must be positive)
 SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 0 } } ] }');
- document 
-----------
-(0 rows)
-
+ERROR:  size argument to $sample must be a positive integer
 -- Single document collection
 SELECT documentdb_api.insert_one('reservoirdb','singleDoc',' { "_id" : 1, "x" : 42 }', NULL);
 NOTICE:  creating collection
@@ -823,14 +809,24 @@ SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "r
 RESET enable_seqscan;
 RESET documentdb.forceUseIndexIfAvailable;
 -- =============================================================================
--- ERROR: Sample size exceeds maximum reservoir capacity
+-- Oversized sample sizes fall back to order by random() (no error)
 -- =============================================================================
--- Should error when sample size exceeds MaxAllocSize / sizeof(HeapTuple)
-SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 200000000 } } ] }');
-ERROR:  $sample size 200000000 exceeds maximum reservoir capacity
--- Should error when sample size exceeds INT32_MAX (2 billion)
-SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 2200000000 } } ] }');
-ERROR:  $sample size 2200000000 exceeds maximum supported value
+-- A size above the reservoir cap is not routed to the reservoir; it falls back
+-- to order by random(), where a size >= population returns every matching document.
+SELECT count(*) AS fallback_count FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 200000000 } } ] }')) t;
+ fallback_count 
+----------------
+              8
+(1 row)
+
+-- Sample size beyond INT32_MAX is not routed to the reservoir; it falls back to
+-- order-by-random, where a size >= population returns every matching document.
+SELECT count(*) AS fallback_count FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 2200000000 } } ] }')) t;
+ fallback_count 
+----------------
+              8
+(1 row)
+
 -- =============================================================================
 -- $lookup + $sample TESTS
 -- =============================================================================
@@ -1591,7 +1587,7 @@ RESET documentdb.enableDollarSampleHeapSkipReservoirScan;
 -- HEAP-SKIP MODE: DEAD TUPLES, EMPTY POPULATION, AND SIZE BOUNDARIES
 -- Paths the other sections don't reach: dead index entries (deleted but not yet
 -- vacuumed) that the skip phase must not count, an empty match set, and sizes 0
--- and 1.
+-- (rejected) and 1.
 -- =============================================================================
 SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('reservoirdb','extraHS', FORMAT('{ "_id": %s, "a": %s }', g, g)::documentdb_core.bson, NULL) FROM generate_series(1, 60) g) ig;
 NOTICE:  creating collection
@@ -1662,25 +1658,11 @@ SELECT count(*) AS cnt FROM (SELECT document FROM bson_aggregation_pipeline('res
    0
 (1 row)
 
--- Size 0: empty result.
+-- Size 0: rejected during planning (error 28747, must be positive).
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "extraHS", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sample": { "size": 0 } } ] }');
-                                       QUERY PLAN                                       
-----------------------------------------------------------------------------------------
- Custom Scan (DocumentDBApiReservoirSample)
-   Output: document
-   Sample Size: 0
-   Sample Reservoir Method: Heap Skip
-   ->  Index Scan using a_1 on documentdb_data.documents_25712010 collection
-         Output: document
-         Index Cond: (collection.document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
-(7 rows)
-
+ERROR:  size argument to $sample must be a positive integer
 SELECT count(*) AS cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "extraHS", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sample": { "size": 0 } } ] }')) t;
- cnt 
------
-   0
-(1 row)
-
+ERROR:  size argument to $sample must be a positive integer
 -- Size 1: one document.
 SELECT count(*) AS cnt FROM (SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "extraHS", "pipeline": [ { "$match": { "a": { "$gte": 1 } } }, { "$sample": { "size": 1 } } ] }')) t;
  cnt 

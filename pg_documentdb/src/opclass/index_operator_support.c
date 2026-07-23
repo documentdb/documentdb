@@ -122,6 +122,7 @@ CompositeIndexOptInfoIsMultiKey(IndexOptInfo *indexOptInfo, uint32_t *multiKeyBi
 	{
 		bool hasReducedCorrelatedTerms = false;
 		bool hasTruncatedTerms = false;
+		uint32_t truncatedPerPathStatus = 0;
 		uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(getOpclassMetadata,
 																	  PointerGetDatum(
 																		  indexRel)));
@@ -129,7 +130,7 @@ CompositeIndexOptInfoIsMultiKey(IndexOptInfo *indexOptInfo, uint32_t *multiKeyBi
 											&isMultiKeyIndex,
 											multiKeyBitMask,
 											&hasReducedCorrelatedTerms,
-											&hasTruncatedTerms);
+											&hasTruncatedTerms, &truncatedPerPathStatus);
 	}
 	else
 	{

@@ -19,6 +19,28 @@
 
 #define MAX_ALTERNATE_INDEX_AMS 5
 
+typedef struct CompositeOpClassMetadataInfo
+{
+	uint64 rawBlob;
+	bool isMultiKey;
+	int multiKeyPathCount;
+	bool hasCorrelatedReducedTerms;
+	bool hasTruncation;
+	int trackedTruncatedPathCount;
+} CompositeOpClassMetadataInfo;
+
+/* Result of reading composite-index opclass metadata: how much was populated. */
+typedef enum CompositeOpClassMetadataReadResult
+{
+	/* Nothing read; *info untouched. */
+	CompositeOpClassMetadataReadResult_None = 0,
+
+	/* Only info->isMultiKey set, from the index metapage. */
+	CompositeOpClassMetadataReadResult_Partial,
+
+	/* All fields set, decoded from the opclass metadata blob. */
+	CompositeOpClassMetadataReadResult_Full
+} CompositeOpClassMetadataReadResult;
 
 int SetDynamicIndexAmOidsAndGetCount(Datum *indexAmArray, int32_t indexAmArraySize);
 
@@ -83,5 +105,15 @@ bool GetCompositeOpClassWithProps(Relation indexRelation,
 								  bool *supportsOrderedOperatorScans,
 								  PGFunction *multiKeyStatusFunc,
 								  PGFunction *getOpclassMetadata);
+
+/*
+ * Reads composite-index opclass metadata for telemetry. Returns Full with *info
+ * fully populated when the metadata blob is available, Partial with only
+ * info->isMultiKey set as a fallback, or None if neither can be read.
+ */
+CompositeOpClassMetadataReadResult TryGetCompositeOpClassMetadataInfo(Oid indexOid,
+																	  LOCKMODE lockmode,
+																	  CompositeOpClassMetadataInfo
+																	  *info);
 
 #endif

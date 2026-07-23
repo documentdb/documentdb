@@ -19,6 +19,7 @@
 #include <access/relscan.h>
 #include <utils/rel.h>
 #include "math.h"
+#include <optimizer/optimizer.h>
 #include <commands/explain.h>
 #include <access/gin.h>
 #include <parser/parsetree.h>
@@ -30,6 +31,7 @@
 #endif
 
 #include "api_hooks.h"
+#include "opclass/bson_index_support.h"
 #include "planner/mongo_query_operator.h"
 #include "opclass/bson_gin_index_mgmt.h"
 #include "index_am/documentdb_rum.h"
@@ -49,6 +51,7 @@ extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
 extern bool EnableIndexPathKeySummarization;
+extern bool EnableMergeSortForInPrefix;
 
 bool RumHasMultiKeyPaths = false;
 
@@ -62,15 +65,6 @@ static bool loaded_documentdb_rum_routine = false;
 static IndexAmRoutine rum_index_routine = { 0 };
 
 static PGFunction rum_index_multi_key_update_func = NULL;
-
-typedef enum IndexMultiKeyStatus
-{
-	IndexMultiKeyStatus_Unknown = 0,
-
-	IndexMultiKeyStatus_HasArrays = 1,
-
-	IndexMultiKeyStatus_HasNoArrays = 2
-} IndexMultiKeyStatus;
 
 typedef struct DocumentDBRumIndexState
 {
@@ -712,9 +706,8 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 	if (isCompositeOpFamily)
 	{
 		bool canSupportIndexOnlyScan = false;
-		bool firstColumnSpecified = TraverseIndexPathForCompositeIndex(path, root,
-																	   &
-																	   canSupportIndexOnlyScan);
+		bool firstColumnSpecified = TraverseIndexPathForCompositeIndex(
+			path, root, &canSupportIndexOnlyScan);
 
 		/* Even if the first column was not specified and the index covers the query entirely we should consider doing
 		 * an index-only scan even though the cost will be set to INFINITY. This way we support index only scan when hinting is used and the first column is not part of the filters. */
@@ -822,6 +815,11 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
 								   boundarySelectivity, numBoundaryQuals,
 								   dataPagesProportionFetched);
 	}
+
+	if (EnableMergeSortForInPrefix && isCompositeOpFamily)
+	{
+		MaybeMarkIndexPathForMergeSortInPrefix(root, path);
+	}
 }
 
 
@@ -878,6 +876,7 @@ CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath)
 	if (compositeOptions->enableMetadataBasedTracking && getOpclassMetadataFunc != NULL)
 	{
 		uint32_t multiKeyPerPathStatus = 0;
+		uint32_t truncatedPerPathStatus = 0;
 		bool hasReducedCorrelatedTerms = false;
 		uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
 													  getOpclassMetadataFunc,
@@ -885,7 +884,8 @@ CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath)
 		DecodeCompositeOpClassQueryMetadata(options, opclassMetadata, &multiKeyStatus,
 											&multiKeyPerPathStatus,
 											&hasReducedCorrelatedTerms,
-											&hasTruncatedTerms);
+											&hasTruncatedTerms,
+											&truncatedPerPathStatus);
 	}
 	else
 	{
@@ -1244,6 +1244,7 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 			if (options->enableMetadataBasedTracking &&
 				getopclassMetadataFunc != NULL)
 			{
+				uint32_t truncatedPerPathStatus = 0;
 				bool hasReducedCorrelatedTerms = false;
 				bool indexHasArrays = false;
 				bool indexHasTruncation = false;
@@ -1255,7 +1256,8 @@ extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 													&indexHasArrays,
 													&outerScanState->multiKeyPerPathStatus,
 													&hasReducedCorrelatedTerms,
-													&indexHasTruncation);
+													&indexHasTruncation,
+													&truncatedPerPathStatus);
 				outerScanState->multiKeyStatus = indexHasArrays ?
 												 IndexMultiKeyStatus_HasArrays :
 												 IndexMultiKeyStatus_HasNoArrays;
@@ -1394,6 +1396,7 @@ extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nsc
 		{
 			bool indexHasArraysBool = false;
 			bool indexHasTruncation = false;
+			uint32_t truncatedPerPathStatus = 0;
 			uint64_t opclassMetadata = DatumGetUInt64(DirectFunctionCall1(
 														  getopclassMetadataFunc,
 														  PointerGetDatum(
@@ -1402,7 +1405,8 @@ extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nsc
 												&indexHasArraysBool,
 												&multiKeyPerPathStatus,
 												&hasCorrelatedReducedTerms,
-												&indexHasTruncation);
+												&indexHasTruncation,
+												&truncatedPerPathStatus);
 			indexHasArrays = indexHasArraysBool ? IndexMultiKeyStatus_HasArrays :
 							 IndexMultiKeyStatus_HasNoArrays;
 		}

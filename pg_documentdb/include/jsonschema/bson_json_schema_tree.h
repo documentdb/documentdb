@@ -137,6 +137,9 @@ typedef struct ValidationsCommon
 {
 	BsonTypeFlags jsonTypes;
 	BsonTypeFlags bsonTypes;
+
+	/* Linked list of sub-schemas for the 'oneOf' keyword. */
+	SchemaKeywordNode *oneOfNodes;
 } ValidationsCommon;
 
 typedef struct ValidationsNumeric

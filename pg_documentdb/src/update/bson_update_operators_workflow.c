@@ -241,7 +241,6 @@ NotifyPositionalMatchIndex_HookType notify_positional_match_index_hook = NULL;
 RemoveLastMatchedIndex_HookType remove_last_matched_index_hook = NULL;
 EndPositionalUpdate_HookType end_positional_update_hook = NULL;
 
-extern bool MultiplePositionalNotAllowed;
 extern bool EnableDuplicateFieldFix;
 
 
@@ -1459,33 +1458,30 @@ ValidateSpecPathForUpdateTree(const StringView *updatePath)
 		}
 	}
 
-	if (MultiplePositionalNotAllowed)
+	/* Reject paths that contain multiple positional segments (".$"). */
+	int positionalDotDollarCount = 0;
+	for (uint32_t i = 0; i + 1 < updatePath->length; i++)
 	{
-		/* Reject paths that contain multiple positional segments (".$"). */
-		int positionalDotDollarCount = 0;
-		for (uint32_t i = 0; i + 1 < updatePath->length; i++)
+		if (updatePath->string[i] == '.' && updatePath->string[i + 1] == '$')
 		{
-			if (updatePath->string[i] == '.' && updatePath->string[i + 1] == '$')
+			if ((i + 1) == (updatePath->length - 1))
 			{
-				if ((i + 1) == (updatePath->length - 1))
-				{
-					/* If we are at the end, this is positional */
-					positionalDotDollarCount++;
-				}
-				else if (updatePath->string[i + 2] == '.')
-				{
-					/* If not the next char needs to be a dot for this to be positional */
-					positionalDotDollarCount++;
-				}
+				/* If we are at the end, this is positional */
+				positionalDotDollarCount++;
+			}
+			else if (updatePath->string[i + 2] == '.')
+			{
+				/* If not the next char needs to be a dot for this to be positional */
+				positionalDotDollarCount++;
+			}
 
-				if (positionalDotDollarCount > 1)
-				{
-					/* TODO: Check error code */
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-									errmsg(
-										"Too many positional (i.e. '$') elements found in path '%s'",
-										updatePath->string)));
-				}
+			if (positionalDotDollarCount > 1)
+			{
+				/* TODO: Check error code */
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"Too many positional (i.e. '$') elements found in path '%s'",
+									updatePath->string)));
 			}
 		}
 	}

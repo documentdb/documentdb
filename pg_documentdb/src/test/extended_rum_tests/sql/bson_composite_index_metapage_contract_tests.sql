@@ -159,6 +159,44 @@ SELECT documentdb_api.insert_one('mpc_db', 'c_reduced', '{ "_id": 1, "a": [ { "b
 SELECT documentdb_api_internal.composite_metapage_blob('mpc_db', 'c_reduced', 'ab_ac_1');
 
 -- ---------------------------------------------------------------------------
+-- Empty array marks a path multi-key. An empty array at an indexed path produces
+-- no array-element terms, but the path is still multi-key, so its bit is set in
+-- the metapage blob.
+-- ---------------------------------------------------------------------------
+-- Empty array only on the second path (a.c, index 1): bit0 | bit2 -> 0x5.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('mpc_db', '{ "createIndexes": "c_empty_ac", "indexes": [ { "key": { "a.b": 1, "a.c": 1 }, "name": "ab_ac_1", "enableOrderedIndex": 1 } ] }');
+SELECT documentdb_api.insert_one('mpc_db', 'c_empty_ac', '{ "_id": 1, "a": { "b": 1, "c": [ ] } }');
+-- Expected: bit0 | bit2 -> 0x5
+SELECT documentdb_api_internal.composite_metapage_blob('mpc_db', 'c_empty_ac', 'ab_ac_1');
+
+-- Empty array on both leaf paths (a.b index 0, a.c index 1): bit0 | bit1 | bit2 -> 0x7.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('mpc_db', '{ "createIndexes": "c_empty_both", "indexes": [ { "key": { "a.b": 1, "a.c": 1 }, "name": "ab_ac_1", "enableOrderedIndex": 1 } ] }');
+SELECT documentdb_api.insert_one('mpc_db', 'c_empty_both', '{ "_id": 1, "a": { "b": [ ], "c": [ ] } }');
+-- Expected: bit0 | bit1 | bit2 -> 0x7
+SELECT documentdb_api_internal.composite_metapage_blob('mpc_db', 'c_empty_both', 'ab_ac_1');
+
+-- ---------------------------------------------------------------------------
+-- Ancestor array marks a deep path multi-key. For an index on a.b.c, an array at
+-- the ancestor "a" makes the a.b.c path multi-key even though the array is not at
+-- the leaf; the metapage blob sets that path's bit.
+-- ---------------------------------------------------------------------------
+-- Ancestor array for a two-path deep index (a.b.c index 0, a.b.d index 1): the
+-- array at "a" makes both paths multi-key; the shared a.b prefix also engages
+-- reduced correlated terms -> bit34 | bit0 | bit1 | bit2 -> 0x400000007.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('mpc_db', '{ "createIndexes": "c_ancestor", "indexes": [ { "key": { "a.b.c": 1, "a.b.d": 1 }, "name": "abc_abd_1", "enableOrderedIndex": 1 } ] }');
+SELECT documentdb_api.insert_one('mpc_db', 'c_ancestor', '{ "_id": 1, "a": [ { "b": { "c": 1, "d": 2 } } ] }');
+-- Expected: bit34 | bit0 | bit1 | bit2 -> 0x400000007
+SELECT documentdb_api_internal.composite_metapage_blob('mpc_db', 'c_ancestor', 'abc_abd_1');
+
+-- Ancestor array affecting only the first deep path: index on a.b.c and an
+-- independent scalar path x; array at "a" marks only path 0 (a.b.c) multi-key.
+-- Expected: bit0 | bit1 -> 0x3.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('mpc_db', '{ "createIndexes": "c_ancestor_one", "indexes": [ { "key": { "a.b.c": 1, "x": 1 }, "name": "abc_x_1", "enableOrderedIndex": 1 } ] }');
+SELECT documentdb_api.insert_one('mpc_db', 'c_ancestor_one', '{ "_id": 1, "a": [ { "b": { "c": 1 } } ], "x": 5 }');
+-- Expected: bit0 | bit1 -> 0x3
+SELECT documentdb_api_internal.composite_metapage_blob('mpc_db', 'c_ancestor_one', 'abc_x_1');
+
+-- ---------------------------------------------------------------------------
 -- The blob is persisted on the metapage and survives a VACUUM (it is not a
 -- transient pending-list counter). Re-read the combined index after VACUUM and
 -- confirm the same bits remain set.

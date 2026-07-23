@@ -513,9 +513,9 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 
 -- Control: with index-only scans disabled, the same covered $count falls back to a
 -- regular Index Scan over the same metadata-bearing index (no "Index Only Scan").
-set documentdb.enableIndexOnlyScan to off;
+set enable_indexonlyscan to off;
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('mkpq_db', '{ "aggregate" : "mkpq_ios", "pipeline" : [{ "$match" : { "country": { "$eq": "USA" } } }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
-set documentdb.enableIndexOnlyScan to on;
+set enable_indexonlyscan to on;
 
 -- --- H2: making the SAME index multi-key removes index-only-scan eligibility ---
 -- Insert one document into the SAME collection whose "city" value is an array. This

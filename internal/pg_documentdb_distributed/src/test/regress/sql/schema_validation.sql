@@ -78,5 +78,16 @@ SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "
 -- get collection info
 SELECT bson_dollar_project(cursorpage, '{"cursor.firstBatch.info": 0, "cursor.firstBatch.idIndex": 0 }') as cursorpage, continuation, persistconnection, cursorid FROM documentdb_api.list_collections_cursor_first_page('schema_validation', '{ "listCollections": 1, "filter": { "name": "col7" }, "nameOnly": false }');
 
+-- oneOf: two disjoint sub-schemas
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_oneof1", "validator": {"$jsonSchema": {"bsonType": "object", "properties": {"v": {"oneOf": [{"bsonType": "int"}, {"bsonType": "string"}]}}}}}');
+-- oneOf: nested properties / required
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_oneof2", "validator": {"$jsonSchema": {"oneOf": [{"bsonType": "object", "required": ["a"]}, {"bsonType": "object", "required": ["b"]}]}}}');
+-- oneOf invalid: not an array
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_oneof_bad1", "validator": {"$jsonSchema": {"oneOf": {"bsonType": "int"}}}}');
+-- oneOf invalid: empty array
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_oneof_bad2", "validator": {"$jsonSchema": {"oneOf": []}}}');
+-- oneOf invalid: element is not an object
+SELECT documentdb_api.create_collection_view('schema_validation', '{ "create": "col_oneof_bad3", "validator": {"$jsonSchema": {"oneOf": [{"bsonType": "int"}, "string"]}}}');
+
    
 

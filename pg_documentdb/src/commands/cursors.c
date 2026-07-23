@@ -185,6 +185,25 @@ typedef struct DynamicStreamingTupleDestReceiver
 
 	/* The custom scan used for the core execution of the query */
 	PlanState *topLevelPlanState;
+
+	/*
+	 * True when a streaming grouping node (sorted GroupAggregate / Unique) sits
+	 * above the dynamic cursor scan. Such a node reads one input row past the
+	 * group it emits to detect the group boundary, so the underlying scan is
+	 * already positioned at the first row of the next group when a group is
+	 * handed to the receiver. In that case the continuation is snapshotted into
+	 * continuationDocument right after each emitted group and left untouched at
+	 * reject time, otherwise the resume position would be one group too far
+	 * ahead and a whole group would be skipped on the next page.
+	 */
+	bool isGroupedReadAhead;
+
+	/*
+	 * Dynamic streaming custom scan state, located once in
+	 * UpdateQueryDescriptionForDynamicCursor and reused so the plan tree is not
+	 * re-walked on every emitted row.
+	 */
+	CustomScanState *streamingCustomScanState;
 } DynamicStreamingTupleDestReceiver;
 
 
@@ -522,6 +541,25 @@ UpdateQueryDescriptionForDynamicCursor(PlanState *planState, DestReceiver *destR
 		(DynamicStreamingTupleDestReceiver *) destReceiver;
 
 	receiver->topLevelPlanState = planState;
+
+	/*
+	 * Locate the dynamic streaming custom scan once, up front, from the
+	 * freshly-initialized plan tree (this callback runs right after
+	 * ExecutorStart). The same downward walk also reports whether a sorted
+	 * GroupAggregate sits above the scan (group read-ahead), so both the cached
+	 * scan state and the read-ahead flag are derived from a single traversal
+	 * rather than re-walking the tree per emitted row.
+	 */
+	bool isGroupReadAhead = false;
+	receiver->streamingCustomScanState =
+		GetDynamicStreamingCustomScanState(planState, &isGroupReadAhead);
+	if (receiver->streamingCustomScanState == NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg(
+							"Failed to get dynamic streaming custom scan state")));
+	}
+	receiver->isGroupedReadAhead = isGroupReadAhead;
 }
 
 
@@ -1063,21 +1101,25 @@ DynamicStreamingDestReceiverReceive(TupleTableSlot *slot,
 	 * was fetched but NOT emitted. On resume, SkipWithUserContinuation uses
 	 * returnOnEquality=true so that the exact-match tuple is re-yielded
 	 * instead of skipped.
+	 *
+	 * For plans with a streaming grouping node on top (isGroupedReadAhead), the
+	 * grouping node has already read one row past the group being emitted, so
+	 * at this point the underlying scan sits at the start of the group *after*
+	 * the rejected one. Capturing here would skip the rejected group entirely.
+	 * Instead continuationDocument was already snapshotted right after the last
+	 * emitted group (below), which points at the first row of the rejected
+	 * group - exactly where the next page must resume - so we leave it as-is.
 	 */
 	if (sizeLimitReached ||
 		base->numRowsFetched >= (uint32_t) base->batchSize)
 	{
-		oldContext = MemoryContextSwitchTo(base->writerContext);
-		CustomScanState *customScanState = GetDynamicStreamingCustomScanState(
-			receiver->topLevelPlanState);
-		if (customScanState == NULL)
+		if (!receiver->isGroupedReadAhead)
 		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-							errmsg("Failed to get dynamic streaming custom scan state")));
+			oldContext = MemoryContextSwitchTo(base->writerContext);
+			receiver->continuationDocument = GetContinuationFromCustomScan(
+				receiver->streamingCustomScanState);
+			MemoryContextSwitchTo(oldContext);
 		}
-
-		receiver->continuationDocument = GetContinuationFromCustomScan(customScanState);
-		MemoryContextSwitchTo(oldContext);
 		receiver->terminationReason = sizeLimitReached ?
 									  TerminationReason_BatchSizeLimit :
 									  TerminationReason_BatchItemLimit;
@@ -1090,6 +1132,30 @@ DynamicStreamingDestReceiverReceive(TupleTableSlot *slot,
 
 	base->numRowsFetched++;
 	base->currentAccumulatedSize += (datumSize + PER_DOC_OVERHEAD);
+
+	/*
+	 * For grouped read-ahead plans, snapshot the continuation into
+	 * continuationDocument right after emitting each group. Because the grouping
+	 * node has already fetched the first row of the *next* group to complete the
+	 * one just written, the underlying scan is positioned exactly where the next
+	 * page should resume. We keep only the latest snapshot so that whichever
+	 * group turns out to be the last emitted one (whether the batch stops on an
+	 * item or size limit), the retained continuation resumes at the immediately
+	 * following group. On natural cursor completion this value is ignored
+	 * (GetContinuation returns NULL for TerminationReason_CursorCompletion).
+	 */
+	if (receiver->isGroupedReadAhead)
+	{
+		oldContext = MemoryContextSwitchTo(base->writerContext);
+		if (receiver->continuationDocument != NULL)
+		{
+			pfree(receiver->continuationDocument);
+		}
+		receiver->continuationDocument = GetContinuationFromCustomScan(
+			receiver->streamingCustomScanState);
+		MemoryContextSwitchTo(oldContext);
+	}
+
 	return true;
 }
 

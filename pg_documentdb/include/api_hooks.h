@@ -166,6 +166,17 @@ Query * MutateListCollectionsQueryForDistribution(Query *cosmosMetadataQuery);
 
 
 /*
+ * Hook wrapper for extended indexes result post-processing.
+ * Takes a base query that returns raw index data for extended indexes
+ * and transforms it to produce the desired output format.
+ * Returns NULL if no hook is registered.
+ */
+typedef struct AggregationPipelineBuildContext AggregationPipelineBuildContext;
+Query * RewriteListExtendedIndexesQuery(const bson_value_t *specValue, Query *query,
+										AggregationPipelineBuildContext *context);
+
+
+/*
  * Mutates the shards query for handling distributed scenario.
  */
 Query * MutateShardsQueryForDistribution(Query *metadataQuery);
@@ -184,7 +195,8 @@ Query * MutateChunksQueryForDistribution(Query *cosmosMetadataQuery);
  * NULL implies that the request can be tried again. "" implies that the shard cannot be resolved locally.
  */
 const char * TryGetShardNameForUnshardedCollection(Oid relationOid, uint64 collectionId,
-												   const char *tableName);
+												   const char *tableName,
+												   bool *isSingleShardTable);
 
 const char * GetDistributedApplicationName(void);
 
@@ -223,6 +235,7 @@ void TryCustomParseAndValidateVectorQuerySpec(const char *key,
 
 
 char * TryGetExtendedVersionRefreshQuery(void);
+char * TryGetExtendedInitializedVersionRefreshQuery(void);
 
 
 void AllowNestedDistributionInCurrentTransaction(void);
@@ -262,6 +275,7 @@ const char * GetOperationCancellationQuery(int64 shardId, StringView *opIdString
 																			argNulls));
 
 bool ShouldUseCompositeOpClassByDefault(void);
+bool ShouldEnablePlannerStatisticsNewCollections(void);
 
 
 /*

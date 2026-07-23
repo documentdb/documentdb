@@ -19,19 +19,28 @@
 /* --------------------------------------------------------- */
 
 /* GUC controlling whether or not we use the pretty printed version json representation for bson */
+/* SystemConfig */
 #define DEFAULT_BSON_TEXT_USE_JSON_REPRESENTATION false
 bool BsonTextUseJsonRepresentation = DEFAULT_BSON_TEXT_USE_JSON_REPRESENTATION;
 
 /* GUC deciding whether collation is support */
+/* FeatureFlag */
+/* Added in v108, Pending stabilization, enable in v124 */
 #define DEFAULT_ENABLE_COLLATION false
 bool EnableCollation = DEFAULT_ENABLE_COLLATION;
 
+/* FeatureFlag */
+/* Added in v110, Pending stabilization, enable in v116 */
 #define DEFAULT_SKIP_BSON_ARRAY_TRAVERSE_OPTIMIZATION false
 bool SkipBsonArrayTraverseOptimization = DEFAULT_SKIP_BSON_ARRAY_TRAVERSE_OPTIMIZATION;
 
+/* FeatureFlag */
+/* Added in v114, Pending stabilization, enable in v116 */
 #define DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH false
 bool EnableWriteDocumentsInRepath = DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH;
 
+/* FeatureFlag */
+/* Added in v114, Pending stabilization, enable in v124 */
 #define DEFAULT_ENABLE_BSON_SELECTIVITY_FROM_BTREE_STATS false
 bool EnableBsonSelectivityFromBtreeStats =
 	DEFAULT_ENABLE_BSON_SELECTIVITY_FROM_BTREE_STATS;

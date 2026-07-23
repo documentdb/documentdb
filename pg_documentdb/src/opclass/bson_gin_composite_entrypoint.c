@@ -232,7 +232,10 @@ static void ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const
 											int32_t wildcardPathIndex,
 											ScanDirection *scanDirection,
 											VariableIndexBounds *variableBounds,
-											const char *indexCollation);
+											const char *indexCollation,
+											bool hasArrayPaths,
+											uint32_t multiKeyBitMask,
+											bool isGlobalIndexMetadataTracked);
 static bytea * BuildTermForBounds(CompositeQueryRunData *runData,
 								  IndexTermCreateMetadata *singlePathMetadata,
 								  IndexTermCreateMetadata *compositeMetadata,
@@ -554,7 +557,9 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 		ParseOperatorStrategy(indexPaths, indexPathLengths, sortOrders, numPaths,
 							  metaInfo->wildcardPathIndex, &singleElement, strategy,
 							  &scanDir, &variableBounds,
-							  metaInfo->collation);
+							  metaInfo->collation,
+							  hasArrayPaths, multiKeyBitMask,
+							  options->enableMetadataBasedTracking);
 	}
 	else
 	{
@@ -568,7 +573,9 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 										metaInfo->wildcardPathIndex,
 										&scanDir,
 										&variableBounds,
-										metaInfo->collation);
+										metaInfo->collation,
+										hasArrayPaths, multiKeyBitMask,
+										options->enableMetadataBasedTracking);
 	}
 
 	metaInfo->hasArrayPaths = hasArrayPaths;
@@ -3763,7 +3770,8 @@ SerializeCompositeIndexKeyForExplain(bytea *entry)
 void
 DecodeCompositeOpClassQueryMetadata(void *options, uint64_t opclassMetadata,
 									bool *hasMultiKey, uint32_t *multiKeyPathBitmask,
-									bool *hasCorrelatedReducedTerms, bool *hasTruncation)
+									bool *hasCorrelatedReducedTerms, bool *hasTruncation,
+									uint32_t *perPathTruncationBitmask)
 {
 	*hasMultiKey = (opclassMetadata & CompositeIndexMetadata_MultiKeyBitMask) != 0;
 	*multiKeyPathBitmask = (uint32_t) (opclassMetadata >>
@@ -3771,6 +3779,12 @@ DecodeCompositeOpClassQueryMetadata(void *options, uint64_t opclassMetadata,
 	*hasCorrelatedReducedTerms = (opclassMetadata &
 								  CompositeIndexMetadata_ReducedCorrelatedBitMask) != 0;
 	*hasTruncation = (opclassMetadata & CompositeIndexMetadata_TruncationBitMask) != 0;
+
+	/* Only the first 6 paths are tracked per-path */
+	*perPathTruncationBitmask =
+		(uint32_t) ((opclassMetadata >>
+					 CompositeIndexMetadata_PerPathTruncatedBitPosition) &
+					CompositeIndexMetadata_PerPathTruncatedBitMask);
 }
 
 
@@ -3796,9 +3810,10 @@ DecodeCompositeOpClassMetadata(void *options, uint64_t opclassMetadata, bool *ha
 		indexPaths, indexPathsLengths, sortOrders);
 
 	uint32_t multiKeyPerPathStatus = 0;
+	uint32_t truncatedPerPathStatus = 0;
 	DecodeCompositeOpClassQueryMetadata(options, opclassMetadata, hasMultiKey,
 										&multiKeyPerPathStatus, hasCorrelatedReducedTerms,
-										hasTruncation);
+										hasTruncation, &truncatedPerPathStatus);
 	*multiKeyPerPathList = NIL;
 	*multiKeyBitMask = multiKeyPerPathStatus;
 	for (int i = 0; i < numPaths; i++)
@@ -3811,10 +3826,6 @@ DecodeCompositeOpClassMetadata(void *options, uint64_t opclassMetadata, bool *ha
 
 	/* Per-path truncation is tracked only for the first 6 paths; truncation on
 	 * later paths is lossy and surfaces solely via the global truncated flag. */
-	uint32_t truncatedPerPathStatus =
-		(uint32_t) (opclassMetadata >>
-					CompositeIndexMetadata_PerPathTruncatedBitPosition) &
-		CompositeIndexMetadata_PerPathTruncatedBitMask;
 	int maxTruncatedPaths = numPaths < CompositeIndexMetadata_PerPathTruncatedBitCount ?
 							numPaths : CompositeIndexMetadata_PerPathTruncatedBitCount;
 	*truncatedPerPathList = NIL;
@@ -4699,6 +4710,11 @@ BuildSinglePathTermsForCompositeTerms(pgbson *bson,
 	context.options = (void *) termState;
 	context.traverseOptionsFunc = &GetCompositePathGenerateTraverseOption;
 	SetGenerateTermsContextFlags(&context);
+
+	/* Empty arrays make a path multi-key; only surfaced when the index tracks
+	* per-path multi-key status via opclass metadata (the "mkp" reloption). */
+	context.markEmptyArrayAsMultiKey = options->enableMetadataBasedTracking;
+
 	GenerateTermsForPath(bson, &context);
 
 	/* We will have at least 1 term */
@@ -4709,7 +4725,8 @@ BuildSinglePathTermsForCompositeTerms(pgbson *bson,
 		entries[i].index = termState->pathData[i].terms.index;
 		entries[i].entryCapacity = termState->pathData[i].terms.entryCapacity;
 
-		if (termState->pathData[i].hasArrayValues)
+		if (termState->pathData[i].hasArrayValues ||
+			termState->pathData[i].hasArrayAncestors)
 		{
 			*pathMultiKeyBitMask |= (UINT32_C(1) << i);
 		}
@@ -5317,7 +5334,9 @@ ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const char **index
 								numPaths,
 								int32_t wildcardPathIndex, ScanDirection *scanDirection,
 								VariableIndexBounds *variableBounds,
-								const char *indexCollation)
+								const char *indexCollation,
+								bool hasArrayPaths, uint32_t multiKeyBitMask,
+								bool isGlobalIndexMetadataTracked)
 {
 	if (singleElement->bsonValue.value_type != BSON_TYPE_ARRAY)
 	{
@@ -5370,7 +5389,9 @@ ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const char **index
 		ParseOperatorStrategy(indexPaths, indexPathsLengths, sortOrders, numPaths,
 							  wildcardPathIndex,
 							  &queryElement, queryStrategy, scanDirection,
-							  variableBounds, indexCollation);
+							  variableBounds, indexCollation,
+							  hasArrayPaths, multiKeyBitMask,
+							  isGlobalIndexMetadataTracked);
 	}
 }
 
