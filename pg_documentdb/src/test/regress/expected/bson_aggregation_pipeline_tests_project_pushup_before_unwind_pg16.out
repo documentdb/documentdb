@@ -12,6 +12,7 @@ SET documentdb.enableNewWithExprAccumulators TO off;
 --   Section 1 — positive trigger cases (rewrite fires, result equality,
 --               EXPLAIN shows the synthetic $project with the expected fields)
 --   Section 2 — bail-out cases (rewrite must NOT fire)
+--   Section 3 — multiple $unwind stages before the $group
 --   Section 4 — telemetry (applicability counter)
 --   Section 5 — index-pushdown preservation
 --
@@ -34,7 +35,7 @@ SELECT documentdb_api.insert_one('proj_pushup_db', 'orders_coll',
        "noise": "wide-payload-aaaaa",
        "tag": "t1",
        "items": [ {"kind": "x", "qty": 1}, {"kind": "y", "qty": 2} ] }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_project_pushup_before_unwind.sql:39: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_project_pushup_before_unwind.sql:40: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1089,7 +1090,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- even though the unwind/group pair downstream looks otherwise eligible.
 SELECT documentdb_api.insert_one('proj_pushup_db', 'lookup_target',
     '{ "_id": 1, "ownerId": "A", "name": "Alice" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_project_pushup_before_unwind.sql:657: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_project_pushup_before_unwind.sql:658: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1270,6 +1271,275 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                ->  Seq Scan on documentdb_data.documents_87001 collection
                      Output: collection.shard_key_value, collection.object_id, collection.document
 (9 rows)
+
+-- ============================================================================
+-- Section 3 — multiple $unwind stages before the $group
+--
+-- The optimization allows more than one $unwind between the first $unwind and
+-- the anchoring $group. Every $unwind's top-level path, plus any intervening
+-- $match's fields, must be preserved by the synthetic $project. A dedicated
+-- collection with two array fields ("items" and "tags") lets us chain them.
+-- ============================================================================
+SELECT documentdb_api.insert_one('proj_pushup_db', 'multi_unwind_coll',
+    '{ "_id": 1, "regionId": "north", "ownerId": "A",
+       "noise": "wide-payload-aaaaa",
+       "items": [ { "qty": 1 }, { "qty": 2 } ],
+       "tags": [ "red", "blue" ] }', NULL);
+psql:sql/bson_aggregation_pipeline_tests_project_pushup_before_unwind.sql:772: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('proj_pushup_db', 'multi_unwind_coll',
+    '{ "_id": 2, "regionId": "north", "ownerId": "B",
+       "noise": "wide-payload-bbbbb",
+       "items": [ { "qty": 3 } ],
+       "tags": [ "green" ] }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('proj_pushup_db', 'multi_unwind_coll',
+    '{ "_id": 3, "regionId": "south", "ownerId": "A",
+       "noise": "wide-payload-ccccc",
+       "items": [ { "qty": 4 } ],
+       "tags": [ "red" ] }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- 3.1 Two consecutive $unwind stages on different top-level array fields.
+-- Both "items" and "tags" must survive the synthetic $project, along with the
+-- $group key "ownerId" and the accumulator's source field "items".
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO off;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": "$items" },
+        { "$unwind": "$tags" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+                       document                       
+------------------------------------------------------
+ { "_id" : "A", "totalQty" : { "$numberInt" : "6" } }
+ { "_id" : "B", "totalQty" : { "$numberInt" : "3" } }
+(2 rows)
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO on;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": "$items" },
+        { "$unwind": "$tags" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+                       document                       
+------------------------------------------------------
+ { "_id" : "A", "totalQty" : { "$numberInt" : "6" } }
+ { "_id" : "B", "totalQty" : { "$numberInt" : "3" } }
+(2 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": "$items" },
+        { "$unwind": "$tags" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } }
+    ],
+    "cursor": {}
+}');
+                                                                                                                                                                                                                                                                                                      QUERY PLAN                                                                                                                                                                                                                                                                                                      
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ HashAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_4.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalQty'::text, bsonsum(documentdb_api_internal.bson_expression_get(agg_stage_4.document, '{ "" : "$items.qty" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_4.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_4.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_4
+         Output: documentdb_api_internal.bson_expression_get(agg_stage_4.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_4.document
+         ->  ProjectSet
+               Output: bson_dollar_unwind((bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "tags" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)), '$tags'::text)
+               ->  ProjectSet
+                     Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "tags" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
+                     ->  Bitmap Heap Scan on documentdb_data.documents_87003 collection
+                           Output: collection.shard_key_value, collection.object_id, collection.document
+                           Recheck Cond: (collection.shard_key_value = '87003'::bigint)
+                           Filter: (collection.document @= '{ "regionId" : "north" }'::bson)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '87003'::bigint)
+(15 rows)
+
+-- 3.2 A $match sits between the two $unwind stages. The intermediate match's
+-- top-level field ("tags") must also be carried into the synthetic $project.
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO off;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "tags": "red" } },
+        { "$unwind": "$tags" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+                       document                        
+-------------------------------------------------------
+ { "_id" : "A", "totalQty" : { "$numberInt" : "10" } }
+(1 row)
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO on;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "tags": "red" } },
+        { "$unwind": "$tags" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+                       document                        
+-------------------------------------------------------
+ { "_id" : "A", "totalQty" : { "$numberInt" : "10" } }
+(1 row)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "tags": "red" } },
+        { "$unwind": "$tags" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } }
+    ],
+    "cursor": {}
+}');
+                                                                                                                                                                                                                                                                                                      QUERY PLAN                                                                                                                                                                                                                                                                                                      
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ HashAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_4.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalQty'::text, bsonsum(documentdb_api_internal.bson_expression_get(agg_stage_4.document, '{ "" : "$items.qty" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_4.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_4.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_4
+         Output: documentdb_api_internal.bson_expression_get(agg_stage_4.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_4.document
+         ->  ProjectSet
+               Output: bson_dollar_unwind(agg_stage_2.document, '$tags'::text)
+               ->  Subquery Scan on agg_stage_2
+                     Output: agg_stage_2.document
+                     Filter: (agg_stage_2.document #= '{ "tags" : "red" }'::bsonquery)
+                     ->  ProjectSet
+                           Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "tags" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
+                           ->  Bitmap Heap Scan on documentdb_data.documents_87003 collection
+                                 Output: collection.shard_key_value, collection.object_id, collection.document
+                                 Recheck Cond: (collection.shard_key_value = '87003'::bigint)
+                                 ->  Bitmap Index Scan on _id_
+                                       Index Cond: (collection.shard_key_value = '87003'::bigint)
+(17 rows)
+
+-- 3.3 A later $unwind carries includeArrayIndex. The optimization is disabled
+-- whenever any $unwind in the window uses includeArrayIndex, so no synthetic
+-- $project is injected before the first $unwind (bail).
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$unwind": { "path": "$tags", "includeArrayIndex": "tagIdx" } },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ HashAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_2
+         Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+         ->  ProjectSet
+               Output: bson_dollar_unwind((bson_dollar_unwind(collection.document, '$items'::text)), '{ "path" : "$tags", "includeArrayIndex" : "tagIdx" }'::bson)
+               ->  ProjectSet
+                     Output: bson_dollar_unwind(collection.document, '$items'::text)
+                     ->  Bitmap Heap Scan on documentdb_data.documents_87003 collection
+                           Output: collection.shard_key_value, collection.object_id, collection.document
+                           Recheck Cond: (collection.shard_key_value = '87003'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '87003'::bigint)
+(14 rows)
+
+-- 3.4 The second $unwind targets a nested path under the first $unwind's
+-- field ("$items" then "$items.qty"). Both resolve to the same top-level
+-- "items", so the synthetic $project keeps "items" once with no separate
+-- nested entry; off vs on documents result equivalence.
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO off;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$unwind": "$items.qty" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+                       document                       
+------------------------------------------------------
+ { "_id" : "A", "totalQty" : { "$numberInt" : "7" } }
+ { "_id" : "B", "totalQty" : { "$numberInt" : "3" } }
+(2 rows)
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO on;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$unwind": "$items.qty" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+                       document                       
+------------------------------------------------------
+ { "_id" : "A", "totalQty" : { "$numberInt" : "7" } }
+ { "_id" : "B", "totalQty" : { "$numberInt" : "3" } }
+(2 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$unwind": "$items.qty" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } }
+    ],
+    "cursor": {}
+}');
+                                                                                                                                                                                                                                                                                                      QUERY PLAN                                                                                                                                                                                                                                                                                                      
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ HashAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalQty'::text, bsonsum(documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$items.qty" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_3
+         Output: documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_3.document
+         ->  ProjectSet
+               Output: bson_dollar_unwind((bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)), '$items.qty'::text)
+               ->  ProjectSet
+                     Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
+                     ->  Bitmap Heap Scan on documentdb_data.documents_87003 collection
+                           Output: collection.shard_key_value, collection.object_id, collection.document
+                           Recheck Cond: (collection.shard_key_value = '87003'::bigint)
+                           ->  Bitmap Index Scan on _id_
+                                 Index Cond: (collection.shard_key_value = '87003'::bigint)
+(14 rows)
 
 -- ============================================================================
 -- Section 4 — telemetry (applicability counter)
@@ -1479,6 +1749,12 @@ SELECT documentdb_api.drop_collection('proj_pushup_db', 'orders_coll');
 (1 row)
 
 SELECT documentdb_api.drop_collection('proj_pushup_db', 'lookup_target');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('proj_pushup_db', 'multi_unwind_coll');
  drop_collection 
 -----------------
  t

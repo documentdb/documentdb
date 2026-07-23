@@ -10139,8 +10139,10 @@ TryOptimizeAggregationPipelines(List *aggregationStages,
 	/* Project-pushup-before-unwind-with-group state. The per-stage walk
 	 * below detects the $unwind ... $match* ... $group shape: unwindIdx is
 	 * set on the first $unwind, groupIdx on the first $group after it.
-	 * projectPushupDisqualified flips true on a non-$match between them or
-	 * a second $unwind, suppressing the rewrite for the whole pipeline. The
+	 * projectPushupDisqualified flips true on a non-$unwind/$match stage
+	 * between them, suppressing the rewrite for the whole pipeline.
+	 * Additional $unwind stages before the $group are allowed; each one's
+	 * referenced top-level field is collected during project injection. The
 	 * rewrite is applied after the loop, so foreach_delete_current calls in
 	 * the merge cases can't invalidate the recorded indices. */
 	int unwindIdx = -1;
@@ -10186,14 +10188,13 @@ TryOptimizeAggregationPipelines(List *aggregationStages,
 		{
 			case Stage_Unwind:
 			{
-				/* second $unwind in the window disqualifies */
+				/* The first $unwind opens the tracking window. Additional
+				 * $unwind stages before the $group are allowed; their
+				 * referenced top-level fields are collected during project
+				 * injection so they survive the synthetic $project. */
 				if (unwindIdx < 0)
 				{
 					unwindIdx = currentIndex;
-				}
-				else if (groupIdx < 0)
-				{
-					projectPushupDisqualified = true;
 				}
 				continue;
 			}
@@ -10796,6 +10797,26 @@ ExtractUnwindInfo(const bson_value_t *unwindStageValue,
 
 
 /*
+ * Collects the $unwind path's top-level source field into the set. Sets
+ * *outReferencesId if the path's top-level is "_id". Returns false if the
+ * $unwind path is unusable here (see ExtractUnwindInfo) or on set overflow.
+ */
+static bool
+CollectUnwindTopLevelPath(const bson_value_t *unwindStageValue,
+						  HTAB *consumedFields,
+						  bool *outReferencesId)
+{
+	StringView unwindTopLevel = { 0 };
+	if (!ExtractUnwindInfo(unwindStageValue, &unwindTopLevel, outReferencesId))
+	{
+		return false;
+	}
+
+	return AddTopLevelFieldToSet(consumedFields, unwindTopLevel);
+}
+
+
+/*
  * True if value provably references no source fields: null, scalars, literal
  * (no leading '$') strings, and the empty document. UTF8 starting with '$'
  * (path or $$-variable), non-empty documents, and arrays may reference fields
@@ -11004,38 +11025,55 @@ TryInjectProjectBeforeUnwindForGroupCore(List *aggregationStages,
 		return stages;
 	}
 
-	AggregationStage *unwindStage = (AggregationStage *) list_nth(stages, unwindIdx);
 	AggregationStage *groupStage = (AggregationStage *) list_nth(stages, groupIdx);
 
-	/* Synthetic $project keeps _id iff any of the unwind/match/group
-	 * analyses below reports a reference to it. */
+	/* Synthetic $project keeps _id iff any of the unwind/match analyses
+	 * below reports a reference to it. */
 	bool includeId = false;
 
-	StringView unwindTopLevel = { 0 };
-	bool unwindReferencesId = false;
-	if (!ExtractUnwindInfo(&unwindStage->stageValue, &unwindTopLevel,
-						   &unwindReferencesId))
+	/* Analyze every stage in [unwindIdx, groupIdx): the $unwind itself plus
+	 * any $unwind/$match stages the state machine allowed between it and the
+	 * $group. Each contributes the top-level source fields it needs so they
+	 * survive the synthetic $project; anything unexpected bails. */
+	for (int i = unwindIdx; i < groupIdx; i++)
 	{
-		return stages;
-	}
-	includeId = includeId || unwindReferencesId;
+		AggregationStage *interStage = (AggregationStage *) list_nth(stages, i);
 
-	if (!AddTopLevelFieldToSet(consumedFields, unwindTopLevel))
-	{
-		return stages;
-	}
-
-	for (int i = unwindIdx + 1; i < groupIdx; i++)
-	{
-		AggregationStage *interMatch = (AggregationStage *) list_nth(stages, i);
-		bool matchReferencesId = false;
-		if (!CollectMatchTopLevelPaths(&interMatch->stageValue,
-									   consumedFields,
-									   &matchReferencesId))
+		switch (interStage->stageDefinition->stageEnum)
 		{
-			return stages;
+			case Stage_Unwind:
+			{
+				bool unwindReferencesId = false;
+				if (!CollectUnwindTopLevelPath(&interStage->stageValue,
+											   consumedFields,
+											   &unwindReferencesId))
+				{
+					return stages;
+				}
+				includeId = includeId || unwindReferencesId;
+				break;
+			}
+
+			case Stage_Match:
+			{
+				bool matchReferencesId = false;
+				if (!CollectMatchTopLevelPaths(&interStage->stageValue,
+											   consumedFields,
+											   &matchReferencesId))
+				{
+					return stages;
+				}
+				includeId = includeId || matchReferencesId;
+				break;
+			}
+
+			default:
+			{
+				/* The state machine only allows $unwind/$match in this
+				 * window; bail conservatively on anything unexpected. */
+				return stages;
+			}
 		}
-		includeId = includeId || matchReferencesId;
 	}
 
 	bool groupReferencesId = false;

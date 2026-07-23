@@ -12,6 +12,7 @@ SET documentdb.enableNewWithExprAccumulators TO off;
 --   Section 1 — positive trigger cases (rewrite fires, result equality,
 --               EXPLAIN shows the synthetic $project with the expected fields)
 --   Section 2 — bail-out cases (rewrite must NOT fire)
+--   Section 3 — multiple $unwind stages before the $group
 --   Section 4 — telemetry (applicability counter)
 --   Section 5 — index-pushdown preservation
 --
@@ -756,6 +757,167 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 
 
 -- ============================================================================
+-- Section 3 — multiple $unwind stages before the $group
+--
+-- The optimization allows more than one $unwind between the first $unwind and
+-- the anchoring $group. Every $unwind's top-level path, plus any intervening
+-- $match's fields, must be preserved by the synthetic $project. A dedicated
+-- collection with two array fields ("items" and "tags") lets us chain them.
+-- ============================================================================
+
+SELECT documentdb_api.insert_one('proj_pushup_db', 'multi_unwind_coll',
+    '{ "_id": 1, "regionId": "north", "ownerId": "A",
+       "noise": "wide-payload-aaaaa",
+       "items": [ { "qty": 1 }, { "qty": 2 } ],
+       "tags": [ "red", "blue" ] }', NULL);
+SELECT documentdb_api.insert_one('proj_pushup_db', 'multi_unwind_coll',
+    '{ "_id": 2, "regionId": "north", "ownerId": "B",
+       "noise": "wide-payload-bbbbb",
+       "items": [ { "qty": 3 } ],
+       "tags": [ "green" ] }', NULL);
+SELECT documentdb_api.insert_one('proj_pushup_db', 'multi_unwind_coll',
+    '{ "_id": 3, "regionId": "south", "ownerId": "A",
+       "noise": "wide-payload-ccccc",
+       "items": [ { "qty": 4 } ],
+       "tags": [ "red" ] }', NULL);
+
+
+-- 3.1 Two consecutive $unwind stages on different top-level array fields.
+-- Both "items" and "tags" must survive the synthetic $project, along with the
+-- $group key "ownerId" and the accumulator's source field "items".
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO off;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": "$items" },
+        { "$unwind": "$tags" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO on;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": "$items" },
+        { "$unwind": "$tags" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$match": { "regionId": "north" } },
+        { "$unwind": "$items" },
+        { "$unwind": "$tags" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 3.2 A $match sits between the two $unwind stages. The intermediate match's
+-- top-level field ("tags") must also be carried into the synthetic $project.
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO off;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "tags": "red" } },
+        { "$unwind": "$tags" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO on;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "tags": "red" } },
+        { "$unwind": "$tags" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "tags": "red" } },
+        { "$unwind": "$tags" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 3.3 A later $unwind carries includeArrayIndex. The optimization is disabled
+-- whenever any $unwind in the window uses includeArrayIndex, so no synthetic
+-- $project is injected before the first $unwind (bail).
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$unwind": { "path": "$tags", "includeArrayIndex": "tagIdx" } },
+        { "$group": { "_id": "$ownerId" } }
+    ],
+    "cursor": {}
+}');
+
+
+-- 3.4 The second $unwind targets a nested path under the first $unwind's
+-- field ("$items" then "$items.qty"). Both resolve to the same top-level
+-- "items", so the synthetic $project keeps "items" once with no separate
+-- nested entry; off vs on documents result equivalence.
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO off;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$unwind": "$items.qty" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO on;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$unwind": "$items.qty" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$unwind": "$items.qty" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } }
+    ],
+    "cursor": {}
+}');
+
+
+
+-- ============================================================================
 -- Section 4 — telemetry (applicability counter)
 --
 -- The FEATURE_STAGE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP counter is bumped
@@ -905,3 +1067,4 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 
 SELECT documentdb_api.drop_collection('proj_pushup_db', 'orders_coll');
 SELECT documentdb_api.drop_collection('proj_pushup_db', 'lookup_target');
+SELECT documentdb_api.drop_collection('proj_pushup_db', 'multi_unwind_coll');

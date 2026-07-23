@@ -273,9 +273,160 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 
 
 -- ============================================================================
+-- Section D5 - multiple $unwind stages before the $group (sharded)
+--
+-- The optimization is extended to windows with more than one $unwind. The
+-- synthetic $project must union every $unwind's top-level path (and any
+-- intervening $match's fields) so cross-shard partial aggregation still sees
+-- all required columns. Sharded by _id (hashed) so the group on the
+-- non-shard-key ownerId forces per-worker partials + coordinator combine.
+-- ============================================================================
+SELECT documentdb_api.insert_one('proj_pushup_dist_db', 'multi_unwind_coll',
+    '{ "_id": 1, "regionId": "north", "ownerId": "A",
+       "noise": "wide-payload-aaaaa",
+       "items": [ { "qty": 1 }, { "qty": 2 } ],
+       "tags": [ "red", "blue" ] }');
+SELECT documentdb_api.insert_one('proj_pushup_dist_db', 'multi_unwind_coll',
+    '{ "_id": 2, "regionId": "north", "ownerId": "B",
+       "noise": "wide-payload-bbbbb",
+       "items": [ { "qty": 3 } ],
+       "tags": [ "green" ] }');
+SELECT documentdb_api.insert_one('proj_pushup_dist_db', 'multi_unwind_coll',
+    '{ "_id": 3, "regionId": "south", "ownerId": "A",
+       "noise": "wide-payload-ccccc",
+       "items": [ { "qty": 4 } ],
+       "tags": [ "red" ] }');
+SELECT documentdb_api.insert_one('proj_pushup_dist_db', 'multi_unwind_coll',
+    '{ "_id": 4, "regionId": "north", "ownerId": "B",
+       "noise": "wide-payload-ddddd",
+       "items": [ { "qty": 5 }, { "qty": 6 } ],
+       "tags": [ "blue", "green" ] }');
+SELECT documentdb_api.shard_collection('proj_pushup_dist_db', 'multi_unwind_coll', '{ "_id": "hashed" }', false);
+
+-- D5.1 Two consecutive $unwind stages (items, tags) on different array fields,
+-- grouped by the non-shard-key ownerId. The injected project must keep both
+-- "items" and "tags"; off vs on documents result equivalence.
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO off;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_dist_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$unwind": "$tags" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO on;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_dist_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$unwind": "$tags" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_dist_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$unwind": "$tags" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } }
+    ],
+    "cursor": {}
+}');
+
+
+-- D5.2 A $match sits between the two $unwind stages. The intermediate match's
+-- field ("tags") must also be preserved by the synthetic project on sharded
+-- data; off vs on documents result equivalence.
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO off;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_dist_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "tags": "red" } },
+        { "$unwind": "$tags" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO on;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_dist_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "tags": "red" } },
+        { "$unwind": "$tags" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_dist_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$match": { "tags": "red" } },
+        { "$unwind": "$tags" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } }
+    ],
+    "cursor": {}
+}');
+
+
+-- D5.3 The second $unwind targets a nested path under the first $unwind's
+-- field ("$items" then "$items.qty") on sharded data. Both resolve to the
+-- same top-level "items", so the synthetic per-shard $project keeps "items"
+-- once; off vs on documents result equivalence across shards.
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO off;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_dist_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$unwind": "$items.qty" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+SET documentdb.enableProjectPushUpBeforeUnwindWithGroup TO on;
+SELECT document FROM bson_aggregation_pipeline('proj_pushup_dist_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$unwind": "$items.qty" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } },
+        { "$sort": { "_id": 1 } }
+    ],
+    "cursor": {}
+}');
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_dist_db', '{
+    "aggregate": "multi_unwind_coll",
+    "pipeline": [
+        { "$unwind": "$items" },
+        { "$unwind": "$items.qty" },
+        { "$group": { "_id": "$ownerId", "totalQty": { "$sum": "$items.qty" } } }
+    ],
+    "cursor": {}
+}');
+
+
+
+-- ============================================================================
 -- Clean up
 -- ============================================================================
 
 SELECT documentdb_api.drop_collection('proj_pushup_dist_db', 'orders_coll');
 SELECT documentdb_api.drop_collection('proj_pushup_dist_db', 'orders_colocated');
 SELECT documentdb_api.drop_collection('proj_pushup_dist_db', 'lookup_target');
+SELECT documentdb_api.drop_collection('proj_pushup_dist_db', 'multi_unwind_coll');
