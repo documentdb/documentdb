@@ -222,6 +222,8 @@ static char FeatureMapping[MAX_FEATURE_COUNT][MAX_FEATURE_NAME_LENGTH] = {
 	[FEATURE_AGGREGATE_GROUP_MIN_N] = "group_min_n",
 	[FEATURE_AGGREGATE_GROUP_PERCENTILE] = "group_percentile",
 	[FEATURE_AGGREGATE_GROUP_PUSH] = "group_push",
+	[FEATURE_AGGREGATE_GROUP_SCALAR_AGG_INDEX_PUSHDOWN] =
+		"group_scalar_agg_index_pushdown",
 	[FEATURE_AGGREGATE_GROUP_SORT_PREFIX_CANDIDATE] = "group_sort_prefix_candidate",
 	[FEATURE_AGGREGATE_GROUP_STDDEV_POP] = "group_stddev_pop",
 	[FEATURE_AGGREGATE_GROUP_STDDEV_SAMP] = "group_stddev_samp",

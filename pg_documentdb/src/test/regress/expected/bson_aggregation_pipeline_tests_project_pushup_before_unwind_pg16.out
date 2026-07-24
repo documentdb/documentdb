@@ -1165,7 +1165,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 (15 rows)
 
 -- 2.14 Match references more distinct top-level fields than the optimizer's
--- PROJECT_PUSHUP_MAX_FIELDS cap (64). AddTopLevelFieldToSet returns false on
+-- PROJECT_PUSHUP_MAX_FIELDS cap (64). TryAddFieldToSet returns false on
 -- overflow → CollectMatchTopLevelPaths returns false → the rewrite bails.
 -- The counter still bumps for the candidate unwind/group shape. We exercise this with a $and of 70
 -- single-field subdocs (f1..f70), and use a DO block + counter assertion to

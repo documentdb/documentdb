@@ -1,0 +1,864 @@
+SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documentdb_api_internal,public;
+-- =============================================================================
+-- Scalar aggregate index pushdown: for $group with a constant _id (e.g.
+-- _id: null), simple "$field" references in the accumulators are emitted as
+-- bson_full_scan({"<field>": {"fullScan": true}}) hints so the planner can pick
+-- a covering Index Only Scan.  Gated by
+-- documentdb.enable_scalar_aggregate_index_pushdown.
+-- =============================================================================
+SET documentdb.defaultUseCompositeOpClass TO on;
+SET documentdb.next_collection_id TO 21300;
+SET documentdb.next_collection_index_id TO 21300;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'scalar_agg_db', '{ "createIndexes": "scalar_agg_push", "indexes": [ { "name": "a_1", "key": { "a": 1 } }, { "name": "b_c_1", "key": { "b": 1, "c": 1 } }, { "name": "e_f_1", "key": { "e.f": 1 } } ] }', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one('scalar_agg_db', 'scalar_agg_push', bson_build_document('_id', i, 'a', i % 100, 'b', i % 10, 'c', i, 'e', bson_build_document('f', i % 100)) )) FROM generate_series(1, 1000) AS i;
+ count 
+-------
+  1000
+(1 row)
+
+ANALYZE;
+set enable_seqscan to off;
+set enable_bitmapscan to off;
+-- =============================================================================
+-- Baseline: GUC off => no pushdown; plan keeps the _id index scan.
+-- =============================================================================
+BEGIN;
+set local documentdb.enable_scalar_aggregate_index_pushdown to off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" } } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Scan using _id_ on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.shard_key_value = '21301'::bigint)
+(6 rows)
+
+ROLLBACK;
+set documentdb.enable_scalar_aggregate_index_pushdown to on;
+-- _id: null with $sum:"$a" on indexed field "a" -> covering Index Only Scan
+-- on a_1 (no GROUP BY/ORDER BY consumer needed).
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" } } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Only Scan using a_1 on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.document @<> '{ "a" : { "fullScan" : true } }'::bson)
+(6 rows)
+
+-- Same shape with $avg -- covering Index Only Scan on a_1.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "average": { "$avg": "$a" } } } ] }');
+                                                                                                                       QUERY PLAN                                                                                                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'average'::text, bsonaveragewithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Only Scan using a_1 on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.document @<> '{ "a" : { "fullScan" : true } }'::bson)
+(6 rows)
+
+-- Multiple accumulators on the same field -> single qual on "a", Index Only
+-- Scan on a_1.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "mx": { "$max": "$a" }, "mn": { "$min": "$a" } } } ] }');
+                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'mx'::text, bsonmaxwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'mn'::text, bsonminwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Only Scan using a_1 on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.document @<> '{ "a" : { "fullScan" : true } }'::bson)
+(6 rows)
+
+-- Accumulators on different fields (b, c), both covered by b_c_1.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "sb": { "$sum": "$b" }, "mc": { "$max": "$c" } } } ] }');
+                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'sb'::text, bsonsumwithexpr(document, '{ "" : "$b" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'mc'::text, bsonmaxwithexpr(document, '{ "" : "$c" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Only Scan using b_c_1 on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: ((collection.document @<> '{ "b" : { "fullScan" : true } }'::bson) AND (collection.document @<> '{ "c" : { "fullScan" : true } }'::bson))
+(6 rows)
+
+-- Non-null constant _id values also push.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": 1, "total": { "$sum": "$a" } } } ] }');
+                                                                                                                                      QUERY PLAN                                                                                                                                      
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : { "$numberInt" : "1" } }'::bson)
+   Group Key: '{ "" : { "$numberInt" : "1" } }'::bson
+   ->  Index Only Scan using a_1 on documentdb_data.documents_21301 collection
+         Output: '{ "" : { "$numberInt" : "1" } }'::bson, document
+         Index Cond: (collection.document @<> '{ "a" : { "fullScan" : true } }'::bson)
+(6 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": "literal", "total": { "$sum": "$a" } } } ] }');
+                                                                                                                         QUERY PLAN                                                                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : "literal" }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : "literal" }'::bson)
+   Group Key: '{ "" : "literal" }'::bson
+   ->  Index Only Scan using a_1 on documentdb_data.documents_21301 collection
+         Output: '{ "" : "literal" }'::bson, document
+         Index Cond: (collection.document @<> '{ "a" : { "fullScan" : true } }'::bson)
+(6 rows)
+
+-- $sum:1 contributes no path; $sum:"$a" still drives the a_1 Index Only Scan.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "cnt": { "$sum": 1 }, "total": { "$sum": "$a" } } } ] }');
+                                                                                                                                 QUERY PLAN                                                                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'cnt'::text, bsoncount(1), 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Only Scan using a_1 on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.document @<> '{ "a" : { "fullScan" : true } }'::bson)
+(6 rows)
+
+-- Pure $sum:1: no field path, no qual; the bson_count fast path applies.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "cnt": { "$sum": 1 } } } ] }');
+                                                       QUERY PLAN                                                        
+-------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'cnt'::text, bsoncount(1)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Only Scan using _id_ on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson
+         Index Cond: (collection.shard_key_value = '21301'::bigint)
+(6 rows)
+
+-- {$count: {}} alone -- same fast path, no qual.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "cnt": { "$count": {} } } } ] }');
+                                                       QUERY PLAN                                                        
+-------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'cnt'::text, bsoncount(1)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Only Scan using _id_ on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson
+         Index Cond: (collection.shard_key_value = '21301'::bigint)
+(6 rows)
+
+-- Constant string argument ({$max: "foo"}) needs no field; the $sum:"$a" path
+-- is still emitted as a fullScan hint.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "label": { "$max": "foo" }, "total": { "$sum": "$a" } } } ] }');
+                                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'label'::text, bsonmaxwithexpr('{ }'::bson, '{ "" : "foo" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Only Scan using a_1 on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.document @<> '{ "a" : { "fullScan" : true } }'::bson)
+(6 rows)
+
+-- Expression argument reads fields the index cannot be proven to cover, so no
+-- single-field hint is added.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": { "$multiply": ["$a", "$b"] } } } } ] }');
+                                                                                                                                  QUERY PLAN                                                                                                                                  
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : { "$multiply" : [ "$a", "$b" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Scan using _id_ on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.shard_key_value = '21301'::bigint)
+(6 rows)
+
+-- $isArray wraps the field reference in an expression document, so (like
+-- $multiply) the argument is not a bare "$field" string and no single-field
+-- hint is emitted; the plan keeps the _id index scan.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "m": { "$max": { "$isArray": "$b" } } } } ] }');
+                                                                                                                          QUERY PLAN                                                                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'm'::text, bsonmaxwithexpr(document, '{ "" : { "$isArray" : "$b" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Scan using _id_ on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.shard_key_value = '21301'::bigint)
+(6 rows)
+
+-- $$ROOT reads the whole document -- no single-field hint.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "r": { "$max": "$$ROOT" } } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'r'::text, bsonmaxwithexpr(document, '{ "" : "$$ROOT" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Scan using _id_ on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.shard_key_value = '21301'::bigint)
+(6 rows)
+
+-- Order-sensitive accumulators with a simple "$field" ($first/$push) push too.
+-- Without a preceding $sort the input order is arbitrary, so index order is a
+-- valid ordering (sorted inputs are covered by the correctness cases below).
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "f": { "$first": "$a" } } } ] }');
+                                                                                                                   QUERY PLAN                                                                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'f'::text, bsonfirstwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Only Scan using a_1 on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.document @<> '{ "a" : { "fullScan" : true } }'::bson)
+(6 rows)
+
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "items": { "$push": "$a" } } } ] }');
+                                                                                                                                   QUERY PLAN                                                                                                                                    
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'items'::text, bson_array_agg(bson_expression_get(document, '{ "" : "$a" }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson), ''::text, true)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Only Scan using a_1 on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.document @<> '{ "a" : { "fullScan" : true } }'::bson)
+(6 rows)
+
+-- Dotted-path accumulator on the indexed nested field "e.f": the hint is
+-- emitted and covered by e_f_1, giving a covering Index Only Scan.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$e.f" } } } ] }');
+                                                                                                                     QUERY PLAN                                                                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$e.f" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Only Scan using e_f_1 on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.document @<> '{ "e.f" : { "fullScan" : true } }'::bson)
+(6 rows)
+
+-- Dotted-path accumulator on an unindexed nested field "$a.nested": the hint is
+-- emitted but no index covers it, so the planner keeps the _id index scan.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a.nested" } } } ] }');
+                                                                                                                       QUERY PLAN                                                                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$a.nested" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Scan using _id_ on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.shard_key_value = '21301'::bigint)
+(6 rows)
+
+-- Uncovered field "$d": the hint is emitted but no index covers it, so the
+-- planner keeps the _id index scan.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$d" } } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$d" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Scan using _id_ on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.shard_key_value = '21301'::bigint)
+(6 rows)
+
+-- Mixed group: a covered "$a" accumulator alongside an un-pushable sibling
+-- (an expression).  The "$a" hint is still emitted, but the uncovered sibling
+-- forces a heap-reading scan (not index-only), so the result stays correct.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" }, "p": { "$sum": { "$multiply": ["$a", "$b"] } } } } ] }');
+                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                          
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'p'::text, bsonsumwithexpr(document, '{ "" : { "$multiply" : [ "$a", "$b" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Scan using a_1 on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.document @<> '{ "a" : { "fullScan" : true } }'::bson)
+(6 rows)
+
+-- Mixed group with a "$$variable" sibling: a covered "$a" accumulator alongside
+-- a $max over a let-bound variable ("$$myVar").  A "$$variable" is not a "$field"
+-- path, so it contributes no hint, but the "$a" hint is still emitted and drives 
+-- the a_1 index scan.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "let": { "myVar": "hi" }, "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" }, "v": { "$max": "$$myVar" } } } ] }');
+                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "myVar" : { "$literal" : "hi" } } }'::bson, NULL::text), 'v'::text, bsonmaxwithexpr(document, '{ "" : "$$myVar" }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "myVar" : { "$literal" : "hi" } } }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Scan using a_1 on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.document @<> '{ "a" : { "fullScan" : true } }'::bson)
+(6 rows)
+
+-- WithExpr accumulators (enableNewWithExprAccumulators on): $sum/$avg/$max/$min
+-- take a different code path -- verify pushdown still works and is correct.
+BEGIN;
+set local documentdb.enableNewWithExprAccumulators to on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" }, "average": { "$avg": "$a" }, "mx": { "$max": "$b" }, "mn": { "$min": "$b" } } } ] }');
+                                                                                                                                                                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                                                                                                                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'average'::text, bsonaveragewithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'mx'::text, bsonmaxwithexpr(document, '{ "" : "$b" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'mn'::text, bsonminwithexpr(document, '{ "" : "$b" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Scan using a_1 on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.document @<> '{ "a" : { "fullScan" : true } }'::bson)
+(6 rows)
+
+SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" }, "average": { "$avg": "$a" }, "mx": { "$max": "$b" }, "mn": { "$min": "$b" } } } ] }');
+                                                                            document                                                                            
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : null, "total" : { "$numberInt" : "49500" }, "average" : { "$numberDouble" : "49.5" }, "mx" : { "$numberInt" : "9" }, "mn" : { "$numberInt" : "0" } }
+(1 row)
+
+-- Negative case under WithExpr -- still no pushdown.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": { "$multiply": ["$a", "$b"] } } } } ] }');
+                                                                                                                                  QUERY PLAN                                                                                                                                  
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : { "$multiply" : [ "$a", "$b" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Scan using _id_ on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.shard_key_value = '21301'::bigint)
+(6 rows)
+
+ROLLBACK;
+-- Correctness: value matches the seq-scan plan (sum = 49500, count = 1000).
+SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" }, "cnt": { "$sum": 1 } } } ] }');
+                                         document                                          
+-------------------------------------------------------------------------------------------
+ { "_id" : null, "total" : { "$numberInt" : "49500" }, "cnt" : { "$numberInt" : "1000" } }
+(1 row)
+
+-- Correctness: the dotted-path nested "$e.f" sum matches the same total (49500),
+-- confirming the Index Only Scan over the covering e_f_1 index returns the
+-- right value.
+SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$e.f" } } } ] }');
+                        document                        
+--------------------------------------------------------
+ { "_id" : null, "total" : { "$numberInt" : "49500" } }
+(1 row)
+
+-- Constant string accumulator returns "foo" for the single group.
+SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "label": { "$max": "foo" }, "total": { "$sum": "$a" } } } ] }');
+                                document                                 
+-------------------------------------------------------------------------
+ { "_id" : null, "label" : "foo", "total" : { "$numberInt" : "49500" } }
+(1 row)
+
+-- Mixed-group correctness: the covered "$a" sum and the uncovered $multiply
+-- sibling both match the seq-scan result (order-insensitive).
+SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" }, "p": { "$sum": { "$multiply": ["$a", "$b"] } } } } ] }');
+                                         document                                          
+-------------------------------------------------------------------------------------------
+ { "_id" : null, "total" : { "$numberInt" : "49500" }, "p" : { "$numberInt" : "231000" } }
+(1 row)
+
+-- Mixed-group-with-let correctness: the covered "$a" sum matches the seq-scan
+-- total (49500) and the "$$myVar" max returns the let-bound literal ("hi"),
+-- confirming the pushdown on "a" does not change results.
+SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "let": { "myVar": "hi" }, "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" }, "v": { "$max": "$$myVar" } } } ] }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : null, "total" : { "$numberInt" : "49500" }, "v" : "hi" }
+(1 row)
+
+-- $first with no $sort: the result is arbitrary by the documented semantics.
+-- With the GUC on (seq/bitmap scans off) the a_1 Index Only Scan surfaces rows
+-- in "a" order, so $first returns 0 (min a) -- a spec-permitted ordering, not
+-- a guarantee.
+SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "f": { "$first": "$a" } } } ] }');
+                    document                    
+------------------------------------------------
+ { "_id" : null, "f" : { "$numberInt" : "0" } }
+(1 row)
+
+-- With a preceding $sort the order is enforced inside the aggregate
+-- (independent of the physical scan), so the pushdown cannot change the result.
+-- c = i is a total order: $sort:{c:1} makes _id=1 first (a=1) and _id=1000 last
+-- (a=0); $push preserves the sorted order -> [1, 2, 3].
+SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$sort": { "c": 1 } }, { "$group": { "_id": null, "f": { "$first": "$a" } } } ] }');
+                    document                    
+------------------------------------------------
+ { "_id" : null, "f" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$sort": { "c": 1 } }, { "$group": { "_id": null, "l": { "$last": "$a" } } } ] }');
+                    document                    
+------------------------------------------------
+ { "_id" : null, "l" : { "$numberInt" : "0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$sort": { "c": 1 } }, { "$group": { "_id": null, "items": { "$push": "$a" } } }, { "$project": { "first3": { "$slice": ["$items", 3] } } } ] }');
+                                                document                                                 
+---------------------------------------------------------------------------------------------------------
+ { "_id" : null, "first3" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }
+(1 row)
+
+set documentdb.enable_scalar_aggregate_index_pushdown to off;
+-- =============================================================================
+-- Truth table for the basic scalar aggregate ($group _id:null, $sum:"$a") over a
+-- small (5-row) collection with the pushdown GUC on.  Walk all four combinations
+-- of enable_seqscan x enable_bitmapscan and print the plan the cost-based
+-- optimizer picks in each cell:
+--
+--   enable_seqscan | enable_bitmapscan | chosen scan
+--   ---------------+-------------------+-----------------------------
+--        on        |        on         | Seq Scan
+--        on        |        off        | Seq Scan
+--        off       |        on         | Index Only Scan (a_1)
+--        off       |        off        | Index Only Scan (a_1)
+-- =============================================================================
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'scalar_agg_db', '{ "createIndexes": "scalar_agg_few", "indexes": [ { "name": "a_1", "key": { "a": 1 } } ] }', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one('scalar_agg_db', 'scalar_agg_few', bson_build_document('_id', i, 'a', i % 3) )) FROM generate_series(1, 5) AS i;
+ count 
+-------
+     5
+(1 row)
+
+ANALYZE;
+set documentdb.enable_scalar_aggregate_index_pushdown to on;
+-- (1) enable_seqscan=on,  enable_bitmapscan=on  -> Seq Scan
+SET enable_seqscan TO on;
+SET enable_bitmapscan TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_few", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" } } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Seq Scan on documentdb_data.documents_21302 collection
+         Output: '{ "" : null }'::bson, document
+(5 rows)
+
+-- (2) enable_seqscan=on,  enable_bitmapscan=off -> Seq Scan
+SET enable_seqscan TO on;
+SET enable_bitmapscan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_few", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" } } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Seq Scan on documentdb_data.documents_21302 collection
+         Output: '{ "" : null }'::bson, document
+(5 rows)
+
+-- (3) enable_seqscan=off, enable_bitmapscan=on  -> Index Only Scan (a_1)
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_few", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" } } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Only Scan using a_1 on documentdb_data.documents_21302 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.document @<> '{ "a" : { "fullScan" : true } }'::bson)
+(6 rows)
+
+-- (4) enable_seqscan=off, enable_bitmapscan=off -> Index Only Scan (a_1)
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_few", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" } } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Only Scan using a_1 on documentdb_data.documents_21302 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.document @<> '{ "a" : { "fullScan" : true } }'::bson)
+(6 rows)
+
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+set documentdb.enable_scalar_aggregate_index_pushdown to off;
+-- =============================================================================
+-- Cost-based determinism: penalize heap access with a high seq_page_cost (1000)
+-- while leaving enable_seqscan / enable_bitmapscan ON.  At the default
+-- seq_page_cost the optimizer prefers a Seq Scan over the 1000-row
+-- scalar_agg_push collection; once heap pages are made expensive the covering
+-- Index Only Scan on a_1 wins deterministically -- no enable_* knobs required.
+-- =============================================================================
+set documentdb.enable_scalar_aggregate_index_pushdown to on;
+SET enable_seqscan TO on;
+SET enable_bitmapscan TO on;
+-- Default seq_page_cost: the optimizer picks a Seq Scan.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" } } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Seq Scan on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+(5 rows)
+
+-- seq_page_cost = 1000 makes heap reads expensive; the covering Index Only Scan
+-- on a_1 is chosen even with seq/bitmap scans enabled.
+BEGIN;
+set local seq_page_cost to 1000;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" } } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Only Scan using a_1 on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.document @<> '{ "a" : { "fullScan" : true } }'::bson)
+(6 rows)
+
+ROLLBACK;
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+set documentdb.enable_scalar_aggregate_index_pushdown to off;
+-- =============================================================================
+-- GUC sanity: enable_scalar_aggregate_accumulator_path_collection gates path
+-- collection *upstream* of enable_scalar_aggregate_index_pushdown.  With the
+-- collection GUC OFF, no accumulator paths are gathered, so even with the
+-- pushdown GUC ON no fullScan hint is emitted and the plan falls back to the
+-- baseline _id index scan.
+-- =============================================================================
+set enable_seqscan to off;
+set enable_bitmapscan to off;
+set documentdb.enable_scalar_aggregate_index_pushdown to on;
+BEGIN;
+set local documentdb.enable_scalar_aggregate_accumulator_path_collection to off;
+-- Collection GUC off: no "a" fullScan qual despite the pushdown GUC being on;
+-- the plan keeps the baseline _id index scan.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" } } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Scan using _id_ on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.shard_key_value = '21301'::bigint)
+(6 rows)
+
+-- Correctness is unchanged with collection off (sum = 49500).
+SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" } } } ] }');
+                        document                        
+--------------------------------------------------------
+ { "_id" : null, "total" : { "$numberInt" : "49500" } }
+(1 row)
+
+ROLLBACK;
+-- Collection GUC back at its default (on): the a_1 covering Index Only Scan and
+-- its "a" fullScan hint return.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" } } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Only Scan using a_1 on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.document @<> '{ "a" : { "fullScan" : true } }'::bson)
+(6 rows)
+
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+set documentdb.enable_scalar_aggregate_index_pushdown to off;
+-- =============================================================================
+-- $match preceding the constant _id $group.  Verify the plan and the result stay correct for
+-- both the same-field and different-field cases.
+-- =============================================================================
+set enable_seqscan to off;
+set enable_bitmapscan to off;
+set documentdb.enable_scalar_aggregate_index_pushdown to on;
+-- $match and the accumulator both reference "a": the range filter and the "a"
+-- fullScan hint target the same a_1 index.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$match": { "a": { "$gte": 50 } } }, { "$group": { "_id": null, "total": { "$sum": "$a" } } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Only Scan using a_1 on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: ((collection.document @>= '{ "a" : { "$numberInt" : "50" } }'::bson) AND (collection.document @<> '{ "a" : { "fullScan" : true } }'::bson))
+(6 rows)
+
+SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$match": { "a": { "$gte": 50 } } }, { "$group": { "_id": null, "total": { "$sum": "$a" } } } ] }');
+                        document                        
+--------------------------------------------------------
+ { "_id" : null, "total" : { "$numberInt" : "37250" } }
+(1 row)
+
+-- $match on "b" while the accumulator reads "a": the match filter and the "a"
+-- fullScan hint reference different fields.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$match": { "b": 5 } }, { "$group": { "_id": null, "total": { "$sum": "$a" } } } ] }');
+                                                                                                                    QUERY PLAN                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'total'::text, bsonsumwithexpr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Scan using b_c_1 on documentdb_data.documents_21301 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.document @= '{ "b" : { "$numberInt" : "5" } }'::bson)
+(6 rows)
+
+SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$match": { "b": 5 } }, { "$group": { "_id": null, "total": { "$sum": "$a" } } } ] }');
+                       document                        
+-------------------------------------------------------
+ { "_id" : null, "total" : { "$numberInt" : "5000" } }
+(1 row)
+
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+set documentdb.enable_scalar_aggregate_index_pushdown to off;
+-- =============================================================================
+-- P1: more than INDEX_MAX_KEYS (32) distinct "$field" accumulators.  The path
+-- collector caps at INDEX_MAX_KEYS and drops the surplus without overflowing the
+-- fixed scalarAggFieldPaths array; every accumulator is still evaluated, so the
+-- result document keeps all fields (1 _id + 40 accumulators = 41).
+-- =============================================================================
+set documentdb.enable_scalar_aggregate_index_pushdown to on;
+DO $prj$
+DECLARE
+    v_accums text;
+    v_spec text;
+    v_doc documentdb_core.bson;
+BEGIN
+    SELECT string_agg(format('"f%s": { "$max": "$g%s" }', i, i), ', ')
+      INTO v_accums FROM generate_series(1, 40) AS i;
+    v_spec := format('{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, %s } } ] }', v_accums);
+    SELECT document INTO v_doc FROM bson_aggregation_pipeline('scalar_agg_db', v_spec::documentdb_core.bson);
+    RAISE NOTICE 'field-cap group top-level field count: %',
+        (bson_dollar_project(v_doc, '{ "n": { "$size": { "$objectToArray": "$$ROOT" } } }') ->> 'n');
+END $prj$;
+NOTICE:  field-cap group top-level field count: 41
+set documentdb.enable_scalar_aggregate_index_pushdown to off;
+-- =============================================================================
+-- Cursor coverage.  A constant _id $group is a single group with no ordered
+-- grouping key, so it is always a persisted (never streaming) cursor whether
+-- dynamic cursors are off or on (see IsGroupByFullyPushableForStreaming).  It
+-- still pages: scalar_agg_drain reports (groups, pages).
+-- =============================================================================
+set enable_seqscan to off;
+set enable_bitmapscan to off;
+set documentdb.enable_scalar_aggregate_index_pushdown to on;
+set documentdb.enableCursorsOnAggregationQueryRewrite to on;
+CREATE OR REPLACE FUNCTION scalar_agg_drain(p_agg text, p_cursor_id int8,
+                                            OUT groups bigint, OUT pages int) AS $$
+DECLARE
+    v_page documentdb_core.bson;
+    v_cont documentdb_core.bson;
+    v_batch bigint;
+BEGIN
+    groups := 0;
+    pages := 0;
+    SELECT fp.cursorPage, fp.continuation INTO v_page, v_cont
+    FROM aggregate_cursor_first_page(
+        database => 'scalar_agg_db', commandSpec => p_agg::documentdb_core.bson,
+        cursorId => p_cursor_id) fp;
+    pages := pages + 1;
+    SELECT (bson_dollar_project(v_page, '{ "c": { "$size": { "$ifNull": ["$cursor.firstBatch", []] } } }') ->> 'c')::bigint INTO v_batch;
+    groups := groups + COALESCE(v_batch, 0);
+
+    WHILE v_cont IS NOT NULL LOOP
+        SELECT gm.cursorPage, gm.continuation INTO v_page, v_cont
+        FROM cursor_get_more(
+            database => 'scalar_agg_db',
+            getMoreSpec => FORMAT('{ "getMore": { "$numberLong": "%s" }, "collection": "scalar_agg_push", "batchSize": 10 }', p_cursor_id)::documentdb_core.bson,
+            continuationSpec => v_cont) gm;
+        pages := pages + 1;
+        SELECT (bson_dollar_project(v_page, '{ "c": { "$size": { "$ifNull": ["$cursor.nextBatch", []] } } }') ->> 'c')::bigint INTO v_batch;
+        groups := groups + COALESCE(v_batch, 0);
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+-- batchSize 1: the group fits in the first page (1 group, 1 page).
+SET documentdb.enableDynamicCursors TO off;
+SELECT groups, pages FROM scalar_agg_drain('{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" } } } ], "cursor": { "batchSize": 1 } }', 7710);
+ groups | pages 
+--------+-------
+      1 |     1
+(1 row)
+
+SET documentdb.enableDynamicCursors TO on;
+SELECT groups, pages FROM scalar_agg_drain('{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" } } } ], "cursor": { "batchSize": 1 } }', 7711);
+ groups | pages 
+--------+-------
+      1 |     1
+(1 row)
+
+-- Value is correct through the cursor (sum = 49500).
+SELECT bson_dollar_project(cursorPage, '{ "cursor.firstBatch": 1 }')
+FROM aggregate_cursor_first_page(
+    database => 'scalar_agg_db',
+    commandSpec => '{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" } } } ], "cursor": { "batchSize": 1 } }'::documentdb_core.bson,
+    cursorId => 7712);
+                                     bson_dollar_project                                      
+----------------------------------------------------------------------------------------------
+ { "cursor" : { "firstBatch" : [ { "_id" : null, "total" : { "$numberInt" : "49500" } } ] } }
+(1 row)
+
+-- batchSize 0: empty first page + a getMore delivers the group (1 group, 2 pages).
+SET documentdb.enableDynamicCursors TO off;
+SELECT groups, pages FROM scalar_agg_drain('{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" } } } ], "cursor": { "batchSize": 0 } }', 7713);
+ groups | pages 
+--------+-------
+      1 |     2
+(1 row)
+
+SET documentdb.enableDynamicCursors TO on;
+SELECT groups, pages FROM scalar_agg_drain('{ "aggregate": "scalar_agg_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" } } } ], "cursor": { "batchSize": 0 } }', 7714);
+ groups | pages 
+--------+-------
+      1 |     2
+(1 row)
+
+DROP FUNCTION scalar_agg_drain(text, int8);
+SET documentdb.enableDynamicCursors TO off;
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO off;
+-- =============================================================================
+-- Three distinct "$field" accumulator paths, covering vs. non-covering index.
+-- Composite index x_y_z_1 has keys (x, y, z):
+--   * $group on x, y, z -- all three paths are keys of x_y_z_1 -> covering
+--     Index Only Scan with three fullScan hints.
+--   * $group on x, y, w -- w is not indexed, so no single index spans all three
+--     paths -> heap-fetching Index Scan on the covered x/y prefix.
+-- =============================================================================
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'scalar_agg_db', '{ "createIndexes": "scalar_agg_multi", "indexes": [ { "name": "x_y_z_1", "key": { "x": 1, "y": 1, "z": 1 } } ] }', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one('scalar_agg_db', 'scalar_agg_multi', bson_build_document('_id', i, 'x', i % 100, 'y', i % 10, 'z', i, 'w', i % 50) )) FROM generate_series(1, 1000) AS i;
+ count 
+-------
+  1000
+(1 row)
+
+ANALYZE;
+set enable_seqscan to off;
+set enable_bitmapscan to off;
+set documentdb.enable_scalar_aggregate_index_pushdown to on;
+-- Covering: x, y, z are all keys of x_y_z_1 -> Index Only Scan, three fullScan hints.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_multi", "pipeline": [ { "$group": { "_id": null, "sx": { "$sum": "$x" }, "sy": { "$sum": "$y" }, "sz": { "$sum": "$z" } } } ] }');
+                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'sx'::text, bsonsumwithexpr(document, '{ "" : "$x" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'sy'::text, bsonsumwithexpr(document, '{ "" : "$y" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'sz'::text, bsonsumwithexpr(document, '{ "" : "$z" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Only Scan using x_y_z_1 on documentdb_data.documents_21303 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: ((collection.document @<> '{ "y" : { "fullScan" : true } }'::bson) AND (collection.document @<> '{ "x" : { "fullScan" : true } }'::bson) AND (collection.document @<> '{ "z" : { "fullScan" : true } }'::bson))
+(6 rows)
+
+SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_multi", "pipeline": [ { "$group": { "_id": null, "sx": { "$sum": "$x" }, "sy": { "$sum": "$y" }, "sz": { "$sum": "$z" } } } ] }');
+                                                         document                                                          
+---------------------------------------------------------------------------------------------------------------------------
+ { "_id" : null, "sx" : { "$numberInt" : "49500" }, "sy" : { "$numberInt" : "4500" }, "sz" : { "$numberInt" : "500500" } }
+(1 row)
+
+-- Non-covering: swap z for the un-indexed w.  x_y_z_1 covers x/y but not w, so no
+-- Index Only Scan -- the x/y prefix pushes down to a heap-fetching Index Scan.
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_multi", "pipeline": [ { "$group": { "_id": null, "sx": { "$sum": "$x" }, "sy": { "$sum": "$y" }, "sw": { "$sum": "$w" } } } ] }');
+                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'sx'::text, bsonsumwithexpr(document, '{ "" : "$x" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'sy'::text, bsonsumwithexpr(document, '{ "" : "$y" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'sw'::text, bsonsumwithexpr(document, '{ "" : "$w" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Scan using x_y_z_1 on documentdb_data.documents_21303 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: ((collection.document @<> '{ "y" : { "fullScan" : true } }'::bson) AND (collection.document @<> '{ "x" : { "fullScan" : true } }'::bson))
+(6 rows)
+
+SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_multi", "pipeline": [ { "$group": { "_id": null, "sx": { "$sum": "$x" }, "sy": { "$sum": "$y" }, "sw": { "$sum": "$w" } } } ] }');
+                                                         document                                                         
+--------------------------------------------------------------------------------------------------------------------------
+ { "_id" : null, "sx" : { "$numberInt" : "49500" }, "sy" : { "$numberInt" : "4500" }, "sw" : { "$numberInt" : "24500" } }
+(1 row)
+
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+set documentdb.enable_scalar_aggregate_index_pushdown to off;
+-- =============================================================================
+-- Three distinct "$field" accumulator paths indexed by three SEPARATE
+-- single-field indexes (x_1, y_1, z_1) -- no single index spans all three, so
+-- no covering Index Only Scan:
+--   * bitmap scans off -> a single-index Index Scan (one path's fullScan hint
+--     pushed; the other two accumulators read "document" from the heap).
+--   * bitmap scans on  -> a single-index Bitmap Heap Scan (no BitmapAnd).
+-- =============================================================================
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'scalar_agg_db', '{ "createIndexes": "scalar_agg_sep", "indexes": [ { "name": "x_1", "key": { "x": 1 } }, { "name": "y_1", "key": { "y": 1 } }, { "name": "z_1", "key": { "z": 1 } } ] }', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one('scalar_agg_db', 'scalar_agg_sep', bson_build_document('_id', i, 'x', i % 100, 'y', i % 10, 'z', i) )) FROM generate_series(1, 1000) AS i;
+ count 
+-------
+  1000
+(1 row)
+
+ANALYZE;
+set documentdb.enable_scalar_aggregate_index_pushdown to on;
+-- Bitmap scans off: single-index Index Scan (one fullScan hint pushed, heap fetch).
+set enable_seqscan to off;
+set enable_bitmapscan to off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_sep", "pipeline": [ { "$group": { "_id": null, "sx": { "$sum": "$x" }, "sy": { "$sum": "$y" }, "sz": { "$sum": "$z" } } } ] }');
+                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'sx'::text, bsonsumwithexpr(document, '{ "" : "$x" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'sy'::text, bsonsumwithexpr(document, '{ "" : "$y" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'sz'::text, bsonsumwithexpr(document, '{ "" : "$z" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Index Scan using z_1 on documentdb_data.documents_21304 collection
+         Output: '{ "" : null }'::bson, document
+         Index Cond: (collection.document @<> '{ "z" : { "fullScan" : true } }'::bson)
+(6 rows)
+
+-- Bitmap scans on: single-index Bitmap Heap Scan (no BitmapAnd).
+set enable_seqscan to off;
+set enable_bitmapscan to on;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_sep", "pipeline": [ { "$group": { "_id": null, "sx": { "$sum": "$x" }, "sy": { "$sum": "$y" }, "sz": { "$sum": "$z" } } } ] }');
+                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : null }'::bson, 'sx'::text, bsonsumwithexpr(document, '{ "" : "$x" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'sy'::text, bsonsumwithexpr(document, '{ "" : "$y" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'sz'::text, bsonsumwithexpr(document, '{ "" : "$z" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), ('{ "" : null }'::bson)
+   Group Key: '{ "" : null }'::bson
+   ->  Bitmap Heap Scan on documentdb_data.documents_21304 collection
+         Output: '{ "" : null }'::bson, document
+         Recheck Cond: (collection.document @<> '{ "z" : { "fullScan" : true } }'::bson)
+         ->  Bitmap Index Scan on z_1
+               Index Cond: (collection.document @<> '{ "z" : { "fullScan" : true } }'::bson)
+(8 rows)
+
+SELECT document FROM bson_aggregation_pipeline('scalar_agg_db', '{ "aggregate": "scalar_agg_sep", "pipeline": [ { "$group": { "_id": null, "sx": { "$sum": "$x" }, "sy": { "$sum": "$y" }, "sz": { "$sum": "$z" } } } ] }');
+                                                         document                                                          
+---------------------------------------------------------------------------------------------------------------------------
+ { "_id" : null, "sx" : { "$numberInt" : "49500" }, "sy" : { "$numberInt" : "4500" }, "sz" : { "$numberInt" : "500500" } }
+(1 row)
+
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+set documentdb.enable_scalar_aggregate_index_pushdown to off;

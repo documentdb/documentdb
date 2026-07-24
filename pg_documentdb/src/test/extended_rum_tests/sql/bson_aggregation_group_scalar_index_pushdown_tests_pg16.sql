@@ -1,0 +1,1 @@
+\i sql/bson_aggregation_group_scalar_index_pushdown_tests.sql

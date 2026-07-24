@@ -222,6 +222,16 @@ bool EnableOrderByIndexTerm = DEFAULT_ENABLE_ORDER_BY_INDEX_TERM;
 bool EnableGroupByCompoundIdIndexPushdown =
 	DEFAULT_ENABLE_GROUP_BY_COMPOUND_ID_INDEX_PUSHDOWN;
 
+/* Added in v117, Pending stabilization, enable in v119 */
+#define DEFAULT_ENABLE_SCALAR_AGGREGATE_INDEX_PUSHDOWN false
+bool EnableScalarAggregateIndexPushdown =
+	DEFAULT_ENABLE_SCALAR_AGGREGATE_INDEX_PUSHDOWN;
+
+/* Added in v117, enabled in v117, remove after v120 */
+#define DEFAULT_ENABLE_SCALAR_AGGREGATE_ACCUMULATOR_PATH_COLLECTION true
+bool EnableScalarAggregateAccumulatorPathCollection =
+	DEFAULT_ENABLE_SCALAR_AGGREGATE_ACCUMULATOR_PATH_COLLECTION;
+
 /* Added in v112, enabled in v112, remove after v116 */
 #define DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK true
 bool EnablePartialMatchHasRecheck = DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK;
@@ -1190,6 +1200,24 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		DEFAULT_ENABLE_GROUP_BY_COMPOUND_ID_INDEX_PUSHDOWN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_scalar_aggregate_index_pushdown", newGucPrefix),
+		gettext_noop(
+			"Whether to enable index pushdown for scalar $group aggregates "
+			"(constant _id, e.g. _id: null) by emitting bson_full_scan quals "
+			"derived from simple $field accumulator references."),
+		NULL, &EnableScalarAggregateIndexPushdown,
+		DEFAULT_ENABLE_SCALAR_AGGREGATE_INDEX_PUSHDOWN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_scalar_aggregate_accumulator_path_collection", newGucPrefix),
+		gettext_noop(
+			"Whether to collect simple $field accumulator paths for scalar "
+			"$group index pushdown."),
+		NULL, &EnableScalarAggregateAccumulatorPathCollection,
+		DEFAULT_ENABLE_SCALAR_AGGREGATE_ACCUMULATOR_PATH_COLLECTION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 		psprintf("%s.indexBuildsScheduledOnBgWorker", newGucPrefix),

@@ -93,6 +93,8 @@ extern bool EnableTailableCursorMaxAwaitTime;
 extern bool RemoveMatchNamespaceFilters;
 extern bool EnableOrderByIndexTerm;
 extern bool EnableGroupByCompoundIdIndexPushdown;
+extern bool EnableScalarAggregateIndexPushdown;
+extern bool EnableScalarAggregateAccumulatorPathCollection;
 extern bool EnableSortGroupStage;
 extern bool EnableProjectPushUpBeforeUnwindWithGroup;
 extern bool EnableSortPushToAccumulatorWithPrefix;
@@ -417,6 +419,15 @@ static void SetAccumulatorSortOrder(TargetEntry *accumulatorTle, Expr *documentE
 static bool TryBuildSuffixSortSpec(const bson_value_t *groupValue,
 								   const bson_value_t *sortValue,
 								   bson_value_t *suffixSortSpec);
+static bool TryGetDollarFieldPathView(const bson_value_t *value,
+									  StringView *fieldPath);
+static void AddScalarAggAccumulatorPath(const bson_value_t *accVal,
+										int maxFieldPaths,
+										HTAB *seenPaths);
+static bool TryAddFieldToSet(HTAB *fieldSet, StringView field, int maxFields);
+static List * AppendBsonFullScanQualsForPaths(List *quals, Expr *documentExpr,
+											  HTAB *paths,
+											  const char *collationString);
 static bool CanPushSortFilterToIndex(Query *query,
 									 AggregationPipelineBuildContext *context);
 static FindSpec ParseFindQuery(pgbson *findSpec,
@@ -430,6 +441,9 @@ static Query * ApplyFindSpecCore(const FindSpec *spec, Query *query, Query *base
 								 AggregationPipelineBuildContext *context);
 static Const * AddCollationToSortSpec(const pgbsonelement *sortElement,
 									  const char *collationString);
+static Expr * MakeBsonFullScanQual(Expr *documentExpr,
+								   const pgbsonelement *sortSpecElement,
+								   const char *collationString);
 
 #define COMPATIBLE_CHANGE_STREAM_STAGES_COUNT 8
 const char *CompatibleChangeStreamPipelineStages[COMPATIBLE_CHANGE_STREAM_STAGES_COUNT] =
@@ -5296,18 +5310,30 @@ CreateSingleArgAggregate(Oid aggregateFunctionId, Expr *argument, ParseState *pa
 }
 
 
+/*
+ * Builds a single bson_full_scan(document, {"<path>": <hint>}) qual used for
+ * index pushdown, attaching the collation to the sort spec.
+ */
+static Expr *
+MakeBsonFullScanQual(Expr *documentExpr, const pgbsonelement *sortSpecElement,
+					 const char *collationString)
+{
+	Const *sortConst = AddCollationToSortSpec(sortSpecElement, collationString);
+	List *rangeArgs = list_make2(documentExpr, sortConst);
+	return (Expr *) makeFuncExpr(
+		BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
+		InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+}
+
+
 static List *
 AddFullScanQualsToJoinTreeForOrderByPushdown(List *currentQuals, Expr *documentExpr,
 											 const pgbsonelement *sortSpecElement,
 											 AggregationPipelineBuildContext *context,
 											 bool *addedShardKeyFilter)
 {
-	Const *sortConst = AddCollationToSortSpec(sortSpecElement,
+	Expr *fullScanExpr = MakeBsonFullScanQual(documentExpr, sortSpecElement,
 											  context->collationString);
-	List *rangeArgs = list_make2(documentExpr, sortConst);
-	Expr *fullScanExpr = (Expr *) makeFuncExpr(
-		BsonFullScanFunctionOid(), BOOLOID, rangeArgs,
-		InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
 	currentQuals = lappend(currentQuals, fullScanExpr);
 
 	if (sortSpecElement->pathLength == 3 && strncmp(sortSpecElement->path, "_id", 3) ==
@@ -6270,6 +6296,36 @@ AnalyzeSortGroupAccumulators(const bson_value_t *groupValue,
 
 
 /*
+ * If value is a simple "$field" reference (a BSON_TYPE_UTF8 of the form "$" +
+ * at least one field char), writes the unprefixed field path (e.g. "a" or
+ * "a.b") to *fieldPath and returns true.  Returns false for non-strings, a
+ * bare "$", and "$$variable" references (e.g. "$$ROOT").
+ */
+static bool
+TryGetDollarFieldPathView(const bson_value_t *value, StringView *fieldPath)
+{
+	if (value->value_type != BSON_TYPE_UTF8)
+	{
+		return false;
+	}
+
+	const char *path = value->value.v_utf8.str;
+	uint32_t pathLen = value->value.v_utf8.len;
+
+	/* Require "$" + at least one field char (also makes path[1] safe), and
+	 * reject "$$" variable refs (e.g. "$$ROOT"). */
+	if (pathLen < 2 || path[0] != '$' || path[1] == '$')
+	{
+		return false;
+	}
+
+	fieldPath->string = path + 1;
+	fieldPath->length = pathLen - 1;
+	return true;
+}
+
+
+/*
  * Extracts the unprefixed group-by field paths from a $group _id value
  * (scalar "$f" or document { f: "$f", ... }).  Returns false (and leaves
  * *numFieldPaths == 0) when _id isn't a string or document, an entry isn't
@@ -6291,17 +6347,13 @@ TryExtractGroupByFieldPaths(const bson_value_t *idValue,
 
 	if (idValue->value_type == BSON_TYPE_UTF8)
 	{
-		/* Scalar _id (e.g. "$f3"): require "$" + >=1 field char (also makes
-		 * path[1] safe), and reject "$$" variable refs (e.g. "$$ROOT"). */
-		const char *path = idValue->value.v_utf8.str;
-		uint32_t pathLen = idValue->value.v_utf8.len;
-		if (pathLen < 2 || path[0] != '$' || path[1] == '$')
+		/* Scalar _id (e.g. "$f3"): a simple "$field" reference (rejects "$$"
+		 * variable refs like "$$ROOT"). */
+		if (!TryGetDollarFieldPathView(idValue, &fieldPaths[0]))
 		{
 			return false;
 		}
 
-		fieldPaths[0].string = path + 1;
-		fieldPaths[0].length = pathLen - 1;
 		*numFieldPaths = 1;
 		return true;
 	}
@@ -6318,23 +6370,14 @@ TryExtractGroupByFieldPaths(const bson_value_t *idValue,
 				return false;
 			}
 
+			/* Each entry must be a simple "$field" reference; rejects
+			 * non-strings and "$$" variable refs (e.g. "$$ROOT"). */
 			const bson_value_t *val = bson_iter_value(&idIter);
-			if (val->value_type != BSON_TYPE_UTF8)
+			if (!TryGetDollarFieldPathView(val, &fieldPaths[count]))
 			{
 				return false;
 			}
 
-			/* Same per-entry guard as the scalar branch: require "$" + >=1
-			 * field char and reject "$$" variable refs (e.g. "$$ROOT"). */
-			const char *path = val->value.v_utf8.str;
-			uint32_t pathLen = val->value.v_utf8.len;
-			if (pathLen < 2 || path[0] != '$' || path[1] == '$')
-			{
-				return false;
-			}
-
-			fieldPaths[count].string = path + 1;
-			fieldPaths[count].length = pathLen - 1;
 			count++;
 		}
 
@@ -6348,6 +6391,61 @@ TryExtractGroupByFieldPaths(const bson_value_t *idValue,
 	}
 
 	return false;
+}
+
+
+/*
+ * Collects the simple "$field" path (if any) an accumulator argument reads
+ * into seenPaths, for scalar-aggregate index pushdown (constant _id, e.g.
+ * _id: null).  A top-level "$field" contributes a path; constants and
+ * "$$vars" are skipped.  seenPaths is a StringView hash set that de-duplicates
+ * across accumulators (e.g. $sum:$a and $max:$a share "a") and is capped at
+ * maxFieldPaths entries.
+ */
+static void
+AddScalarAggAccumulatorPath(const bson_value_t *accVal, int maxFieldPaths,
+							HTAB *seenPaths)
+{
+	/* Only a simple "$field" string reads a single hintable field; skip
+	 * constant strings ({$max: "foo"}) and "$$variable" / "$$ROOT" refs. */
+	StringView candidate;
+	if (!TryGetDollarFieldPathView(accVal, &candidate))
+	{
+		return;
+	}
+
+	TryAddFieldToSet(seenPaths, candidate, maxFieldPaths);
+}
+
+
+/*
+ * Appends a bson_full_scan(document, {"<path>": {"fullScan": true}}) qual for
+ * each path in the set, registering a planner-side fullScan index hint.
+ */
+static List *
+AppendBsonFullScanQualsForPaths(List *quals, Expr *documentExpr,
+								HTAB *paths, const char *collationString)
+{
+	pgbson_writer fullScanWriter;
+	PgbsonWriterInit(&fullScanWriter);
+	PgbsonWriterAppendBool(&fullScanWriter, "fullScan", 8, true);
+	bson_value_t fullScanValue = ConvertPgbsonToBsonValue(
+		PgbsonWriterGetPgbson(&fullScanWriter));
+
+	HASH_SEQ_STATUS seqStatus;
+	hash_seq_init(&seqStatus, paths);
+	StringView *path;
+	while ((path = (StringView *) hash_seq_search(&seqStatus)) != NULL)
+	{
+		pgbsonelement sortElement = { 0 };
+		sortElement.path = path->string;
+		sortElement.pathLength = path->length;
+		sortElement.bsonValue = fullScanValue;
+		Expr *fullScanExpr = MakeBsonFullScanQual(documentExpr, &sortElement,
+												  collationString);
+		quals = lappend(quals, fullScanExpr);
+	}
+	return quals;
 }
 
 
@@ -7542,7 +7640,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 	/* Group by is valid for pushdown iff it's a string expression of a path that's not a variable
 	 * or a document whose fields are all $path expressions.
 	 */
-	bool isGroupByValidForIndexPushdown = false;
+	bool isValidForIndexPushdownWithGroupKey = false;
 	StringView groupByFieldPaths[INDEX_MAX_KEYS] = { 0 };
 	int numGroupByFields = 0;
 	if (CanPushSortFilterToIndex(query, context))
@@ -7551,7 +7649,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		 * in the case where there are more than INDEX_MAX_KEYS fields, we
 		 * can still do partial index pushdown on the first INDEX_MAX_KEYS
 		 * fields. TryExtractGroupByFieldPaths currently bails entirely. */
-		isGroupByValidForIndexPushdown =
+		isValidForIndexPushdownWithGroupKey =
 			TryExtractGroupByFieldPaths(&idValue, groupByFieldPaths,
 										INDEX_MAX_KEYS,
 										&numGroupByFields);
@@ -7582,7 +7680,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 	 * For multi-field document _id with index pushdown, decompose into
 	 * individual per-field GROUP BY expressions.
 	 */
-	bool canUseDecomposedGroupBy = isGroupByValidForIndexPushdown &&
+	bool canUseDecomposedGroupBy = isValidForIndexPushdownWithGroupKey &&
 								   idValue.value_type == BSON_TYPE_DOCUMENT &&
 								   numGroupByFields > 1 &&
 								   !isGroupConstant;
@@ -7684,7 +7782,8 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 			groupFunc = makeFuncExpr(
 				bsonExpressionGetFunction, BsonTypeId(), groupArgs, InvalidOid,
 				InvalidOid, COERCE_EXPLICIT_CALL);
-			if (isGroupByValidForIndexPushdown && IsDistributedShardContext(context) &&
+			if (isValidForIndexPushdownWithGroupKey && IsDistributedShardContext(
+					context) &&
 				BsonTypeId() != DocumentDBCoreBsonTypeId())
 			{
 				groupFunc = makeFuncExpr(
@@ -7713,6 +7812,17 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 
 		groupEntries = list_make1(groupEntry);
 	}
+
+	/* Scalar-aggregate pushdown eligibility: a constant _id where simple
+	 * "$field" accumulator references can still drive index selection.  Gated
+	 * by EnableScalarAggregateAccumulatorPathCollection (default: true). */
+	const bool scalarAggCandidate = EnableScalarAggregateAccumulatorPathCollection &&
+									isGroupConstant &&
+									!isValidForIndexPushdownWithGroupKey &&
+									CanPushSortFilterToIndex(query, context);
+
+	/* De-duplicated set of the simple "$field" accumulator paths to hint. */
+	HTAB *scalarAggPaths = scalarAggCandidate ? CreateStringViewHashSet() : NULL;
 
 	/* Now add accumulators */
 	parseState->p_expr_kind = EXPR_KIND_SELECT_TARGET;
@@ -7759,6 +7869,15 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		StringView accumulatorName = {
 			.length = accumulatorElement.pathLength, .string = accumulatorElement.path
 		};
+
+		/* Collect this accumulator's simple "$field" path, if any. */
+		if (scalarAggCandidate)
+		{
+			AddScalarAggAccumulatorPath(&accumulatorElement.bsonValue,
+										INDEX_MAX_KEYS,
+										scalarAggPaths);
+		}
+
 		if (StringViewEqualsCString(&accumulatorName, "$avg"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_AVG);
@@ -8306,26 +8425,58 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 	}
 
 	/*
-	 * If there's an orderby pushdown to the index, add a full scan clause iff
-	 * the query has no filters yet.
+	 * Report eligibility regardless of the GUC
+	 * EnableScalarAggregateIndexPushdown (which only gates qual emission),
+	 * so the counter measures how often this pattern occurs.
 	 */
-	if (isGroupByValidForIndexPushdown && (useDecomposedGroupBy || numGroupByFields == 1))
+	bool scalarAggHasPaths = scalarAggCandidate &&
+							 hash_get_num_entries(scalarAggPaths) > 0;
+	if (scalarAggHasPaths)
+	{
+		ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_SCALAR_AGG_INDEX_PUSHDOWN);
+	}
+
+	/*
+	 * Emit the bson_full_scan index hint when there are no filters yet.  The
+	 * same machinery serves the group-by-key pushdown (paths from $group _id)
+	 * and the scalar-aggregate pushdown (paths from "$field" accumulators).
+	 */
+	bool emitGroupByQuals = isValidForIndexPushdownWithGroupKey &&
+							(useDecomposedGroupBy || numGroupByFields == 1);
+	bool emitScalarAggQuals = scalarAggHasPaths &&
+							  EnableScalarAggregateIndexPushdown;
+
+	if (emitGroupByQuals || emitScalarAggQuals)
 	{
 		List *currentQuals = make_ands_implicit(
 			(Expr *) query->jointree->quals);
 
 		bool addedShardKeyFilter = false;
-		for (int i = 0; i < numGroupByFields; i++)
+		if (emitGroupByQuals)
 		{
-			pgbsonelement sortElement = { 0 };
-			sortElement.path = groupByFieldPaths[i].string;
-			sortElement.pathLength = groupByFieldPaths[i].length;
-			sortElement.bsonValue.value_type = BSON_TYPE_INT32;
-			sortElement.bsonValue.value.v_int32 = 1;
+			/* Group-by-key pushdown: emit an orderByScan ({path:1}) hint per
+			 * key, adding the unsharded _id shard-key filter when applicable. */
+			for (int i = 0; i < numGroupByFields; i++)
+			{
+				pgbsonelement sortElement = { 0 };
+				sortElement.path = groupByFieldPaths[i].string;
+				sortElement.pathLength = groupByFieldPaths[i].length;
+				sortElement.bsonValue.value_type = BSON_TYPE_INT32;
+				sortElement.bsonValue.value.v_int32 = 1;
 
-			currentQuals = AddFullScanQualsToJoinTreeForOrderByPushdown(
-				currentQuals, origEntry->expr, &sortElement,
-				context, &addedShardKeyFilter);
+				currentQuals = AddFullScanQualsToJoinTreeForOrderByPushdown(
+					currentQuals, origEntry->expr, &sortElement,
+					context, &addedShardKeyFilter);
+			}
+		}
+		else
+		{
+			/* Scalar-aggregate pushdown: emit a plain fullScan
+			 * ({path:{fullScan:true}}) hint per "$field" accumulator path --
+			 * a covering index path with no ordering consumer. */
+			currentQuals = AppendBsonFullScanQualsForPaths(
+				currentQuals, origEntry->expr, scalarAggPaths,
+				context->collationString);
 		}
 
 		/* When the group-by keys form a prefix of the sort spec, the suffix
@@ -8355,6 +8506,11 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 
 		query->jointree->quals = (Node *) make_ands_explicit(
 			currentQuals);
+	}
+
+	if (scalarAggPaths != NULL)
+	{
+		hash_destroy(scalarAggPaths);
 	}
 
 	/*
@@ -10482,31 +10638,31 @@ TryInlineChangeStreamNamespaceFilters(AggregationStage *changeStreamStage,
 
 
 /*
- * Adds topLevel to consumedFields if not already present. Empty views are
- * ignored. Returns false when the set is already at
- * PROJECT_PUSHUP_MAX_FIELDS and topLevel would be a new entry.
+ * Adds field to fieldSet if not already present. Empty views are ignored.
+ * Returns false when the set is already at maxFields and field would be a new
+ * entry.
  */
 static bool
-AddTopLevelFieldToSet(HTAB *consumedFields, StringView topLevel)
+TryAddFieldToSet(HTAB *fieldSet, StringView field, int maxFields)
 {
-	if (topLevel.length == 0)
+	if (field.length == 0)
 	{
 		return true;
 	}
 
 	bool found = false;
-	hash_search(consumedFields, &topLevel, HASH_FIND, &found);
+	hash_search(fieldSet, &field, HASH_FIND, &found);
 	if (found)
 	{
 		return true;
 	}
 
-	if (hash_get_num_entries(consumedFields) >= PROJECT_PUSHUP_MAX_FIELDS)
+	if (hash_get_num_entries(fieldSet) >= maxFields)
 	{
 		return false;
 	}
 
-	hash_search(consumedFields, &topLevel, HASH_ENTER, NULL);
+	hash_search(fieldSet, &field, HASH_ENTER, NULL);
 	return true;
 }
 
@@ -10555,7 +10711,8 @@ AddFieldPathTopLevelToSet(HTAB *consumedFields,
 		return false;
 	}
 
-	return AddTopLevelFieldToSet(consumedFields, *outTopLevel);
+	return TryAddFieldToSet(consumedFields, *outTopLevel,
+							PROJECT_PUSHUP_MAX_FIELDS);
 }
 
 
@@ -10812,7 +10969,8 @@ CollectUnwindTopLevelPath(const bson_value_t *unwindStageValue,
 		return false;
 	}
 
-	return AddTopLevelFieldToSet(consumedFields, unwindTopLevel);
+	return TryAddFieldToSet(consumedFields, unwindTopLevel,
+							PROJECT_PUSHUP_MAX_FIELDS);
 }
 
 

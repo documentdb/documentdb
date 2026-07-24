@@ -262,3 +262,32 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$match": { "a": { "$lt": 5 } } }, { "$group": { "_id": "$_id", "total": { "$sum": 1 } } } ] }')$$);
 
 ROLLBACK;
+
+---------------------------------------------------------------------------------------------------
+-- scalar-aggregate index pushdown (constant _id, e.g. _id: null) sanity on the
+-- sharded group_push collection.  A constant _id plan shape is
+-- PG-version-specific, so this focuses on cross-shard correctness: the pushdown
+-- must return the same aggregate as the non-pushdown scan.
+---------------------------------------------------------------------------------------------------
+BEGIN;
+set local citus.enable_local_execution to off;
+set local enable_seqscan to off;
+set local enable_bitmapscan to off;
+
+-- pushdown ON: aggregate the whole (sharded) collection into one group via the
+-- covering index (a = i % 100 over 1..1000 -> total 49500, cnt 1000).
+set local documentdb.enable_scalar_aggregate_index_pushdown to on;
+SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" }, "cnt": { "$sum": 1 } } } ] }');
+
+-- EXPLAIN coverage: the full sharded plan shows the pushdown engaged on every
+-- shard -- a per-shard GroupAggregate fed by an Index Only Scan on a_1 with the
+-- fullScan index condition.  A constant _id emits a shard-level
+-- "Group Key: '{ "" : null }'" line on PG15 but not PG16, so that one line is
+-- filtered out to keep a single baseline across supported versions; WITH
+-- ORDINALITY preserves the plan-line order.
+SELECT plan_line
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('group_idx_db', '{ "aggregate": "group_push", "pipeline": [ { "$group": { "_id": null, "total": { "$sum": "$a" } } } ] }')$$) WITH ORDINALITY AS t(plan_line, ord)
+WHERE plan_line NOT LIKE '%Group Key: ''{ "" : null }''%'
+ORDER BY ord;
+ROLLBACK;
