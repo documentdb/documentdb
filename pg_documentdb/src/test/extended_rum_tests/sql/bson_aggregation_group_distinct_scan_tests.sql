@@ -1,5 +1,11 @@
 SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, documentdb_api_internal, public;
 
+-- enableDistinctScanForGroupFirst is enabled by default starting in v116. Pin it off
+-- here so the $first cases in this suite keep exercising the non-distinct-scan plan
+-- shape (this suite manages enableGroupByDistinctScan explicitly per section). Remove
+-- this pin when the flag is retired.
+SET documentdb.enableDistinctScanForGroupFirst TO off;
+
 -- Use composite op class so RUM index supports the distinct skip-tids optimization
 SET documentdb.defaultUseCompositeOpClass TO on;
 

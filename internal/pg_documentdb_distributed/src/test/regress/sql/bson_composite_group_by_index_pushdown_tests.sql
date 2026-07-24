@@ -3,6 +3,12 @@ SET citus.next_shard_id TO 860000;
 SET documentdb.next_collection_id TO 8600;
 SET documentdb.next_collection_index_id TO 8600;
 
+-- enableGroupByDistinctScan and enableDistinctScanForGroupFirst are enabled by
+-- default starting in v116. Pin them off here so this suite keeps exercising the
+-- non-distinct-scan plan shapes. Remove these pins when the flags are retired.
+SET documentdb.enableGroupByDistinctScan TO off;
+SET documentdb.enableDistinctScanForGroupFirst TO off;
+
 
 -- if documentdb_extended_rum exists, set alternate index handler
 SELECT pg_catalog.set_config('documentdb.alternate_index_handler_name', 'extended_rum', false), extname FROM pg_extension WHERE extname = 'documentdb_extended_rum';

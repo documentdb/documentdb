@@ -1,5 +1,9 @@
 \i sql/bson_aggregation_sort_group_commonprefix_tests.sql
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documentdb_api_internal,public;
+-- enableDistinctScanForGroupFirst is enabled by default starting in v116. Pin it
+-- off here so this suite keeps exercising the non-distinct-scan plan shape for the
+-- $first accumulator cases. Remove this pin when the flag is retired.
+SET documentdb.enableDistinctScanForGroupFirst TO off;
 SET documentdb.next_collection_id TO 9300;
 SET documentdb.next_collection_index_id TO 9300;
 -- ================================================================
@@ -37,7 +41,7 @@ SELECT COUNT(documentdb_api.insert_one('db', 'cpfx_test', bson_build_document(
     'v', i * 10,
     'name', concat('name_', i)
 ))) FROM generate_series(1, 100) AS i;
-psql:sql/bson_aggregation_sort_group_commonprefix_tests.sql:40: NOTICE:  creating collection
+psql:sql/bson_aggregation_sort_group_commonprefix_tests.sql:45: NOTICE:  creating collection
  count 
 -------
    100
@@ -90,7 +94,7 @@ SELECT COUNT(documentdb_api.insert_one('db', 'cpfx_test_by', bson_build_document
     'c', i % 5,
     'name', concat('byname_', i)
 ))) FROM generate_series(0, 9) AS i;
-psql:sql/bson_aggregation_sort_group_commonprefix_tests.sql:64: NOTICE:  creating collection
+psql:sql/bson_aggregation_sort_group_commonprefix_tests.sql:69: NOTICE:  creating collection
  count 
 -------
     10

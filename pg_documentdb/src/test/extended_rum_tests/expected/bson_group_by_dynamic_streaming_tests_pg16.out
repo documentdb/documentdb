@@ -1,9 +1,13 @@
 \i sql/bson_group_by_dynamic_streaming_tests.sql
 SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, documentdb_api_internal, public;
+-- enableGroupByDistinctScan is enabled by default starting in v116. Pin it off here
+-- so this suite keeps exercising the non-distinct-scan plan shape for accumulator-less
+-- $group. Remove this pin when the flag is retired.
+SET documentdb.enableGroupByDistinctScan TO off;
 -- Ensure database 'gbstream_db' exists so that the system.dbSentinel collection
 -- does not consume a test collection id when running in standalone mode.
 SELECT documentdb_api.insert_one('gbstream_db', 'setup_sentinel', '{ "_id": 0 }');
-psql:sql/bson_group_by_dynamic_streaming_tests.sql:5: NOTICE:  creating collection
+psql:sql/bson_group_by_dynamic_streaming_tests.sql:10: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -21,7 +25,7 @@ SET documentdb.next_collection_index_id TO 79000;
 SELECT COUNT(documentdb_api.insert_one('gbstream_db', 'gstream',
     FORMAT('{ "_id": %s, "a": %s, "b": %s }', i, i % 5, i)::documentdb_core.bson))
 FROM generate_series(1, 50) i;
-psql:sql/bson_group_by_dynamic_streaming_tests.sql:14: NOTICE:  creating collection
+psql:sql/bson_group_by_dynamic_streaming_tests.sql:19: NOTICE:  creating collection
  count 
 -------
     50
@@ -255,7 +259,7 @@ BEGIN
     RAISE NOTICE 'Group-by dynamic streaming: batch sizes 1..7 stream all 5 groups and match the persisted cursor';
 END;
 $$;
-psql:sql/bson_group_by_dynamic_streaming_tests.sql:211: NOTICE:  Group-by dynamic streaming: batch sizes 1..7 stream all 5 groups and match the persisted cursor
+psql:sql/bson_group_by_dynamic_streaming_tests.sql:216: NOTICE:  Group-by dynamic streaming: batch sizes 1..7 stream all 5 groups and match the persisted cursor
 DROP FUNCTION gstream_drain_group(int, bool);
 -- ===========================================================================
 -- Stages layered on top of a fully pushable $group (a trailing $project or a
@@ -357,5 +361,5 @@ BEGIN
     RAISE NOTICE 'Group-by dynamic streaming: $group with trailing $project/$match stages matches the persisted cursor across batch sizes';
 END;
 $$;
-psql:sql/bson_group_by_dynamic_streaming_tests.sql:315: NOTICE:  Group-by dynamic streaming: $group with trailing $project/$match stages matches the persisted cursor across batch sizes
+psql:sql/bson_group_by_dynamic_streaming_tests.sql:320: NOTICE:  Group-by dynamic streaming: $group with trailing $project/$match stages matches the persisted cursor across batch sizes
 DROP FUNCTION gstream_drain_pipeline(text, int, bool);

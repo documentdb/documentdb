@@ -1,5 +1,10 @@
 SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, documentdb_api_internal, public;
 
+-- enableGroupByDistinctScan is enabled by default starting in v116. Pin it off here
+-- so this suite keeps exercising the non-distinct-scan plan shape for accumulator-less
+-- $group. Remove this pin when the flag is retired.
+SET documentdb.enableGroupByDistinctScan TO off;
+
 -- Ensure database 'gbstream_db' exists so that the system.dbSentinel collection
 -- does not consume a test collection id when running in standalone mode.
 SELECT documentdb_api.insert_one('gbstream_db', 'setup_sentinel', '{ "_id": 0 }');

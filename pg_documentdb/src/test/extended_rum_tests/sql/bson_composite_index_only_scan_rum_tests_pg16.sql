@@ -1,5 +1,11 @@
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 
+-- enableGroupByDistinctScan and enableDistinctScanForGroupFirst are enabled by
+-- default starting in v116. Pin them off here so this suite keeps exercising the
+-- non-distinct-scan plan shapes. Remove these pins when the flags are retired.
+SET documentdb.enableGroupByDistinctScan TO off;
+SET documentdb.enableDistinctScanForGroupFirst TO off;
+
 SET documentdb.next_collection_id TO 9100;
 SET documentdb.next_collection_index_id TO 9100;
 SET documentdb.enableNewMinMaxAccumulators TO off;

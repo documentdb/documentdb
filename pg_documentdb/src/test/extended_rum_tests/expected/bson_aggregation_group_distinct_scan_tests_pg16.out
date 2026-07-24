@@ -1,11 +1,16 @@
 \i sql/bson_aggregation_group_distinct_scan_tests.sql
 SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, documentdb_api_internal, public;
+-- enableDistinctScanForGroupFirst is enabled by default starting in v116. Pin it off
+-- here so the $first cases in this suite keep exercising the non-distinct-scan plan
+-- shape (this suite manages enableGroupByDistinctScan explicitly per section). Remove
+-- this pin when the flag is retired.
+SET documentdb.enableDistinctScanForGroupFirst TO off;
 -- Use composite op class so RUM index supports the distinct skip-tids optimization
 SET documentdb.defaultUseCompositeOpClass TO on;
 -- Ensure database 'db' exists so that the system.dbSentinel collection
 -- does not consume a test collection ID when running in standalone mode.
 SELECT documentdb_api.insert_one('db', 'setup_sentinel', '{ "_id": 0 }');
-psql:sql/bson_aggregation_group_distinct_scan_tests.sql:8: NOTICE:  creating collection
+psql:sql/bson_aggregation_group_distinct_scan_tests.sql:14: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -23,7 +28,7 @@ SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 -- Setup: create collection with repeated values for field "x"
 SELECT documentdb_api.insert_one('db', 'grp_dist', '{ "_id": 1, "x": "a", "y": 10 }', NULL);
-psql:sql/bson_aggregation_group_distinct_scan_tests.sql:17: NOTICE:  creating collection
+psql:sql/bson_aggregation_group_distinct_scan_tests.sql:23: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -81,7 +86,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
 
 -- Companion collection with an array field for $unwind cases.
 SELECT documentdb_api.insert_one('db', 'grp_dist_arr', '{ "_id": 1, "x": "a", "tags": ["t1", "t2"] }', NULL);
-psql:sql/bson_aggregation_group_distinct_scan_tests.sql:31: NOTICE:  creating collection
+psql:sql/bson_aggregation_group_distinct_scan_tests.sql:37: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1324,7 +1329,7 @@ ROLLBACK;
 -- composite idx_xy_composite (for the compound-_id case).
 -- ------------------------------------------------------------
 SELECT documentdb_api.insert_one('db', 'grp_dist_more', '{ "_id": 1, "x": "a", "y": 10 }', NULL);
-psql:sql/bson_aggregation_group_distinct_scan_tests.sql:709: NOTICE:  creating collection
+psql:sql/bson_aggregation_group_distinct_scan_tests.sql:715: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1398,7 +1403,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
 COMMIT;
 -- Companion collection: multikey (array) indexed field.
 SELECT documentdb_api.insert_one('db', 'grp_mk', '{ "_id": 1, "tags": ["a","b","c"] }', NULL);
-psql:sql/bson_aggregation_group_distinct_scan_tests.sql:734: NOTICE:  creating collection
+psql:sql/bson_aggregation_group_distinct_scan_tests.sql:740: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1435,7 +1440,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
 -- tested; the divergent shape is a known hazard if the planner
 -- ever lets the partial index serve a non-subsuming predicate.
 SELECT documentdb_api.insert_one('db', 'grp_part', '{ "_id": 1, "x": "a", "y": 60 }', NULL);
-psql:sql/bson_aggregation_group_distinct_scan_tests.sql:746: NOTICE:  creating collection
+psql:sql/bson_aggregation_group_distinct_scan_tests.sql:752: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
