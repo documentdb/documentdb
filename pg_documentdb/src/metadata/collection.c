@@ -137,9 +137,9 @@ static Datum GetCollectionOrViewCore(PG_FUNCTION_ARGS, bool allowViews);
 static void CopyCollectionOptions(const pgbson *options,
 								  MongoCollection *collection);
 static void UpdateCollectionOptions(MongoCollection *collection, const
-									pgbson *updateSpec);
+									pgbson *updateSpec, bool useCommutativeWrites);
 static void RemoveCollectionOptions(MongoCollection *collection, const
-									pgbson *removeSpec);
+									pgbson *removeSpec, bool useCommutativeWrites);
 static void ValidateSystemNamespace(const char *databaseName, const char *collectionName);
 
 
@@ -2307,13 +2307,16 @@ UpdateChangeStreamPreAndPostImages(MongoCollection *collection,
 	}
 	pgbson *changeStreamOptionsBson = PgbsonWriterGetPgbson(&changeStreamOptions);
 
+	bool useCommutativeWrites = false;
 	if (enabled)
 	{
-		UpdateCollectionOptions(collection, changeStreamOptionsBson);
+		UpdateCollectionOptions(collection, changeStreamOptionsBson,
+								useCommutativeWrites);
 	}
 	else
 	{
-		RemoveCollectionOptions(collection, changeStreamOptionsBson);
+		RemoveCollectionOptions(collection, changeStreamOptionsBson,
+								useCommutativeWrites);
 	}
 }
 
@@ -2348,13 +2351,14 @@ UpdateEnableUpdateDescription(MongoCollection *collection, bool enabled)
 	}
 	pgbson *optionBson = PgbsonWriterGetPgbson(&optionWriter);
 
+	bool useCommutativeWrites = false;
 	if (enabled)
 	{
-		UpdateCollectionOptions(collection, optionBson);
+		UpdateCollectionOptions(collection, optionBson, useCommutativeWrites);
 	}
 	else
 	{
-		RemoveCollectionOptions(collection, optionBson);
+		RemoveCollectionOptions(collection, optionBson, useCommutativeWrites);
 	}
 }
 
@@ -2364,6 +2368,14 @@ UpdateEnableUpdateDescription(MongoCollection *collection, bool enabled)
  * option in the collection's options column. This is used to track whether
  * planner statistics are enabled for the collection without requiring a
  * FOR UPDATE lock on collection_indexes.
+ *
+ * The options update is issued with commutative writes so that it takes the
+ * same (weaker) lock on the collections reference table as the other metadata
+ * updates performed alongside it (e.g. the shard_key update in the shard
+ * collection flow). Issuing it as a plain modification would acquire a
+ * stronger lock on the reference table placement, and mixing the two lock
+ * modes on the same row within a single transaction leads to lock-upgrade
+ * deadlocks under concurrent shard/collMod operations.
  */
 void
 UpdateCollectionStatsEnabledOption(uint64 collectionId, bool enabled)
@@ -2377,24 +2389,26 @@ UpdateCollectionStatsEnabledOption(uint64 collectionId, bool enabled)
 	pgbson_writer optionWriter;
 	PgbsonWriterInit(&optionWriter);
 
+	bool useCommutativeWrites = true;
 	if (enabled)
 	{
 		PgbsonWriterAppendBool(&optionWriter, "statsEnabled",
 							   strlen("statsEnabled"), true);
 		pgbson *updateSpec = PgbsonWriterGetPgbson(&optionWriter);
-		UpdateCollectionOptions(collection, updateSpec);
+		UpdateCollectionOptions(collection, updateSpec, useCommutativeWrites);
 	}
 	else
 	{
 		PgbsonWriterAppendUtf8(&optionWriter, "", 0, "statsEnabled");
 		pgbson *removeSpec = PgbsonWriterGetPgbson(&optionWriter);
-		RemoveCollectionOptions(collection, removeSpec);
+		RemoveCollectionOptions(collection, removeSpec, useCommutativeWrites);
 	}
 }
 
 
 static void
-UpdateCollectionOptions(MongoCollection *collection, const pgbson *updateSpec)
+UpdateCollectionOptions(MongoCollection *collection, const pgbson *updateSpec,
+						bool useCommutativeWrites)
 {
 	bool isNull = false;
 	bool readOnly = false;
@@ -2432,9 +2446,18 @@ UpdateCollectionOptions(MongoCollection *collection, const pgbson *updateSpec)
 					 ApiCatalogSchemaName, CoreSchemaName,
 					 CoreSchemaName, collection->collectionId);
 
-	ExtensionExecuteQueryWithArgsViaSPI(updateOptionQuery->data, numArgs,
-										argOid, datum, isNulls, readOnly,
-										SPI_OK_UPDATE, &isNull);
+	if (useCommutativeWrites)
+	{
+		RunQueryWithCommutativeWrites(updateOptionQuery->data, numArgs,
+									  argOid, datum, isNulls,
+									  SPI_OK_UPDATE, &isNull);
+	}
+	else
+	{
+		ExtensionExecuteQueryWithArgsViaSPI(updateOptionQuery->data, numArgs,
+											argOid, datum, isNulls, readOnly,
+											SPI_OK_UPDATE, &isNull);
+	}
 }
 
 
@@ -2444,7 +2467,8 @@ UpdateCollectionOptions(MongoCollection *collection, const pgbson *updateSpec)
  * `removeArraySpec` can accept valid specification as array of paths or a single path.
  */
 static void
-RemoveCollectionOptions(MongoCollection *collection, const pgbson *removeArraySpec)
+RemoveCollectionOptions(MongoCollection *collection, const pgbson *removeArraySpec,
+						bool useCommutativeWrites)
 {
 	bool isNull = false;
 	bool readOnly = false;
@@ -2482,9 +2506,18 @@ RemoveCollectionOptions(MongoCollection *collection, const pgbson *removeArraySp
 					 ApiCatalogSchemaName, CoreSchemaName,
 					 CoreSchemaName, collection->collectionId);
 
-	ExtensionExecuteQueryWithArgsViaSPI(updateOptionQuery->data, numArgs,
-										argOid, datum, isNulls, readOnly,
-										SPI_OK_UPDATE, &isNull);
+	if (useCommutativeWrites)
+	{
+		RunQueryWithCommutativeWrites(updateOptionQuery->data, numArgs,
+									  argOid, datum, isNulls,
+									  SPI_OK_UPDATE, &isNull);
+	}
+	else
+	{
+		ExtensionExecuteQueryWithArgsViaSPI(updateOptionQuery->data, numArgs,
+											argOid, datum, isNulls, readOnly,
+											SPI_OK_UPDATE, &isNull);
+	}
 }
 
 
