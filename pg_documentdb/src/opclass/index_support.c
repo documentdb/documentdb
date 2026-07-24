@@ -7168,6 +7168,11 @@ TrimIndexRestrictInfoForBtreePath(PlannerInfo *root, IndexPath *indexPath,
 					continue;
 				}
 			}
+			else if (IsFuncExprTrimmable(funcExpr))
+			{
+				restrictInfosToRemove = lappend(restrictInfosToRemove, rinfo);
+				continue;
+			}
 		}
 
 		if (!IsA(rinfo->clause, OpExpr))

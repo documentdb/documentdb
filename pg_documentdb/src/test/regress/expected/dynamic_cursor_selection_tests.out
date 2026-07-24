@@ -942,6 +942,22 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
 (5 rows)
 
+set enable_seqscan to off;
+SET documentdb.enableDynamicCursors TO on;
+SELECT documentdb_test_helpers.explain_uses_index_only_scan($Q$ SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "_id": { "$gt": 0 } } }, { "$group": { "_id": null, "count": { "$sum": 1 } } }], "cursor": {} }') $Q$) AS uses_index_only_scan;
+ uses_index_only_scan 
+----------------------
+ t
+(1 row)
+
+SET documentdb.enableDynamicCursors TO off;
+SELECT documentdb_test_helpers.explain_uses_index_only_scan($Q$ SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "_id": { "$gt": 0 } } }, { "$group": { "_id": null, "count": { "$sum": 1 } } }], "cursor": {} }') $Q$) AS uses_index_only_scan;
+ uses_index_only_scan 
+----------------------
+ t
+(1 row)
+
+reset enable_seqscan;
 -- Stage: $unwind (non-streamable - RequiresPersistentCursorTrue)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$unwind": "$b" }], "cursor": {} }');
