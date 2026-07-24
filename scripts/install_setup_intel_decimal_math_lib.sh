@@ -61,7 +61,21 @@ git init
 # This repo is based on Intel Decimal Floating-Point Math Library, with patches applied to support more architecture types
 git remote add origin https://git.launchpad.net/ubuntu/+source/intelrdfpmath
 
-git fetch --depth 1 origin "$MATH_LIB_VERSION"
+# Retry the fetch up to 3 times with a 5s delay between attempts. launchpad.net
+# occasionally returns transient HTTP 503s, which would otherwise fail the script.
+for attempt in 1 2 3; do
+    if git fetch --depth 1 origin "$MATH_LIB_VERSION"; then
+        break
+    fi
+
+    if [ "$attempt" -eq 3 ]; then
+        echo "git fetch failed after 3 attempts"
+        exit 1
+    fi
+
+    echo "git fetch failed (attempt $attempt), retrying in 5s..."
+    sleep 5
+done
 git checkout FETCH_HEAD
 
 # Build the library with -fPIC so that it is linked properly and also other variables are defined to configure the library
