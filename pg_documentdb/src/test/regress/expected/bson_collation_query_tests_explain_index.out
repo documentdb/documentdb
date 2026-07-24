@@ -175,13 +175,13 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_array_filter", "pipeline": [ { "$sort": { "_id": 1 } }, { "$addFields": { "e": {  "f": "$a" } } }, { "$replaceRoot": { "newRoot": "$e" } }, { "$match" : { "f": { "$elemMatch": {"$eq": "cAt"} } } }, {"$project": { "items" : { "$filter" : { "input" : "$f", "as" : "animal", "cond" : { "$eq" : ["$$animal", "CAT"] } }} }} ],
  "cursor": {}, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
-                                                                                                                                                                                                                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                               
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: (documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_replace_root(documentdb_api_internal.bson_dollar_add_fields(document, '{ "e" : { "f" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "newRoot" : "$e" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "items" : { "$filter" : { "input" : "$f", "as" : "animal", "cond" : { "$eq" : [ "$$animal", "CAT" ] } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: (documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_replace_root(documentdb_api_internal.bson_dollar_add_fields(document, '{ "e" : { "f" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "newRoot" : "$e" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "items" : { "$filter" : { "input" : "$f", "as" : "animal", "cond" : { "$eq" : [ "$$animal", "CAT" ] } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_replace_root(documentdb_api_internal.bson_dollar_add_fields(document, '{ "e" : { "f" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "newRoot" : "$e" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "items" : { "$filter" : { "input" : "$f", "as" : "animal", "cond" : { "$eq" : [ "$$animal", "CAT" ] } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         Output: documentdb_api_internal.bson_dollar_project(documentdb_api_internal.bson_dollar_replace_root(documentdb_api_internal.bson_dollar_add_fields(document, '{ "e" : { "f" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "newRoot" : "$e" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '{ "items" : { "$filter" : { "input" : "$f", "as" : "animal", "cond" : { "$eq" : [ "$$animal", "CAT" ] } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          namespaceName: coll_q_db.coll_array_filter
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8800 collection
@@ -239,10 +239,10 @@ $cmd$);
                                                                                                            run_explain_and_trim                                                                                                           
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -259,10 +259,10 @@ $cmd$);
                                                                                                            run_explain_and_trim                                                                                                           
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'hi-u-ks-level2'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'hi-u-ks-level2'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'hi-u-ks-level2'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'hi-u-ks-level2'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'hi-u-ks-level2'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'hi-u-ks-level2'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -279,10 +279,10 @@ $cmd$);
                                                                                                            run_explain_and_trim                                                                                                           
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fi-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fi-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fi-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fi-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fi-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fi-u-ks-level1'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -299,10 +299,10 @@ $cmd$);
                                                                                                            run_explain_and_trim                                                                                                            
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -319,10 +319,10 @@ $cmd$);
                                                                                                            run_explain_and_trim                                                                                                            
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level3'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level3'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level3'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level3'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level3'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level3'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -339,10 +339,10 @@ $cmd$);
                                                                                                              run_explain_and_trim                                                                                                             
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-CA-u-ks-level3'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-CA-u-ks-level3'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-CA-u-ks-level3'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-CA-u-ks-level3'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-CA-u-ks-level3'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-CA-u-ks-level3'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -359,10 +359,10 @@ $cmd$);
                                                                                                                 run_explain_and_trim                                                                                                                 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'es-u-co-search-ks-level3'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'es-u-co-search-ks-level3'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'es-u-co-search-ks-level3'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'es-u-co-search-ks-level3'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'es-u-co-search-ks-level3'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'es-u-co-search-ks-level3'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -379,10 +379,10 @@ $cmd$);
                                                                                                            run_explain_and_trim                                                                                                           
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -399,10 +399,10 @@ $cmd$);
                                                                                                                                   run_explain_and_trim                                                                                                                                   
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -419,10 +419,10 @@ $cmd$);
                                                                                                                                    run_explain_and_trim                                                                                                                                   
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level2'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level2'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level2'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level2'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level2'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level2'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -440,10 +440,10 @@ $cmd$);
                                                                                                                run_explain_and_trim                                                                                                                
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-US-POSIX-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-US-POSIX-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-US-POSIX-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-US-POSIX-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-US-POSIX-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-US-POSIX-u-ks-level1'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -460,10 +460,10 @@ $cmd$);
                                                                                                                run_explain_and_trim                                                                                                                
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-US-POSIX-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-US-POSIX-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-US-POSIX-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-US-POSIX-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-US-POSIX-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-US-POSIX-u-ks-level1'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -481,12 +481,12 @@ $cmd$);
                                                                                                           run_explain_and_trim                                                                                                          
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)) USING <<< NULLS FIRST
+         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)
+               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)
                namespaceName: coll_q_db.coll_agg_proj
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -503,12 +503,12 @@ $cmd$);
                                                                                                           run_explain_and_trim                                                                                                          
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)) USING <<< NULLS FIRST
+         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)
+               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)
                namespaceName: coll_q_db.coll_agg_proj
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -526,12 +526,12 @@ $cmd$);
                                                                                                           run_explain_and_trim                                                                                                          
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)) USING <<< NULLS FIRST
+         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)
+               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)
                namespaceName: coll_q_db.coll_agg_proj
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -548,12 +548,12 @@ $cmd$);
                                                                                                           run_explain_and_trim                                                                                                          
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)) USING <<< NULLS FIRST
+         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)
+               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)
                namespaceName: coll_q_db.coll_agg_proj
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -570,12 +570,12 @@ $cmd$);
                                                                                                           run_explain_and_trim                                                                                                          
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)) USING <<< NULLS FIRST
+         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)
+               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)
                namespaceName: coll_q_db.coll_agg_proj
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -592,12 +592,12 @@ $cmd$);
                                                                                                           run_explain_and_trim                                                                                                          
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)) USING <<< NULLS FIRST
+         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)
+               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'simple'::text)
                namespaceName: coll_q_db.coll_agg_proj
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -618,10 +618,10 @@ $cmd$);
                                                                                                                                                           run_explain_and_trim                                                                                                                                                          
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -638,10 +638,10 @@ $cmd$);
                                                                                                                                                           run_explain_and_trim                                                                                                                                                          
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -658,10 +658,10 @@ $cmd$);
                                                                                                                                                           run_explain_and_trim                                                                                                                                                          
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -678,10 +678,10 @@ $cmd$);
                                                                                                                                                                                    run_explain_and_trim                                                                                                                                                                                    
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -698,10 +698,10 @@ $cmd$);
                                                                                                                                                                                     run_explain_and_trim                                                                                                                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -718,10 +718,10 @@ $cmd$);
                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                      
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -739,10 +739,10 @@ $cmd$);
                                                                                                                 run_explain_and_trim                                                                                                                 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level1'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -759,10 +759,10 @@ $cmd$);
                                                                                                                 run_explain_and_trim                                                                                                                 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -779,10 +779,10 @@ $cmd$);
                                                                                                                 run_explain_and_trim                                                                                                                 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -799,10 +799,10 @@ $cmd$);
                                                                                                                  run_explain_and_trim                                                                                                                  
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -819,10 +819,10 @@ $cmd$);
                                                                                                                  run_explain_and_trim                                                                                                                  
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -840,10 +840,10 @@ $cmd$);
                                                                                                                                          run_explain_and_trim                                                                                                                                          
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -860,10 +860,10 @@ $cmd$);
                                                                                                                                          run_explain_and_trim                                                                                                                                          
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)
          namespaceName: coll_q_db.coll_agg_proj
          indexName: _id_
          ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -1235,15 +1235,15 @@ SELECT documentdb_api.drop_collection('coll_q_db', 'coll_sortArray');
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_agg_proj", "projection": { "a": 1, "newField": { "$eq": ["$a", "CAT"] } }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
-                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                         
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$eq" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$eq" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
    ->  Sort
-         Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$eq" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+         Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$eq" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$eq" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+               Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$eq" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
                namespaceName: coll_q_db.coll_agg_proj
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -1256,15 +1256,15 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_agg_proj", "projection": { "a": 1, "newField": { "$ne": ["$a", "CAT"] } }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 2} }')
 $cmd$);
-                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                         
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$ne" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text)), (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text))
+   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$ne" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text))
    ->  Sort
-         Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$ne" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text)), (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text)) USING <<< NULLS FIRST
+         Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$ne" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$ne" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text), documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text)
+               Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$ne" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text), documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text)
                namespaceName: coll_q_db.coll_agg_proj
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -1277,15 +1277,15 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_agg_proj", "projection": { "a": 1, "newField": { "$ne": ["$a", "CAT"] } }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 3} }')
 $cmd$);
-                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                         
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$ne" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)), (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
+   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$ne" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
    ->  Sort
-         Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$ne" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)), (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) USING <<< NULLS FIRST
+         Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$ne" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$ne" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text), documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)
+               Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$ne" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text), documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)
                namespaceName: coll_q_db.coll_agg_proj
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -1298,15 +1298,15 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_agg_proj", "projection": { "a": 1, "newField": { "$gte": ["$a", "CAT"] } }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
-                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                          
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$gte" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$gte" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
    ->  Sort
-         Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$gte" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+         Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$gte" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$gte" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+               Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$gte" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
                namespaceName: coll_q_db.coll_agg_proj
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -1319,15 +1319,15 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_agg_proj", "projection": { "a": 1, "newField": { "$gte": ["$a", "CAT"] } }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 3} }')
 $cmd$);
-                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                          
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$gte" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)), (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
+   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$gte" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
    ->  Sort
-         Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$gte" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)), (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) USING <<< NULLS FIRST
+         Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$gte" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$gte" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text), documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)
+               Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$gte" : [ "$a", "CAT" ] } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text), documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)
                namespaceName: coll_q_db.coll_agg_proj
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8801 collection
@@ -2002,15 +2002,15 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll
   "collation": { "locale": "en", "strength" : 3}
 }')
 $cmd$);
-                                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                                
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                   run_explain_and_trim                                                                                                                                                                                                                   
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "b.$" : { "$numberInt" : "1" } }'::bson, '{ "a" : "CAT", "b" : { "$elemMatch" : { "a" : "CAT" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)), (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
+   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "b.$" : { "$numberInt" : "1" } }'::bson, '{ "a" : "CAT", "b" : { "$elemMatch" : { "a" : "CAT" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
    ->  Sort
-         Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "b.$" : { "$numberInt" : "1" } }'::bson, '{ "a" : "CAT", "b" : { "$elemMatch" : { "a" : "CAT" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)), (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) USING <<< NULLS FIRST
+         Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "b.$" : { "$numberInt" : "1" } }'::bson, '{ "a" : "CAT", "b" : { "$elemMatch" : { "a" : "CAT" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "b.$" : { "$numberInt" : "1" } }'::bson, '{ "a" : "CAT", "b" : { "$elemMatch" : { "a" : "CAT" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text), documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)
+               Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "b.$" : { "$numberInt" : "1" } }'::bson, '{ "a" : "CAT", "b" : { "$elemMatch" : { "a" : "CAT" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text), documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)
                namespaceName: coll_q_db.coll_find_positional
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8804 collection
@@ -2032,15 +2032,15 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll
   "collation": { "locale": "en", "strength" : 1 }
 }')
 $cmd$);
-                                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                                
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                   run_explain_and_trim                                                                                                                                                                                                                   
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "b.$" : { "$numberInt" : "1" } }'::bson, '{ "a" : "CAT", "b" : { "$elemMatch" : { "a" : "CAT" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "b.$" : { "$numberInt" : "1" } }'::bson, '{ "a" : "CAT", "b" : { "$elemMatch" : { "a" : "CAT" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
    ->  Sort
-         Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "b.$" : { "$numberInt" : "1" } }'::bson, '{ "a" : "CAT", "b" : { "$elemMatch" : { "a" : "CAT" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+         Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "b.$" : { "$numberInt" : "1" } }'::bson, '{ "a" : "CAT", "b" : { "$elemMatch" : { "a" : "CAT" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "b.$" : { "$numberInt" : "1" } }'::bson, '{ "a" : "CAT", "b" : { "$elemMatch" : { "a" : "CAT" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+               Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "b.$" : { "$numberInt" : "1" } }'::bson, '{ "a" : "CAT", "b" : { "$elemMatch" : { "a" : "CAT" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
                namespaceName: coll_q_db.coll_find_positional
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8804 collection
@@ -2062,15 +2062,15 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('coll
   "collation": { "locale": "en", "strength" : 1 }
 }')
 $cmd$);
-                                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                                
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                   run_explain_and_trim                                                                                                                                                                                                                   
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "b.$" : { "$numberInt" : "1" } }'::bson, '{ "a" : "CAT", "b" : { "$elemMatch" : { "a" : "CAT" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "b.$" : { "$numberInt" : "1" } }'::bson, '{ "a" : "CAT", "b" : { "$elemMatch" : { "a" : "CAT" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
    ->  Sort
-         Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "b.$" : { "$numberInt" : "1" } }'::bson, '{ "a" : "CAT", "b" : { "$elemMatch" : { "a" : "CAT" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+         Output: (documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "b.$" : { "$numberInt" : "1" } }'::bson, '{ "a" : "CAT", "b" : { "$elemMatch" : { "a" : "CAT" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "b.$" : { "$numberInt" : "1" } }'::bson, '{ "a" : "CAT", "b" : { "$elemMatch" : { "a" : "CAT" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+               Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" }, "b.$" : { "$numberInt" : "1" } }'::bson, '{ "a" : "CAT", "b" : { "$elemMatch" : { "a" : "CAT" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
                namespaceName: coll_q_db.coll_find_positional
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8804 collection
@@ -2522,13 +2522,13 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$eq": "apple" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                       run_explain_and_trim                                                                        
--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                     run_explain_and_trim                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          namespaceName: coll_q_db.single_field
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
@@ -2542,10 +2542,10 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$ 
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline(%L, '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$eq": "apple" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
  $cmd$, 'coll_q_db'));
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: coll_q_db.single_field
@@ -2591,13 +2591,13 @@ SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$gt": "banana" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                       run_explain_and_trim                                                                        
--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                     run_explain_and_trim                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          namespaceName: coll_q_db.single_field
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
@@ -2611,10 +2611,10 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$ 
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline(%L, '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$gt": "banana" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
  $cmd$, 'coll_q_db'));
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          namespaceName: coll_q_db.single_field
@@ -2630,13 +2630,13 @@ SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$eq": "cherry" } } }, { "$project": { "a": 1, "_id": 0 } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                                                        run_explain_and_trim                                                                                                                                                                        
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                           
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: (documentdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: (documentdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: documentdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         Output: documentdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          namespaceName: coll_q_db.single_field
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
@@ -2650,10 +2650,10 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$ 
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline(%L, '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$eq": "cherry" } } }, { "$project": { "a": 1, "_id": 0 } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
  $cmd$, 'coll_q_db'));
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: coll_q_db.single_field
@@ -2669,13 +2669,13 @@ SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$lt": "cherry" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                       run_explain_and_trim                                                                        
--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                     run_explain_and_trim                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          namespaceName: coll_q_db.single_field
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
@@ -2689,10 +2689,10 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$ 
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline(%L, '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$lt": "cherry" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
  $cmd$, 'coll_q_db'));
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          namespaceName: coll_q_db.single_field
@@ -2708,13 +2708,13 @@ SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$lte": "banana" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                       run_explain_and_trim                                                                        
--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                     run_explain_and_trim                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          namespaceName: coll_q_db.single_field
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
@@ -2728,10 +2728,10 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$ 
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline(%L, '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$lte": "banana" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
  $cmd$, 'coll_q_db'));
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          namespaceName: coll_q_db.single_field
@@ -3419,15 +3419,15 @@ SELECT documentdb_api.insert_one('coll_q_db', 'nested_arrays', '{ "_id": 3, "a":
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "nested_arrays", "filter": { "a" : {"$in" : [ ["dOG"] ] }}, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
-                                                                          run_explain_and_trim                                                                           
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                        run_explain_and_trim                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
                namespaceName: coll_q_db.nested_arrays
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8811 collection
@@ -3441,15 +3441,15 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "nested_arrays", "filter": { "a" : {"$in" : [ [["CAT"]] ] }}, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
-                                                                          run_explain_and_trim                                                                           
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                        run_explain_and_trim                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
                namespaceName: coll_q_db.nested_arrays
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8811 collection
@@ -3463,15 +3463,15 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "nested_arrays", "filter": { "a" : {"$in" : [["CAT"], ["DOG"]] }}, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
-                                                                          run_explain_and_trim                                                                           
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                        run_explain_and_trim                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
                namespaceName: coll_q_db.nested_arrays
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8811 collection
@@ -3516,15 +3516,15 @@ SELECT documentdb_api.insert_one('coll_q_db', 'nested_docs', '{ "_id": 5, "a": {
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "nested_docs", "filter": { "a" : {"$in" : [ {"b": "dOG"} ] }}, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
-                                                                          run_explain_and_trim                                                                           
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                        run_explain_and_trim                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
                namespaceName: coll_q_db.nested_docs
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8812 collection
@@ -3538,15 +3538,15 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "nested_docs", "filter": { "a" : {"$in" : [ {"b": { "c": "dOg" }} ] }}, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
-                                                                          run_explain_and_trim                                                                           
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                        run_explain_and_trim                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
                namespaceName: coll_q_db.nested_docs
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8812 collection
@@ -3560,15 +3560,15 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "nested_docs", "filter": { "a" : {"$in" : [ {"b": { "c": { "d": "dOg" }}} ] }}, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
-                                                                          run_explain_and_trim                                                                           
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                        run_explain_and_trim                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
                namespaceName: coll_q_db.nested_docs
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8812 collection
@@ -3583,15 +3583,15 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "nested_docs", "filter": { "a" : {"$in" : [ {"B": "dOG"} ] }}, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
-                                                                          run_explain_and_trim                                                                           
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                        run_explain_and_trim                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
                namespaceName: coll_q_db.nested_docs
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8812 collection
@@ -3642,15 +3642,15 @@ SELECT documentdb_api.insert_one('coll_q_db', 'nested_arrays_docs', '{ "_id": 6,
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "nested_arrays_docs", "filter": { "a" : {"$in" : [ {"b": ["dOG"]}, "CAT" ] }}, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
-                                                                          run_explain_and_trim                                                                           
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                        run_explain_and_trim                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
                namespaceName: coll_q_db.nested_arrays_docs
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8813 collection
@@ -3664,15 +3664,15 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "nested_arrays_docs", "filter": { "a" : {"$in" : [ {"b": [["dOg"]] } ] }}, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
-                                                                          run_explain_and_trim                                                                           
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                        run_explain_and_trim                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
    ->  Sort
-         Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-         Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+         Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+         Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
-               Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+               Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
                namespaceName: coll_q_db.nested_arrays_docs
                indexName: _id_
                ->  Bitmap Heap Scan on documentdb_data.documents_8813 collection
@@ -3824,10 +3824,10 @@ $cmd$);
                                                                                                             run_explain_and_trim                                                                                                            
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          namespaceName: coll_q_db.single_field
          indexName: _id_
          ->  Index Scan using _id_ on documentdb_data.documents_8806 collection
@@ -4171,13 +4171,13 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_id_ios", "filter": { "_id": "cat" }, "sort": { "v": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                      run_explain_and_trim                                                                       
------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                    run_explain_and_trim                                                                     
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: document, (documentdb_api_internal.bson_orderby(document, '{ "v" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-   Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Output: document, (documentdb_api_internal.bson_orderby_index(document, '{ "v" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
-         Output: document, documentdb_api_internal.bson_orderby(document, '{ "v" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+         Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "v" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          namespaceName: coll_q_db.coll_id_ios
          indexName: idx_id_en_s1
          indexKey: {"_id": 1}

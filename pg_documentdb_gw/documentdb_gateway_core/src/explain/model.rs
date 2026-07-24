@@ -214,6 +214,12 @@ pub struct ExplainPlan {
     /// Emitted in the executionStats stage when > 0.
     #[serde(rename = "Skipped Tuples")]
     pub skipped_tuples: Option<f64>,
+
+    /// Per-loop average number of duplicate rows removed by the de-duplicating
+    /// scan. Inlined onto the surviving child stage and emitted in the
+    /// executionStats stage when > 0.
+    #[serde(rename = "Duplicate Rows Removed")]
+    pub duplicate_rows_removed: Option<f64>,
 }
 
 #[derive(Deserialize, Debug, Clone)]

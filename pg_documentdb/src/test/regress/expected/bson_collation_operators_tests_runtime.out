@@ -3158,9 +3158,9 @@ SELECT document FROM bson_aggregation_find('coll_op_db', '{ "find": "mixed_types
  { "_id" : { "$numberInt" : "6" }, "a" : "cherry" }
  { "_id" : { "$numberInt" : "15" }, "a" : { "$numberInt" : "42" } }
  { "_id" : { "$numberInt" : "16" }, "a" : { "$numberInt" : "7" } }
+ { "_id" : { "$numberInt" : "18" }, "a" : null }
  { "_id" : { "$numberInt" : "20" } }
  { "_id" : { "$numberInt" : "19" } }
- { "_id" : { "$numberInt" : "18" }, "a" : null }
 (15 rows)
 
 -- 19.3: $ne "apple" on DESCENDING index

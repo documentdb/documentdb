@@ -31,6 +31,7 @@
 #include "infrastructure/job_management.h"
 #include "background_worker/background_worker_job.h"
 #include "utils/error_utils.h"
+#include "utils/roaring_bitmap_utils.h"
 
 /* --------------------------------------------------------- */
 /* Data Types & Enum values */
@@ -117,6 +118,9 @@ InstallDocumentDBApiPostgresHooks(void)
 
 	/* Load the rum routine in the shared_preload_libraries to avoid LoadLibrary calls all the time */
 	LoadRumRoutine();
+
+	/* Register Roaring bitmap memory alloc hooks */
+	RegisterDocumentDBRoaringBitmapUtilHooks();
 
 	SetupCursorStorage();
 }

@@ -176,7 +176,7 @@ $cmd$);
          Node: host=localhost port=58070 dbname=regression
          ->  Limit
                ->  Sort
-                     Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+                     Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, 'en-u-ks-level1'::text)) NULLS FIRST
                      ->  Custom Scan (DocumentDBApiExplainQueryScan)
                            indexName: _id_
                            ->  Index Scan using _id_ on documents_95652_95650015 collection
@@ -266,7 +266,7 @@ $cmd$);
                                                                       run_explain_and_trim                                                                       
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8

@@ -45,6 +45,7 @@
 #include "utils/documentdb_errors.h"
 #include "planner/documentdb_planner.h"
 #include "utils/error_utils.h"
+#include "collation/collation.h"
 #include "query/bson_dollar_selectivity.h"
 
 extern bool ForceUseIndexIfAvailable;
@@ -1034,7 +1035,7 @@ ValidateMatchForOrderbyQuals(IndexPath *path)
 
 		/* Validate that it's a supported operator */
 		OpExpr *opQual = (OpExpr *) orderQual;
-		if (EnableOrderByIndexTerm &&
+		if ((EnableOrderByIndexTerm || EnableCollation) &&
 			opQual->opfuncid != BsonOrderByFunctionOid() &&
 			opQual->opfuncid != BsonOrderByIndexFunctionOid() &&
 			opQual->opfuncid != BsonOrderByIndexWithCollationFunctionOid() &&

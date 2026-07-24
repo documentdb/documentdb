@@ -109,7 +109,7 @@ $cmd$);
                                                                       run_explain_and_trim                                                                      
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8
@@ -136,7 +136,7 @@ $cmd$);
                                                                       run_explain_and_trim                                                                       
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8
@@ -166,7 +166,7 @@ $cmd$);
                                                                       run_explain_and_trim                                                                       
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8
@@ -220,7 +220,7 @@ $cmd$);
                                                                       run_explain_and_trim                                                                       
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8
@@ -251,7 +251,7 @@ $cmd$);
                                                                        run_explain_and_trim                                                                        
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8
@@ -279,7 +279,7 @@ $cmd$);
                                                                         run_explain_and_trim                                                                        
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8
@@ -310,7 +310,7 @@ $cmd$);
                                                                        run_explain_and_trim                                                                        
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8
@@ -338,7 +338,7 @@ $cmd$);
                                                                         run_explain_and_trim                                                                        
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8
@@ -366,7 +366,7 @@ $cmd$);
                                                                                run_explain_and_trim                                                                                
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8
@@ -460,7 +460,7 @@ $cmd$);
                                                                                                                                             run_explain_and_trim                                                                                                                                             
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8
@@ -488,7 +488,7 @@ $cmd$);
                                                                       run_explain_and_trim                                                                      
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8
@@ -516,7 +516,7 @@ $cmd$);
                                                                                                                                             run_explain_and_trim                                                                                                                                             
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8
@@ -545,7 +545,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dis
                                                                                   QUERY PLAN                                                                                   
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8
@@ -571,7 +571,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dis
                                                                                    QUERY PLAN                                                                                   
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8
@@ -597,7 +597,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dis
                                                                                                                                                        QUERY PLAN                                                                                                                                                        
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8
@@ -690,7 +690,7 @@ $cmd$);
                                                                                                         run_explain_and_trim                                                                                                        
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8
@@ -719,7 +719,7 @@ $cmd$);
                                                                                                                 run_explain_and_trim                                                                                                                
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8
@@ -748,7 +748,7 @@ $cmd$);
                                                                                                                                              run_explain_and_trim                                                                                                                                             
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8
@@ -777,7 +777,7 @@ $cmd$);
                                                                          run_explain_and_trim                                                                          
 ---------------------------------------------------------------------
  Sort
-   Sort Key: remote_scan."?sort?" USING <<< NULLS FIRST
+   Sort Key: remote_scan."?sort?" NULLS FIRST
    ->  Custom Scan (Citus Adaptive)
          Task Count: 8
          Tasks Shown: One of 8

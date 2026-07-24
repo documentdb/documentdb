@@ -207,6 +207,27 @@ typedef struct FieldCoverageState
 } FieldCoverageState;
 
 
+/*
+ * Per-$or-branch equality bounds captured for the BitmapOr -> MergeAppend
+ * rewrite. A MergeAppend concatenates its children without deduplicating
+ * tuples (unlike a BitmapOr, which unions TID bitmaps), so a document reachable
+ * through more than one branch would be emitted once per matching branch. These
+ * bounds let the rewrite prove pairs of branches disjoint and skip the de-dup:
+ * two branches are disjoint when some scalar (non-multikey) index column is
+ * bound to a different equality constant in both, since a document holds a
+ * single value per scalar column and cannot satisfy both equalities at once.
+ * When disjointness cannot be proven the rewrite still proceeds and a heap-TID
+ * de-dup CustomScan above the MergeAppend removes any repeats.
+ */
+typedef struct BitmapOrBranchEqBounds
+{
+	/* hasEquality[c] is true when column c is bound to an equality constant. */
+	bool hasEquality[INDEX_MAX_KEYS];
+
+	/* The equality value bound to column c (valid only when hasEquality[c]). */
+	bson_value_t values[INDEX_MAX_KEYS];
+} BitmapOrBranchEqBounds;
+
 /* Per-$in metadata used to expand a $in (@*=) filter on an equality-prefix column of a composite index into one point-equality (@=) clause per value */
 typedef struct InPrefixOpInfo
 {
@@ -321,8 +342,10 @@ extern bool EnableDynamicCursors;
 extern bool EnableDistinctIndexPushdown;
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool EnablePerPathMultiKeySortPushdown;
+extern bool EnableGroupByMultiKeySortPushdown;
 extern bool EnableCompositeReducedCorrelatedPrefixTrim;
 extern bool EnableCompositeReducedCorrelatedBoundsPlanning;
+extern bool EnableMergeSortForBitmapOr;
 extern bool EnableCompositeReducedCorrelatedFirstOwnerFallback;
 
 /* --------------------------------------------------------- */
@@ -434,6 +457,9 @@ static int ProcessSingleCompositeFilter(Node *predQual, bytea *opClassOptions,
 										bool equalityPrefixes[INDEX_MAX_KEYS],
 										bool nonEqualityPrefixes[INDEX_MAX_KEYS],
 										int32_t *indexStrategy);
+static bool PopulateQueryPathAndValueFromOpExpr(OpExpr *opExpr,
+												const char **queryPathString,
+												bson_value_t *queryValue);
 
 static List * UpdateIndexListForExtendedIndex(List *existingIndex,
 											  ReplaceExtensionFunctionContext *context);
@@ -3396,7 +3422,7 @@ GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby,
 
 			hasOrderBy = true;
 		}
-		else if (EnableOrderByIndexTerm &&
+		else if ((EnableOrderByIndexTerm || EnableCollation) &&
 				 (func->funcid == BsonOrderByIndexWithCollationFunctionOid() ||
 				  func->funcid == BsonOrderByIndexWithCollationReverseFunctionOid()))
 		{
@@ -4713,7 +4739,7 @@ TryGetMergeSortInPrefixMarkingInfo(PlannerInfo *root, IndexPath *indexPath,
 	bool hasDistinctScan = false;
 	List *sortDetails = GetSortDetails(root, indexPath->path.parent->relid, &hasGroupby,
 									   &isOrderById, &hasDistinctScan);
-	if (sortDetails == NIL || hasGroupby)
+	if (sortDetails == NIL)
 	{
 		return false;
 	}
@@ -4908,6 +4934,104 @@ MaybeMakeMergeSortInPrefixChildIndexOnly(PlannerInfo *root, IndexPath *childPath
  * this and the existing plan. Gated by documentdb.enable_merge_sort_for_in_prefix
  * and bounded by documentdb.max_merge_sort_in_values.
  */
+
+
+/*
+ * Extract the scalar equality value a single BitmapOr branch binds to an index
+ * column, for the pairwise disjointness check. Two clause shapes yield a point
+ * value:
+ *   - a genuine point-equality operator (@=), whose Const is the scalar; and
+ *   - an $elemMatch whose sole inner op is an equality, lowered onto the range
+ *     operator: its Const is the elemMatch spec document, so the inner equality
+ *     "value" is read out of the elemMatchIndexOp array.
+ * Returns true and sets *outValue when exactly one equality value is found.
+ */
+static bool
+TryGetBranchEqualityValue(OpExpr *clause, bson_value_t *outValue)
+{
+	const char *eqPath = NULL;
+	bson_value_t eqValue = { 0 };
+	if (!PopulateQueryPathAndValueFromOpExpr(clause, &eqPath, &eqValue) ||
+		eqValue.value_type == BSON_TYPE_EOD)
+	{
+		return false;
+	}
+
+	if (clause->opno == BsonEqualMatchOperatorId())
+	{
+		*outValue = eqValue;
+		return true;
+	}
+
+	if (clause->opno != BsonRangeMatchOperatorOid())
+	{
+		return false;
+	}
+
+	/*
+	 * $elemMatch inner-equality: the Const is the range/elemMatch spec document.
+	 * Read the inner equality "value" out of the elemMatchIndexOp array so the
+	 * disjointness check compares the actual per-element scalars rather than the
+	 * (differing) spec documents.
+	 */
+	DollarRangeParams params = { 0 };
+	InitializeQueryDollarRange(&eqValue, &params);
+	if (!params.isElemMatch ||
+		params.elemMatchValue.value_type != BSON_TYPE_ARRAY)
+	{
+		return false;
+	}
+
+	bson_iter_t opIter;
+	BsonValueInitIterator(&params.elemMatchValue, &opIter);
+	bson_value_t candidate = { 0 };
+	bool found = false;
+	while (bson_iter_next(&opIter))
+	{
+		bson_iter_t innerIter;
+		if (!bson_iter_recurse(&opIter, &innerIter))
+		{
+			return false;
+		}
+
+		int32_t op = -1;
+		bson_value_t value = { 0 };
+		while (bson_iter_next(&innerIter))
+		{
+			const char *key = bson_iter_key(&innerIter);
+			if (strcmp(key, "op") == 0)
+			{
+				op = BsonValueAsInt32(bson_iter_value(&innerIter));
+			}
+			else if (strcmp(key, "value") == 0)
+			{
+				value = *bson_iter_value(&innerIter);
+			}
+		}
+
+		/*
+		 * Only a lone equality op bounds the branch to a single scalar; any other
+		 * op (or an extra condition on the same column) means the column is not a
+		 * clean point, so it cannot serve as a distinguishing equality.
+		 */
+		if (op != BSON_INDEX_STRATEGY_DOLLAR_EQUAL ||
+			value.value_type == BSON_TYPE_EOD)
+		{
+			return false;
+		}
+
+		candidate = value;
+		found = true;
+	}
+
+	if (found)
+	{
+		*outValue = candidate;
+	}
+	return found;
+}
+
+
 void
 ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 							 Index rti, ReplaceExtensionFunctionContext *context)
@@ -4922,7 +5046,7 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 	bool hasDistinctScan = false;
 	List *sortDetails = GetSortDetails(root, rti, &hasGroupby, &isOrderById,
 									   &hasDistinctScan);
-	if (sortDetails == NIL || hasGroupby)
+	if (sortDetails == NIL)
 	{
 		return;
 	}
@@ -4945,97 +5069,7 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 			}
 		}
 
-		if (!IsA(path, IndexPath))
-		{
-			continue;
-		}
-
-		IndexPath *indexPath = (IndexPath *) path;
-		IndexOptInfo *indexInfo = indexPath->indexinfo;
-
-		if (!IsBsonRegularIndexAm(indexInfo->relam))
-		{
-			continue;
-		}
-
-		bool hasMergeSortMarker = IndexPathHasMergeSortInPrefixMarker(indexPath);
-
-		/*
-		 * Only base (unparameterized) scans are rewritten. The per-value child
-		 * scans and the MergeAppend are built unparameterized (required_outer =
-		 * NULL), so a parameterized source -- whose index clauses reference outer
-		 * rels -- cannot be reproduced correctly. Parameterized paths also gain
-		 * nothing here: add_path ignores their pathkeys, so there is no candidate
-		 * to preserve.
-		 */
-		if (indexPath->path.param_info != NULL)
-		{
-			continue;
-		}
-
-		/*
-		 * Only target paths whose order is NOT already satisfied by the index.
-		 * If the existing path already carries pathkeys, the sort is pushed (e.g.
-		 * the sort starts at the index prefix) and no MergeAppend is needed.
-		 * Marked candidates carry placeholder pathkeys from the cost-estimate
-		 * pass, so they are still considered here.
-		 */
-		if (indexPath->path.pathkeys != NIL && !hasMergeSortMarker)
-		{
-			continue;
-		}
-
-		/*
-		 * Structural eligibility (ordered composite index with more than one
-		 * path). A multi-key index is permitted: the MergeAppend built below is
-		 * wrapped in a heap-TID de-dup CustomScan so a document reachable through
-		 * more than one exploded $in branch is still returned once.
-		 */
-		if (!MergeSortInPrefixIndexEligible(indexInfo))
-		{
-			continue;
-		}
-
-		/*
-		 * Build the shared $in-prefix plan (suffix order-by clauses, the $in
-		 * split, and the fan-out) from the same helper the cost-estimate marking
-		 * pass uses, so marking and rewriting cannot drift apart. The internal
-		 * marker clause is stripped first so it never reaches a child scan.
-		 */
-		bool removedMarker = false;
-		List *candidateIndexClauses = RemoveMergeSortInPrefixMarkerClauses(
-			indexPath->indexclauses, &removedMarker);
-
-		MergeSortInPrefixPlan plan;
-		bool materializeValues = true;
-		if (!TryBuildMergeSortInPrefixPlan(root, indexInfo, candidateIndexClauses,
-										   sortDetails, materializeValues, &plan))
-		{
-			continue;
-		}
-
-		List *orderByClauses = plan.orderByClauses;
-		List *otherClauses = plan.otherClauses;
-
-		/*
-		 * Flatten the $in prefix infos into a mixed-radix counter for the
-		 * cartesian-product enumeration below. inInfos is non-empty and the
-		 * fan-out is within the cap (validated by TryBuildMergeSortInPrefixPlan).
-		 */
-		int numInOps = list_length(plan.inInfos);
-		InPrefixOpInfo **infoArray = palloc(sizeof(InPrefixOpInfo *) * numInOps);
-		int *radix = palloc(sizeof(int) * numInOps);
-		int *counter = palloc0(sizeof(int) * numInOps);
-		int numChildren = plan.numChildren;
-		int infoIndex = 0;
-		ListCell *infoCell;
-		foreach(infoCell, plan.inInfos)
-		{
-			InPrefixOpInfo *info = (InPrefixOpInfo *) lfirst(infoCell);
-			infoArray[infoIndex] = info;
-			radix[infoIndex] = list_length(info->valueConsts);
-			infoIndex++;
-		}
+		bool hasMergeSortMarker = false;
 
 		/* Enumerate the cartesian product of $in values into ordered scans. */
 		List *childPaths = NIL;
@@ -5049,151 +5083,614 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 		 * above it.
 		 */
 		int commonPresorted = INT_MAX;
+		bool indexIsMultiKey = false;
 
 		/*
-		 * A multi-child MergeAppend over a multi-key index is wrapped in a
-		 * heap-TID de-dup CustomScan (see the wrap site further down). That
-		 * de-dup reads each row's heap ctid, which an index-only scan cannot
-		 * supply, so those children must be heap index scans. A single $in
-		 * combination is returned unwrapped and needs no ctid.
+		 * Set when a BitmapOr -> MergeAppend rewrite has at least one pair of
+		 * branches that cannot be proven disjoint, so the MergeAppend may emit a
+		 * document once per matching branch and needs a heap-TID de-dup wrap.
 		 */
+		bool bitmapOrNeedsDedup = false;
 		uint32_t inPrefixMultiKeyBitMask = 0;
-		bool indexIsMultiKey = CompositeIndexOptInfoIsMultiKey(indexInfo,
-															   &inPrefixMultiKeyBitMask);
-
-		/*
-		 * Whether the children can be served as index-only scans is a query/index
-		 * level decision, identical for every child. Resolve it lazily on the
-		 * first child (-1 undetermined, 0 no, 1 yes) and reuse it for the rest.
-		 * Index-only is disallowed only when a de-dup wrap will read the heap
-		 * ctid, i.e. a multi-child MergeAppend on a multi-key index (see below).
-		 */
-		int childrenIndexOnly = -1;
-		for (int combo = 0; combo < numChildren; combo++)
+		switch (path->pathtype)
 		{
-			CHECK_FOR_INTERRUPTS();
-
-			List *childClauses = list_concat(list_copy(otherClauses),
-											 list_copy(orderByClauses));
-			for (int i = 0; i < numInOps; i++)
+			case T_IndexScan:
+			case T_IndexOnlyScan:
 			{
-				Expr *valueConst = (Expr *) list_nth(infoArray[i]->valueConsts,
-													 counter[i]);
-				OpExpr *pointExpr = (OpExpr *) make_opclause(
-					BsonEqualMatchOperatorId(), BOOLOID, false,
-					infoArray[i]->leftExpr, valueConst, InvalidOid, InvalidOid);
-				pointExpr->opfuncid = BsonEqualMatchIndexFunctionId();
+				IndexPath *indexPath = (IndexPath *) path;
+				IndexOptInfo *indexInfo = indexPath->indexinfo;
 
-				RestrictInfo *pointRinfo =
-					make_simple_restrictinfo(root, (Expr *) pointExpr);
-				IndexClause *pointClause =
-					BuildPointReadIndexClause(pointRinfo, infoArray[i]->indexcol);
-				childClauses = lappend(childClauses, pointClause);
-
-				/*
-				 * The original $in clause remains in rel->baserestrictinfo, so
-				 * without this the planner re-attaches it as a redundant recheck
-				 * Filter on every child scan. Carry it back as a non-lossy
-				 * placeholder whose rinfo pointer-matches the original: PG's
-				 * is_redundant_with_indexclauses() then drops it from the child's
-				 * qpqual. The placeholder contributes no index qual of its own
-				 * (indexquals = NIL) -- the point-equality clause appended just
-				 * above is what restricts this child to a single $in value. The
-				 * lossy = false claim is sound only because of that sibling point
-				 * clause: every row this child returns has the column fixed to one
-				 * $in value and therefore satisfies $in (the per-value union across
-				 * the MergeAppend supplies completeness). On a multi-key index a
-				 * document can still match more than one branch; the de-dup wrap on
-				 * the MergeAppend (see WrapPathWithTidDedup below) removes those
-				 * repeats. This must run after the point clause is appended and once
-				 * per $in column, since each child fixes all $in columns.
-				 */
-				Assert(infoArray[i]->inRinfo != NULL);
-				IndexClause *coverClause = makeNode(IndexClause);
-				coverClause->rinfo = infoArray[i]->inRinfo;
-				coverClause->indexquals = NIL;
-				coverClause->lossy = false;
-				coverClause->indexcol = infoArray[i]->indexcol;
-				coverClause->indexcols = NIL;
-				childClauses = lappend(childClauses, coverClause);
-			}
-
-			/*
-			 * Build the ordered index scan for this one combination of $in
-			 * values -- i.e. one child path per point in the cartesian product.
-			 * childClauses holds everything this child scans with: the shared
-			 * non-$in index clauses, the shared suffix order-by clauses, and (the
-			 * loop above) one point-equality clause per $in column plus its
-			 * non-lossy cover clause, so the child is pinned to exactly one value
-			 * on every $in column.
-			 *
-			 * create_index_path runs the index's cost callback, which reads those
-			 * order-by clauses and fills in childPath->path.pathkeys (and the cost)
-			 * for us, which the check below relies on.
-			 */
-			IndexPath *childPath = create_index_path(
-				root, indexInfo, childClauses, NIL, NIL, NIL,
-				ForwardScanDirection, false, NULL, 1, false);
-
-			/*
-			 * Verify the cost callback was able to push at least a leading
-			 * prefix of the requested order onto this child scan. It only assigns
-			 * pathkeys when the equality prefix and the sort suffix line up on the
-			 * index; if the scan produced no usable order (pathkeys == NIL) or one
-			 * that shares no leading key with the query sort (presorted == 0 --
-			 * e.g. an unconstrained column sits between the $in prefix and the
-			 * first sort key, or the direction cannot be served), then this index
-			 * cannot stream rows in the requested order. Abandon the rewrite for
-			 * this index entirely (the MergeAppend is only valid if every child is
-			 * individually ordered) and fall back to the blocking Sort.
-			 *
-			 * When the child supplies only a leading prefix of the sort (the index
-			 * orders the first N sort keys but not the rest), the MergeAppend
-			 * advertises that prefix and create_ordered_paths sorts the remaining
-			 * keys above it (a plain or incremental Sort, by cost). commonPresorted
-			 * tracks the prefix length shared by all children.
-			 */
-			int presortedKeys = 0;
-			pathkeys_count_contained_in(root->query_pathkeys,
-										childPath->path.pathkeys, &presortedKeys);
-			if (childPath->path.pathkeys == NIL || presortedKeys == 0)
-			{
-				childrenValid = false;
-				break;
-			}
-			if (presortedKeys < commonPresorted)
-			{
-				commonPresorted = presortedKeys;
-			}
-
-			if (childrenIndexOnly < 0)
-			{
-				/* Multi-key indexes require heap children only when we will wrap the
-				 * multi-child MergeAppend in a TID de-dup node (which reads heap ctid). */
-				bool needsTidDedup = (indexIsMultiKey && numChildren > 1);
-
-				childrenIndexOnly =
-					(!needsTidDedup &&
-					 MergeSortInPrefixChildrenSupportIndexOnly(root, rel, childPath,
-															   context)) ? 1 : 0;
-			}
-
-			if (childrenIndexOnly == 1)
-			{
-				childPath = MaybeMakeMergeSortInPrefixChildIndexOnly(root, childPath);
-			}
-
-			childPaths = lappend(childPaths, childPath);
-
-			/* Advance the mixed-radix combination counter. */
-			for (int i = numInOps - 1; i >= 0; i--)
-			{
-				if (++counter[i] < radix[i])
+				if (!IsBsonRegularIndexAm(indexInfo->relam))
 				{
-					break;
+					continue;
 				}
 
-				counter[i] = 0;
+				hasMergeSortMarker = IndexPathHasMergeSortInPrefixMarker(indexPath);
+
+				/*
+				 * Only base (unparameterized) scans are rewritten. The per-value child
+				 * scans and the MergeAppend are built unparameterized (required_outer =
+				 * NULL), so a parameterized source -- whose index clauses reference outer
+				 * rels -- cannot be reproduced correctly. Parameterized paths also gain
+				 * nothing here: add_path ignores their pathkeys, so there is no candidate
+				 * to preserve.
+				 */
+				if (indexPath->path.param_info != NULL)
+				{
+					continue;
+				}
+
+				/*
+				 * Only target paths whose order is NOT already satisfied by the index.
+				 * If the existing path already carries pathkeys, the sort is pushed (e.g.
+				 * the sort starts at the index prefix) and no MergeAppend is needed.
+				 * Marked candidates carry placeholder pathkeys from the cost-estimate
+				 * pass, so they are still considered here.
+				 */
+				if (indexPath->path.pathkeys != NIL && !hasMergeSortMarker)
+				{
+					continue;
+				}
+
+				/*
+				 * Structural eligibility (ordered composite index with more than one
+				 * path). A multi-key index is permitted: the MergeAppend built below is
+				 * wrapped in a heap-TID de-dup CustomScan so a document reachable through
+				 * more than one exploded $in branch is still returned once.
+				 */
+				if (!MergeSortInPrefixIndexEligible(indexInfo))
+				{
+					continue;
+				}
+
+				/*
+				 * Build the shared $in-prefix plan (suffix order-by clauses, the $in
+				 * split, and the fan-out) from the same helper the cost-estimate marking
+				 * pass uses, so marking and rewriting cannot drift apart. The internal
+				 * marker clause is stripped first so it never reaches a child scan.
+				 */
+				bool removedMarker = false;
+				List *candidateIndexClauses = RemoveMergeSortInPrefixMarkerClauses(
+					indexPath->indexclauses, &removedMarker);
+
+				MergeSortInPrefixPlan plan;
+				bool materializeValues = true;
+				if (!TryBuildMergeSortInPrefixPlan(root, indexInfo, candidateIndexClauses,
+												   sortDetails, materializeValues, &plan))
+				{
+					continue;
+				}
+
+				List *orderByClauses = plan.orderByClauses;
+				List *otherClauses = plan.otherClauses;
+
+				/*
+				 * Flatten the $in prefix infos into a mixed-radix counter for the
+				 * cartesian-product enumeration below. inInfos is non-empty and the
+				 * fan-out is within the cap (validated by TryBuildMergeSortInPrefixPlan).
+				 */
+				int numInOps = list_length(plan.inInfos);
+				InPrefixOpInfo **infoArray = palloc(sizeof(InPrefixOpInfo *) * numInOps);
+				int *radix = palloc(sizeof(int) * numInOps);
+				int *counter = palloc0(sizeof(int) * numInOps);
+				int numChildren = plan.numChildren;
+				int infoIndex = 0;
+				ListCell *infoCell;
+				foreach(infoCell, plan.inInfos)
+				{
+					InPrefixOpInfo *info = (InPrefixOpInfo *) lfirst(infoCell);
+					infoArray[infoIndex] = info;
+					radix[infoIndex] = list_length(info->valueConsts);
+					infoIndex++;
+				}
+
+				/*
+				 * A multi-child MergeAppend over a multi-key index is wrapped in a
+				 * heap-TID de-dup CustomScan (see the wrap site further down). That
+				 * de-dup reads each row's heap ctid, which an index-only scan cannot
+				 * supply, so those children must be heap index scans. A single $in
+				 * combination is returned unwrapped and needs no ctid.
+				 */
+				indexIsMultiKey = CompositeIndexOptInfoIsMultiKey(indexInfo,
+																  &inPrefixMultiKeyBitMask);
+
+				/*
+				 * Whether the children can be served as index-only scans is a query/index
+				 * level decision, identical for every child. Resolve it lazily on the
+				 * first child (-1 undetermined, 0 no, 1 yes) and reuse it for the rest.
+				 * Index-only is disallowed only when a de-dup wrap will read the heap
+				 * ctid, i.e. a multi-child MergeAppend on a multi-key index (see below).
+				 */
+				int childrenIndexOnly = -1;
+				for (int combo = 0; combo < numChildren; combo++)
+				{
+					CHECK_FOR_INTERRUPTS();
+
+					List *childClauses = list_concat(list_copy(otherClauses),
+													 list_copy(orderByClauses));
+					for (int i = 0; i < numInOps; i++)
+					{
+						Expr *valueConst = (Expr *) list_nth(infoArray[i]->valueConsts,
+															 counter[i]);
+						OpExpr *pointExpr = (OpExpr *) make_opclause(
+							BsonEqualMatchOperatorId(), BOOLOID, false,
+							infoArray[i]->leftExpr, valueConst, InvalidOid, InvalidOid);
+						pointExpr->opfuncid = BsonEqualMatchIndexFunctionId();
+
+						RestrictInfo *pointRinfo =
+							make_simple_restrictinfo(root, (Expr *) pointExpr);
+						IndexClause *pointClause =
+							BuildPointReadIndexClause(pointRinfo, infoArray[i]->indexcol);
+						childClauses = lappend(childClauses, pointClause);
+
+						/*
+						 * The original $in clause remains in rel->baserestrictinfo, so
+						 * without this the planner re-attaches it as a redundant recheck
+						 * Filter on every child scan. Carry it back as a non-lossy
+						 * placeholder whose rinfo pointer-matches the original: PG's
+						 * is_redundant_with_indexclauses() then drops it from the child's
+						 * qpqual. The placeholder contributes no index qual of its own
+						 * (indexquals = NIL) -- the point-equality clause appended just
+						 * above is what restricts this child to a single $in value. The
+						 * lossy = false claim is sound only because of that sibling point
+						 * clause: every row this child returns has the column fixed to one
+						 * $in value and therefore satisfies $in (the per-value union across
+						 * the MergeAppend supplies completeness). On a multi-key index a
+						 * document can still match more than one branch; the de-dup wrap on
+						 * the MergeAppend (see WrapPathWithTidDedup below) removes those
+						 * repeats. This must run after the point clause is appended and once
+						 * per $in column, since each child fixes all $in columns.
+						 */
+						Assert(infoArray[i]->inRinfo != NULL);
+						IndexClause *coverClause = makeNode(IndexClause);
+						coverClause->rinfo = infoArray[i]->inRinfo;
+						coverClause->indexquals = NIL;
+						coverClause->lossy = false;
+						coverClause->indexcol = infoArray[i]->indexcol;
+						coverClause->indexcols = NIL;
+						childClauses = lappend(childClauses, coverClause);
+					}
+
+					/*
+					 * Build the ordered index scan for this one combination of $in
+					 * values -- i.e. one child path per point in the cartesian product.
+					 * childClauses holds everything this child scans with: the shared
+					 * non-$in index clauses, the shared suffix order-by clauses, and (the
+					 * loop above) one point-equality clause per $in column plus its
+					 * non-lossy cover clause, so the child is pinned to exactly one value
+					 * on every $in column.
+					 *
+					 * create_index_path runs the index's cost callback, which reads those
+					 * order-by clauses and fills in childPath->path.pathkeys (and the cost)
+					 * for us, which the check below relies on.
+					 */
+					IndexPath *childPath = create_index_path(
+						root, indexInfo, childClauses, NIL, NIL, NIL,
+						ForwardScanDirection, false, NULL, 1, false);
+
+					/*
+					 * Verify the cost callback was able to push at least a leading
+					 * prefix of the requested order onto this child scan. It only assigns
+					 * pathkeys when the equality prefix and the sort suffix line up on the
+					 * index; if the scan produced no usable order (pathkeys == NIL) or one
+					 * that shares no leading key with the query sort (presorted == 0 --
+					 * e.g. an unconstrained column sits between the $in prefix and the
+					 * first sort key, or the direction cannot be served), then this index
+					 * cannot stream rows in the requested order. Abandon the rewrite for
+					 * this index entirely (the MergeAppend is only valid if every child is
+					 * individually ordered) and fall back to the blocking Sort.
+					 *
+					 * When the child supplies only a leading prefix of the sort (the index
+					 * orders the first N sort keys but not the rest), the MergeAppend
+					 * advertises that prefix and create_ordered_paths sorts the remaining
+					 * keys above it (a plain or incremental Sort, by cost). commonPresorted
+					 * tracks the prefix length shared by all children.
+					 */
+					int presortedKeys = 0;
+					pathkeys_count_contained_in(root->query_pathkeys,
+												childPath->path.pathkeys, &presortedKeys);
+					if (childPath->path.pathkeys == NIL || presortedKeys == 0)
+					{
+						childrenValid = false;
+						break;
+					}
+					if (presortedKeys < commonPresorted)
+					{
+						commonPresorted = presortedKeys;
+					}
+
+					if (childrenIndexOnly < 0)
+					{
+						/* Multi-key indexes require heap children only when we will wrap the
+						 * multi-child MergeAppend in a TID de-dup node (which reads heap ctid). */
+						bool needsTidDedup = (indexIsMultiKey && numChildren > 1);
+
+						childrenIndexOnly =
+							(!needsTidDedup &&
+							 MergeSortInPrefixChildrenSupportIndexOnly(root, rel,
+																	   childPath,
+																	   context)) ? 1 : 0;
+					}
+
+					if (childrenIndexOnly == 1)
+					{
+						childPath = MaybeMakeMergeSortInPrefixChildIndexOnly(root,
+																			 childPath);
+					}
+
+					childPaths = lappend(childPaths, childPath);
+
+					/* Advance the mixed-radix combination counter. */
+					for (int i = numInOps - 1; i >= 0; i--)
+					{
+						if (++counter[i] < radix[i])
+						{
+							break;
+						}
+
+						counter[i] = 0;
+					}
+				}
+
+				break;
+			}
+
+			case T_BitmapHeapScan:
+			{
+				/*
+				 * The BitmapOr pushdown converts a BitmapOr of ordered per-branch
+				 * composite index scans (an $or whose branches share the same index
+				 * and order-by suffix) into a MergeAppend that streams already sorted,
+				 * removing the blocking Sort. Gated separately so it can be disabled
+				 * without turning off the $in-prefix merge-sort rewrite.
+				 */
+				if (!EnableMergeSortForBitmapOr)
+				{
+					continue;
+				}
+
+				BitmapHeapPath *bitmapPath = (BitmapHeapPath *) path;
+				if (!IsA(bitmapPath->bitmapqual, BitmapOrPath))
+				{
+					continue;
+				}
+
+				BitmapOrPath *bitmapOrPath = (BitmapOrPath *) bitmapPath->bitmapqual;
+				ListCell *subPathCell;
+				IndexOptInfo *indexInfo = NULL;
+				List *subPathPathKeys = NIL;
+				childrenValid = true;
+				childPaths = NIL;
+
+				if (list_length(bitmapOrPath->bitmapquals) == 0)
+				{
+					continue;
+				}
+
+				Path *firstPath = linitial(bitmapOrPath->bitmapquals);
+				if (!IsA(firstPath, IndexPath))
+				{
+					continue;
+				}
+				else
+				{
+					IndexPath *indexSubPath = (IndexPath *) firstPath;
+					indexInfo = indexSubPath->indexinfo;
+					subPathPathKeys = indexSubPath->path.pathkeys;
+					pathkeys_count_contained_in(root->query_pathkeys,
+												subPathPathKeys, &commonPresorted);
+				}
+
+				if (!IsBsonRegularIndexAm(indexInfo->relam))
+				{
+					continue;
+				}
+
+				indexIsMultiKey = CompositeIndexOptInfoIsMultiKey(indexInfo,
+																  &inPrefixMultiKeyBitMask);
+
+
+				/*
+				 * Structural eligibility (ordered composite index with more than one
+				 * path). A multi-key index is permitted: the MergeAppend built below is
+				 * wrapped in a heap-TID de-dup CustomScan so a document reachable through
+				 * more than one exploded $in branch is still returned once.
+				 */
+				if (!MergeSortInPrefixIndexEligible(indexInfo))
+				{
+					continue;
+				}
+
+				childrenValid = true;
+				int32_t minOrderByColumn = INDEX_MAX_KEYS + 1;
+				foreach(subPathCell, sortDetails)
+				{
+					SortIndexInputDetails *sortDetail = (SortIndexInputDetails *) lfirst(
+						subPathCell);
+					const char *sortPath = sortDetail->sortPath;
+
+					int8_t indexSortDirection = 0;
+					int columnNumber = GetCompositeOpClassColumnNumber(sortPath,
+																	   indexInfo->
+																	   opclassoptions[0],
+																	   &indexSortDirection);
+					if (columnNumber < 0 || columnNumber >= INDEX_MAX_KEYS)
+					{
+						childrenValid = false;
+						break;
+					}
+
+					minOrderByColumn = Min(minOrderByColumn, columnNumber);
+				}
+
+				if (!childrenValid || minOrderByColumn >= INDEX_MAX_KEYS)
+				{
+					continue;
+				}
+
+				/* A bitmap or path is valid if and only if the filters preceding the order by are just
+				 * equalities. Given that we guarantee that the order by is identical as a suffix, we
+				 * only need to validate the the prefixes are equalities. We also capture each branch's
+				 * equality bounds (see BitmapOrBranchEqBounds) so we can prove pairs of branches
+				 * disjoint: MergeAppend does not deduplicate tuples the way BitmapOr does, so branches
+				 * that are not provably disjoint would emit duplicate rows. When disjointness cannot be
+				 * proven we do not reject the rewrite; instead a heap-TID de-dup wrap is added above the
+				 * MergeAppend to drop the repeats.
+				 */
+				List *branchEqBoundsList = NIL;
+				foreach(subPathCell, bitmapOrPath->bitmapquals)
+				{
+					Path *subPath = (Path *) lfirst(subPathCell);
+					if (!IsA(subPath, IndexPath))
+					{
+						childrenValid = false;
+						break;
+					}
+
+					IndexPath *indexSubPath = (IndexPath *) subPath;
+					if (indexSubPath->path.pathkeys == NIL)
+					{
+						/* No sort to push down */
+						childrenValid = false;
+						break;
+					}
+
+					if (indexInfo->indexoid != indexSubPath->indexinfo->indexoid)
+					{
+						childrenValid = false;
+						break;
+					}
+					else if (!equal(subPathPathKeys, indexSubPath->path.pathkeys))
+					{
+						/* If the sorts don't match they're not eligible */
+						childrenValid = false;
+						break;
+					}
+
+					hasMergeSortMarker = IndexPathHasMergeSortInPrefixMarker(
+						indexSubPath);
+					if (hasMergeSortMarker)
+					{
+						/* This requires deduping similar to multi-key: handle this later
+						 * but skip this for now.
+						 */
+						childrenValid = false;
+						break;
+					}
+					if (indexSubPath->path.param_info != NULL)
+					{
+						childrenValid = false;
+						break;
+					}
+
+					/* Validate indexquals */
+					ListCell *qualCell;
+					bool equalityPrefixes[INDEX_MAX_KEYS] = { false };
+					bool nonEqualityPrefixes[INDEX_MAX_KEYS] = { false };
+					BitmapOrBranchEqBounds *branchBounds =
+						palloc0(sizeof(BitmapOrBranchEqBounds));
+					foreach(qualCell, indexSubPath->indexclauses)
+					{
+						IndexClause *indexClause = lfirst_node(IndexClause, qualCell);
+
+						/*
+						 * Walk the derived index quals rather than the original
+						 * restriction clause. A single restriction can lower to
+						 * several per-column index quals: e.g. an $elemMatch on a
+						 * multi-key sub-document (city/area/grade) lowers to one
+						 * per-column bound each, and its original clause carries the
+						 * elemMatch root path, which maps to no single index column.
+						 * The derived quals expose exactly the per-column
+						 * equality/range bounds the disjointness check needs, and
+						 * they are already collation-resolved when the query carries
+						 * a collation.
+						 */
+						ListCell *derivedCell;
+						foreach(derivedCell, indexClause->indexquals)
+						{
+							RestrictInfo *derivedRinfo =
+								lfirst_node(RestrictInfo, derivedCell);
+							Expr *clause = derivedRinfo->clause;
+
+							if (!IsA(clause, OpExpr))
+							{
+								childrenValid = false;
+								break;
+							}
+
+							Expr *clauseArg = lsecond(((OpExpr *) clause)->args);
+							if (!IsA(clauseArg, Const))
+							{
+								/* We only support const args for now */
+								childrenValid = false;
+								break;
+							}
+
+							Const *clauseConst = (Const *) clauseArg;
+							if (clauseConst->constisnull)
+							{
+								/* We don't support null const args for now */
+								childrenValid = false;
+								break;
+							}
+
+							int32_t indexStrategy = 0;
+							int columnNumber = ProcessSingleCompositeFilter(
+								(Node *) clause,
+								indexSubPath->indexinfo->opclassoptions[0],
+								equalityPrefixes, nonEqualityPrefixes,
+								&indexStrategy);
+							if (columnNumber < 0)
+							{
+								childrenValid = false;
+								break;
+							}
+
+							/*
+							 * Capture the equality bound so the pairwise
+							 * disjointness check below can prove two branches never
+							 * match the same document. Both genuine point-equality
+							 * (@=) and an $elemMatch whose sole inner op is an
+							 * equality bound the column to a single scalar;
+							 * TryGetBranchEqualityValue reads the actual scalar out
+							 * of either shape (for $elemMatch it digs the inner
+							 * "value" out of the elemMatchIndexOp spec rather than
+							 * comparing spec documents).
+							 *
+							 * NOTE: for a multi-key array path an $elemMatch equality
+							 * bounds a single array element, not the whole document,
+							 * so two "disjoint" branches can still both match a
+							 * document that has different array elements satisfying
+							 * each branch. That is accepted here (duplicate rows are
+							 * handled by a dedup layer above the MergeAppend); the
+							 * goal of this capture is to expose the sort pushdown.
+							 */
+							if (indexStrategy == BSON_INDEX_STRATEGY_DOLLAR_EQUAL &&
+								columnNumber < INDEX_MAX_KEYS)
+							{
+								bson_value_t eqValue = { 0 };
+								if (TryGetBranchEqualityValue((OpExpr *) clause,
+															  &eqValue))
+								{
+									branchBounds->hasEquality[columnNumber] = true;
+									branchBounds->values[columnNumber] = eqValue;
+								}
+							}
+						}
+
+						if (!childrenValid)
+						{
+							break;
+						}
+					}
+
+					if (!childrenValid)
+					{
+						break;
+					}
+
+					branchEqBoundsList = lappend(branchEqBoundsList, branchBounds);
+					childPaths = lappend(childPaths, indexSubPath);
+				}
+
+				/*
+				 * MergeAppend concatenates its children without deduplicating
+				 * tuples. Two branches are treated as disjoint when some index
+				 * column is bound to different equality constants in both. For a
+				 * scalar column this proves the branches never share a document,
+				 * so no de-dup is required. When no distinguishing equality
+				 * exists (or a multi-key array column is involved, where an
+				 * $elemMatch equality only bounds a single array element), the
+				 * branches may both match the same document, so the rewrite still
+				 * proceeds but records that a heap-TID de-dup wrap is needed above
+				 * the MergeAppend to remove the repeats.
+				 */
+				if (childrenValid)
+				{
+					/*
+					 * Compare the per-branch equality scalars under the index's
+					 * collation, read straight from the index options. This
+					 * points into the reloptions buffer (no allocation) instead
+					 * of materializing the sort detail's collation text.
+					 */
+					const char *collationString = NULL;
+					if (indexInfo->opclassoptions != NULL &&
+						indexInfo->opclassoptions[0] != NULL)
+					{
+						uint32_t indexCollationLength = 0;
+						Get_Index_Collation_Option(
+							(BsonGinIndexOptionsBase *) indexInfo->opclassoptions[0],
+							collation, collationString, indexCollationLength);
+					}
+
+					int numBranches = list_length(branchEqBoundsList);
+					for (int outer = 0;
+						 outer < numBranches && !bitmapOrNeedsDedup;
+						 outer++)
+					{
+						BitmapOrBranchEqBounds *outerBounds =
+							(BitmapOrBranchEqBounds *) list_nth(branchEqBoundsList,
+																outer);
+						for (int inner = outer + 1;
+							 inner < numBranches && !bitmapOrNeedsDedup;
+							 inner++)
+						{
+							BitmapOrBranchEqBounds *innerBounds =
+								(BitmapOrBranchEqBounds *) list_nth(
+									branchEqBoundsList, inner);
+
+							bool disjoint = false;
+							for (int col = 0; col < INDEX_MAX_KEYS; col++)
+							{
+								if (outerBounds->hasEquality[col] &&
+									innerBounds->hasEquality[col] &&
+									!BsonValueEqualsWithCollation(
+										&outerBounds->values[col],
+										&innerBounds->values[col],
+										collationString))
+								{
+									disjoint = true;
+									break;
+								}
+							}
+
+							if (!disjoint)
+							{
+								/*
+								 * This pair is not provably disjoint, so the
+								 * MergeAppend may return a shared document once
+								 * per branch. Keep the rewrite and de-dup above
+								 * the MergeAppend below. One such pair is enough
+								 * to require the wrap, so stop checking.
+								 */
+								bitmapOrNeedsDedup = true;
+							}
+						}
+					}
+				}
+
+				if (branchEqBoundsList != NIL)
+				{
+					list_free_deep(branchEqBoundsList);
+				}
+
+				if (!childrenValid)
+				{
+					if (list_length(childPaths) > 0)
+					{
+						list_free(childPaths);
+					}
+
+					continue;
+				}
+
+				markedPathsToRemove = lappend(markedPathsToRemove, sourcePath);
+				break;
+			}
+
+			default:
+			{
+				continue;
 			}
 		}
 
@@ -5252,16 +5749,17 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 			}
 
 			/*
-			 * On a multi-key index a document can be reached through more than
-			 * one exploded $in branch (its array holds several matching values),
-			 * so the MergeAppend -- which does not de-duplicate across children --
-			 * would return it once per branch. Wrap it in a heap-TID de-dup
-			 * CustomScan, which drops the repeats while preserving the merge
-			 * order. Single-key indexes need no de-dup: each document matches
-			 * exactly one branch.
+			 * A document can be reached through more than one exploded branch --
+			 * on a multi-key index (its array holds several matching values), or
+			 * on any index whose $or branches were not proven pairwise disjoint
+			 * above -- so the MergeAppend, which does not de-duplicate across
+			 * children, would return it once per branch. Wrap it in a heap-TID
+			 * de-dup CustomScan, which drops the repeats while preserving the
+			 * merge order. A single-key index whose branches are all provably
+			 * disjoint needs no de-dup: each document matches exactly one branch.
 			 */
 			Path *finalMergePath = (Path *) mergePath;
-			if (indexIsMultiKey)
+			if (indexIsMultiKey || bitmapOrNeedsDedup)
 			{
 				finalMergePath = WrapPathWithTidDedup(finalMergePath);
 			}
@@ -5315,6 +5813,7 @@ ProcessOrderByStatements(PlannerInfo *root,
 						 IndexPath *path,
 						 int32_t minOrderByColumn,
 						 int32_t maxOrderByColumn, bool isMultiKeyIndex,
+						 bool hasPerPathMetadata,
 						 uint32_t multiKeyBitMask,
 						 const char *queryOrderPaths[INDEX_MAX_KEYS],
 						 bool equalityPrefixes[INDEX_MAX_KEYS],
@@ -5343,9 +5842,45 @@ ProcessOrderByStatements(PlannerInfo *root,
 
 	if (isMultiKeyIndex && hasGroupby)
 	{
-		/* We can't push down orderby on a multikey index if there is a group by */
-		list_free_deep(sortDetails);
-		return;
+		/*
+		 * A group-by can only stream off a multi-key composite ordered index
+		 * when none of the grouped/ordered (sort) columns are themselves
+		 * multi-key: a multi-key sort column yields one index tuple per array
+		 * element with a distinct sort value, so the grouped order (and the
+		 * group keys) would be unsound. A multi-key path in the equality
+		 * *prefix* ahead of the sort columns is permitted -- the sort columns
+		 * stay scalar-ordered -- though such a prefix can still emit one index
+		 * tuple per matching array element, so the streamed group may over-count
+		 * until de-duplication is layered on top.
+		 *
+		 * This relaxation requires per-path multi-key metadata (an "mkp" index)
+		 * so we can tell which individual columns are multi-key, and is gated
+		 * behind a dedicated, default-off flag. Without it we conservatively
+		 * refuse the whole pushdown.
+		 */
+		bool rejectGroupByPushdown = true;
+		if (EnableGroupByMultiKeySortPushdown &&
+			EnablePerPathMultiKeySortPushdown &&
+			hasPerPathMetadata)
+		{
+			rejectGroupByPushdown = false;
+			for (int col = minOrderByColumn; col <= maxOrderByColumn; col++)
+			{
+				/* Reject when a grouped/ordered sort column is itself multi-key. */
+				if (pathSortOrders[col] != 0 &&
+					(multiKeyBitMask & (UINT32_C(1) << col)) != 0)
+				{
+					rejectGroupByPushdown = true;
+					break;
+				}
+			}
+		}
+
+		if (rejectGroupByPushdown)
+		{
+			list_free_deep(sortDetails);
+			return;
+		}
 	}
 
 	List *indexOrderBys = NIL;
@@ -6573,6 +7108,7 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 		ProcessOrderByStatements(
 			root, indexPath, minOrderByColumn,
 			maxOrderByColumn, isMultiKeyIndex,
+			hasPerPathMetadata,
 			indexMetadata.multiKeyPathBitMask,
 			queryOrderPaths, equalityPrefixes,
 			nonEqualityPrefixes,
@@ -8088,6 +8624,24 @@ IsMatchingPathForQueryOperator(RelOptInfo *rel, Path *path,
 			return true;
 		}
 		return false;
+	}
+	else if (IsA(path, MergeAppendPath))
+	{
+		MergeAppendPath *mergeAppendPath = (MergeAppendPath *) path;
+		ListCell *cell;
+		bool isAllMatchingPaths = true;
+		foreach(cell, mergeAppendPath->subpaths)
+		{
+			Path *subpath = (Path *) lfirst(cell);
+			if (!IsMatchingPathForQueryOperator(rel, subpath, context,
+												matchIndexPath, matchContext))
+			{
+				isAllMatchingPaths = false;
+				break;
+			}
+		}
+
+		return isAllMatchingPaths;
 	}
 	else if (IsA(path, IndexPath))
 	{

@@ -176,6 +176,11 @@ bool EnableIndexMetadataGlobalTracking = DEFAULT_ENABLE_INDEX_METADATA_GLOBAL_TR
 bool EnablePerPathMultiKeySortPushdown =
 	DEFAULT_ENABLE_PER_PATH_MULTI_KEY_SORT_PUSHDOWN;
 
+/* Added in v116, pending stabilization, enable in v118 */
+#define DEFAULT_ENABLE_GROUP_BY_MULTI_KEY_SORT_PUSHDOWN false
+bool EnableGroupByMultiKeySortPushdown =
+	DEFAULT_ENABLE_GROUP_BY_MULTI_KEY_SORT_PUSHDOWN;
+
 /* Added in v115, enabled in v115, remove after v118 */
 #define DEFAULT_ENABLE_INDEX_CORRELATION_FROM_STATISTICS true
 bool EnableIndexCorrelationFromStatistics =
@@ -406,6 +411,15 @@ bool EnableSortPushToAccumulatorWithPrefix =
 /* Added in v116, Pending stabilization, enable in v121 */
 #define DEFAULT_ENABLE_MERGE_SORT_FOR_IN_PREFIX false
 bool EnableMergeSortForInPrefix = DEFAULT_ENABLE_MERGE_SORT_FOR_IN_PREFIX;
+
+/* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_MERGE_SORT_FOR_BITMAP_OR true
+bool EnableMergeSortForBitmapOr = DEFAULT_ENABLE_MERGE_SORT_FOR_BITMAP_OR;
+
+/* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_COMPOSITE_SECONDARY_PATH_ORDER_PUSHDOWN true
+bool EnableCompositeSecondaryPathOrderPushdown =
+	DEFAULT_ENABLE_COMPOSITE_SECONDARY_PATH_ORDER_PUSHDOWN;
 
 /* Added in v114, enabled in v114, remove after v117 */
 #define DEFAULT_ENABLE_STRICT_ADDTOSET_MODIFIER_VALIDATION true
@@ -1061,6 +1075,22 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
+		psprintf("%s.enable_merge_sort_for_bitmap_or", newGucPrefix),
+		gettext_noop(
+			"Whether to push a composite index sort to a merge of the ordered per-branch index scans of a bitmap OR when the $or branches share the index and order-by suffix."),
+		NULL, &EnableMergeSortForBitmapOr,
+		DEFAULT_ENABLE_MERGE_SORT_FOR_BITMAP_OR,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_composite_secondary_path_order_pushdown", newGucPrefix),
+		gettext_noop(
+			"Whether to push an order-by down to a non-leading top-level path of a composite index whose reduced correlated terms carry metadata-based tracking."),
+		NULL, &EnableCompositeSecondaryPathOrderPushdown,
+		DEFAULT_ENABLE_COMPOSITE_SECONDARY_PATH_ORDER_PUSHDOWN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
 		psprintf("%s.failOnGroupIdDuplicate", newGucPrefix),
 		gettext_noop(
 			"Whether to fail when $group stage has duplicate _id."),
@@ -1141,6 +1171,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to respect the per-path multi-key bitmask when deciding order-by pushdown for composite ordered indexes. When off, a multi-key index blocks order-by pushdown on any filtered sort column regardless of that column's per-path multi-key state."),
 		NULL, &EnablePerPathMultiKeySortPushdown,
 		DEFAULT_ENABLE_PER_PATH_MULTI_KEY_SORT_PUSHDOWN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_group_by_multi_key_sort_pushdown", newGucPrefix),
+		gettext_noop(
+			"Whether to allow order-by pushdown for a group-by over a multi-key composite ordered index when the per-path multi-key bitmask proves the grouped/ordered columns are scalar. When off, any group-by on a multi-key index blocks order-by pushdown. A multi-key equality prefix can still emit one index tuple per matching array element, so the streamed group may over-count until de-duplication is layered on top."),
+		NULL, &EnableGroupByMultiKeySortPushdown,
+		DEFAULT_ENABLE_GROUP_BY_MULTI_KEY_SORT_PUSHDOWN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

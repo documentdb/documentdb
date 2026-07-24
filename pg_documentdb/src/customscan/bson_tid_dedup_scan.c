@@ -59,10 +59,10 @@ static TupleTableSlot * TidDedupNext(CustomScanState *node);
 static bool TidDedupRecheck(CustomScanState *node, TupleTableSlot *slot);
 static void TidDedupEndScan(CustomScanState *node);
 static void TidDedupReScan(CustomScanState *node);
-static void TidDedupCleanupCallback(void *arg);
 static void TidDedupExplain(CustomScanState *node, List *ancestors,
 							ExplainState *es);
 static void AddCtidToPathTargets(Path *path, Index scanRelId);
+static List * BuildTidDedupPassThroughTargetList(List *sourceTlist);
 
 
 /* --------------------------------------------------------- */
@@ -128,6 +128,9 @@ RegisterTidDedupScanNodes(void)
 static void
 AddCtidToPathTargets(Path *path, Index scanRelId)
 {
+	check_stack_depth();
+	CHECK_FOR_INTERRUPTS();
+
 	Var *ctidVar = makeVar(scanRelId, SelfItemPointerAttributeNumber, TIDOID,
 						   -1, InvalidOid, 0);
 
@@ -141,6 +144,19 @@ AddCtidToPathTargets(Path *path, Index scanRelId)
 		{
 			AddCtidToPathTargets((Path *) lfirst(cell), scanRelId);
 		}
+	}
+	else if (IsA(path, IndexPath))
+	{
+		/*
+		 * We de-duplicate on the heap ctid, which only a heap-fetching index
+		 * scan can surface. Force a regular index scan so the planner does not
+		 * pick an index-only scan for this branch (which it may otherwise do
+		 * when no heap column is independently required, e.g. under a count(*)
+		 * that prunes the document column). An index-only scan reads solely
+		 * from the index and cannot emit the system ctid, which would trip a
+		 * "variable not found in subplan target list" error during setrefs.
+		 */
+		path->pathtype = T_IndexScan;
 	}
 }
 
@@ -197,10 +213,60 @@ TidDedupPlanCustomPath(PlannerInfo *root, RelOptInfo *rel,
 	 * output to the parent (the original columns, with ctid projected away).
 	 */
 	cscan->custom_scan_tlist = childPlan->targetlist;
-	cscan->scan.plan.targetlist = tlist;
+	if (tlist != NIL)
+	{
+		/*
+		 * The planner already resolved this level's output columns against our
+		 * path and handed them to us, so we adopt them verbatim.
+		 */
+		cscan->scan.plan.targetlist = tlist;
+	}
+	else
+	{
+		/*
+		 * A grouping / aggregation node sits above us (e.g. a count(*) that
+		 * needs no columns from this scan), so the planner handed us a NIL
+		 * tlist and computes its output from our child's tuple instead. Emit a
+		 * pass-through target list that projects the child's tuple straight
+		 * through (including the surfaced ctid) rather than leaving the output
+		 * empty, which would drop columns the upper node references and trip a
+		 * "variable not found in subplan target list" planner error.
+		 */
+		cscan->scan.plan.targetlist =
+			BuildTidDedupPassThroughTargetList(childPlan->targetlist);
+	}
 	cscan->scan.plan.qual = NIL;
 
 	return (Plan *) cscan;
+}
+
+
+/*
+ * Build a pass-through target list that projects every column of the child's
+ * output tuple straight through this node. Used when the planner hands us a
+ * NIL output tlist because a grouping / aggregation node above computes its
+ * output from our child's columns; emitting the child's shape (rather than an
+ * empty list) keeps those columns resolvable during setrefs.
+ *
+ * Each entry references the child's expression verbatim (same varno/varattno)
+ * so setrefs.c can match it against custom_scan_tlist (the child's target
+ * list) and rewrite it to an INDEX_VAR reference.
+ */
+static List *
+BuildTidDedupPassThroughTargetList(List *sourceTlist)
+{
+	List *outputTargetEntries = NIL;
+	ListCell *cell;
+	foreach(cell, sourceTlist)
+	{
+		TargetEntry *tle = (TargetEntry *) lfirst(cell);
+		TargetEntry *outputTle = makeTargetEntry(copyObject(tle->expr),
+												 tle->resno, tle->resname,
+												 tle->resjunk);
+		outputTargetEntries = lappend(outputTargetEntries, outputTle);
+	}
+
+	return outputTargetEntries;
 }
 
 
@@ -268,11 +334,6 @@ TidDedupBeginScan(CustomScanState *node, EState *estate, int eflags)
 	MemoryContextSwitchTo(oldContext);
 
 	state->numDuplicatesDropped = 0;
-
-	state->cleanupCallback.func = TidDedupCleanupCallback;
-	state->cleanupCallback.arg = state;
-	MemoryContextRegisterResetCallback(estate->es_query_cxt,
-									   &state->cleanupCallback);
 }
 
 
@@ -318,11 +379,17 @@ TidDedupNext(CustomScanState *node)
 		if (!isNull)
 		{
 			ItemPointer tid = (ItemPointer) DatumGetPointer(ctidDatum);
-			if (ItemPointerIsValid(tid) &&
-				!RoaringTidDedupAddChecked(state->seenTids, tid))
+			if (ItemPointerIsValid(tid))
 			{
-				state->numDuplicatesDropped++;
-				continue;
+				MemoryContext oldContext =
+					MemoryContextSwitchTo(node->ss.ps.state->es_query_cxt);
+				bool added = RoaringTidDedupAddChecked(state->seenTids, tid);
+				MemoryContextSwitchTo(oldContext);
+				if (!added)
+				{
+					state->numDuplicatesDropped++;
+					continue;
+				}
 			}
 		}
 
@@ -385,25 +452,6 @@ TidDedupReScan(CustomScanState *node)
 	if (state->childPlanState != NULL)
 	{
 		ExecReScan(state->childPlanState);
-	}
-}
-
-
-/*
- * Reset callback registered on the per-query context. Frees the roaring bitmap
- * if it is still live -- i.e. when execution was aborted before EndScan ran.
- * On the normal path EndScan (or ReScan) has already freed it and NULLed the
- * pointer, so this is a no-op then.
- */
-static void
-TidDedupCleanupCallback(void *arg)
-{
-	TidDedupScanState *state = (TidDedupScanState *) arg;
-
-	if (state->seenTids != NULL)
-	{
-		FreeRoaringTidDedup(state->seenTids);
-		state->seenTids = NULL;
 	}
 }
 

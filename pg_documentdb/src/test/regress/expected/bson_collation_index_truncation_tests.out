@@ -189,10 +189,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$eq": "short_string" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -216,10 +216,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$eq": "SHORT_STRING" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -250,7 +250,7 @@ $cmd$);
                                                                                                    run_explain_and_trim                                                                                                   
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -278,7 +278,7 @@ $cmd$);
                                                                                                    run_explain_and_trim                                                                                                   
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=1 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -307,7 +307,7 @@ $cmd$);
                                                                                                    run_explain_and_trim                                                                                                   
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -334,7 +334,7 @@ $cmd$);
                                                                                                    run_explain_and_trim                                                                                                   
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=0 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -365,7 +365,7 @@ $cmd$);
                                                                                       run_explain_and_trim                                                                                      
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=1 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -393,7 +393,7 @@ $cmd$);
                                                                                      run_explain_and_trim                                                                                      
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=1 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -424,7 +424,7 @@ $cmd$);
                                                                                              run_explain_and_trim                                                                                              
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=1 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -451,7 +451,7 @@ $cmd$);
                                                                                              run_explain_and_trim                                                                                              
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=1 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -479,10 +479,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$gt": "short_string" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=3 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -509,10 +509,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$gte": "short_string" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=5 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -539,7 +539,7 @@ $cmd$);
                                                                                                    run_explain_and_trim                                                                                                   
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=1 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -569,7 +569,7 @@ $cmd$);
                                                                                                    run_explain_and_trim                                                                                                    
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=3 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -606,7 +606,7 @@ $cmd$);
                                                                                       run_explain_and_trim                                                                                      
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=11 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=11 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -645,7 +645,7 @@ $cmd$);
                                                                                       run_explain_and_trim                                                                                       
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=12 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=12 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -677,7 +677,7 @@ $cmd$);
                                                                                              run_explain_and_trim                                                                                              
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=6 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -711,10 +711,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$lt": "short_string" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=8 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=8 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -746,10 +746,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$lte": "short_string" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=10 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -788,7 +788,7 @@ $cmd$);
                                                                                                    run_explain_and_trim                                                                                                   
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=12 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=12 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -828,7 +828,7 @@ $cmd$);
                                                                                                    run_explain_and_trim                                                                                                    
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=12 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=12 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -858,7 +858,7 @@ $cmd$);
                                                                                      run_explain_and_trim                                                                                      
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -888,7 +888,7 @@ $cmd$);
                                                                                       run_explain_and_trim                                                                                       
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -923,7 +923,7 @@ $cmd$);
                                                                                              run_explain_and_trim                                                                                              
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=7 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -957,7 +957,7 @@ $cmd$);
                                                                                                                                              run_explain_and_trim                                                                                                                                              
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=1 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -986,7 +986,7 @@ $cmd$);
                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                            
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1017,7 +1017,7 @@ $cmd$);
                                                                                       run_explain_and_trim                                                                                       
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1043,10 +1043,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$eq": 12345 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=1 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1069,10 +1069,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$gt": 10000 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=1 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1095,10 +1095,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$eq": null } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=1 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1146,10 +1146,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$eq": "short_string" } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1207,10 +1207,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$ne": "short_string" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=13 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=13 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1245,10 +1245,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$ne": "SHORT_STRING" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=13 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=13 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1286,7 +1286,7 @@ $cmd$);
                                                                                                    run_explain_and_trim                                                                                                    
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=13 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=13 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1325,7 +1325,7 @@ $cmd$);
                                                                                                    run_explain_and_trim                                                                                                    
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=13 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=13 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1362,10 +1362,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$ne": 12345 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=14 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=14 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1401,10 +1401,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$ne": null } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=14 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=14 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1440,10 +1440,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$ne": "short_string" } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=13 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=13 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1534,10 +1534,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$gt": "short_string" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=12 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=12 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1594,7 +1594,7 @@ $cmd$);
                                                                                                                     run_explain_and_trim                                                                                                                     
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=14 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=14 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1644,7 +1644,7 @@ $cmd$);
                                                                                                        run_explain_and_trim                                                                                                        
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1714,10 +1714,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$gt": "short_string" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=12 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=12 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1750,10 +1750,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$gte": "short_string" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=10 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1806,7 +1806,7 @@ $cmd$);
                                                                                                                      run_explain_and_trim                                                                                                                     
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=12 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=12 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1853,7 +1853,7 @@ $cmd$);
                                                                                                         run_explain_and_trim                                                                                                        
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=3 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1920,10 +1920,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$gte": "short_string" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=10 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1953,10 +1953,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$lt": "short_string" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=7 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -1999,7 +1999,7 @@ $cmd$);
                                                                                                                     run_explain_and_trim                                                                                                                     
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=5 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -2049,7 +2049,7 @@ $cmd$);
                                                                                                        run_explain_and_trim                                                                                                        
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=14 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=14 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -2114,10 +2114,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$lt": "short_string" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=7 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -2145,10 +2145,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$lte": "short_string" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=5 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -2187,7 +2187,7 @@ $cmd$);
                                                                                                                      run_explain_and_trim                                                                                                                     
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=3 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -2235,7 +2235,7 @@ $cmd$);
                                                                                                         run_explain_and_trim                                                                                                        
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=13 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=13 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -2297,10 +2297,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$lte": "short_string" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=5 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -2413,7 +2413,7 @@ $cmd$);
                                                                          run_explain_and_trim                                                                         
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=3 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: trunc_db.trunc_elemmatch
@@ -2442,7 +2442,7 @@ $cmd$);
                                                                                                                  run_explain_and_trim                                                                                                                  
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=3 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: trunc_db.trunc_elemmatch
@@ -2471,7 +2471,7 @@ $cmd$);
                                                                                                                  run_explain_and_trim                                                                                                                  
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: trunc_db.trunc_elemmatch
@@ -2500,7 +2500,7 @@ $cmd$);
                                                                                                                  run_explain_and_trim                                                                                                                  
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: trunc_db.trunc_elemmatch
@@ -2534,7 +2534,7 @@ $cmd$);
                                                                                                                  run_explain_and_trim                                                                                                                  
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=7 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
          namespaceName: trunc_db.trunc_elemmatch
@@ -2562,7 +2562,7 @@ $cmd$);
                                                                                                                   run_explain_and_trim                                                                                                                   
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=1 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
          namespaceName: trunc_db.trunc_elemmatch
@@ -2592,7 +2592,7 @@ $cmd$);
                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          namespaceName: trunc_db.trunc_elemmatch
@@ -2625,7 +2625,7 @@ $cmd$);
                                                                                       run_explain_and_trim                                                                                      
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=7 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
          namespaceName: trunc_db.trunc_elemmatch
@@ -2650,10 +2650,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmat
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$not": { "$gt": "short" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=5 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          namespaceName: trunc_db.trunc_elemmatch
@@ -2677,7 +2677,7 @@ $cmd$);
                                                                                  run_explain_and_trim                                                                                 
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=1 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
          namespaceName: trunc_db.trunc_elemmatch
@@ -2703,10 +2703,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmat
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": "short" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=3 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: trunc_db.trunc_elemmatch
@@ -2732,7 +2732,7 @@ $cmd$);
                                                                                                               run_explain_and_trim                                                                                                               
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=3 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: trunc_db.trunc_elemmatch
@@ -2789,7 +2789,7 @@ $cmd$);
                                                                           run_explain_and_trim                                                                          
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=8 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=8 loops=1)
          namespaceName: trunc_db.trunc_elemmatch
@@ -2823,7 +2823,7 @@ $cmd$);
                                                                               run_explain_and_trim                                                                              
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=8 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=8 loops=1)
          namespaceName: trunc_db.trunc_elemmatch
@@ -2852,7 +2852,7 @@ $cmd$);
                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: trunc_db.trunc_elemmatch
@@ -2886,7 +2886,7 @@ $cmd$);
                                                                                             run_explain_and_trim                                                                                             
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=7 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
          namespaceName: trunc_db.trunc_elemmatch
@@ -2909,7 +2909,7 @@ $cmd$);
                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=0 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
          namespaceName: trunc_db.trunc_elemmatch
@@ -2939,10 +2939,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["short_string", "another_short"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=3 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -2978,7 +2978,7 @@ $cmd$);
                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                      
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=3 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -3021,7 +3021,7 @@ $cmd$);
                                                                                                                                            run_explain_and_trim                                                                                                                                           
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -3047,7 +3047,7 @@ $cmd$);
                                                                                              run_explain_and_trim                                                                                              
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=1 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -3078,7 +3078,7 @@ $cmd$);
                                                                                                                               run_explain_and_trim                                                                                                                               
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=6 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -3111,10 +3111,10 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["short_string"] } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -3130,10 +3130,10 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": [12345, null] } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 2 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level2'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level2'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -3174,10 +3174,10 @@ SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", 
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$nin": ["short_string", "another_short"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=12 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=12 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -3235,7 +3235,7 @@ $cmd$);
                                                                                                    run_explain_and_trim                                                                                                    
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=13 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=13 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -3275,7 +3275,7 @@ $cmd$);
                                                                                       run_explain_and_trim                                                                                       
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=14 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=14 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -3311,7 +3311,7 @@ $cmd$);
                                                                                                                             run_explain_and_trim                                                                                                                            
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=10 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
          namespaceName: trunc_db.trunc_coll
@@ -3329,10 +3329,10 @@ $cmd$);
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$nin": ["short_string"] } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=13 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=13 loops=1)
          namespaceName: trunc_db.trunc_coll

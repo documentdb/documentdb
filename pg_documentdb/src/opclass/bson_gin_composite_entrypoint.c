@@ -209,6 +209,7 @@ extern bool EnablePartialMatchHasRecheck;
 extern bool EnableFailureOnParallelIndexArrays;
 extern bool EnableFailureOnParallelIndexArraysForMetadataTracking;
 extern bool EnableDynamicCursorDedupTracking;
+extern bool EnableCompositeSecondaryPathOrderPushdown;
 
 static void ValidateCompositePathSpec(const char *prefix);
 static Size FillCompositePathSpec(const char *prefix, void *buffer);
@@ -2291,23 +2292,49 @@ gin_bson_composite_path_consistent(PG_FUNCTION_ARGS)
 
 
 Datum *
-GenerateCompositeTermsFromIndexSpec(pgbson *document, pgbson *keySpec, uint32_t *numTerms)
+GenerateCompositeTermsFromIndexSpec(pgbson *document, pgbson *keySpec, uint32_t *numTerms,
+									const StringView *collationStringView)
 {
 	bool isIndexSpec = true;
-	Size fieldSize = FillCompositePathSpecFromBson(keySpec, NULL, isIndexSpec);
+	Size compositeKeySpecLength = FillCompositePathSpecFromBson(keySpec, NULL,
+																isIndexSpec);
+	Size fieldSize = compositeKeySpecLength;
+
+	if (collationStringView->length > 0)
+	{
+		/* Add the collation field and the associated null terminator as well */
+		fieldSize += FillCollationSpec(collationStringView->string, NULL);
+	}
+
 	BsonGinCompositePathOptions *options = palloc0(
 		sizeof(BsonGinCompositePathOptions) + fieldSize);
 	options->base.indexTermTruncateLimit = INT32_MAX;
 	options->base.wildcardIndexTruncatedPathLimit = MaxWildcardIndexKeySize;
 	options->base.type = IndexOptionsType_Composite;
 	options->base.version = IndexOptionsVersion_V0;
-	options->compositePathSpec = sizeof(BsonGinCompositePathOptions);
 	options->wildcardPathIndex = -1;
 	options->enableCompositeReducedCorrelatedTerms = true;
 
+	/*
+	 * Track reduced-correlated / multi-key / truncation state through the global
+	 * metadata blob (matching how composite indexes store terms) rather than as
+	 * separate physical marker terms. Combined with addMetadataTerms=false below,
+	 * this yields only the composite value tuples so order-by-index-term selects
+	 * the real minimum/maximum tuple instead of a marker term.
+	 */
+	options->enableMetadataBasedTracking = true;
+
+	options->compositePathSpec = sizeof(BsonGinCompositePathOptions);
 	FillCompositePathSpecFromBson(keySpec,
-								  ((char *) options) +
-								  sizeof(BsonGinCompositePathOptions), isIndexSpec);
+								  ((char *) options) + options->compositePathSpec,
+								  isIndexSpec);
+
+	if (collationStringView->length > 0)
+	{
+		options->base.collation = options->compositePathSpec + compositeKeySpecLength;
+		FillCollationSpec(collationStringView->string,
+						  ((char *) options) + options->base.collation);
+	}
 
 	GinEntryPathData pathData = { 0 };
 	bool addMetadataTerms = false;
@@ -3455,6 +3482,17 @@ GetCompositeTraverseOptionSinglePath(BsonGinCompositePathOptions *options,
 				 strategy == BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE) &&
 				i > 0)
 			{
+				if (options->enableMetadataBasedTracking &&
+					EnableCompositeSecondaryPathOrderPushdown &&
+					memchr(indexPaths[i], '.', indexPathsLengths[i]) == NULL)
+				{
+					/* Reduced correlated term index, and secondary path, but it's
+					 * top level (not dotted) - eligible for pushdown
+					 */
+					*compositeIndexCol = i;
+					return IndexTraverse_Match;
+				}
+
 				/*
 				 * Can't push down order by on secondary columns yet
 				 * TODO: Requires orderby to match reduced index term in the runtime
@@ -5108,7 +5146,7 @@ GenerateCompositeTermsCore(pgbson *bson, BsonGinCompositePathOptions *options,
 
 			SetRequiredMetadataFieldsForReducedCorrelated(termBlobMetadata);
 		}
-		else
+		else if (addMetadataTerms)
 		{
 			indexEntries[totalTermCount] = GenerateCorrelatedRootArrayTerm(
 				&overallMetadata);

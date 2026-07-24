@@ -1024,6 +1024,7 @@ fn get_stage_from_plan(
             ("FUNCSCAN".to_owned(), None)
         }
         "Explain_Count_Scan" => ("COUNT".to_owned(), None),
+        "Merge Append" => ("SORT_MERGE".to_owned(), None),
         "Append" => {
             // This is an estimate of the behavior - could be incorrect, but
             // as a starting point "good enough".
@@ -1812,6 +1813,15 @@ fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocume
             }
         }
 
+        if let Some(duplicate_rows_removed) = plan.duplicate_rows_removed {
+            if duplicate_rows_removed > 0.0 {
+                doc.append(
+                    "duplicateRowsRemoved",
+                    smallest_from_f64(duplicate_rows_removed),
+                );
+            }
+        }
+
         if stage_name != "FETCH" {
             if let Some(index_name) = plan.index_name.as_deref() {
                 doc.append("indexName", index_name);
@@ -2073,6 +2083,27 @@ fn skip_stage(mut plan: ExplainPlan, query_catalog: &QueryCatalog) -> ExplainPla
                 new_plan.skipped_tuples = plan.skipped_tuples;
             }
             new_plan
+        } else if plan.node_type == "Custom Scan"
+            && plan.custom_plan_provider.as_deref() == Some("DocumentDBApiTidDedup")
+            && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
+        {
+            // The de-duplicating scan is an internal wrapper over its child.
+            // Strip it and inline the "Duplicate Rows Removed" counter onto the
+            // surviving child stage, mirroring the plan explain output.
+            let mut new_plan = plan.inner_plans.expect("Checked").remove(0);
+            if new_plan.alias.is_none() {
+                new_plan.alias = plan.alias;
+            }
+            if new_plan.cursor_scan_type.is_none() {
+                new_plan.cursor_scan_type = plan.cursor_scan_type;
+            }
+            if new_plan.skipped_tuples.is_none() {
+                new_plan.skipped_tuples = plan.skipped_tuples;
+            }
+            if new_plan.duplicate_rows_removed.is_none() {
+                new_plan.duplicate_rows_removed = plan.duplicate_rows_removed;
+            }
+            new_plan
         } else {
             break plan;
         };
@@ -2277,6 +2308,60 @@ mod tests {
         let (stage, _) = get_stage_from_plan(&plan, None, &catalog);
 
         assert_eq!(stage, "COLLSCAN");
+    }
+
+    #[test]
+    fn merge_append_maps_to_sort_merge() {
+        let catalog = QueryCatalog::default();
+        let plan = plan_with_node_type("Merge Append");
+        let (stage, _) = get_stage_from_plan(&plan, None, &catalog);
+        assert_eq!(stage, "SORT_MERGE");
+    }
+
+    #[test]
+    fn tid_dedup_scan_is_inlined_and_propagates_duplicate_rows_removed() {
+        let catalog = QueryCatalog::default();
+
+        let child = ExplainPlan {
+            node_type: "Bitmap Heap Scan".to_owned(),
+            ..Default::default()
+        };
+        let plan = ExplainPlan {
+            node_type: "Custom Scan".to_owned(),
+            custom_plan_provider: Some("DocumentDBApiTidDedup".to_owned()),
+            duplicate_rows_removed: Some(7.0),
+            inner_plans: Some(vec![child]),
+            ..Default::default()
+        };
+
+        let result = super::skip_stage(plan, &catalog);
+
+        // The de-dup wrapper is stripped, surfacing the child, and the counter
+        // is inlined onto the surviving child stage.
+        assert_eq!(result.node_type, "Bitmap Heap Scan");
+        assert_eq!(result.duplicate_rows_removed, Some(7.0));
+    }
+
+    #[test]
+    fn tid_dedup_scan_does_not_overwrite_child_duplicate_rows_removed() {
+        let catalog = QueryCatalog::default();
+
+        let child = ExplainPlan {
+            node_type: "Bitmap Heap Scan".to_owned(),
+            duplicate_rows_removed: Some(3.0),
+            ..Default::default()
+        };
+        let plan = ExplainPlan {
+            node_type: "Custom Scan".to_owned(),
+            custom_plan_provider: Some("DocumentDBApiTidDedup".to_owned()),
+            duplicate_rows_removed: Some(7.0),
+            inner_plans: Some(vec![child]),
+            ..Default::default()
+        };
+
+        let result = super::skip_stage(plan, &catalog);
+
+        assert_eq!(result.duplicate_rows_removed, Some(3.0));
     }
 
     #[test]

@@ -4,7 +4,7 @@
  * include/utils/roaring_bitmap_utils.h
  *
  * Adapter layer for roaring bitmaps.
- * All consumers should use the RoaringBitmapAdapterFuncs instead
+ * All consumers should use the RoaringBitmap32AdapterFuncs instead
  * of the roaring library directly, restricting complete library exposure
  * and controlling what we use safely.
  *
@@ -22,28 +22,28 @@
  * adapter's C file so consumers cannot dereference it; they may only
  * pass it through the adapter functions below.
  */
-typedef struct RoaringBitmapState RoaringBitmapState;
+typedef struct RoaringBitmap32State RoaringBitmap32State;
 
 /* Function pointer typedefs for each bitmap operation. */
-typedef RoaringBitmapState *(*CreateRoaringBitmapFunc)(uint32 initialCapacity);
-typedef void (*FreeRoaringBitmapFunc)(RoaringBitmapState *state);
-typedef void (*RoaringBitmapAddManyFunc)(RoaringBitmapState *state, uint32 count,
+typedef RoaringBitmap32State *(*CreateRoaringBitmapFunc)(uint32 initialCapacity);
+typedef void (*FreeRoaringBitmapFunc)(RoaringBitmap32State *state);
+typedef void (*RoaringBitmapAddManyFunc)(RoaringBitmap32State *state, uint32 count,
 										 const uint32 *values);
-typedef uint64 (*RoaringBitmapGetCardinalityFunc)(RoaringBitmapState *state);
-typedef void (*RoaringBitmapToUint32ArrayFunc)(RoaringBitmapState *state,
+typedef uint64 (*RoaringBitmapGetCardinalityFunc)(RoaringBitmap32State *state);
+typedef void (*RoaringBitmapToUint32ArrayFunc)(RoaringBitmap32State *state,
 											   uint32 *outValues);
-typedef void (*RoaringBitmapRunOptimizeFunc)(RoaringBitmapState *state);
-typedef size_t (*RoaringBitmapSerializedSizeFunc)(RoaringBitmapState *state);
-typedef void (*RoaringBitmapSerializeFunc)(RoaringBitmapState *state, char *buf);
-typedef RoaringBitmapState *(*RoaringBitmapDeserializeFunc)(const char *buf,
-															size_t length);
+typedef void (*RoaringBitmapRunOptimizeFunc)(RoaringBitmap32State *state);
+typedef size_t (*RoaringBitmapSerializedSizeFunc)(RoaringBitmap32State *state);
+typedef void (*RoaringBitmapSerializeFunc)(RoaringBitmap32State *state, char *buf);
+typedef RoaringBitmap32State *(*RoaringBitmapDeserializeFunc)(const char *buf,
+															  size_t length);
 
 
 /*
  * Adapter struct that provides function pointers to abstract the roaring
  * bitmap library for serialization / deserialization of sets.
  */
-typedef struct RoaringBitmapAdapterFuncs
+typedef struct RoaringBitmap32AdapterFuncs
 {
 	/* Create opaque bitmap state with the given initial capacity */
 	CreateRoaringBitmapFunc create;
@@ -71,8 +71,9 @@ typedef struct RoaringBitmapAdapterFuncs
 
 	/* Deserialize from buf; returns NULL on failure */
 	RoaringBitmapDeserializeFunc deserialize;
-} RoaringBitmapAdapterFuncs;
+} RoaringBitmap32AdapterFuncs;
 
+extern const RoaringBitmap32AdapterFuncs RoaringBitmapAdapter;
 
 /* Opaque 64-bit heap-TID de-duplication set. */
 typedef struct RoaringTidDedupState RoaringTidDedupState;
@@ -89,5 +90,7 @@ bool RoaringTidDedupAddChecked(RoaringTidDedupState *state, ItemPointer tid);
 /* Free a heap-TID de-duplication set (no-op when state is NULL). */
 void FreeRoaringTidDedup(RoaringTidDedupState *state);
 
+
+void RegisterDocumentDBRoaringBitmapUtilHooks(void);
 
 #endif /* ROARING_BITMAP_UTILS_H */

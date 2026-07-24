@@ -34,7 +34,7 @@ SET enable_bitmapscan TO off;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('grpq_db',
     '{ "createIndexes": "docs", "indexes": [ { "key": { "cat": 1, "sub": 1, "ord": -1 }, "name": "idx_cat_sub_ord", "enableOrderedIndex": 1 } ] }', TRUE);
 NOTICE:  creating collection
-                                                                                                   create_indexes_non_concurrently
+                                                                                                   create_indexes_non_concurrently                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
@@ -42,7 +42,7 @@ NOTICE:  creating collection
 -- Multi-key (rct) composite index over the array tags.name / tags.val + ord.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('grpq_db',
     '{ "createIndexes": "docs", "indexes": [ { "key": { "tags.name": 1, "tags.val": 1, "ord": -1 }, "name": "idx_tags_ord", "enableOrderedIndex": 1 } ] }', TRUE);
-                                                                                                   create_indexes_non_concurrently
+                                                                                                   create_indexes_non_concurrently                                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
@@ -53,7 +53,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('grpq_db',
 -- sections below to test whether the planner lowers a /i regex onto it.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('grpq_db',
     '{ "createIndexes": "docs", "indexes": [ { "key": { "tags.name": 1, "tags.val": 1, "ord": -1 }, "name": "idx_tags_ord_ci", "enableOrderedIndex": 1, "collation": { "locale": "en", "strength": 1 } } ] }', TRUE);
-                                                                                                   create_indexes_non_concurrently
+                                                                                                   create_indexes_non_concurrently                                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
@@ -71,7 +71,7 @@ SELECT COUNT(documentdb_api.insert_one('grpq_db', 'docs',
         '{ "name": "' || (CASE WHEN i % 11 = 0 THEN 'NAME2' ELSE 'm' || (i % 9)::text END) ||
         '", "val": "' || (CASE WHEN i % 11 = 0 THEN 'V2' ELSE 'y' || (i % 4)::text END) || '" } ] }')::bson))
 FROM generate_series(1, 200) i;
- count
+ count 
 -------
    200
 (1 row)
@@ -104,7 +104,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_count('grpq_db',
         '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] }, "hint": "idx_cat_sub_ord" }')
 $cmd$, p_ignore_heap_fetches => true);
-                                                                                                                                                                                                                          run_explain_and_trim
+                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                          
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
@@ -135,7 +135,7 @@ $cmd$, p_ignore_heap_fetches => true);
 
 SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] }, "hint": "idx_cat_sub_ord" }');
-                               document
+                               document                                
 -----------------------------------------------------------------------
  { "n" : { "$numberInt" : "17" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -159,7 +159,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_pipeline('grpq_db',
         '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
 $cmd$);
-                                                                                                                                                                                                            run_explain_and_trim
+                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                             
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
    Sort Key: (bson_orderby(agg_stage_3.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
@@ -181,7 +181,7 @@ $cmd$);
 
 SELECT document FROM bson_aggregation_pipeline('grpq_db',
     '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
-                                     document
+                                     document                                      
 -----------------------------------------------------------------------------------
  { "_id" : { "type" : "c2", "subType" : "s2" }, "count" : { "$numberInt" : "9" } }
  { "_id" : { "type" : "c1", "subType" : "s1" }, "count" : { "$numberInt" : "8" } }
@@ -201,7 +201,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_count('grpq_db',
         '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }')
 $cmd$);
-                                                                                                                                                                                                                                                                                                                       run_explain_and_trim
+                                                                                                                                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                                                                                                                                       
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
@@ -222,7 +222,7 @@ $cmd$);
 
 SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }');
-                               document
+                               document                               
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -245,7 +245,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_count('grpq_db',
         '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }')
 $cmd$);
-                                                                                                                                                                                                                                                                                                                                                                                                                  run_explain_and_trim
+                                                                                                                                                                                                                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                   
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
@@ -281,7 +281,7 @@ $cmd$);
 
 SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }');
-                               document
+                               document                                
 -----------------------------------------------------------------------
  { "n" : { "$numberInt" : "22" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -303,7 +303,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_pipeline('grpq_db',
         '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
 $cmd$);
-                                                                                                                                                                                                                                                                                                                           run_explain_and_trim
+                                                                                                                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                                                                                                                            
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=12 loops=1)
    Sort Key: (bson_orderby(agg_stage_3.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
@@ -325,7 +325,7 @@ $cmd$);
 
 SELECT document FROM bson_aggregation_pipeline('grpq_db',
     '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
-                                     document
+                                     document                                      
 -----------------------------------------------------------------------------------
  { "_id" : { "type" : "c3", "subType" : "s0" }, "count" : { "$numberInt" : "3" } }
  { "_id" : { "type" : "c0", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
@@ -360,7 +360,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_count('grpq_db',
         '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }')
 $cmd$);
-                                                                                                                                                                                                       run_explain_and_trim
+                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                        
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
@@ -383,7 +383,7 @@ $cmd$);
 
 SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }');
-                               document
+                               document                               
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -405,7 +405,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_count('grpq_db',
         '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }')
 $cmd$);
-                                                                                                                                                                                                       run_explain_and_trim
+                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                       
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
@@ -428,7 +428,7 @@ $cmd$);
 
 SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }');
-                               document
+                               document                                
 -----------------------------------------------------------------------
  { "n" : { "$numberInt" : "22" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -444,7 +444,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_count('grpq_db',
         '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }')
 $cmd$);
-                                                                                                                                                                                                                                                                                      run_explain_and_trim
+                                                                                                                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                                                                                                                      
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
@@ -466,7 +466,7 @@ $cmd$);
 
 SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }');
-                               document
+                               document                               
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -488,7 +488,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_count('grpq_db',
         '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }')
 $cmd$);
-                                                                                                                                                                                                                                                                                            run_explain_and_trim
+                                                                                                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                                                                                                            
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
@@ -524,7 +524,7 @@ $cmd$);
 
 SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }');
-                               document
+                               document                                
 -----------------------------------------------------------------------
  { "n" : { "$numberInt" : "22" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -546,7 +546,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_pipeline('grpq_db',
         '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
 $cmd$);
-                                                                                                                                                                                               run_explain_and_trim
+                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=12 loops=1)
    Sort Key: (bson_orderby(agg_stage_3.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
@@ -568,7 +568,7 @@ $cmd$);
 
 SELECT document FROM bson_aggregation_pipeline('grpq_db',
     '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
-                                     document
+                                     document                                      
 -----------------------------------------------------------------------------------
  { "_id" : { "type" : "c3", "subType" : "s0" }, "count" : { "$numberInt" : "3" } }
  { "_id" : { "type" : "c0", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
@@ -602,7 +602,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_count('grpq_db',
         '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] }, "hint": "idx_cat_sub_ord" }')
 $cmd$, p_ignore_heap_fetches => true);
-                                                                                                                                                                                                                          run_explain_and_trim
+                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                          
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
@@ -633,7 +633,7 @@ $cmd$, p_ignore_heap_fetches => true);
 
 SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] }, "hint": "idx_cat_sub_ord" }');
-                               document
+                               document                                
 -----------------------------------------------------------------------
  { "n" : { "$numberInt" : "17" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -644,7 +644,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_pipeline('grpq_db',
         '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
 $cmd$);
-                                                                                                                                                                                                            run_explain_and_trim
+                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                             
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
    Sort Key: (bson_orderby(agg_stage_3.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
@@ -666,7 +666,7 @@ $cmd$);
 
 SELECT document FROM bson_aggregation_pipeline('grpq_db',
     '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "$and": [ { "cat": "c1" }, { "sub": "s1" } ] }, { "$and": [ { "cat": "c2" }, { "sub": "s2" } ] } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
-                                     document
+                                     document                                      
 -----------------------------------------------------------------------------------
  { "_id" : { "type" : "c2", "subType" : "s2" }, "count" : { "$numberInt" : "9" } }
  { "_id" : { "type" : "c1", "subType" : "s1" }, "count" : { "$numberInt" : "8" } }
@@ -678,7 +678,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_count('grpq_db',
         '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }')
 $cmd$);
-                                                                                                                                                                                                                                                                                                                       run_explain_and_trim
+                                                                                                                                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                                                                                                                                       
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
@@ -700,7 +700,7 @@ $cmd$);
 
 SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }');
-                               document
+                               document                               
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -711,7 +711,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_count('grpq_db',
         '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }')
 $cmd$);
-                                                                                                                                                                                                                                                                                                                                                                                                                  run_explain_and_trim
+                                                                                                                                                                                                                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                   
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
@@ -747,7 +747,7 @@ $cmd$);
 
 SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord" }');
-                               document
+                               document                                
 -----------------------------------------------------------------------
  { "n" : { "$numberInt" : "22" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -758,7 +758,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_pipeline('grpq_db',
         '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
 $cmd$);
-                                                                                                                                                                                                                                                                                                                           run_explain_and_trim
+                                                                                                                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                                                                                                                            
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=12 loops=1)
    Sort Key: (bson_orderby(agg_stage_3.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
@@ -780,7 +780,7 @@ $cmd$);
 
 SELECT document FROM bson_aggregation_pipeline('grpq_db',
     '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
-                                     document
+                                     document                                      
 -----------------------------------------------------------------------------------
  { "_id" : { "type" : "c3", "subType" : "s0" }, "count" : { "$numberInt" : "3" } }
  { "_id" : { "type" : "c0", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }
@@ -802,7 +802,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_count('grpq_db',
         '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }')
 $cmd$);
-                                                                                                                                                                                                       run_explain_and_trim
+                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                        
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
@@ -825,7 +825,7 @@ $cmd$);
 
 SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }');
-                               document
+                               document                               
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -836,7 +836,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_count('grpq_db',
         '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }')
 $cmd$);
-                                                                                                                                                                                                       run_explain_and_trim
+                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                       
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
@@ -859,7 +859,7 @@ $cmd$);
 
 SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }');
-                               document
+                               document                                
 -----------------------------------------------------------------------
  { "n" : { "$numberInt" : "22" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -870,7 +870,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_count('grpq_db',
         '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }')
 $cmd$);
-                                                                                                                                                                                                                                                                                      run_explain_and_trim
+                                                                                                                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                                                                                                                      
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
@@ -892,7 +892,7 @@ $cmd$);
 
 SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }');
-                               document
+                               document                               
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -903,7 +903,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_count('grpq_db',
         '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }')
 $cmd$);
-                                                                                                                                                                                                                                                                                            run_explain_and_trim
+                                                                                                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                                                                                                            
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
@@ -939,7 +939,7 @@ $cmd$);
 
 SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] }, "hint": "idx_tags_ord" }');
-                               document
+                               document                                
 -----------------------------------------------------------------------
  { "n" : { "$numberInt" : "22" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -950,7 +950,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_pipeline('grpq_db',
         '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }')
 $cmd$);
-                                                                                                                                                                                               run_explain_and_trim
+                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=12 loops=1)
    Sort Key: (bson_orderby(agg_stage_3.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
@@ -972,7 +972,7 @@ $cmd$);
 
 SELECT document FROM bson_aggregation_pipeline('grpq_db',
     '{ "aggregate": "docs", "pipeline": [ { "$match": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": "NAME1", "val": "V1" } } }, { "tags": { "$elemMatch": { "name": "NAME2", "val": "V2" } } } ] } ] } }, { "$match": { "$and": [ { "cat": { "$ne": null } }, { "cat": { "$ne": "" } } ] } }, { "$group": { "_id": { "type": "$cat", "subType": "$sub" }, "count": { "$sum": 1 } } }, { "$sort": { "count": -1 } } ], "cursor": {} }');
-                                     document
+                                     document                                      
 -----------------------------------------------------------------------------------
  { "_id" : { "type" : "c3", "subType" : "s0" }, "count" : { "$numberInt" : "3" } }
  { "_id" : { "type" : "c0", "subType" : "s1" }, "count" : { "$numberInt" : "2" } }

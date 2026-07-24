@@ -1713,10 +1713,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          ->  Subquery Scan on agg_stage_0
                Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
                ->  Sort
-                     Output: collection.document, (documentdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-                     Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+                     Output: collection.document, (documentdb_api_internal.bson_orderby_index(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+                     Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
                      ->  Bitmap Heap Scan on documentdb_data.documents_25701012 collection
-                           Output: collection.document, documentdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+                           Output: collection.document, documentdb_api_internal.bson_orderby_index(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
                            Recheck Cond: (collection.shard_key_value = '25701012'::bigint)
                            ->  Bitmap Index Scan on _id_
                                  Index Cond: (collection.shard_key_value = '25701012'::bigint)
@@ -1751,10 +1751,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          ->  Subquery Scan on agg_stage_0
                Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
                ->  Sort
-                     Output: collection.document, (documentdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text))
-                     Sort Key: (documentdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING >>> NULLS LAST
+                     Output: collection.document, (documentdb_api_internal.bson_orderby_index_reverse(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+                     Sort Key: (documentdb_api_internal.bson_orderby_index_reverse(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) DESC NULLS LAST
                      ->  Bitmap Heap Scan on documentdb_data.documents_25701012 collection
-                           Output: collection.document, documentdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)
+                           Output: collection.document, documentdb_api_internal.bson_orderby_index_reverse(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
                            Recheck Cond: (collection.shard_key_value = '25701012'::bigint)
                            ->  Bitmap Index Scan on _id_
                                  Index Cond: (collection.shard_key_value = '25701012'::bigint)

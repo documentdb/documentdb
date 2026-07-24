@@ -1421,10 +1421,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=17 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
          namespaceName: ord_coll_ordered_db.ord_not_intervals
@@ -1490,10 +1490,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gte": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=14 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=14 loops=1)
          namespaceName: ord_coll_ordered_db.ord_not_intervals
@@ -1555,10 +1555,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$lte": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=14 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=14 loops=1)
          namespaceName: ord_coll_ordered_db.ord_not_intervals
@@ -1590,10 +1590,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          namespaceName: ord_coll_ordered_db.ord_not_intervals
@@ -1680,10 +1680,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "zzzzz" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=27 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=27 loops=1)
          namespaceName: ord_coll_ordered_db.ord_not_intervals
@@ -1748,10 +1748,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$lt": "zzzzz" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          namespaceName: ord_coll_ordered_db.ord_not_intervals
@@ -1793,7 +1793,7 @@ $cmd$);
                                                                                                                   run_explain_and_trim                                                                                                                   
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=12 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=12 loops=1)
          namespaceName: ord_coll_ordered_db.ord_not_intervals
@@ -1867,10 +1867,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "avocado" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=9 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=9 loops=1)
          namespaceName: ord_coll_ordered_db.ord_not_intervals
@@ -1985,10 +1985,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$ne": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=24 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=24 loops=1)
          namespaceName: ord_coll_ordered_db.ord_not_intervals
@@ -2037,10 +2037,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 2 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=17 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level2'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level2'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
          namespaceName: ord_coll_ordered_db.ord_not_intervals
@@ -2265,7 +2265,7 @@ $cmd$);
                                                                                                run_explain_and_trim                                                                                                
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=9 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=9 loops=1)
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
@@ -2335,7 +2335,7 @@ $cmd$);
                                                                                                run_explain_and_trim                                                                                                
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
@@ -2402,7 +2402,7 @@ $cmd$);
                                                                                                                                          run_explain_and_trim                                                                                                                                         
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=7 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
@@ -2442,7 +2442,7 @@ $cmd$);
                                                                                                run_explain_and_trim                                                                                                
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=7 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
@@ -2483,7 +2483,7 @@ $cmd$);
                                                                                                 run_explain_and_trim                                                                                                 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=11 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=11 loops=1)
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
@@ -2529,7 +2529,7 @@ $cmd$);
                                                                                                 run_explain_and_trim                                                                                                
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=5 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
@@ -2603,7 +2603,7 @@ $cmd$);
                                                                                                                   run_explain_and_trim                                                                                                                  
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=9 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=9 loops=1)
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
@@ -2645,7 +2645,7 @@ $cmd$);
                                                                                                                  run_explain_and_trim                                                                                                                 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=11 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=11 loops=1)
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
@@ -2696,7 +2696,7 @@ $cmd$);
                                                                                run_explain_and_trim                                                                               
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=7 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
@@ -2750,7 +2750,7 @@ $cmd$);
                                                                                                                                                         run_explain_and_trim                                                                                                                                                         
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=10 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
@@ -2901,7 +2901,7 @@ $cmd$);
                                                                                                run_explain_and_trim                                                                                                
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=6 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
@@ -2992,7 +2992,7 @@ $cmd$);
                                                                                                                   run_explain_and_trim                                                                                                                  
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=7 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
@@ -3340,10 +3340,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=28 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=28 loops=1)
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
@@ -3402,10 +3402,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$gt": "avocado" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=21 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=21 loops=1)
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
@@ -3452,10 +3452,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$gt": "aardvark" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=16 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=16 loops=1)
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
@@ -3512,10 +3512,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$lt": "lemon" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=20 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=20 loops=1)
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
@@ -3619,10 +3619,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$ne": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=37 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=37 loops=1)
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
@@ -3733,7 +3733,7 @@ $cmd$);
                                                                                                                     run_explain_and_trim                                                                                                                    
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=24 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=24 loops=1)
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
@@ -3781,7 +3781,7 @@ $cmd$);
                                                                                                                   run_explain_and_trim                                                                                                                   
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=15 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=15 loops=1)
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
@@ -3841,10 +3841,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$gte": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=25 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=25 loops=1)
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
@@ -3878,8 +3878,8 @@ SET enable_seqscan TO OFF;
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                               document                              
 --------------------------------------------------------------------
- { "_id" : { "$numberInt" : "26" }, "a" : null }
  { "_id" : { "$numberInt" : "27" } }
+ { "_id" : { "$numberInt" : "26" }, "a" : null }
  { "_id" : { "$numberInt" : "24" }, "a" : { "$numberInt" : "42" } }
  { "_id" : { "$numberInt" : "1" }, "a" : "apple" }
  { "_id" : { "$numberInt" : "2" }, "a" : "Apple" }
@@ -3932,10 +3932,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$ne": null } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=25 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=25 loops=1)
          namespaceName: ord_coll_ordered_db.ord_not_intervals
@@ -4015,10 +4015,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                      run_explain_and_trim                                                                      
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=17 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING >>> NULLS LAST
+   Sort Key: (documentdb_api_internal.bson_orderby_index_reverse(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) DESC NULLS LAST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
          namespaceName: ord_coll_ordered_db.ord_not_intervals
@@ -4076,11 +4076,12 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$gt": "green" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                       run_explain_and_trim                                                                                                                                       
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=9 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
+                                                                                                                                   run_explain_and_trim                                                                                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Incremental Sort (actual rows=9 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
+   Presorted Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Full-sort Groups: 1  Sort Method: quicksort  Average Memory: xxxkB  Peak Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=9 loops=1)
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
          indexName: idx_comp_ab_en_strength1
@@ -4093,7 +4094,8 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 9)]
          ->  Index Scan using idx_comp_ab_en_strength1 on documents_8116 collection (actual rows=9 loops=1)
                Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!>) '{ "b" : "green", "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+               Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(17 rows)
 
 -- H2b: Reverse compound sort {a: -1, _id: -1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$gt": "green" } } }, "sort": { "a": -1, "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -4230,10 +4232,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$ne": "cafe" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=5 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          namespaceName: ord_coll_ordered_db.ord_accent_coll
@@ -4265,10 +4267,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$ne": "cafe" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 2 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=7 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
          namespaceName: ord_coll_ordered_db.ord_accent_coll
@@ -4314,10 +4316,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_accent_coll", "filter": { "a": { "$not": { "$gt": "cafe" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 2 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level2'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          namespaceName: ord_coll_ordered_db.ord_accent_coll
@@ -4533,7 +4535,7 @@ $cmd$);
                                                                                                                                              run_explain_and_trim                                                                                                                                             
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: ord_coll_ordered_db.ord_three_key_coll
@@ -4569,7 +4571,7 @@ $cmd$);
                                                                                                                                               run_explain_and_trim                                                                                                                                              
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=3 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: ord_coll_ordered_db.ord_three_key_coll
@@ -4630,7 +4632,7 @@ $cmd$);
                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=11 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=11 loops=1)
          namespaceName: ord_coll_ordered_db.ord_three_key_coll
@@ -4665,7 +4667,7 @@ $cmd$);
                                                                                                                                              run_explain_and_trim                                                                                                                                              
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: ord_coll_ordered_db.ord_three_key_coll
@@ -4784,10 +4786,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=28 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=28 loops=1)
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
@@ -4875,10 +4877,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$ne": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=37 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=37 loops=1)
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
@@ -4914,10 +4916,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
  { "_id" : { "$numberInt" : "33" }, "a" : { "$numberInt" : "0" } }
  { "_id" : { "$numberInt" : "31" }, "a" : { "$numberInt" : "-5" } }
  { "_id" : { "$numberInt" : "40" }, "a" : [  ] }
- { "_id" : { "$numberInt" : "39" } }
- { "_id" : { "$numberInt" : "38" } }
  { "_id" : { "$numberInt" : "37" }, "a" : null }
  { "_id" : { "$numberInt" : "36" }, "a" : null }
+ { "_id" : { "$numberInt" : "39" } }
+ { "_id" : { "$numberInt" : "38" } }
 (21 rows)
 
 -- 26e: Mixed-direction index {a:1, b:-1} with $not on both keys
@@ -4964,11 +4966,12 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$lt": "green" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                       run_explain_and_trim                                                                                                                                       
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=19 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
+                                                                                                                                   run_explain_and_trim                                                                                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Incremental Sort (actual rows=19 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
+   Presorted Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Full-sort Groups: 1  Sort Method: quicksort  Average Memory: xxxkB  Peak Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=19 loops=1)
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
          indexName: idx_comp_ab_mixed_s1
@@ -4981,7 +4984,8 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
          ->  Index Scan using idx_comp_ab_mixed_s1 on documents_8116 collection (actual rows=19 loops=1)
                Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!<) '{ "b" : "green", "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+               Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(17 rows)
 
 -- 26f: Mixed-direction sort {a: 1, b: -1} — leverages the mixed index
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$lt": "green" } } }, "sort": { "a": 1, "b": -1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5011,24 +5015,22 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$lt": "green" } } }, "sort": { "a": 1, "b": -1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                      run_explain_and_trim                                                                                                                                      
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=19 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST, (documentdb_api_internal.bson_orderby(document, '{ "b" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING >>> NULLS LAST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=19 loops=1)
-         namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
-         indexName: idx_comp_ab_mixed_s1
-         indexKey: {"a": 1,"b": -1}
-         isMultiKey: false
-         startBounds: ["a": [MinKey, "cherry"], "b": DESC["green", MaxKey]]
-         rawBounds: ["a": [MinKey, "cherry"], ({ }, MaxKey]], ["b": DESC["green", MaxKey], DESC[MinKey, "")]
-         innerScanLoops: 15 loops
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
-         ->  Index Scan using idx_comp_ab_mixed_s1 on documents_8116 collection (actual rows=19 loops=1)
-               Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!<) '{ "b" : "green", "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+                                                                                                               run_explain_and_trim                                                                                                               
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=19 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
+   indexName: idx_comp_ab_mixed_s1
+   indexKey: {"a": 1,"b": -1}
+   isMultiKey: false
+   startBounds: ["a": [MinKey, "cherry"], "b": DESC["green", MaxKey]]
+   rawBounds: ["a": [MinKey, "cherry"], ({ }, MaxKey]], ["b": DESC["green", MaxKey], DESC[MinKey, "")]
+   innerScanLoops: 15 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
+   ->  Index Scan using idx_comp_ab_mixed_s1 on documents_8116 collection (actual rows=19 loops=1)
+         Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!<) '{ "b" : "green", "collation" : "en-u-ks-level1" }'::bson))
+         Order By: ((document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document OPERATOR(documentdb_api_internal.|<>) '{ "b" : { "$numberInt" : "-1" } }'::bson))
+(13 rows)
 
 RESET documentdb.max_non_ordered_term_scan_threshold;
 RESET documentdb.enableExtendedExplainPlans;
@@ -5141,10 +5143,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_array_coll", "filter": { "a": { "$not": { "$gt": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=7 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
          namespaceName: ord_coll_ordered_db.ord_array_coll
@@ -5180,10 +5182,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_array_coll", "filter": { "a": { "$ne": "cherry" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=6 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
          namespaceName: ord_coll_ordered_db.ord_array_coll
@@ -5241,23 +5243,21 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "banana", "cherry"] } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                             run_explain_and_trim                                                                             
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=9 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=9 loops=1)
-         namespaceName: ord_coll_ordered_db.ord_not_intervals
-         indexName: idx_intervals_en_strength1
-         indexKey: {"a": 1}
-         isMultiKey: false
-         indexBounds: ["a": ["apple", "apple"]], ["a": ["banana", "banana"]], ["a": ["cherry", "cherry"]]
-         innerScanLoops: 9 loops
-         scanType: regular
-         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3), (isInequality: false, estimatedEntryCount: 3), (isInequality: false, estimatedEntryCount: 3)]
-         ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=9 loops=1)
-               Index Cond: (document @*= '{ "a" : [ "apple", "banana", "cherry" ], "collation" : "en-u-ks-level1" }'::bson)
-(14 rows)
+                                                                          run_explain_and_trim                                                                          
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=9 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_not_intervals
+   indexName: idx_intervals_en_strength1
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": ["apple", "apple"]], ["a": ["banana", "banana"]], ["a": ["cherry", "cherry"]]
+   innerScanLoops: 6 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3), (isInequality: false, estimatedEntryCount: 3), (isInequality: false, estimatedEntryCount: 3)]
+   ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=9 loops=1)
+         Index Cond: (document @*= '{ "a" : [ "apple", "banana", "cherry" ], "collation" : "en-u-ks-level1" }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
 
 -- 28.2: $in with sort on collated field descending — no ordered scan
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "date"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5273,23 +5273,22 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "date"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                 run_explain_and_trim                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=5 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING >>> NULLS LAST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
-         namespaceName: ord_coll_ordered_db.ord_not_intervals
-         indexName: idx_intervals_en_strength1
-         indexKey: {"a": 1}
-         isMultiKey: false
-         indexBounds: ["a": ["apple", "apple"]], ["a": ["date", "date"]]
-         innerScanLoops: 5 loops
-         scanType: regular
-         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3), (isInequality: false, estimatedEntryCount: 2)]
-         ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=5 loops=1)
-               Index Cond: (document @*= '{ "a" : [ "apple", "date" ], "collation" : "en-u-ks-level1" }'::bson)
-(14 rows)
+                                                  run_explain_and_trim                                                   
+-------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_not_intervals
+   indexName: idx_intervals_en_strength1
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": ["apple", "apple"]], ["a": ["date", "date"]]
+   isBackwardScan: true
+   innerScanLoops: 4 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3), (isInequality: false, estimatedEntryCount: 2)]
+   ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=5 loops=1)
+         Index Cond: (document @*= '{ "a" : [ "apple", "date" ], "collation" : "en-u-ks-level1" }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "-1" } }'::bson)
+(13 rows)
 
 -- 28.3: $nin with sort on collated field ascending — no ordered scan
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["apple", "cherry"] } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5300,9 +5299,9 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
  { "_id" : { "$numberInt" : "24" }, "a" : { "$numberInt" : "42" } }
  { "_id" : { "$numberInt" : "4" }, "a" : "apricot" }
  { "_id" : { "$numberInt" : "5" }, "a" : "avocado" }
- { "_id" : { "$numberInt" : "8" }, "a" : "BANANA" }
- { "_id" : { "$numberInt" : "7" }, "a" : "Banana" }
  { "_id" : { "$numberInt" : "6" }, "a" : "banana" }
+ { "_id" : { "$numberInt" : "7" }, "a" : "Banana" }
+ { "_id" : { "$numberInt" : "8" }, "a" : "BANANA" }
  { "_id" : { "$numberInt" : "9" }, "a" : "blueberry" }
  { "_id" : { "$numberInt" : "10" }, "a" : "cantaloupe" }
  { "_id" : { "$numberInt" : "14" }, "a" : "cranberry" }
@@ -5321,24 +5320,22 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["apple", "cherry"] } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                 run_explain_and_trim                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=21 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=21 loops=1)
-         namespaceName: ord_coll_ordered_db.ord_not_intervals
-         indexName: idx_intervals_en_strength1
-         indexKey: {"a": 1}
-         isMultiKey: false
-         indexBounds: ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]]
-         innerScanLoops: 27 loops
-         scanType: regular
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 24), (isInequality: true, estimatedEntryCount: 24)]
-         ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=21 loops=1)
-               Index Cond: (document @!*= '{ "a" : [ "apple", "cherry" ], "collation" : "en-u-ks-level1" }'::bson)
-               Rows Removed by Index Recheck: 6
-(15 rows)
+                                                  run_explain_and_trim                                                  
+------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=21 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_not_intervals
+   indexName: idx_intervals_en_strength1
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]]
+   innerScanLoops: 20 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 27), (isInequality: true, estimatedEntryCount: 0)]
+   ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=21 loops=1)
+         Index Cond: (document @!*= '{ "a" : [ "apple", "cherry" ], "collation" : "en-u-ks-level1" }'::bson)
+         Rows Removed by Index Recheck: 6
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
 
 -- 28.4: $nin with sort on collated field descending — no ordered scan
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["banana"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5355,16 +5352,16 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
  { "_id" : { "$numberInt" : "15" }, "a" : "date" }
  { "_id" : { "$numberInt" : "16" }, "a" : "Date" }
  { "_id" : { "$numberInt" : "14" }, "a" : "cranberry" }
- { "_id" : { "$numberInt" : "13" }, "a" : "CHERRY" }
  { "_id" : { "$numberInt" : "11" }, "a" : "cherry" }
  { "_id" : { "$numberInt" : "12" }, "a" : "Cherry" }
+ { "_id" : { "$numberInt" : "13" }, "a" : "CHERRY" }
  { "_id" : { "$numberInt" : "10" }, "a" : "cantaloupe" }
  { "_id" : { "$numberInt" : "9" }, "a" : "blueberry" }
  { "_id" : { "$numberInt" : "5" }, "a" : "avocado" }
  { "_id" : { "$numberInt" : "4" }, "a" : "apricot" }
  { "_id" : { "$numberInt" : "1" }, "a" : "apple" }
- { "_id" : { "$numberInt" : "3" }, "a" : "APPLE" }
  { "_id" : { "$numberInt" : "2" }, "a" : "Apple" }
+ { "_id" : { "$numberInt" : "3" }, "a" : "APPLE" }
  { "_id" : { "$numberInt" : "24" }, "a" : { "$numberInt" : "42" } }
  { "_id" : { "$numberInt" : "26" }, "a" : null }
  { "_id" : { "$numberInt" : "27" } }
@@ -5373,41 +5370,40 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["banana"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                 run_explain_and_trim                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=24 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING >>> NULLS LAST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=24 loops=1)
-         namespaceName: ord_coll_ordered_db.ord_not_intervals
-         indexName: idx_intervals_en_strength1
-         indexKey: {"a": 1}
-         isMultiKey: false
-         indexBounds: ["a": [MinKey, MaxKey]]
-         innerScanLoops: 20 loops
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 24)]
-         ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=24 loops=1)
-               Index Cond: (document @!= '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson)
-(14 rows)
+                                             run_explain_and_trim                                             
+--------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=24 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_not_intervals
+   indexName: idx_intervals_en_strength1
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": [MinKey, MaxKey]]
+   isBackwardScan: true
+   innerScanLoops: 20 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 24)]
+   ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=24 loops=1)
+         Index Cond: (document @!= '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "-1" } }'::bson)
+(13 rows)
 
 -- 28.5: $in on compound with sort on both keys — no ordered scan
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$in": ["apple", "cherry"] } }, "sort": { "a": 1, "b": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                                       document                                      
 ------------------------------------------------------------------------------------
- { "_id" : { "$numberInt" : "20" }, "a" : "APPLE", "b" : "GREEN" }
  { "_id" : { "$numberInt" : "2" }, "a" : "apple", "b" : "green" }
+ { "_id" : { "$numberInt" : "20" }, "a" : "APPLE", "b" : "GREEN" }
  { "_id" : { "$numberInt" : "1" }, "a" : "apple", "b" : "red" }
  { "_id" : { "$numberInt" : "3" }, "a" : "apple", "b" : "yellow" }
  { "_id" : { "$numberInt" : "24" }, "a" : "cherry" }
  { "_id" : { "$numberInt" : "22" }, "a" : "cherry", "b" : null }
  { "_id" : { "$numberInt" : "21" }, "a" : "cherry", "b" : { "$numberInt" : "99" } }
  { "_id" : { "$numberInt" : "10" }, "a" : "cherry", "b" : "blue" }
- { "_id" : { "$numberInt" : "16" }, "a" : "Cherry", "b" : "Green" }
  { "_id" : { "$numberInt" : "8" }, "a" : "cherry", "b" : "green" }
- { "_id" : { "$numberInt" : "17" }, "a" : "CHERRY", "b" : "RED" }
+ { "_id" : { "$numberInt" : "16" }, "a" : "Cherry", "b" : "Green" }
  { "_id" : { "$numberInt" : "7" }, "a" : "cherry", "b" : "red" }
  { "_id" : { "$numberInt" : "15" }, "a" : "Cherry", "b" : "Red" }
+ { "_id" : { "$numberInt" : "17" }, "a" : "CHERRY", "b" : "RED" }
  { "_id" : { "$numberInt" : "9" }, "a" : "cherry", "b" : "yellow" }
  { "_id" : { "$numberInt" : "18" }, "a" : "CHERRY", "b" : "YELLOW" }
 (15 rows)
@@ -5415,23 +5411,21 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$in": ["apple", "cherry"] } }, "sort": { "a": 1, "b": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                      run_explain_and_trim                                                                                                                                      
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=15 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST, (documentdb_api_internal.bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=15 loops=1)
-         namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
-         indexName: idx_comp_ab_mixed_s1
-         indexKey: {"a": 1,"b": -1}
-         isMultiKey: false
-         indexBounds: ["a": ["apple", "apple"], "b": DESC(MinKey, MaxKey)], ["a": ["cherry", "cherry"], "b": DESC(MinKey, MaxKey)]
-         innerScanLoops: 15 loops
-         scanType: regular
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4), (isInequality: true, estimatedEntryCount: 11)]
-         ->  Index Scan using idx_comp_ab_mixed_s1 on documents_8116 collection (actual rows=15 loops=1)
-               Index Cond: (document @*= '{ "a" : [ "apple", "cherry" ], "collation" : "en-u-ks-level1" }'::bson)
-(14 rows)
+                                                                                            run_explain_and_trim                                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=15 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
+   indexName: idx_comp_ab_en_strength1
+   indexKey: {"a": 1,"b": 1}
+   isMultiKey: false
+   indexBounds: ["a": ["apple", "apple"], "b": (MinKey, MaxKey)], ["a": ["cherry", "cherry"], "b": (MinKey, MaxKey)]
+   innerScanLoops: 12 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4), (isInequality: true, estimatedEntryCount: 11)]
+   ->  Index Scan using idx_comp_ab_en_strength1 on documents_8116 collection (actual rows=15 loops=1)
+         Index Cond: (document @*= '{ "a" : [ "apple", "cherry" ], "collation" : "en-u-ks-level1" }'::bson)
+         Order By: ((document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document OPERATOR(documentdb_api_internal.|<>) '{ "b" : { "$numberInt" : "1" } }'::bson))
+(12 rows)
 
 -- 28.6: $in with sort on _id (non-collated) — should work normally
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "banana"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5448,10 +5442,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "banana"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=6 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
          namespaceName: ord_coll_ordered_db.ord_not_intervals
@@ -5586,7 +5580,7 @@ $cmd$);
                                                                        run_explain_and_trim                                                                        
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=3 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
@@ -5618,7 +5612,7 @@ $cmd$);
                                                                        run_explain_and_trim                                                                        
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=3 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
@@ -5651,7 +5645,7 @@ $cmd$);
                                                                                                               run_explain_and_trim                                                                                                              
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
@@ -5680,10 +5674,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "cherry" } } }, "sort": { "a": -1, "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                       run_explain_and_trim                                                                                                                                       
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                               run_explain_and_trim                                                                                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=3 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING >>> NULLS LAST, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING >>> NULLS LAST
+   Sort Key: (documentdb_api_internal.bson_orderby_index_reverse(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) DESC NULLS LAST, (documentdb_api_internal.bson_orderby_index_reverse(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) DESC NULLS LAST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
@@ -5713,7 +5707,7 @@ $cmd$);
                                                                         run_explain_and_trim                                                                        
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
@@ -5745,7 +5739,7 @@ $cmd$);
                                                                         run_explain_and_trim                                                                        
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=3 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING >>> NULLS LAST
+   Sort Key: (documentdb_api_internal.bson_orderby_index_reverse(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) DESC NULLS LAST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
@@ -5776,10 +5770,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$not": { "$gt": "cherry" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                run_explain_and_trim                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=5 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
@@ -5806,28 +5800,34 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$ne": "apple" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                 run_explain_and_trim                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=7 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
-         namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
-         indexName: _id_
-         ->  Index Scan using _id_ on documents_8121 collection (actual rows=7 loops=1)
-               Index Cond: (shard_key_value = '8121'::bigint)
-               Filter: (document @#? '{ "a" : { "$ne" : "apple" }, "collation" : "en-u-ks-level1" }'::bson)
-               Rows Removed by Filter: 3
-(10 rows)
+                                            run_explain_and_trim                                             
+-------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
+   indexName: idx_ord_em_desc_s1
+   indexKey: {"a": -1}
+   isMultiKey: true
+   indexBounds: ["a": DESC(MinKey, MaxKey)]
+   numDuplicates: 9 entries
+   isBackwardScan: true
+   innerScanLoops: 11 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
+   ->  Index Scan using idx_ord_em_desc_s1 on documents_8121 collection (actual rows=7 loops=1)
+         Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+         Filter: (document @#? '{ "a" : { "$ne" : "apple" }, "collation" : "en-u-ks-level1" }'::bson)
+         Rows Removed by Filter: 3
+(16 rows)
 
 -- 28i: $elemMatch with mismatched collation + sort
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "apple" } } }, "sort": { "a": 1 }, "collation": { "locale": "de", "strength": 1 } }')
 $cmd$);
-                                                                 run_explain_and_trim                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                               run_explain_and_trim                                                               
+--------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=3 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
@@ -5848,10 +5848,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": 42 } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                       run_explain_and_trim                                                                                                                                       
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                   run_explain_and_trim                                                                                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=1 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
@@ -5879,10 +5879,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                       run_explain_and_trim                                                                                                                                       
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                   run_explain_and_trim                                                                                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=3 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
@@ -5904,8 +5904,8 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 --------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "4" }, "a" : [ { "$numberInt" : "42" }, "apple", null ] }
  { "_id" : { "$numberInt" : "7" }, "a" : [ null, "banana" ] }
- { "_id" : { "$numberInt" : "2" }, "a" : [ "apple", "BANANA", "cherry" ] }
  { "_id" : { "$numberInt" : "1" }, "a" : [ "Apple", "banana", "Cherry" ] }
+ { "_id" : { "$numberInt" : "2" }, "a" : [ "apple", "BANANA", "cherry" ] }
  { "_id" : { "$numberInt" : "6" }, "a" : [ "cherry", "CHERRY", "Cherry" ] }
  { "_id" : { "$numberInt" : "3" }, "a" : [ "Dog", "elephant", "FOX" ] }
  { "_id" : { "$numberInt" : "10" }, "a" : [ "grape" ] }
@@ -5914,26 +5914,25 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$exists": true } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                            run_explain_and_trim                                                                             
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=7 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
-         namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
-         indexName: idx_ord_em_desc_s1
-         indexKey: {"a": -1}
-         isMultiKey: true
-         indexBounds: ["a": DESC[MinKey, MaxKey]]
-         numDuplicates: 9 entries
-         innerScanLoops: 10 loops
-         scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 18)]
-         ->  Index Scan using idx_ord_em_desc_s1 on documents_8121 collection (actual rows=7 loops=1)
-               Index Cond: (document @<> '{ "a" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "3" }, "value" : { "$minKey" : 1 }, "isTopLevel" : true } ] } }'::bson)
-               Filter: (document @#? '{ "a" : { "$exists" : true }, "collation" : "en-u-ks-level1" }'::bson)
-               Rows Removed by Filter: 2
-(17 rows)
+                                                                         run_explain_and_trim                                                                          
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
+   namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
+   indexName: idx_ord_em_desc_s1
+   indexKey: {"a": -1}
+   isMultiKey: true
+   indexBounds: ["a": DESC[MinKey, MaxKey]]
+   numDuplicates: 9 entries
+   isBackwardScan: true
+   innerScanLoops: 11 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 18)]
+   ->  Index Scan using idx_ord_em_desc_s1 on documents_8121 collection (actual rows=7 loops=1)
+         Index Cond: (document @<> '{ "a" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "3" }, "value" : { "$minKey" : 1 }, "isTopLevel" : true } ] } }'::bson)
+         Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
+         Filter: (document @#? '{ "a" : { "$exists" : true }, "collation" : "en-u-ks-level1" }'::bson)
+         Rows Removed by Filter: 2
+(16 rows)
 
 -- 28m: $elemMatch $type: "string" + sort {a: 1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$type": "string" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5951,10 +5950,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$type": "string" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                       run_explain_and_trim                                                                                                                                       
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                   run_explain_and_trim                                                                                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=7 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
@@ -5988,19 +5987,29 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$not": { "$eq": "apple" } } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                       run_explain_and_trim                                                                                                                                       
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort (actual rows=7 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
-   Sort Method: quicksort  Memory: xxxkB
+                                                                                                                                   run_explain_and_trim                                                                                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Incremental Sort (actual rows=7 loops=1)
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
+   Presorted Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+   Full-sort Groups: 1  Sort Method: quicksort  Average Memory: xxxkB  Peak Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=7 loops=1)
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
-         indexName: _id_
-         ->  Index Scan using _id_ on documents_8121 collection (actual rows=7 loops=1)
-               Index Cond: (shard_key_value = '8121'::bigint)
+         indexName: idx_ord_em_desc_s1
+         indexKey: {"a": -1}
+         isMultiKey: true
+         indexBounds: ["a": DESC(MinKey, MaxKey)]
+         numDuplicates: 9 entries
+         isBackwardScan: true
+         innerScanLoops: 11 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 19)]
+         ->  Index Scan using idx_ord_em_desc_s1 on documents_8121 collection (actual rows=7 loops=1)
+               Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+               Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
                Filter: (document @#? '{ "a" : { "$not" : { "$eq" : "apple" } }, "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Filter: 3
-(10 rows)
+(20 rows)
 
 -- 28o: $elemMatch three-way ($gt + $lt + $ne) + sort {a: 1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gt": "apple", "$lt": "fox", "$ne": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -6015,10 +6024,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gt": "apple", "$lt": "fox", "$ne": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                       run_explain_and_trim                                                                                                                                       
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                   run_explain_and_trim                                                                                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=4 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
@@ -6045,10 +6054,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gte": "banana", "$lt": "banana" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                       run_explain_and_trim                                                                                                                                       
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                   run_explain_and_trim                                                                                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=0 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=0 loops=1)
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
@@ -6076,10 +6085,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gte": "banana", "$lte": "banana" } } }, "sort": { "a": -1, "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                       run_explain_and_trim                                                                                                                                       
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                               run_explain_and_trim                                                                                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=3 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING >>> NULLS LAST, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING >>> NULLS LAST
+   Sort Key: (documentdb_api_internal.bson_orderby_index_reverse(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) DESC NULLS LAST, (documentdb_api_internal.bson_orderby_index_reverse(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) DESC NULLS LAST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
@@ -6109,10 +6118,10 @@ SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "or
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$type": "string", "$gte": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                       run_explain_and_trim                                                                                                                                       
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                   run_explain_and_trim                                                                                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=5 loops=1)
-   Sort Key: (documentdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST, (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+   Sort Key: (documentdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST, (documentdb_api_internal.bson_orderby_index(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll

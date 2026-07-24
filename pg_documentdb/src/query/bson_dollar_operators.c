@@ -1972,7 +1972,8 @@ RunOrderByOnIndexCore(PG_FUNCTION_ARGS, bool isReverse)
 	}
 
 	uint32_t numTerms = 0;
-	Datum *terms = GenerateCompositeTermsFromIndexSpec(document, sortSpec, &numTerms);
+	Datum *terms = GenerateCompositeTermsFromIndexSpec(document, sortSpec, &numTerms,
+													   &collationStringView);
 
 	PG_FREE_IF_COPY(document, 0);
 	PG_FREE_IF_COPY(sortSpec, 1);

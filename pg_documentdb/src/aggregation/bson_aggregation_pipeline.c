@@ -5908,6 +5908,13 @@ HandleSort(const bson_value_t *existingValue, Query *query,
 			}
 
 			bool isOrderByIndexTerm = EnableOrderByIndexTerm && !isSortByMeta;
+
+			if (IsCollationApplicable(context->collationString))
+			{
+				/* We need this to enable index order by pushdown */
+				isOrderByIndexTerm = !isSortByMeta;
+			}
+
 			SortBy *sortBy = makeNode(SortBy);
 			SortByNulls sortByNulls = isAscending ? SORTBY_NULLS_FIRST :
 									  SORTBY_NULLS_LAST;

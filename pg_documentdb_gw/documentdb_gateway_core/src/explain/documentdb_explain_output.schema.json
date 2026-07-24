@@ -398,6 +398,10 @@
           "type": "number",
           "description": "Number of tuples skipped by the cursor scan during execution. Only present when greater than zero."
         },
+        "duplicateRowsRemoved": {
+          "type": "number",
+          "description": "Per-loop average number of duplicate rows removed by the de-duplicating scan, inlined onto the surviving child stage. Only present when greater than zero."
+        },
         "totalKeysExamined": {
           "type": "integer",
           "description": "Index keys examined by this stage (actual rows + rows removed by index recheck)."
