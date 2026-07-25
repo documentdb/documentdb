@@ -15,6 +15,7 @@ Supported DEB/Ubuntu distributions:
 - deb13 — Debian 13 (trixie)
 - ubuntu22.04 — Ubuntu 22.04 (jammy)
 - ubuntu24.04 — Ubuntu 24.04 (noble)
+- ubuntu26.04 — Ubuntu 26.04 (resolute)
 
 Supported PG versions: 15, 16, 17, 18
 
@@ -81,6 +82,7 @@ Supported DEB/Ubuntu distributions:
 - deb13 — Debian 13 (trixie)
 - ubuntu22.04 — Ubuntu 22.04 (jammy)
 - ubuntu24.04 — Ubuntu 24.04 (noble)
+- ubuntu26.04 — Ubuntu 26.04 (resolute)
 
 Supported RPM distributions:
 - rhel8 (Red Hat Enterprise Linux 8 compatible)
@@ -101,7 +103,7 @@ container, and run an install smoke:
 
 | Family | Targets | What the clean-install test does |
 |--------|---------|----------------------------------|
-| DEB | deb11 / deb12 / deb13 / ubuntu22.04 / ubuntu24.04 | Installs the extension + gateway packages on a real PostgreSQL, starts the service, and exercises the wire protocol end to end (`packaging/gateway/test/Dockerfile_deb_gateway_test`). |
+| DEB | deb11 / deb12 / deb13 / ubuntu22.04 / ubuntu24.04 / ubuntu26.04 | Installs the extension + gateway packages on a real PostgreSQL, starts the service, and exercises the wire protocol end to end (`packaging/gateway/test/Dockerfile_deb_gateway_test`). |
 | RPM | rhel8 / rhel9 | Clean-installs the gateway RPM and runs a root-shell install smoke (`packaging/gateway/test/Dockerfile_rpm_gateway_test`) asserting the system user, file layout, and the wrapper's privilege-drop path (`documentdb-gateway --version` / `--check` as root) — the path that is sensitive to the EL8 `runuser` differences. |
 
 Both the DEB and RPM gateway build/test paths are wired into `build_gateway_packages.sh`.
