@@ -609,3 +609,52 @@ SET enable_seqscan TO on;
 SET documentdb.enablePlannerStatisticsNewCollections TO off;
 SET documentdb.enablePrimaryKeyCursorScan TO off;
 SET documentdb.enableDynamicCursors TO off;
+
+-- ===========================================================================
+-- Test 36: Index hint on getMore across cursor configurations.
+-- The bson_dollar_index_hint marker is a planner-only marker and must be
+-- replaced by the planner. If it survives onto the streaming getMore
+-- continuation scan it reaches execution and raises
+-- "bson_dollar_index_hint function should be replaced by the planner".
+-- ===========================================================================
+SET documentdb.enableDynamicCursors TO off;
+SET documentdb.enablePrimaryKeyCursorScan TO on;
+
+-- EXPLAIN the getMore under primary key cursor scan. bson_dollar_index_hint
+-- must not survive as a runtime Filter.
+DROP TABLE IF EXISTS firstPageResponse;
+CREATE TEMP TABLE firstPageResponse AS
+SELECT continuation FROM
+    find_cursor_first_page(database => 'dyncursordb', commandSpec => '{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "hint": { "$natural": 1 }, "batchSize": 3 }', cursorId => 534);
+
+SELECT continuation AS r1_continuation FROM firstPageResponse \gset
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('dyncursordb',
+    '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 3 }', $cmd$ || quote_literal(:'r1_continuation') || $cmd$::documentdb_core.bson);
+$cmd$);
+
+-- Primary key cursor scan ON: the hint marker is trimmed from the primary-key
+-- cursor scan, so the drain succeeds.
+EXECUTE drain_find_query_continuation('{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "hint": { "$natural": 1 }, "batchSize": 3 }', '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 3 }');
+
+-- Primary key cursor scan OFF: force the continuation onto a TID range scan; the
+-- hint marker is trimmed and the drain succeeds.
+SET documentdb.enablePrimaryKeyCursorScan TO off;
+SET enable_indexscan TO off;
+SET enable_bitmapscan TO off;
+
+EXECUTE drain_find_query_continuation('{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "hint": { "$natural": 1 }, "batchSize": 3 }', '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 3 }');
+
+SET enable_indexscan TO on;
+SET enable_bitmapscan TO on;
+
+-- Dynamic cursors ON: the dynamic cursor scan handles the hint marker; drain
+-- succeeds.
+SET documentdb.enablePrimaryKeyCursorScan TO on;
+SET documentdb.enableDynamicCursors TO on;
+
+EXECUTE drain_find_query_continuation('{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "hint": { "$natural": 1 }, "batchSize": 3 }', '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 3 }');
+
+SET documentdb.enableDynamicCursors TO off;
+SET documentdb.enablePrimaryKeyCursorScan TO off;

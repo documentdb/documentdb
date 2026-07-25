@@ -1243,3 +1243,79 @@ SET enable_seqscan TO on;
 SET documentdb.enablePlannerStatisticsNewCollections TO off;
 SET documentdb.enablePrimaryKeyCursorScan TO off;
 SET documentdb.enableDynamicCursors TO off;
+-- ===========================================================================
+-- Test 36: Index hint on getMore across cursor configurations.
+-- The bson_dollar_index_hint marker is a planner-only marker and must be
+-- replaced by the planner. If it survives onto the streaming getMore
+-- continuation scan it reaches execution and raises
+-- "bson_dollar_index_hint function should be replaced by the planner".
+-- ===========================================================================
+SET documentdb.enableDynamicCursors TO off;
+SET documentdb.enablePrimaryKeyCursorScan TO on;
+-- EXPLAIN the getMore under primary key cursor scan. bson_dollar_index_hint
+-- must not survive as a runtime Filter.
+DROP TABLE IF EXISTS firstPageResponse;
+CREATE TEMP TABLE firstPageResponse AS
+SELECT continuation FROM
+    find_cursor_first_page(database => 'dyncursordb', commandSpec => '{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "hint": { "$natural": 1 }, "batchSize": 3 }', cursorId => 534);
+SELECT continuation AS r1_continuation FROM firstPageResponse \gset
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_getmore('dyncursordb',
+    '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 3 }', $cmd$ || quote_literal(:'r1_continuation') || $cmd$::documentdb_core.bson);
+$cmd$);
+                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                       
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiScan)
+   Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), current_cursor_state(document)
+   cursorScanType: streamingPrimaryKey
+   Page Row Count: 6 rows
+   Page Size Hint: 16777216 bytes
+   Continuation: { "table_name" : "documents_9201", "value" : { "$binary" : { "base64" : "AAAAAAgA", "subType" : "00" } }, "pk" : [ 9201, { "" : 2 } ] }
+   ->  Index Scan using _id_ on documentdb_data.documents_9201 collection
+         Output: shard_key_value, object_id, document
+         Index Cond: ((collection.shard_key_value = '9201'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "2" } }'::bson))
+         Filter: cursor_state(collection.document, '{ "continuation" : [ { "table_name" : "documents_9201", "value" : { "$binary" : { "base64" : "AAAAAAgA", "subType" : "00" } }, "pk" : [ { "$numberLong" : "9201" }, { "" : { "$numberInt" : "2" } } ] } ], "getpage_batchCount" : { "$numberInt" : "6" }, "getpage_batchSizeHint" : { "$numberInt" : "16777216" }, "getpage_batchSizeAttr" : { "$numberInt" : "1" } }'::bson)
+(10 rows)
+
+-- Primary key cursor scan ON: the hint marker is trimmed from the primary-key
+-- cursor scan, so the drain succeeds.
+EXECUTE drain_find_query_continuation('{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "hint": { "$natural": 1 }, "batchSize": 3 }', '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 3 }');
+                                     bson_dollar_project                                     |                                                                                                                                                                                                                                                                                continuation                                                                                                                                                                                                                                                                                
+---------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "firstBatchLength" : { "$numberInt" : "3" }, "nextBatchLength" : { "$numberInt" : "0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qc" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "hint" : { "$natural" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "3" } }, "continuation" : [ { "table_name" : "documents_9201", "value" : { "$binary" : { "base64" : "AAAAAAgA", "subType" : "00" } }, "pk" : [ { "$numberLong" : "9201" }, { "" : { "$numberInt" : "2" } } ] } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qc" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "hint" : { "$natural" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "3" } }, "continuation" : [ { "table_name" : "documents_9201", "value" : { "$binary" : { "base64" : "AAAAAAUA", "subType" : "00" } }, "pk" : [ { "$numberLong" : "9201" }, { "" : { "$numberInt" : "5" } } ] } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qc" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "hint" : { "$natural" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "3" } }, "continuation" : [ { "table_name" : "documents_9201", "value" : { "$binary" : { "base64" : "AAAAAAIA", "subType" : "00" } }, "pk" : [ { "$numberLong" : "9201" }, { "" : { "$numberInt" : "8" } } ] } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "1" } } | 
+(4 rows)
+
+-- Primary key cursor scan OFF: force the continuation onto a TID range scan; the
+-- hint marker is trimmed and the drain succeeds.
+SET documentdb.enablePrimaryKeyCursorScan TO off;
+SET enable_indexscan TO off;
+SET enable_bitmapscan TO off;
+EXECUTE drain_find_query_continuation('{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "hint": { "$natural": 1 }, "batchSize": 3 }', '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 3 }');
+                                     bson_dollar_project                                     |                                                                                                                                                                                                                                            continuation                                                                                                                                                                                                                                            
+---------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "firstBatchLength" : { "$numberInt" : "3" }, "nextBatchLength" : { "$numberInt" : "0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qc" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "hint" : { "$natural" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "3" } }, "continuation" : [ { "table_name" : "documents_9201", "value" : { "$binary" : { "base64" : "AAAAAAMA", "subType" : "00" } } } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qc" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "hint" : { "$natural" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "3" } }, "continuation" : [ { "table_name" : "documents_9201", "value" : { "$binary" : { "base64" : "AAAAAAYA", "subType" : "00" } } } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qc" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "hint" : { "$natural" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "3" } }, "continuation" : [ { "table_name" : "documents_9201", "value" : { "$binary" : { "base64" : "AAAAAAkA", "subType" : "00" } } } ], "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "1" } } | 
+(4 rows)
+
+SET enable_indexscan TO on;
+SET enable_bitmapscan TO on;
+-- Dynamic cursors ON: the dynamic cursor scan handles the hint marker; drain
+-- succeeds.
+SET documentdb.enablePrimaryKeyCursorScan TO on;
+SET documentdb.enableDynamicCursors TO on;
+EXECUTE drain_find_query_continuation('{ "find": "dyncursor_coll", "projection": { "_id": 1 }, "hint": { "$natural": 1 }, "batchSize": 3 }', '{ "getMore": { "$numberLong": "534" }, "collection": "dyncursor_coll", "batchSize": 3 }');
+                                     bson_dollar_project                                     |                                                                                                                                                                                                                                                                                                         continuation                                                                                                                                                                                                                                                                                                         
+---------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "firstBatchLength" : { "$numberInt" : "3" }, "nextBatchLength" : { "$numberInt" : "0" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "hint" : { "$natural" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "3" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "7" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "3" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "hint" : { "$natural" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "3" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "4" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "6" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "3" } } | { "qi" : { "$numberLong" : "534" }, "qp" : false, "qk" : { "$numberInt" : "1" }, "qd" : { "find" : "dyncursor_coll", "projection" : { "_id" : { "$numberInt" : "1" } }, "hint" : { "$natural" : { "$numberInt" : "1" } }, "batchSize" : { "$numberInt" : "3" } }, "dc" : { "type" : { "$numberInt" : "2" }, "tbl" : "documents_9201", "tid" : { "$numberLong" : "1" }, "idx" : "collection_pk_9201", "pk" : { "sk" : { "$numberLong" : "9201" }, "id" : { "" : { "$numberInt" : "9" } } }, "dir" : { "$numberInt" : "1" } }, "numIters" : { "$numberInt" : "1" }, "sn" : NOW_SYS_VARIABLE }
+ { "firstBatchLength" : { "$numberInt" : "0" }, "nextBatchLength" : { "$numberInt" : "1" } } | 
+(4 rows)
+
+SET documentdb.enableDynamicCursors TO off;
+SET documentdb.enablePrimaryKeyCursorScan TO off;
