@@ -74,7 +74,6 @@ const UNSUPPORTED_COMMANDS: &[&str] = &[
     "driverOIDTest",
     "dropAllRolesFromDatabase",
     "dropAllUsersFromDatabase",
-    "enableSharding",
     "eval",
     "features",
     "filemd5",

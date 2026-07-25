@@ -189,3 +189,10 @@ async fn shard_collections() -> Result<(), Error> {
 
     collection_cmd::validate_shard_collections(&db).await
 }
+
+#[tokio::test]
+async fn enable_sharding() -> Result<(), Error> {
+    let db = initialize::initialize_with_db("commands_tests_enable_sharding").await?;
+
+    collection_cmd::validate_enable_sharding(&db).await
+}
