@@ -2470,9 +2470,16 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 	if (indexDef->key->hasCosmosIndexes &&
 		indexDef->cosmosSearchOptions == NULL)
 	{
+		/* The most common way to hit this is a shell/driver createIndex()
+		 * helper that silently drops the non-standard cosmosSearchOptions
+		 * field before the spec reaches the server, so tell the user what
+		 * the working form looks like instead of only what is missing. */
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CANNOTCREATEINDEX),
 						errmsg(
-							"Index type 'CosmosSearch' was requested, but the 'cosmosSearch' options were not provided.")));
+							"Index type 'CosmosSearch' was requested, but the 'cosmosSearch' options were not provided."
+							" Add a 'cosmosSearchOptions' document to the index specification using the createIndexes command directly"
+							" (e.g. db.runCommand({ createIndexes: ..., indexes: [ { name: ..., key: ..., cosmosSearchOptions: {...} } ] }));"
+							" some shell helpers such as mongosh's createIndex() drop this non-standard option.")));
 	}
 
 	if (!indexDef->key->hasTextIndexes &&
