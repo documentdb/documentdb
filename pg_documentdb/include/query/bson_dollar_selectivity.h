@@ -24,6 +24,10 @@ double GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 									List *args, Oid collation, int varRelId, double
 									defaultExprSelectivity);
 
+double GetObjectIdOperatorSelectivity(PlannerInfo *planner, Oid funcId,
+									  Expr *objectIdExpr, Expr *querySpecExpr,
+									  int varRelId, Oid collation);
+
 bool EnablePlannerCostSelectivityFromRelOptInfo(PlannerInfo *planner, RelOptInfo *rel);
 bool EnablePlannerCostSelectivity(PlannerInfo *planner, List *args);
 

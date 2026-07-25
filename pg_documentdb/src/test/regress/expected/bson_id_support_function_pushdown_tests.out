@@ -1,0 +1,568 @@
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
+SET documentdb.next_collection_id TO 25860000;
+SET documentdb.next_collection_index_id TO 25860000;
+-- Enable the support function pushdown GUC
+SET documentdb.enable_support_function_id_pushdown TO on;
+SET enable_seqscan TO off;
+------------------------------------------------------------
+-- Setup: insert test data with various _id types
+------------------------------------------------------------
+SELECT documentdb_api.insert_one('id_push_db', 'test_coll', '{ "_id": 1, "a": 10, "b": "x" }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_db', 'test_coll', '{ "_id": 2, "a": 20, "b": "y" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_db', 'test_coll', '{ "_id": 3, "a": 30, "b": "z" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_db', 'test_coll', '{ "_id": 4, "a": 40, "b": "w" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_db', 'test_coll', '{ "_id": 5, "a": 50, "b": "v" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_db', 'test_coll', '{ "_id": "abc", "a": 60, "b": "u" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_db', 'test_coll', '{ "_id": "def", "a": 70, "b": "t" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_db', 'test_coll', '{ "_id": "xyz", "a": 80, "b": "s" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_db', 'test_coll', '{ "_id": null, "a": 90, "b": "r" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('id_push_db', 'test_coll', '{ "_id": true, "a": 100, "b": "q" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('id_push_db', 'test_coll', FORMAT('{ "_id": %s, "a": %s }', g, g)::bson) FROM generate_series(100, 200) g) i;
+ count 
+-------
+   101
+(1 row)
+
+------------------------------------------------------------
+-- Section 1: Btree _id_ index pushdown via bson_aggregation_find
+------------------------------------------------------------
+-- 1a: Point read $eq
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": 3 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "30" }, "b" : "z" }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": "abc" } }');
+                          document                           
+-------------------------------------------------------------
+ { "_id" : "abc", "a" : { "$numberInt" : "60" }, "b" : "u" }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": null } }');
+                          document                          
+------------------------------------------------------------
+ { "_id" : null, "a" : { "$numberInt" : "90" }, "b" : "r" }
+(1 row)
+
+-- 1b: Range queries $gt, $gte, $lt, $lte
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$gt": 3, "$lt": 6 } }, "sort": { "_id": 1 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : { "$numberInt" : "40" }, "b" : "w" }
+ { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "50" }, "b" : "v" }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$gte": 3, "$lt": 5 } }, "sort": { "_id": 1 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "30" }, "b" : "z" }
+ { "_id" : { "$numberInt" : "4" }, "a" : { "$numberInt" : "40" }, "b" : "w" }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$lte": 2 } }, "sort": { "_id": 1 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "10" }, "b" : "x" }
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "20" }, "b" : "y" }
+(2 rows)
+
+-- 1c: $in
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$in": [1, 3, 5] } }, "sort": { "_id": 1 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "10" }, "b" : "x" }
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "30" }, "b" : "z" }
+ { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "50" }, "b" : "v" }
+(3 rows)
+
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$in": ["abc", "xyz"] } }, "sort": { "_id": 1 } }');
+                          document                           
+-------------------------------------------------------------
+ { "_id" : "abc", "a" : { "$numberInt" : "60" }, "b" : "u" }
+ { "_id" : "xyz", "a" : { "$numberInt" : "80" }, "b" : "s" }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$in": [] } } }');
+ document 
+----------
+(0 rows)
+
+-- 1d: $regex on string _id
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$regex": "^ab" } } }');
+                          document                           
+-------------------------------------------------------------
+ { "_id" : "abc", "a" : { "$numberInt" : "60" }, "b" : "u" }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$regex": "^d" } } }');
+                          document                           
+-------------------------------------------------------------
+ { "_id" : "def", "a" : { "$numberInt" : "70" }, "b" : "t" }
+(1 row)
+
+-- 1e: EXPLAIN plans for btree pushdown
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": 3 } }');
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_25860001 collection
+   Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id = '{ "" : { "$numberInt" : "3" } }'::bson))
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$gt": 3 } } }');
+                                                                                      QUERY PLAN                                                                                       
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_25860001 collection
+   Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$gte": 3, "$lt": 5 } } }');
+                                                                                                                                                       QUERY PLAN                                                                                                                                                       
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_25860001 collection
+   Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id >= '{ "" : { "$numberInt" : "3" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (object_id < '{ "" : { "$numberInt" : "5" } }'::bson) AND (object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$in": [1, 3, 5] } } }');
+                                                                                                   QUERY PLAN                                                                                                    
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_25860001 collection
+   Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id = ANY (ARRAY['{ "" : { "$numberInt" : "1" } }'::bson, '{ "" : { "$numberInt" : "3" } }'::bson, '{ "" : { "$numberInt" : "5" } }'::bson])))
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$regex": "^ab" } } }');
+                                                               QUERY PLAN                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_25860001 collection
+   Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id >= '{ "" : "ab" }'::bson) AND (object_id < '{ "" : "ac" }'::bson))
+   Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^ab", "options" : "" } } }'::bson)
+(3 rows)
+
+------------------------------------------------------------
+-- Section 2: Bitmap scan fallback
+------------------------------------------------------------
+BEGIN;
+SET LOCAL enable_indexscan TO off;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": 3 } }');
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_25860001 collection
+   Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id = '{ "" : { "$numberInt" : "3" } }'::bson))
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$gt": 3, "$lt": 5 } } }');
+                                                                                                                                                         QUERY PLAN                                                                                                                                                          
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_25860001 collection
+   Recheck Cond: (shard_key_value = '25860001'::bigint)
+   Filter: ((document @> '{ "_id" : { "$numberInt" : "3" } }'::bson) AND (document @< '{ "_id" : { "$numberInt" : "5" } }'::bson))
+   ->  Bitmap Index Scan on _id_
+         Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (object_id < '{ "" : { "$numberInt" : "5" } }'::bson) AND (object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+(5 rows)
+
+-- Correctness under bitmap
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": 3 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "30" }, "b" : "z" }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$gt": 3, "$lt": 5 } } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "4" }, "a" : { "$numberInt" : "40" }, "b" : "w" }
+(1 row)
+
+COMMIT;
+------------------------------------------------------------
+-- Section 3: RUM composite index with _id column
+------------------------------------------------------------
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_db',
+  '{ "createIndexes": "test_coll", "indexes": [{ "key": { "a": 1, "_id": 1 }, "name": "idx_a_id" }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- 3a: Compound filter using a + _id → should use RUM index
+ANALYZE;
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "a": 10, "_id": 1 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "10" }, "b" : "x" }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "a": { "$gte": 10, "$lte": 30 }, "_id": { "$gt": 1 } }, "sort": { "_id": 1 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "20" }, "b" : "y" }
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "30" }, "b" : "z" }
+(2 rows)
+
+-- 3b: EXPLAIN for compound filter
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "a": 10, "_id": 1 } }');
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_25860001 collection
+   Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
+   Filter: (document #= '{ "a" : { "$numberInt" : "10" } }'::bsonquery)
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "a": { "$gte": 10 }, "_id": { "$gt": 2 } } }');
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_a_id on documents_25860001 collection
+   Index Cond: ((document @>= '{ "a" : { "$numberInt" : "10" } }'::bson) AND (document @> '{ "_id" : { "$numberInt" : "2" } }'::bson))
+(2 rows)
+
+-- 3c: _id-only filter should fall back to btree _id_ (leading column not covered)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": 3 } }');
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_25860001 collection
+   Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id = '{ "" : { "$numberInt" : "3" } }'::bson))
+(2 rows)
+
+------------------------------------------------------------
+-- Section 4: RUM composite index with multiple columns + _id
+------------------------------------------------------------
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_db',
+  '{ "createIndexes": "test_coll", "indexes": [{ "key": { "a": 1, "b": 1, "_id": 1 }, "name": "idx_a_b_id" }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- 4a: Compound filter a + b + _id
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "a": 10, "b": "x", "_id": 1 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "10" }, "b" : "x" }
+(1 row)
+
+-- 4b: EXPLAIN
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "a": 10, "b": "x", "_id": 1 } }');
+                                                      QUERY PLAN                                                       
+-----------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_25860001 collection
+   Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
+   Filter: ((document #= '{ "a" : { "$numberInt" : "10" } }'::bsonquery) AND (document #= '{ "b" : "x" }'::bsonquery))
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "a": { "$gte": 10 }, "b": "x", "_id": { "$gt": 0 } } }');
+                                                                                  QUERY PLAN                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_a_b_id on documents_25860001 collection
+   Index Cond: ((document @>= '{ "a" : { "$numberInt" : "10" } }'::bson) AND (document @= '{ "b" : "x" }'::bson) AND (document @> '{ "_id" : { "$numberInt" : "0" } }'::bson))
+(2 rows)
+
+-- 4c: Partial columns — a + _id without b
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "a": 10, "_id": 1 } }');
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_25860001 collection
+   Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
+   Filter: (document #= '{ "a" : { "$numberInt" : "10" } }'::bsonquery)
+(3 rows)
+
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "a": 10, "_id": 1 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "10" }, "b" : "x" }
+(1 row)
+
+------------------------------------------------------------
+-- Section 6: Partial filter expressions on RUM with _id
+------------------------------------------------------------
+-- 6a: PFE on _id field
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_db',
+  '{ "createIndexes": "test_coll", "indexes": [{ "key": { "a": 1 }, "name": "idx_a_pfe_id", "partialFilterExpression": { "_id": { "$gt": 50 } } }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+BEGIN;
+-- Filter within PFE range → should use idx_a_pfe_id
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "a": { "$gte": 100 }, "_id": { "$gt": 100 } } }');
+                                                                QUERY PLAN                                                                
+------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_a_id on documents_25860001 collection
+   Index Cond: ((document @>= '{ "a" : { "$numberInt" : "100" } }'::bson) AND (document @> '{ "_id" : { "$numberInt" : "100" } }'::bson))
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "a": { "$gte": 100 }, "_id": { "$gt": 100 } }, "sort": { "_id": 1 } }');
+                               document                               
+----------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "101" }, "a" : { "$numberInt" : "101" } }
+ { "_id" : { "$numberInt" : "102" }, "a" : { "$numberInt" : "102" } }
+ { "_id" : { "$numberInt" : "103" }, "a" : { "$numberInt" : "103" } }
+ { "_id" : { "$numberInt" : "104" }, "a" : { "$numberInt" : "104" } }
+ { "_id" : { "$numberInt" : "105" }, "a" : { "$numberInt" : "105" } }
+ { "_id" : { "$numberInt" : "106" }, "a" : { "$numberInt" : "106" } }
+ { "_id" : { "$numberInt" : "107" }, "a" : { "$numberInt" : "107" } }
+ { "_id" : { "$numberInt" : "108" }, "a" : { "$numberInt" : "108" } }
+ { "_id" : { "$numberInt" : "109" }, "a" : { "$numberInt" : "109" } }
+ { "_id" : { "$numberInt" : "110" }, "a" : { "$numberInt" : "110" } }
+ { "_id" : { "$numberInt" : "111" }, "a" : { "$numberInt" : "111" } }
+ { "_id" : { "$numberInt" : "112" }, "a" : { "$numberInt" : "112" } }
+ { "_id" : { "$numberInt" : "113" }, "a" : { "$numberInt" : "113" } }
+ { "_id" : { "$numberInt" : "114" }, "a" : { "$numberInt" : "114" } }
+ { "_id" : { "$numberInt" : "115" }, "a" : { "$numberInt" : "115" } }
+ { "_id" : { "$numberInt" : "116" }, "a" : { "$numberInt" : "116" } }
+ { "_id" : { "$numberInt" : "117" }, "a" : { "$numberInt" : "117" } }
+ { "_id" : { "$numberInt" : "118" }, "a" : { "$numberInt" : "118" } }
+ { "_id" : { "$numberInt" : "119" }, "a" : { "$numberInt" : "119" } }
+ { "_id" : { "$numberInt" : "120" }, "a" : { "$numberInt" : "120" } }
+ { "_id" : { "$numberInt" : "121" }, "a" : { "$numberInt" : "121" } }
+ { "_id" : { "$numberInt" : "122" }, "a" : { "$numberInt" : "122" } }
+ { "_id" : { "$numberInt" : "123" }, "a" : { "$numberInt" : "123" } }
+ { "_id" : { "$numberInt" : "124" }, "a" : { "$numberInt" : "124" } }
+ { "_id" : { "$numberInt" : "125" }, "a" : { "$numberInt" : "125" } }
+ { "_id" : { "$numberInt" : "126" }, "a" : { "$numberInt" : "126" } }
+ { "_id" : { "$numberInt" : "127" }, "a" : { "$numberInt" : "127" } }
+ { "_id" : { "$numberInt" : "128" }, "a" : { "$numberInt" : "128" } }
+ { "_id" : { "$numberInt" : "129" }, "a" : { "$numberInt" : "129" } }
+ { "_id" : { "$numberInt" : "130" }, "a" : { "$numberInt" : "130" } }
+ { "_id" : { "$numberInt" : "131" }, "a" : { "$numberInt" : "131" } }
+ { "_id" : { "$numberInt" : "132" }, "a" : { "$numberInt" : "132" } }
+ { "_id" : { "$numberInt" : "133" }, "a" : { "$numberInt" : "133" } }
+ { "_id" : { "$numberInt" : "134" }, "a" : { "$numberInt" : "134" } }
+ { "_id" : { "$numberInt" : "135" }, "a" : { "$numberInt" : "135" } }
+ { "_id" : { "$numberInt" : "136" }, "a" : { "$numberInt" : "136" } }
+ { "_id" : { "$numberInt" : "137" }, "a" : { "$numberInt" : "137" } }
+ { "_id" : { "$numberInt" : "138" }, "a" : { "$numberInt" : "138" } }
+ { "_id" : { "$numberInt" : "139" }, "a" : { "$numberInt" : "139" } }
+ { "_id" : { "$numberInt" : "140" }, "a" : { "$numberInt" : "140" } }
+ { "_id" : { "$numberInt" : "141" }, "a" : { "$numberInt" : "141" } }
+ { "_id" : { "$numberInt" : "142" }, "a" : { "$numberInt" : "142" } }
+ { "_id" : { "$numberInt" : "143" }, "a" : { "$numberInt" : "143" } }
+ { "_id" : { "$numberInt" : "144" }, "a" : { "$numberInt" : "144" } }
+ { "_id" : { "$numberInt" : "145" }, "a" : { "$numberInt" : "145" } }
+ { "_id" : { "$numberInt" : "146" }, "a" : { "$numberInt" : "146" } }
+ { "_id" : { "$numberInt" : "147" }, "a" : { "$numberInt" : "147" } }
+ { "_id" : { "$numberInt" : "148" }, "a" : { "$numberInt" : "148" } }
+ { "_id" : { "$numberInt" : "149" }, "a" : { "$numberInt" : "149" } }
+ { "_id" : { "$numberInt" : "150" }, "a" : { "$numberInt" : "150" } }
+ { "_id" : { "$numberInt" : "151" }, "a" : { "$numberInt" : "151" } }
+ { "_id" : { "$numberInt" : "152" }, "a" : { "$numberInt" : "152" } }
+ { "_id" : { "$numberInt" : "153" }, "a" : { "$numberInt" : "153" } }
+ { "_id" : { "$numberInt" : "154" }, "a" : { "$numberInt" : "154" } }
+ { "_id" : { "$numberInt" : "155" }, "a" : { "$numberInt" : "155" } }
+ { "_id" : { "$numberInt" : "156" }, "a" : { "$numberInt" : "156" } }
+ { "_id" : { "$numberInt" : "157" }, "a" : { "$numberInt" : "157" } }
+ { "_id" : { "$numberInt" : "158" }, "a" : { "$numberInt" : "158" } }
+ { "_id" : { "$numberInt" : "159" }, "a" : { "$numberInt" : "159" } }
+ { "_id" : { "$numberInt" : "160" }, "a" : { "$numberInt" : "160" } }
+ { "_id" : { "$numberInt" : "161" }, "a" : { "$numberInt" : "161" } }
+ { "_id" : { "$numberInt" : "162" }, "a" : { "$numberInt" : "162" } }
+ { "_id" : { "$numberInt" : "163" }, "a" : { "$numberInt" : "163" } }
+ { "_id" : { "$numberInt" : "164" }, "a" : { "$numberInt" : "164" } }
+ { "_id" : { "$numberInt" : "165" }, "a" : { "$numberInt" : "165" } }
+ { "_id" : { "$numberInt" : "166" }, "a" : { "$numberInt" : "166" } }
+ { "_id" : { "$numberInt" : "167" }, "a" : { "$numberInt" : "167" } }
+ { "_id" : { "$numberInt" : "168" }, "a" : { "$numberInt" : "168" } }
+ { "_id" : { "$numberInt" : "169" }, "a" : { "$numberInt" : "169" } }
+ { "_id" : { "$numberInt" : "170" }, "a" : { "$numberInt" : "170" } }
+ { "_id" : { "$numberInt" : "171" }, "a" : { "$numberInt" : "171" } }
+ { "_id" : { "$numberInt" : "172" }, "a" : { "$numberInt" : "172" } }
+ { "_id" : { "$numberInt" : "173" }, "a" : { "$numberInt" : "173" } }
+ { "_id" : { "$numberInt" : "174" }, "a" : { "$numberInt" : "174" } }
+ { "_id" : { "$numberInt" : "175" }, "a" : { "$numberInt" : "175" } }
+ { "_id" : { "$numberInt" : "176" }, "a" : { "$numberInt" : "176" } }
+ { "_id" : { "$numberInt" : "177" }, "a" : { "$numberInt" : "177" } }
+ { "_id" : { "$numberInt" : "178" }, "a" : { "$numberInt" : "178" } }
+ { "_id" : { "$numberInt" : "179" }, "a" : { "$numberInt" : "179" } }
+ { "_id" : { "$numberInt" : "180" }, "a" : { "$numberInt" : "180" } }
+ { "_id" : { "$numberInt" : "181" }, "a" : { "$numberInt" : "181" } }
+ { "_id" : { "$numberInt" : "182" }, "a" : { "$numberInt" : "182" } }
+ { "_id" : { "$numberInt" : "183" }, "a" : { "$numberInt" : "183" } }
+ { "_id" : { "$numberInt" : "184" }, "a" : { "$numberInt" : "184" } }
+ { "_id" : { "$numberInt" : "185" }, "a" : { "$numberInt" : "185" } }
+ { "_id" : { "$numberInt" : "186" }, "a" : { "$numberInt" : "186" } }
+ { "_id" : { "$numberInt" : "187" }, "a" : { "$numberInt" : "187" } }
+ { "_id" : { "$numberInt" : "188" }, "a" : { "$numberInt" : "188" } }
+ { "_id" : { "$numberInt" : "189" }, "a" : { "$numberInt" : "189" } }
+ { "_id" : { "$numberInt" : "190" }, "a" : { "$numberInt" : "190" } }
+ { "_id" : { "$numberInt" : "191" }, "a" : { "$numberInt" : "191" } }
+ { "_id" : { "$numberInt" : "192" }, "a" : { "$numberInt" : "192" } }
+ { "_id" : { "$numberInt" : "193" }, "a" : { "$numberInt" : "193" } }
+ { "_id" : { "$numberInt" : "194" }, "a" : { "$numberInt" : "194" } }
+ { "_id" : { "$numberInt" : "195" }, "a" : { "$numberInt" : "195" } }
+ { "_id" : { "$numberInt" : "196" }, "a" : { "$numberInt" : "196" } }
+ { "_id" : { "$numberInt" : "197" }, "a" : { "$numberInt" : "197" } }
+ { "_id" : { "$numberInt" : "198" }, "a" : { "$numberInt" : "198" } }
+ { "_id" : { "$numberInt" : "199" }, "a" : { "$numberInt" : "199" } }
+ { "_id" : { "$numberInt" : "200" }, "a" : { "$numberInt" : "200" } }
+(100 rows)
+
+-- Filter outside PFE range → should NOT use idx_a_pfe_id
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "a": { "$gte": 10 }, "_id": { "$lt": 5 } } }');
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_a_id on documents_25860001 collection
+   Index Cond: ((document @>= '{ "a" : { "$numberInt" : "10" } }'::bson) AND (document @< '{ "_id" : { "$numberInt" : "5" } }'::bson))
+(2 rows)
+
+-- 6b: PFE on non-_id field, index includes _id
+SELECT documentdb_api_internal.create_indexes_non_concurrently('id_push_db',
+  '{ "createIndexes": "test_coll", "indexes": [{ "key": { "a": 1, "_id": 1 }, "name": "idx_a_id_pfe_a", "partialFilterExpression": { "a": { "$gt": 10 } } }] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "4" }, "numIndexesAfter" : { "$numberInt" : "5" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "a": { "$gt": 10 }, "_id": 3 } }');
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_25860001 collection
+   Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id = '{ "" : { "$numberInt" : "3" } }'::bson))
+   Filter: (document #> '{ "a" : { "$numberInt" : "10" } }'::bsonquery)
+(3 rows)
+
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "a": { "$gt": 10 }, "_id": 3 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "30" }, "b" : "z" }
+(1 row)
+
+COMMIT;
+------------------------------------------------------------
+-- Section 7: Collation-aware _id values
+------------------------------------------------------------
+-- String _id values with default collation → btree pushdown should work
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": "abc" } }');
+                                           QUERY PLAN                                            
+-------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_25860001 collection
+   Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id = '{ "" : "abc" }'::bson))
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": "abc" } }');
+                          document                           
+-------------------------------------------------------------
+ { "_id" : "abc", "a" : { "$numberInt" : "60" }, "b" : "u" }
+(1 row)
+
+------------------------------------------------------------
+-- Section 8: Edge cases
+------------------------------------------------------------
+-- 8a: _id: null
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": null } }');
+                          document                          
+------------------------------------------------------------
+ { "_id" : null, "a" : { "$numberInt" : "90" }, "b" : "r" }
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": null } }');
+                                           QUERY PLAN                                           
+------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_25860001 collection
+   Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id = '{ "" : null }'::bson))
+(2 rows)
+
+-- 8b: $in with null
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$in": [null] } } }');
+                          document                          
+------------------------------------------------------------
+ { "_id" : null, "a" : { "$numberInt" : "90" }, "b" : "r" }
+(1 row)
+
+-- 8c: Compound _id + other field
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": 1, "a": 10 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "10" }, "b" : "x" }
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": 1, "a": 10 } }');
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_25860001 collection
+   Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
+   Filter: (document #= '{ "a" : { "$numberInt" : "10" } }'::bsonquery)
+(3 rows)
+
+-- 8d: Multiple _id predicates (range)
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$gt": 2, "$lt": 5 } }, "sort": { "_id": 1 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "30" }, "b" : "z" }
+ { "_id" : { "$numberInt" : "4" }, "a" : { "$numberInt" : "40" }, "b" : "w" }
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$gt": 2, "$lt": 5 } } }');
+                                                                                                                                                      QUERY PLAN                                                                                                                                                       
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_25860001 collection
+   Index Cond: ((shard_key_value = '25860001'::bigint) AND (object_id > '{ "" : { "$numberInt" : "2" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (object_id < '{ "" : { "$numberInt" : "5" } }'::bson) AND (object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+(2 rows)
+
+-- 8e: No matching documents
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": 99999 } }');
+ document 
+----------
+(0 rows)
+
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$in": [99998, 99999] } } }');
+ document 
+----------
+(0 rows)
+
+-- 8f: No matching documents (additional)
+SELECT document FROM bson_aggregation_find('id_push_db', '{ "find": "test_coll", "filter": { "_id": { "$gt": 99999 } } }');
+ document 
+----------
+(0 rows)
+

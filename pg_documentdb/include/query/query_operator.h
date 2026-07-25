@@ -118,6 +118,14 @@ typedef struct BsonQueryOperatorContext
 	 * logical operators may apply to scalar array elements.
 	 */
 	bool skipObjectArrayFilter;
+
+	/*
+	 * When true, skip coercing _id field expressions to OpExpr for btree
+	 * operators ($eq, $gt, $gte, $lt, $lte). Used when operating on the
+	 * base table so that _id pushdown is handled via support function
+	 * instead of coerced OpExpr. Does not affect $in SAOP generation.
+	 */
+	bool skipIdBtreeCoercion;
 } BsonQueryOperatorContext;
 
 Var * MakeSimpleDocumentVar(void);
@@ -149,7 +157,7 @@ Expr * CreateShardKeyFiltersForQuery(const bson_value_t *queryDocument, pgbson *
 									 bool *isShardKeyCollationAware);
 Expr * CreateIdFilterForQuery(List *existingQuals,
 							  Index collectionVarno, bool *isCollationAware,
-							  bool *isPointRead);
+							  bool *isPointRead, bool *hasObjectIdFuncExprs);
 Expr * MakeSimpleIdExpr(const bson_value_t *filterValue, Index collectionVarno, Oid
 						operatorId);
 Expr * MakeLowerBoundIdExpr(const bson_value_t *filterValue, Index collectionVarno);

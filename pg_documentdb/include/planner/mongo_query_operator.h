@@ -165,6 +165,20 @@ typedef struct
 	bool isApiInternalSchema;
 } MongoIndexOperatorInfo;
 
+/*
+ * ObjectIdMongoOperatorInfo is a type-safe wrapper around MongoQueryOperator
+ * and MongoIndexOperatorInfo for ObjectId-specific operators. This prevents
+ * accidental interchange with non-ObjectId operator APIs.
+ */
+typedef struct
+{
+	/* ObjectId-specific runtime query operator info */
+	MongoQueryOperator queryOperator;
+
+	/* Index strategy and operator information */
+	MongoIndexOperatorInfo indexOperator;
+} ObjectIdMongoOperatorInfo;
+
 const MongoQueryOperator * GetMongoQueryOperatorByMongoOpName(const char *key,
 															  MongoQueryOperatorInputType
 															  inputType);
@@ -174,10 +188,16 @@ const MongoQueryOperator * GetMongoQueryOperatorByQueryOperatorType(MongoQueryOp
 																	operatorType,
 																	MongoQueryOperatorInputType
 																	inputType);
+const MongoIndexOperatorInfo * GetMongoIndexOperatorInfoByOperatorType(
+	MongoQueryOperatorType type);
 const MongoIndexOperatorInfo * GetMongoIndexOperatorInfoByPostgresFuncId(Oid
 																		 functionId);
-const MongoIndexOperatorInfo * GetObjectIdMongoIndexOperatorByPostgresFuncId(Oid
-																			 functionId);
+
+const ObjectIdMongoOperatorInfo * GetObjectIdMongoIndexOperatorByPostgresFuncId(Oid
+																				functionId);
+const ObjectIdMongoOperatorInfo * GetObjectIdMongoQueryOperatorByNonObjectIdFuncId(Oid
+																				   functionId);
+
 BsonIndexStrategy GetBsonStrategyForFuncId(Oid functionOid);
 Oid GetMongoQueryOperatorOid(const MongoIndexOperatorInfo *mongoQueryOperator);
 const MongoQueryOperator * GetMongoQueryOperatorFromExpr(Node *expr, List **args);

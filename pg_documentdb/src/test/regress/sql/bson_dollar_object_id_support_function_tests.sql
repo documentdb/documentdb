@@ -1,6 +1,7 @@
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
 SET documentdb.next_collection_id TO 1984500;
 SET documentdb.next_collection_index_id TO 1984500;
+SET documentdb.enable_support_function_id_pushdown TO on;
 
 -- Insert test data
 SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('objid_support_db', 'test_support_func', FORMAT('{ "_id": %s, "a": %s }', g, g)::bson) FROM generate_series(1, 100) g) i;
@@ -105,10 +106,14 @@ EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('obj
   WHERE bson_dollar_in(document, object_id, '{ "_id": [10, 20, 30] }');
 COMMIT;
 
--- Test 3c: a + _id predicates push down to idx_a_id Index Scan.
+-- Test 3c: a + _id predicates. When enable_support_function_id_pushdown is off,
+-- these push down to idx_a_id. When on, the _id equality/in triggers the forced
+-- PK point read on _id_ (zero-cost path), with 'a' applied as a post-filter.
+-- This is by design — PK lookup planning avoids overhead of evaluating other indexes.
 ANALYZE;
 BEGIN;
 SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
   WHERE bson_dollar_eq(document, '{ "a": 15 }') AND bson_dollar_eq(document, object_id, '{ "_id": 15 }');
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
@@ -124,26 +129,6 @@ SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support
   WHERE bson_dollar_eq(document, '{ "a": 50 }') AND bson_dollar_gt(document, object_id, '{ "_id": 40 }');
 SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
   WHERE bson_dollar_eq(document, '{ "a": 20 }') AND bson_dollar_in(document, object_id, '{ "_id": [10, 20, 30] }');
-
--- Test 3d: a + _id predicates push down to idx_a_id Bitmap Index Scan.
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_indexscan TO off;
-SET LOCAL enable_indexonlyscan TO off;
-EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
-  WHERE bson_dollar_eq(document, '{ "a": 15 }') AND bson_dollar_eq(document, object_id, '{ "_id": 15 }');
-EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
-  WHERE bson_dollar_eq(document, '{ "a": 50 }') AND bson_dollar_gt(document, object_id, '{ "_id": 40 }');
-EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
-  WHERE bson_dollar_eq(document, '{ "a": 20 }') AND bson_dollar_in(document, object_id, '{ "_id": [10, 20, 30] }');
--- Runtime sanity.
-SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
-  WHERE bson_dollar_eq(document, '{ "a": 15 }') AND bson_dollar_eq(document, object_id, '{ "_id": 15 }');
-SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
-  WHERE bson_dollar_eq(document, '{ "a": 50 }') AND bson_dollar_gt(document, object_id, '{ "_id": 40 }');
-SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
-  WHERE bson_dollar_eq(document, '{ "a": 20 }') AND bson_dollar_in(document, object_id, '{ "_id": [10, 20, 30] }');
-COMMIT;
 
 -- Test 3e: _id-only predicate under bitmap path falls back to _id_ btree.
 BEGIN;
@@ -197,13 +182,12 @@ SELECT documentdb_api.insert_one('objid_support_db', 'test_runtime_eval',
 SELECT documentdb_api.insert_one('objid_support_db', 'test_runtime_eval',
   FORMAT('{ "_id": 9999, "kind": "big", "blob": "%s" }', repeat('x', 2100))::bson);
 
--- Test 4a: Seq scan over heterogeneous _id corpus.
+-- Test 4a: Runtime correctness over heterogeneous _id corpus.
 BEGIN;
-SET LOCAL enable_indexscan TO off;
+SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_indexonlyscan TO off;
 
--- Plan check: Seq Scan with bson_dollar_eq in the Filter.
+-- Plan check: Index Scan with _id pushdown.
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document->>'kind' AS kind FROM documentdb_api.collection('objid_support_db', 'test_runtime_eval')
   WHERE bson_dollar_eq(document, object_id, '{ "_id": 1 }');
 

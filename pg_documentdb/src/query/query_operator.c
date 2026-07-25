@@ -109,6 +109,9 @@ typedef struct IdFilterWalkerContext
 
 	/* Whether or not the _id filter is an equality (point read) */
 	bool isPointReadQuery;
+
+	/* Whether we generated object_id func exprs or not for new Id filter pushdown. */
+	bool hasObjectIdFuncExprs;
 } IdFilterWalkerContext;
 
 
@@ -142,6 +145,7 @@ typedef struct MatchNamespaceFiltersContext
 
 extern bool EnableObjectIdFuncExprConversion;
 extern bool EnablePartialFilterEvalOnPlanner;
+extern bool EnableSupportFunctionIdPushdown;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -1609,7 +1613,16 @@ ExpandBsonQueryOperator(OpExpr *queryOpExpr, Node *queryNode,
 	context.inputType = MongoQueryOperatorInputType_Bson;
 	context.simplifyOperators = true;
 	context.coerceOperatorExprIfApplicable = true;
+	context.skipIdBtreeCoercion = EnableSupportFunctionIdPushdown &&
+								  IsClusterVersionAtleast(DocDB_V0, 112, 1);
 	context.requiredFilterPathNameHashSet = NULL;
+
+	/* Resolve the collection early only when the GUC is enabled so we can
+	 * gate _id coercion before qual generation. Otherwise the lookup is
+	 * deferred until after quals are generated (and skipped entirely when
+	 * there are no quals). */
+	Index collectionVarno = 0;
+	bool isCollectionBasedRTE = false;
 
 	context.variableContext = NULL;
 	if (variableSpec != NULL && !variableSpec->constisnull)
@@ -1660,15 +1673,11 @@ ExpandBsonQueryOperator(OpExpr *queryOpExpr, Node *queryNode,
 	/* extract the collection via the document Var */
 	if (quals != NIL)
 	{
-		Index collectionVarno;
-		MongoCollection *collection = NULL;
-		bool isCollectionBasedRTE = false;
-
-		/* if query is on a collection, get the collection metadata */
-		collection = GetCollectionByDocumentVar(context.documentExpr,
-												currentQuery,
-												&collectionVarno, boundParams,
-												&isCollectionBasedRTE);
+		MongoCollection *collection = GetCollectionByDocumentVar(context.documentExpr,
+																 currentQuery,
+																 &collectionVarno,
+																 boundParams,
+																 &isCollectionBasedRTE);
 
 		if (collection != NULL)
 		{
@@ -1703,16 +1712,23 @@ ExpandBsonQueryOperator(OpExpr *queryOpExpr, Node *queryNode,
 				hasShardKeyFilters = true;
 			}
 
-			if (hasShardKeyFilters)
+			/* When support function Id Pushdown is enable, we want to unify qual generation for _id even if there is no shard key filter so that we
+			 * update the old func exprs to the new object_id funcexprs. That way queries on _id remain consistent when there is no shard key filter.
+			 */
+			if (hasShardKeyFilters ||
+				(EnableSupportFunctionIdPushdown &&
+				 IsClusterVersionAtleast(DocDB_V0, 112, 1)))
 			{
 				/* Mongo allows collation on _id field. We need to make sure we do that as well. We can't
 				 * push the Id filter to primary key index if the type needs to be collation aware (e.g., _id contains UTF8 )*/
 				bool isCollationAware;
 				bool isPointRead;
+				bool hasObjectIdFuncExprs;
 				Expr *idFilter = CreateIdFilterForQuery(quals,
 														collectionVarno,
 														&isCollationAware,
-														&isPointRead);
+														&isPointRead,
+														&hasObjectIdFuncExprs);
 
 				/* include _id filter in quals */
 				if (idFilter != NULL &&
@@ -3449,9 +3465,15 @@ CreateFuncExprForQueryOperator(BsonQueryOperatorContext *context, const char *pa
 							   operator->mongoOperatorName)));
 	}
 
+	/* If we're doing object_id support functions we skip coercion as we use the original funcExpr to replace the pointer to the new
+	 * object_id funcExpr. PFE index pushdown will be handled at the get_relation_info hook. */
+	bool skipCoercionForId = context->skipIdBtreeCoercion &&
+							 strcmp(path, "_id") == 0;
+
 	constValue->consttype = operator->operandTypeOid();
 
 	if (context->coerceOperatorExprIfApplicable &&
+		!skipCoercionForId &&
 		operator->postgresRuntimeOperatorOidLookup != NULL)
 	{
 		/* First try to see if the Oid exists */
@@ -4069,6 +4091,64 @@ TryConvertExistingExpression(FuncExpr *expr, IdFilterWalkerContext *context,
 }
 
 
+static void
+GenerateObjectIdFiltersFromQueryOperator(const ObjectIdMongoOperatorInfo *objectIdOp,
+										 FuncExpr *expr, IdFilterWalkerContext *context)
+{
+	pgbsonelement qualElement = { 0 };
+	const char *collationString;
+	if (!ValidateAndGetObjectIdQual(expr->args, context, &qualElement,
+									&collationString))
+	{
+		return;
+	}
+
+	if (qualElement.bsonValue.value_type == BSON_TYPE_UTF8 ||
+		qualElement.bsonValue.value_type == BSON_TYPE_DOCUMENT ||
+		qualElement.bsonValue.value_type == BSON_TYPE_ARRAY)
+	{
+		context->isCollationAware = IsCollationApplicable(collationString);
+	}
+
+	switch (objectIdOp->queryOperator.operatorType)
+	{
+		case QUERY_OPERATOR_EQ:
+		{
+			context->isPointReadQuery = true;
+			break;
+		}
+
+		case QUERY_OPERATOR_GT:
+		case QUERY_OPERATOR_GTE:
+		case QUERY_OPERATOR_LT:
+		case QUERY_OPERATOR_LTE:
+		case QUERY_OPERATOR_IN:
+		case QUERY_OPERATOR_REGEX:
+		{
+			break;
+		}
+
+		default:
+		{
+			ereport(ERROR, (errmsg(
+								"Unexpected query operator type for object id filter conversion.")));
+		}
+	}
+
+	/* Update args to point to the object_id variant and return true*/
+	Var *objectIdVar = makeVar(context->collectionVarno,
+							   DOCUMENT_DATA_TABLE_OBJECT_ID_VAR_ATTR_NUMBER,
+							   BsonTypeId(), -1, InvalidOid, 0);
+
+	Expr *querySpec = lsecond(expr->args);
+	ConvertQuerySpecToBsonQuery(querySpec);
+	expr->args = list_make3(linitial(expr->args), objectIdVar, querySpec);
+	expr->funcid = objectIdOp->queryOperator.postgresRuntimeFunctionOidLookup();
+
+	context->hasObjectIdFuncExprs = true;
+}
+
+
 /*
  * Given the binary arguments of a FuncExpr or OpExpr,
  * A specified Collection Var index in a RangeTable,
@@ -4170,22 +4250,37 @@ VisitIdFilterExpression(Node *node, IdFilterWalkerContext *context)
 	else if (IsA(node, FuncExpr))
 	{
 		FuncExpr *funcExpr = (FuncExpr *) node;
-		const MongoIndexOperatorInfo *indexOp =
-			GetMongoIndexOperatorInfoByPostgresFuncId(funcExpr->funcid);
 
-		if (indexOp->indexStrategy != BSON_INDEX_STRATEGY_INVALID &&
-			list_length(funcExpr->args) == 2)
+		if (!EnableSupportFunctionIdPushdown)
 		{
-			/* For $regex on _id, we can mutate the existing expression if applicable
-			 * TODO: Expand this to more scenarios and operators.
-			 */
-			if (EnableObjectIdFuncExprConversion &&
-				TryConvertExistingExpression(funcExpr, context, indexOp))
-			{
-				return false;
-			}
+			const MongoIndexOperatorInfo *indexOp =
+				GetMongoIndexOperatorInfoByPostgresFuncId(funcExpr->funcid);
 
-			CheckAndAddIdFilter(funcExpr->args, context, indexOp);
+			if (indexOp->indexStrategy != BSON_INDEX_STRATEGY_INVALID &&
+				list_length(funcExpr->args) == 2)
+			{
+				/* For $regex on _id, we can mutate the existing expression if applicable
+				 * TODO: Expand this to more scenarios and operators.
+				 */
+				if (EnableObjectIdFuncExprConversion &&
+					TryConvertExistingExpression(funcExpr, context, indexOp))
+				{
+					return false;
+				}
+
+				CheckAndAddIdFilter(funcExpr->args, context, indexOp);
+			}
+		}
+		else
+		{
+			const ObjectIdMongoOperatorInfo *objectIdOp =
+				GetObjectIdMongoQueryOperatorByNonObjectIdFuncId(funcExpr->funcid);
+
+			if (objectIdOp->queryOperator.operatorType != QUERY_OPERATOR_UNKNOWN &&
+				list_length(funcExpr->args) == 2)
+			{
+				GenerateObjectIdFiltersFromQueryOperator(objectIdOp, funcExpr, context);
+			}
 		}
 
 		return false;
@@ -4212,7 +4307,8 @@ Expr *
 CreateIdFilterForQuery(List *existingQuals,
 					   Index collectionVarno,
 					   bool *isCollationAware,
-					   bool *isPointRead)
+					   bool *isPointRead,
+					   bool *hasObjectIdFuncExprs)
 {
 	IdFilterWalkerContext walkerContext = { 0 };
 	walkerContext.idQuals = NIL;
@@ -4222,6 +4318,7 @@ CreateIdFilterForQuery(List *existingQuals,
 
 	*isCollationAware = walkerContext.isCollationAware;
 	*isPointRead = walkerContext.isPointReadQuery;
+	*hasObjectIdFuncExprs = walkerContext.hasObjectIdFuncExprs;
 	if (walkerContext.idQuals == NIL)
 	{
 		return NULL;

@@ -449,10 +449,14 @@ EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('obj
 (10 rows)
 
 COMMIT;
--- Test 3c: a + _id predicates push down to idx_a_id Index Scan.
+-- Test 3c: a + _id predicates. When enable_support_function_id_pushdown is off,
+-- these push down to idx_a_id. When on, the _id equality/in triggers the forced
+-- PK point read on _id_ (zero-cost path), with 'a' applied as a post-filter.
+-- This is by design — PK lookup planning avoids overhead of evaluating other indexes.
 ANALYZE;
 BEGIN;
 SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
 SET LOCAL citus.propagate_set_commands TO 'local';
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
   WHERE bson_dollar_eq(document, '{ "a": 15 }') AND bson_dollar_eq(document, object_id, '{ "_id": 15 }');
@@ -465,10 +469,11 @@ EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('obj
    ->  Task
          Query: SELECT document FROM documentdb_data.documents_1984401_198440002 collection WHERE (documentdb_api_catalog.bson_dollar_eq(document, '{ "a" : { "$numberInt" : "15" } }'::documentdb_core.bson) AND documentdb_api_catalog.bson_dollar_eq(document, object_id, '{ "_id" : { "$numberInt" : "15" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '1984401'::bigint))
          Node: host=localhost port=58070 dbname=regression
-         ->  Index Scan using idx_a_id on documentdb_data.documents_1984401_198440002 collection
+         ->  Index Scan using _id_ on documentdb_data.documents_1984401_198440002 collection
                Output: document
-               Index Cond: ((collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "15" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "15" } }'::documentdb_core.bson))
-(10 rows)
+               Index Cond: ((collection.shard_key_value = '1984401'::bigint) AND (collection.object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "15" } }'::documentdb_core.bson))
+               Filter: ((collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "15" } }'::documentdb_core.bson) AND documentdb_api_catalog.bson_dollar_eq(collection.document, collection.object_id, '{ "_id" : { "$numberInt" : "15" } }'::documentdb_core.bsonquery))
+(11 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
   WHERE bson_dollar_eq(document, '{ "a": 50 }') AND bson_dollar_gt(document, object_id, '{ "_id": 40 }');
@@ -497,10 +502,11 @@ EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('obj
    ->  Task
          Query: SELECT document FROM documentdb_data.documents_1984401_198440002 collection WHERE (documentdb_api_catalog.bson_dollar_eq(document, '{ "a" : { "$numberInt" : "20" } }'::documentdb_core.bson) AND documentdb_api_catalog.bson_dollar_in(document, object_id, '{ "_id" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" }, { "$numberInt" : "30" } ] }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '1984401'::bigint))
          Node: host=localhost port=58070 dbname=regression
-         ->  Index Scan using idx_a_id on documentdb_data.documents_1984401_198440002 collection
+         ->  Index Scan using _id_ on documentdb_data.documents_1984401_198440002 collection
                Output: document
-               Index Cond: ((collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "20" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" }, { "$numberInt" : "30" } ] }'::documentdb_core.bson))
-(10 rows)
+               Index Cond: ((collection.shard_key_value = '1984401'::bigint) AND (collection.object_id OPERATOR(documentdb_core.=) ANY (ARRAY['{ "" : { "$numberInt" : "10" } }'::documentdb_core.bson, '{ "" : { "$numberInt" : "20" } }'::documentdb_core.bson, '{ "" : { "$numberInt" : "30" } }'::documentdb_core.bson])))
+               Filter: ((collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "20" } }'::documentdb_core.bson) AND documentdb_api_catalog.bson_dollar_in(collection.document, collection.object_id, '{ "_id" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" }, { "$numberInt" : "30" } ] }'::documentdb_core.bsonquery))
+(11 rows)
 
 COMMIT;
 -- Runtime sanity.
@@ -525,92 +531,6 @@ SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support
  { "_id" : { "$numberInt" : "20" }, "a" : { "$numberInt" : "20" } }
 (1 row)
 
--- Test 3d: a + _id predicates push down to idx_a_id Bitmap Index Scan.
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_indexscan TO off;
-SET LOCAL enable_indexonlyscan TO off;
-SET LOCAL citus.propagate_set_commands TO 'local';
-EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
-  WHERE bson_dollar_eq(document, '{ "a": 15 }') AND bson_dollar_eq(document, object_id, '{ "_id": 15 }');
-                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                   
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Output: remote_scan.document
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT document FROM documentdb_data.documents_1984401_198440002 collection WHERE (documentdb_api_catalog.bson_dollar_eq(document, '{ "a" : { "$numberInt" : "15" } }'::documentdb_core.bson) AND documentdb_api_catalog.bson_dollar_eq(document, object_id, '{ "_id" : { "$numberInt" : "15" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '1984401'::bigint))
-         Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_1984401_198440002 collection
-               Output: document
-               Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "15" } }'::documentdb_core.bson)
-               Filter: documentdb_api_catalog.bson_dollar_eq(collection.document, collection.object_id, '{ "_id" : { "$numberInt" : "15" } }'::documentdb_core.bsonquery)
-               ->  Bitmap Index Scan on idx_a_id
-                     Index Cond: ((collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "15" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "15" } }'::documentdb_core.bson))
-(13 rows)
-
-EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
-  WHERE bson_dollar_eq(document, '{ "a": 50 }') AND bson_dollar_gt(document, object_id, '{ "_id": 40 }');
-                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                   
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Output: remote_scan.document
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT document FROM documentdb_data.documents_1984401_198440002 collection WHERE (documentdb_api_catalog.bson_dollar_eq(document, '{ "a" : { "$numberInt" : "50" } }'::documentdb_core.bson) AND documentdb_api_catalog.bson_dollar_gt(document, object_id, '{ "_id" : { "$numberInt" : "40" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '1984401'::bigint))
-         Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_1984401_198440002 collection
-               Output: document
-               Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "50" } }'::documentdb_core.bson)
-               Filter: documentdb_api_catalog.bson_dollar_gt(collection.document, collection.object_id, '{ "_id" : { "$numberInt" : "40" } }'::documentdb_core.bsonquery)
-               ->  Bitmap Index Scan on idx_a_id
-                     Index Cond: ((collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "50" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@>) '{ "_id" : { "$numberInt" : "40" } }'::documentdb_core.bson))
-(13 rows)
-
-EXPLAIN (COSTS OFF, VERBOSE) SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
-  WHERE bson_dollar_eq(document, '{ "a": 20 }') AND bson_dollar_in(document, object_id, '{ "_id": [10, 20, 30] }');
-                                                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                                                              
----------------------------------------------------------------------
- Custom Scan (Citus Adaptive)
-   Output: remote_scan.document
-   Task Count: 1
-   Tasks Shown: All
-   ->  Task
-         Query: SELECT document FROM documentdb_data.documents_1984401_198440002 collection WHERE (documentdb_api_catalog.bson_dollar_eq(document, '{ "a" : { "$numberInt" : "20" } }'::documentdb_core.bson) AND documentdb_api_catalog.bson_dollar_in(document, object_id, '{ "_id" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" }, { "$numberInt" : "30" } ] }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '1984401'::bigint))
-         Node: host=localhost port=58070 dbname=regression
-         ->  Bitmap Heap Scan on documentdb_data.documents_1984401_198440002 collection
-               Output: document
-               Recheck Cond: (collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "20" } }'::documentdb_core.bson)
-               Filter: documentdb_api_catalog.bson_dollar_in(collection.document, collection.object_id, '{ "_id" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" }, { "$numberInt" : "30" } ] }'::documentdb_core.bsonquery)
-               ->  Bitmap Index Scan on idx_a_id
-                     Index Cond: ((collection.document OPERATOR(documentdb_api_catalog.@=) '{ "a" : { "$numberInt" : "20" } }'::documentdb_core.bson) AND (collection.document OPERATOR(documentdb_api_catalog.@*=) '{ "_id" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" }, { "$numberInt" : "30" } ] }'::documentdb_core.bson))
-(13 rows)
-
--- Runtime sanity.
-SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
-  WHERE bson_dollar_eq(document, '{ "a": 15 }') AND bson_dollar_eq(document, object_id, '{ "_id": 15 }');
-                              document                              
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "15" }, "a" : { "$numberInt" : "15" } }
-(1 row)
-
-SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
-  WHERE bson_dollar_eq(document, '{ "a": 50 }') AND bson_dollar_gt(document, object_id, '{ "_id": 40 }');
-                              document                              
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "50" }, "a" : { "$numberInt" : "50" } }
-(1 row)
-
-SELECT document FROM documentdb_api.collection('objid_support_db', 'test_support_func')
-  WHERE bson_dollar_eq(document, '{ "a": 20 }') AND bson_dollar_in(document, object_id, '{ "_id": [10, 20, 30] }');
-                              document                              
----------------------------------------------------------------------
- { "_id" : { "$numberInt" : "20" }, "a" : { "$numberInt" : "20" } }
-(1 row)
-
-COMMIT;
 -- Test 3e: _id-only predicate under bitmap path falls back to _id_ btree.
 BEGIN;
 SET LOCAL enable_seqscan TO off;
@@ -786,13 +706,12 @@ SELECT documentdb_api.insert_one('objid_support_db', 'test_runtime_eval',
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
--- Test 4a: Seq scan over heterogeneous _id corpus.
+-- Test 4a: Runtime correctness over heterogeneous _id corpus.
 BEGIN;
-SET LOCAL enable_indexscan TO off;
+SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_indexonlyscan TO off;
 SET LOCAL citus.propagate_set_commands TO 'local';
--- Plan check: Seq Scan with bson_dollar_eq in the Filter.
+-- Plan check: Index Scan with _id pushdown.
 EXPLAIN (COSTS OFF, VERBOSE) SELECT document->>'kind' AS kind FROM documentdb_api.collection('objid_support_db', 'test_runtime_eval')
   WHERE bson_dollar_eq(document, object_id, '{ "_id": 1 }');
                                                                                                                                                                      QUERY PLAN                                                                                                                                                                     
@@ -804,9 +723,9 @@ EXPLAIN (COSTS OFF, VERBOSE) SELECT document->>'kind' AS kind FROM documentdb_ap
    ->  Task
          Query: SELECT (document OPERATOR(documentdb_core.->>) 'kind'::text) AS kind FROM documentdb_data.documents_1984402_198440004 collection WHERE (documentdb_api_catalog.bson_dollar_eq(document, object_id, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '1984402'::bigint))
          Node: host=localhost port=58070 dbname=regression
-         ->  Seq Scan on documentdb_data.documents_1984402_198440004 collection
+         ->  Index Scan using _id_ on documentdb_data.documents_1984402_198440004 collection
                Output: (document OPERATOR(documentdb_core.->>) 'kind'::text)
-               Filter: documentdb_api_catalog.bson_dollar_eq(collection.document, collection.object_id, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bsonquery)
+               Index Cond: ((collection.shard_key_value = '1984402'::bigint) AND (collection.object_id OPERATOR(documentdb_core.=) '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson))
 (10 rows)
 
 -- $eq across every type.

@@ -417,15 +417,13 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 (12 rows)
 
 -- ===========================================================================
--- SECTION C-TODO: known suboptimal/unsupported cases to be addressed later
+-- SECTION C-TODO: cases requiring support function _id pushdown
 -- ===========================================================================
--- C-TODO-1: filter on _id with a RUM compound index covering _id.
--- TODO: IOS for filter-on-_id against a RUM compound index is not yet
--- supported. Today the planner generates _id-typed quals (object_id filters)
--- for _id predicates that the RUM index cannot satisfy index-only; enabling
--- this requires query generation and planner changes to emit RUM-friendly
--- _id quals on the indexed bson document column. Once supported, this
--- should produce an Index Only Scan on country_id_1.
+-- Enable the support function _id pushdown to allow _id filter quals
+-- to be pushed to the RUM compound index.
+SET documentdb.enable_support_function_id_pushdown TO on;
+-- C4: filter on _id range with country equality, projection on country + _id
+-- Expected: IOS using country_id_1 (both filter quals pushed to index)
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "hint": "country_id_1", "filter": { "_id": { "$gt": 3 }, "country": { "$eq": "USA" } }, "projection": { "country": 1, "_id": 1 } }')$$, p_ignore_heap_fetches => true);
                                                                                                                                     run_explain_and_trim                                                                                                                                    
 ---------------------------------------------------------------------
@@ -438,11 +436,215 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
    innerScanLoops: 1 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
-   ->  Index Scan using country_id_1 on documentdb_data.documents_6961_696002 collection (actual rows=1 loops=1)
+   ->  Index Only Scan using country_id_1 on documentdb_data.documents_6961_696002 collection (actual rows=1 loops=1)
          Output: document
          Index Cond: ((collection.document @> '{ "_id" : { "$numberInt" : "3" } }'::bson) AND (collection.document @= '{ "country" : "USA" }'::bson))
-         Filter: ((collection.object_id > '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
+         Heap Fetches: xxx
 (13 rows)
+
+-- C5: filter on _id range with country range, projection on _id only
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "hint": "country_id_1", "filter": { "_id": { "$gt": 1 }, "country": { "$gte": "Mexico" } }, "projection": { "_id": 1 } }')$$, p_ignore_heap_fetches => true);
+                                                                                                                    run_explain_and_trim                                                                                                                    
+---------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
+   Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "_id" : { "$gt" : { "$numberInt" : "1" } }, "country" : { "$gte" : "Mexico" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   indexName: country_id_1
+   indexKey: {"country": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["country": ["Mexico", { }), "_id": (1, Infinity]]
+   innerScanLoops: 6 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
+   ->  Index Only Scan using country_id_1 on documentdb_data.documents_6961_696002 collection (actual rows=5 loops=1)
+         Output: document
+         Index Cond: ((collection.document @> '{ "_id" : { "$numberInt" : "1" } }'::bson) AND (collection.document @>= '{ "country" : "Mexico" }'::bson))
+         Heap Fetches: xxx
+(13 rows)
+
+-- C6: filter on _id $lt with country equality, projection on country + _id
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "hint": "country_id_1", "filter": { "_id": { "$lt": 5 }, "country": { "$eq": "USA" } }, "projection": { "country": 1, "_id": 1 } }')$$, p_ignore_heap_fetches => true);
+                                                                                                                                    run_explain_and_trim                                                                                                                                    
+---------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   Output: bson_dollar_project_find(document, '{ "country" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "1" } }'::bson, '{ "_id" : { "$lt" : { "$numberInt" : "5" } }, "country" : { "$eq" : "USA" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   indexName: country_id_1
+   indexKey: {"country": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["country": ["USA", "USA"], "_id": [-Infinity, 5)]
+   innerScanLoops: 3 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
+   ->  Index Only Scan using country_id_1 on documentdb_data.documents_6961_696002 collection (actual rows=2 loops=1)
+         Output: document
+         Index Cond: ((collection.document @< '{ "_id" : { "$numberInt" : "5" } }'::bson) AND (collection.document @= '{ "country" : "USA" }'::bson))
+         Heap Fetches: xxx
+(13 rows)
+
+-- C7: filter on _id $gte with country equality, projection on country + _id
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "hint": "country_id_1", "filter": { "_id": { "$gte": 2 }, "country": { "$eq": "Mexico" } }, "projection": { "country": 1, "_id": 1 } }')$$, p_ignore_heap_fetches => true);
+                                                                                                                                      run_explain_and_trim                                                                                                                                      
+---------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+   Output: bson_dollar_project_find(document, '{ "country" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "1" } }'::bson, '{ "_id" : { "$gte" : { "$numberInt" : "2" } }, "country" : { "$eq" : "Mexico" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   indexName: country_id_1
+   indexKey: {"country": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["country": ["Mexico", "Mexico"], "_id": [2, Infinity]]
+   innerScanLoops: 4 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+   ->  Index Only Scan using country_id_1 on documentdb_data.documents_6961_696002 collection (actual rows=3 loops=1)
+         Output: document
+         Index Cond: ((collection.document @>= '{ "_id" : { "$numberInt" : "2" } }'::bson) AND (collection.document @= '{ "country" : "Mexico" }'::bson))
+         Heap Fetches: xxx
+(13 rows)
+
+-- C8: filter on _id $lte with country range, projection on _id only
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "hint": "country_id_1", "filter": { "_id": { "$lte": 7 }, "country": { "$gte": "India" } }, "projection": { "_id": 1 } }')$$, p_ignore_heap_fetches => true);
+                                                                                                                    run_explain_and_trim                                                                                                                    
+---------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
+   Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "_id" : { "$lte" : { "$numberInt" : "7" } }, "country" : { "$gte" : "India" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   indexName: country_id_1
+   indexKey: {"country": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["country": ["India", { }), "_id": [-Infinity, 7]]
+   innerScanLoops: 8 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
+   ->  Index Only Scan using country_id_1 on documentdb_data.documents_6961_696002 collection (actual rows=5 loops=1)
+         Output: document
+         Index Cond: ((collection.document @<= '{ "_id" : { "$numberInt" : "7" } }'::bson) AND (collection.document @>= '{ "country" : "India" }'::bson))
+         Heap Fetches: xxx
+(13 rows)
+
+-- C9: filter on _id $in with country equality, projection on country + _id
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "hint": "country_id_1", "filter": { "_id": { "$in": [1, 2, 8] }, "country": { "$eq": "USA" } }, "projection": { "country": 1, "_id": 1 } }')$$, p_ignore_heap_fetches => true);
+                                                                                                                                                              run_explain_and_trim                                                                                                                                                              
+---------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+   Output: bson_dollar_project_find(document, '{ "country" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "1" } }'::bson, '{ "_id" : { "$in" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "8" } ] }, "country" : { "$eq" : "USA" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   indexName: country_id_1
+   indexKey: {"country": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["country": ["USA", "USA"], "_id": [1, 1]], ["country": ["USA", "USA"], "_id": [2, 2]], ["country": ["USA", "USA"], "_id": [8, 8]]
+   innerScanLoops: 3 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3), (isInequality: false, estimatedEntryCount: 0), (isInequality: false, estimatedEntryCount: 0)]
+   ->  Index Only Scan using country_id_1 on documentdb_data.documents_6961_696002 collection (actual rows=3 loops=1)
+         Output: document
+         Index Cond: ((collection.document @*= '{ "_id" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "8" } ] }'::bson) AND (collection.document @= '{ "country" : "USA" }'::bson))
+         Heap Fetches: xxx
+(13 rows)
+
+-- C10: filter on _id only (no country filter), projection on country + _id
+-- The compound index still covers the projection even if only _id is filtered.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "hint": "country_id_1", "filter": { "_id": { "$gt": 5 } }, "projection": { "country": 1, "_id": 1 } }')$$, p_ignore_heap_fetches => true);
+                                                                                                                    run_explain_and_trim                                                                                                                     
+---------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
+   Output: bson_dollar_project_find(document, '{ "country" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "1" } }'::bson, '{ "_id" : { "$gt" : { "$numberInt" : "5" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   indexName: country_id_1
+   indexKey: {"country": 1,"_id": 1}
+   isMultiKey: false
+   indexBounds: ["country": (MinKey, MaxKey), "_id": (5, Infinity]]
+   innerScanLoops: 9 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
+   ->  Index Only Scan using country_id_1 on documentdb_data.documents_6961_696002 collection (actual rows=5 loops=1)
+         Output: document
+         Index Cond: (collection.document @> '{ "_id" : { "$numberInt" : "5" } }'::bson)
+         Heap Fetches: xxx
+(13 rows)
+
+-- C11: $match on country + _id range → $group by country with $count
+-- Expected: IOS using country_id_1 for aggregation with _id filter
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('iosfp_db', '{ "aggregate": "iosfp_coll", "pipeline": [ { "$match": { "_id": { "$gt": 2 }, "country": { "$gte": "Mexico" } } }, { "$group": { "_id": "$country", "n": { "$sum": 1 } } } ], "hint": "country_id_1" }')$$, p_ignore_heap_fetches => true);
+                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                       
+---------------------------------------------------------------------
+ GroupAggregate (actual rows=2 loops=1)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
+         Output: bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         indexName: country_id_1
+         indexKey: {"country": 1,"_id": 1}
+         isMultiKey: false
+         indexBounds: ["country": ["Mexico", { }), "_id": (2, Infinity]]
+         innerScanLoops: 6 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
+         ->  Index Only Scan using country_id_1 on documentdb_data.documents_6961_696002 collection (actual rows=4 loops=1)
+               Output: document
+               Index Cond: ((collection.document @> '{ "_id" : { "$numberInt" : "2" } }'::bson) AND (collection.document @>= '{ "country" : "Mexico" }'::bson))
+               Order By: (collection.document |-<> '{ "country" : { "$numberInt" : "1" } }'::bson)
+               Heap Fetches: xxx
+(17 rows)
+
+SELECT document FROM bson_aggregation_pipeline('iosfp_db', '{ "aggregate": "iosfp_coll", "pipeline": [ { "$match": { "_id": { "$gt": 2 }, "country": { "$gte": "Mexico" } } }, { "$group": { "_id": "$country", "n": { "$sum": 1 } } } ], "hint": "country_id_1" }');
+                      document                      
+---------------------------------------------------------------------
+ { "_id" : "Mexico", "n" : { "$numberInt" : "3" } }
+ { "_id" : "USA", "n" : { "$numberInt" : "1" } }
+(2 rows)
+
+-- C12: $match on country + _id range → $count
+-- Expected: IOS using country_id_1 for count with _id filter
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('iosfp_db', '{ "aggregate": "iosfp_coll", "pipeline": [ { "$match": { "_id": { "$gte": 3 }, "country": { "$eq": "USA" } } }, { "$count": "total" } ], "hint": "country_id_1" }')$$, p_ignore_heap_fetches => true);
+                                                                    run_explain_and_trim                                                                     
+---------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   Output: bson_repath_and_build('total'::text, bsoncount(1))
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+         indexName: country_id_1
+         indexKey: {"country": 1,"_id": 1}
+         isMultiKey: false
+         indexBounds: ["country": ["USA", "USA"], "_id": [3, Infinity]]
+         innerScanLoops: 1 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+         ->  Index Only Scan using country_id_1 on documentdb_data.documents_6961_696002 collection (actual rows=1 loops=1)
+               Index Cond: ((collection.document @>= '{ "_id" : { "$numberInt" : "3" } }'::bson) AND (collection.document @= '{ "country" : "USA" }'::bson))
+               Heap Fetches: xxx
+(13 rows)
+
+SELECT document FROM bson_aggregation_pipeline('iosfp_db', '{ "aggregate": "iosfp_coll", "pipeline": [ { "$match": { "_id": { "$gte": 3 }, "country": { "$eq": "USA" } } }, { "$count": "total" } ], "hint": "country_id_1" }');
+               document               
+---------------------------------------------------------------------
+ { "total" : { "$numberInt" : "1" } }
+(1 row)
+
+-- C13: $match on _id only → $group by _id (compound index used via hint)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('iosfp_db', '{ "aggregate": "iosfp_coll", "pipeline": [ { "$match": { "_id": { "$lt": 6 } } }, { "$group": { "_id": "$country", "n": { "$sum": 1 } } } ], "hint": "country_id_1" }')$$, p_ignore_heap_fetches => true);
+                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                       
+---------------------------------------------------------------------
+ GroupAggregate (actual rows=4 loops=1)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
+         Output: bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         indexName: country_id_1
+         indexKey: {"country": 1,"_id": 1}
+         isMultiKey: false
+         indexBounds: ["country": (MinKey, MaxKey), "_id": [-Infinity, 6)]
+         innerScanLoops: 9 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
+         ->  Index Only Scan using country_id_1 on documentdb_data.documents_6961_696002 collection (actual rows=5 loops=1)
+               Output: document
+               Index Cond: ((collection.document @< '{ "_id" : { "$numberInt" : "6" } }'::bson) AND (collection.document @<> '{ "country" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+               Order By: (collection.document |-<> '{ "country" : { "$numberInt" : "1" } }'::bson)
+               Heap Fetches: xxx
+(17 rows)
+
+SELECT document FROM bson_aggregation_pipeline('iosfp_db', '{ "aggregate": "iosfp_coll", "pipeline": [ { "$match": { "_id": { "$lt": 6 } } }, { "$group": { "_id": "$country", "n": { "$sum": 1 } } } ], "hint": "country_id_1" }');
+                      document                      
+---------------------------------------------------------------------
+ { "_id" : "Brazil", "n" : { "$numberInt" : "1" } }
+ { "_id" : "India", "n" : { "$numberInt" : "1" } }
+ { "_id" : "Mexico", "n" : { "$numberInt" : "1" } }
+ { "_id" : "USA", "n" : { "$numberInt" : "2" } }
+(4 rows)
 
 -- C-TODO-2: find with projection of only `_id`.
 -- TODO: Index-only scan for a projection that only includes `_id` is not yet

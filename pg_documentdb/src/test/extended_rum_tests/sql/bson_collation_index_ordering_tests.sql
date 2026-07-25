@@ -2216,6 +2216,30 @@ SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate"
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": { "$gte": "brazil" } } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
 SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": { "$gte": "brazil" } } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }');
 
+-- ==== IOS with _id range + collated country on compound {country, _id} index ====
+SET documentdb.enable_support_function_id_pushdown TO on;
+SET documentdb.enableIndexOnlyScanForFindProject TO on;
+
+-- _id $gt + collated country, projection on country + _id
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "usa", "_id": { "$gt": "bird" } }, "projection": { "country": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "usa", "_id": { "$gt": "bird" } }, "projection": { "country": 1, "_id": 1 }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- _id $gte with collated match ("CAT" >= "cat" at strength 1), projection on _id
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "usa", "_id": { "$gte": "CAT" } }, "projection": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "usa", "_id": { "$gte": "CAT" } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- _id $lt + collated country, projection on country + _id
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "brazil", "_id": { "$lt": "dog" } }, "projection": { "country": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "brazil", "_id": { "$lt": "dog" } }, "projection": { "country": 1, "_id": 1 }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- $count with _id range + collated country
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa", "_id": { "$gte": "cat" } } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa", "_id": { "$gte": "cat" } } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+
+-- _id $in + collated country, projection on country + _id
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "usa", "_id": { "$in": ["cat", "dog"] } }, "projection": { "country": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "usa", "_id": { "$in": ["cat", "dog"] } }, "projection": { "country": 1, "_id": 1 }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
 RESET enable_bitmapscan;
 
 RESET documentdb.max_non_ordered_term_scan_threshold;

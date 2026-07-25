@@ -103,6 +103,7 @@ extern bool EnableDistinctIndexPushdown;
 extern bool EnableDistinctExistsFilterPushdown;
 extern bool EnableSubqueryPushdownForMatch;
 extern bool EnableDollarSampleReservoirScan;
+extern bool EnableSupportFunctionIdPushdown;
 
 /* GUC to config tdigest compression */
 extern int TdigestCompressionAccuracy;
@@ -4551,6 +4552,8 @@ HandleMatchWithIndexFilter(const bson_value_t *existingValue, Query *query,
 	filterContext.coerceOperatorExprIfApplicable = true;
 	filterContext.requiredFilterPathNameHashSet = requiredFilterPathNameHashSet;
 	filterContext.variableContext = context->variableSpec;
+	filterContext.skipIdBtreeCoercion = EnableSupportFunctionIdPushdown &&
+										IsClusterVersionAtleast(DocDB_V0, 112, 1);
 
 	if (EnableCollation)
 	{
@@ -4913,19 +4916,29 @@ AddShardKeyAndIdFilters(const bson_value_t *existingValue, Query *query,
 		hasShardKeyFilters = true;
 	}
 
-	if (hasShardKeyFilters)
+	if (hasShardKeyFilters ||
+		(EnableSupportFunctionIdPushdown &&
+		 IsClusterVersionAtleast(DocDB_V0, 112, 1)))
 	{
 		/* Protocol behavior allows collation on _id field. We need to make sure we do that as well. We can't
 		 * push the Id filter to primary key index if the type needs to be collation aware (e.g., _id contains UTF8 )*/
 		bool isCollationAware;
 		bool isPointRead = false;
+		bool hasObjectIdFuncExprs = false;
 		Expr *idFilter = CreateIdFilterForQuery(existingQuals, var->varno,
-												&isCollationAware, &isPointRead);
+												&isCollationAware, &isPointRead,
+												&hasObjectIdFuncExprs);
 
-		if (idFilter != NULL &&
+		bool considerPrimaryKeyFilters = idFilter != NULL || (hasObjectIdFuncExprs &&
+															  hasShardKeyFilters);
+		if (considerPrimaryKeyFilters &&
 			!(isCollationAware && IsCollationApplicable(context->collationString)))
 		{
-			existingQuals = lappend(existingQuals, idFilter);
+			if (idFilter != NULL)
+			{
+				existingQuals = lappend(existingQuals, idFilter);
+			}
+
 			context->isPointReadQuery = isPointRead;
 
 			/* If we skipped writing the shard key on the base table, write it now */

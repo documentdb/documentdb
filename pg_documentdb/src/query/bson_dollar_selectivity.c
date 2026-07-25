@@ -444,6 +444,59 @@ GetDollarOperatorSelectivity(PlannerInfo *planner, Oid selectivityOpExpr,
 
 
 /*
+ * GetObjectIdOperatorSelectivity computes selectivity for an object_id
+ * FuncExpr using PG's built-in selectivity functions (eqsel, scalargtsel, etc.)
+ * based on the index strategy derived from the function OID.
+ */
+double
+GetObjectIdOperatorSelectivity(PlannerInfo *planner, Oid funcId,
+							   Expr *objectIdExpr, Expr *querySpecExpr,
+							   int varRelId, Oid collation)
+{
+	const ObjectIdMongoOperatorInfo *operatorInfo =
+		GetObjectIdMongoIndexOperatorByPostgresFuncId(funcId);
+
+	if (operatorInfo->indexOperator.indexStrategy == BSON_INDEX_STRATEGY_INVALID)
+	{
+		return DEFAULT_INEQ_SEL;
+	}
+
+	const MongoIndexOperatorInfo *mongoIndexOperatorInfo =
+		GetMongoIndexOperatorInfoByOperatorType(operatorInfo->queryOperator.operatorType);
+	Oid operatorOid = GetMongoQueryOperatorOid(mongoIndexOperatorInfo);
+
+	if (!OidIsValid(operatorOid))
+	{
+		return DEFAULT_INEQ_SEL;
+	}
+
+	if (IsA(querySpecExpr, Const) && !((Const *) querySpecExpr)->constisnull)
+	{
+		pgbson *queryBson = DatumGetPgBson(((Const *) querySpecExpr)->constvalue);
+		pgbsonelement queryElement;
+		PgbsonToSinglePgbsonElement(queryBson, &queryElement);
+
+		return GetCustomStatisticsSelectivity(planner,
+											  operatorInfo->indexOperator.indexStrategy,
+											  operatorOid,
+											  (Node *) objectIdExpr,
+											  &queryElement.bsonValue,
+											  varRelId,
+											  collation,
+											  DEFAULT_INEQ_SEL);
+	}
+
+	List *newArgs = list_make2(objectIdExpr, querySpecExpr);
+	double selectivity = generic_restriction_selectivity(planner, operatorOid,
+														 collation,
+														 newArgs, varRelId,
+														 DEFAULT_INEQ_SEL);
+	list_free(newArgs);
+	return selectivity;
+}
+
+
+/*
  * Legacy function for compat to restore prior value to
  * implementing selectivity.
  */

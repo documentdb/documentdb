@@ -17,6 +17,7 @@
 
 #include "planner/mongo_query_operator.h"
 #include "metadata/metadata_cache.h"
+#include "utils/version_utils.h"
 
 /* --------------------------------------------------------- */
 /* Top level declarations */
@@ -63,6 +64,11 @@ static const MongoQueryOperator UnknownOperator = {
 };
 static const MongoIndexOperatorInfo UnknownIndexOperator = {
 	NULL, BSON_INDEX_STRATEGY_INVALID, false
+};
+static const ObjectIdMongoOperatorInfo UnknownObjectIdOperator = {
+	{ NULL, QUERY_OPERATOR_UNKNOWN, NULL, NULL, NULL, NULL,
+	  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
+	{ NULL, BSON_INDEX_STRATEGY_INVALID, false },
 };
 
 /*
@@ -543,81 +549,67 @@ static const int QueryOperatorSize = sizeof(QueryOperators) / sizeof(MongoOperat
  * indexed directly by MongoQueryOperatorType -- see
  * GetObjectIdMongoQueryOperatorByQueryOperatorType.
  */
-static const MongoOperatorInfo ObjectIdQueryOperators[] = {
+static const ObjectIdMongoOperatorInfo ObjectIdQueryOperators[] = {
 	{
 		{ "$eq", QUERY_OPERATOR_EQ, GetClusterBsonQueryTypeId,
 		  BsonEqualMatchObjectIdRuntimeFunctionId,
-		  InvalidQueryOperatorFuncOid, BsonEqualMatchIndexFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonEqualMatchRuntimeFunctionId,
 		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
-		{ 0 },
 		{ "@=", BSON_INDEX_STRATEGY_DOLLAR_EQUAL, false },
-		false,
 	},
 	{
 		{ "$gt", QUERY_OPERATOR_GT, GetClusterBsonQueryTypeId,
 		  BsonGreaterThanMatchObjectIdRuntimeFunctionId,
-		  InvalidQueryOperatorFuncOid, BsonGreaterThanMatchIndexFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonGreaterThanMatchRuntimeFunctionId,
 		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
-		{ 0 },
 		{ "@>", BSON_INDEX_STRATEGY_DOLLAR_GREATER, false },
-		false,
 	},
 	{
 		{ "$gte", QUERY_OPERATOR_GTE, GetClusterBsonQueryTypeId,
 		  BsonGreaterThanEqualMatchObjectIdRuntimeFunctionId,
-		  InvalidQueryOperatorFuncOid, BsonGreaterThanEqualMatchIndexFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonGreaterThanEqualMatchRuntimeFunctionId,
 		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
-		{ 0 },
 		{ "@>=", BSON_INDEX_STRATEGY_DOLLAR_GREATER_EQUAL, false },
-		false,
 	},
 	{
 		{ "$lt", QUERY_OPERATOR_LT, GetClusterBsonQueryTypeId,
 		  BsonLessThanMatchObjectIdRuntimeFunctionId,
-		  InvalidQueryOperatorFuncOid, BsonLessThanMatchIndexFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonLessThanMatchRuntimeFunctionId,
 		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
-		{ 0 },
 		{ "@<", BSON_INDEX_STRATEGY_DOLLAR_LESS, false },
-		false,
 	},
 	{
 		{ "$lte", QUERY_OPERATOR_LTE, GetClusterBsonQueryTypeId,
 		  BsonLessThanEqualMatchObjectIdRuntimeFunctionId,
-		  InvalidQueryOperatorFuncOid, BsonLessThanEqualMatchIndexFunctionId,
+		  InvalidQueryOperatorFuncOid, BsonLessThanEqualMatchRuntimeFunctionId,
 		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
-		{ 0 },
 		{ "@<=", BSON_INDEX_STRATEGY_DOLLAR_LESS_EQUAL, false },
-		false,
 	},
 	{
 		{ "$in", QUERY_OPERATOR_IN, GetClusterBsonQueryTypeId,
 		  BsonInObjectIdMatchFunctionId,
 		  InvalidQueryOperatorFuncOid, BsonInMatchFunctionId,
 		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
-		{ 0 },
 		{ "@*=", BSON_INDEX_STRATEGY_DOLLAR_IN, false },
-		false,
 	},
 	{
 		{ "$regex", QUERY_OPERATOR_REGEX, GetClusterBsonQueryTypeId,
 		  BsonRegexObjectIdMatchFunctionId,
 		  InvalidQueryOperatorFuncOid, BsonRegexMatchFunctionId,
 		  INVALID_QUERY_OPERATOR_FEATURE_TYPE },
-		{ 0 },
 		{ "@~", BSON_INDEX_STRATEGY_DOLLAR_REGEX, false },
-		false,
 	},
 };
 
 static const int ObjectIdQueryOperatorSize = sizeof(ObjectIdQueryOperators) /
-											 sizeof(MongoOperatorInfo);
+											 sizeof(ObjectIdMongoOperatorInfo);
 
 /*
  * The ObjectIdQueryOperators array must be indexable by MongoQueryOperatorType
  * for the leading ObjectId-supported operators, i.e. entry [i] must correspond
  * to MongoQueryOperatorType value i for i in [0, QUERY_OPERATOR_OBJECT_ID_MAX].
  */
-StaticAssertDecl(sizeof(ObjectIdQueryOperators) / sizeof(MongoOperatorInfo) ==
+StaticAssertDecl(sizeof(ObjectIdQueryOperators) / sizeof(ObjectIdMongoOperatorInfo) ==
 				 QUERY_OPERATOR_OBJECT_ID_MAX + 1,
 				 "ObjectIdQueryOperators must cover [0, QUERY_OPERATOR_OBJECT_ID_MAX]");
 
@@ -723,6 +715,30 @@ GetMongoQueryOperatorByPostgresFuncId(Oid functionId)
 }
 
 
+const ObjectIdMongoOperatorInfo *
+GetObjectIdMongoQueryOperatorByNonObjectIdFuncId(Oid functionId)
+{
+	if (!IsClusterVersionAtleast(DocDB_V0, 112, 1))
+	{
+		return &UnknownObjectIdOperator;
+	}
+
+	for (int operatorIndex = 0; operatorIndex < ObjectIdQueryOperatorSize;
+		 operatorIndex++)
+	{
+		const ObjectIdMongoOperatorInfo *operator =
+			&(ObjectIdQueryOperators[operatorIndex]);
+		if (operator->indexOperator.postgresOperatorName &&
+			functionId == operator->queryOperator.postgresIndexFunctionOidLookup())
+		{
+			return operator;
+		}
+	}
+
+	return &UnknownObjectIdOperator;
+}
+
+
 const MongoIndexOperatorInfo *
 GetMongoIndexOperatorByPostgresOperatorId(Oid operatorId)
 {
@@ -768,22 +784,27 @@ GetMongoIndexOperatorInfoByPostgresFuncId(Oid functionId)
 }
 
 
-const MongoIndexOperatorInfo *
+const ObjectIdMongoOperatorInfo *
 GetObjectIdMongoIndexOperatorByPostgresFuncId(Oid functionId)
 {
+	if (!IsClusterVersionAtleast(DocDB_V0, 112, 1))
+	{
+		return &UnknownObjectIdOperator;
+	}
+
 	for (int operatorIndex = 0; operatorIndex < ObjectIdQueryOperatorSize;
 		 operatorIndex++)
 	{
-		const MongoOperatorInfo *operator = &(ObjectIdQueryOperators[operatorIndex]);
-		if (operator->indexQueryOperator.postgresOperatorName &&
-			(functionId ==
-			 operator->bsonQueryOperator.postgresRuntimeFunctionOidLookup()))
+		const ObjectIdMongoOperatorInfo *operator =
+			&(ObjectIdQueryOperators[operatorIndex]);
+		if (operator->indexOperator.postgresOperatorName &&
+			(functionId == operator->queryOperator.postgresRuntimeFunctionOidLookup()))
 		{
-			return &operator->indexQueryOperator;
+			return operator;
 		}
 	}
 
-	return &UnknownIndexOperator;
+	return &UnknownObjectIdOperator;
 }
 
 
@@ -798,6 +819,13 @@ GetMongoQueryOperatorByQueryOperatorType(MongoQueryOperatorType type,
 										 MongoQueryOperatorInputType inputType)
 {
 	return GetQueryOperatorCore(&QueryOperators[type], inputType);
+}
+
+
+const MongoIndexOperatorInfo *
+GetMongoIndexOperatorInfoByOperatorType(MongoQueryOperatorType type)
+{
+	return &QueryOperators[type].indexQueryOperator;
 }
 
 

@@ -344,6 +344,10 @@ bool EnableGroupByDistinctScan = DEFAULT_ENABLE_GROUP_BY_DISTINCT_SCAN;
 #define DEFAULT_ENABLE_DISTINCT_SCAN_FOR_GROUP_FIRST true
 bool EnableDistinctScanForGroupFirst = DEFAULT_ENABLE_DISTINCT_SCAN_FOR_GROUP_FIRST;
 
+/* Added in v117, Pending stabilization, enable in v121 */
+#define DEFAULT_ENABLE_SUPPORT_FUNCTION_ID_PUSHDOWN false
+bool EnableSupportFunctionIdPushdown = DEFAULT_ENABLE_SUPPORT_FUNCTION_ID_PUSHDOWN;
+
 /*
  * SECTION: Aggregation & Query feature flags
  */
@@ -455,6 +459,10 @@ bool EnableDollarSampleHeapSkipReservoirScan =
 /* Added in v114, enabled in v114, remove after v117 */
 #define DEFAULT_ENABLE_SKIP_COMMENT_FIELD_ON_UPSERT true
 bool EnableSkipCommentFieldOnUpsert = DEFAULT_ENABLE_SKIP_COMMENT_FIELD_ON_UPSERT;
+
+/* Added in v116, enabled in v116, remove after v119 */
+#define DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MATCH true
+bool EnableExistentialNullArrayMatch = DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MATCH;
 
 /*
  * SECTION: Let support feature flags
@@ -577,10 +585,6 @@ bool EnableDeadIndexEntryMarkingByTTLTask =
 /* Added in v111, enabled in v111, remove after v115 */
 #define DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES true
 bool TTLSkipCaughtUpIndexes = DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES;
-
-/* Added in v116, enabled in v116, remove after v119 */
-#define DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MATCH true
-bool EnableExistentialNullArrayMatch = DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MATCH;
 
 /* FEATURE FLAGS END */
 
@@ -1544,6 +1548,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableDollarSampleHeapSkipReservoirScan,
 		DEFAULT_ENABLE_DOLLAR_SAMPLE_HEAP_SKIP_RESERVOIR_SCAN,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_support_function_id_pushdown", newGucPrefix),
+		gettext_noop(
+			"Whether to use support function for _id index pushdown."),
+		NULL,
+		&EnableSupportFunctionIdPushdown,
+		DEFAULT_ENABLE_SUPPORT_FUNCTION_ID_PUSHDOWN,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

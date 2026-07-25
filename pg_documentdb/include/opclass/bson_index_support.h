@@ -142,6 +142,10 @@ bool IsCollationPresentOnQueryOrIndex(const char *queryCollation, bytea *indexOp
 void ConsiderBtreeOrderByPushdown(PlannerInfo *root, IndexPath *indexPath);
 bool GetBtreeIndexBoundQuals(BsonIndexStrategy strategy, const bson_value_t *queryValue,
 							 Index varno, Expr **firstBound, Expr **secondBound);
+bool ExtractExprsForObjectIdFunction(FuncExpr *expr, pgbsonelement *queryElement,
+									 Var **objectIdVar,
+									 Var **documentVar, Datum *queryValue,
+									 bool allowCollation);
 void documentdb_btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 							   Cost *indexStartupCost, Cost *indexTotalCost,
 							   Selectivity *indexSelectivity, double *indexCorrelation,

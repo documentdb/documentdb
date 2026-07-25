@@ -121,17 +121,49 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "hint": "country_1", "filter": { "country": { "$eq": "USA" } }, "projection": { "country": 1 } }')$$, p_ignore_heap_fetches => true);
 
 -- ===========================================================================
--- SECTION C-TODO: known suboptimal/unsupported cases to be addressed later
+-- SECTION C-TODO: cases requiring support function _id pushdown
 -- ===========================================================================
 
--- C-TODO-1: filter on _id with a RUM compound index covering _id.
--- TODO: IOS for filter-on-_id against a RUM compound index is not yet
--- supported. Today the planner generates _id-typed quals (object_id filters)
--- for _id predicates that the RUM index cannot satisfy index-only; enabling
--- this requires query generation and planner changes to emit RUM-friendly
--- _id quals on the indexed bson document column. Once supported, this
--- should produce an Index Only Scan on country_id_1.
+-- Enable the support function _id pushdown to allow _id filter quals
+-- to be pushed to the RUM compound index.
+SET documentdb.enable_support_function_id_pushdown TO on;
+
+-- C4: filter on _id range with country equality, projection on country + _id
+-- Expected: IOS using country_id_1 (both filter quals pushed to index)
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "hint": "country_id_1", "filter": { "_id": { "$gt": 3 }, "country": { "$eq": "USA" } }, "projection": { "country": 1, "_id": 1 } }')$$, p_ignore_heap_fetches => true);
+
+-- C5: filter on _id range with country range, projection on _id only
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "hint": "country_id_1", "filter": { "_id": { "$gt": 1 }, "country": { "$gte": "Mexico" } }, "projection": { "_id": 1 } }')$$, p_ignore_heap_fetches => true);
+
+-- C6: filter on _id $lt with country equality, projection on country + _id
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "hint": "country_id_1", "filter": { "_id": { "$lt": 5 }, "country": { "$eq": "USA" } }, "projection": { "country": 1, "_id": 1 } }')$$, p_ignore_heap_fetches => true);
+
+-- C7: filter on _id $gte with country equality, projection on country + _id
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "hint": "country_id_1", "filter": { "_id": { "$gte": 2 }, "country": { "$eq": "Mexico" } }, "projection": { "country": 1, "_id": 1 } }')$$, p_ignore_heap_fetches => true);
+
+-- C8: filter on _id $lte with country range, projection on _id only
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "hint": "country_id_1", "filter": { "_id": { "$lte": 7 }, "country": { "$gte": "India" } }, "projection": { "_id": 1 } }')$$, p_ignore_heap_fetches => true);
+
+-- C9: filter on _id $in with country equality, projection on country + _id
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "hint": "country_id_1", "filter": { "_id": { "$in": [1, 2, 8] }, "country": { "$eq": "USA" } }, "projection": { "country": 1, "_id": 1 } }')$$, p_ignore_heap_fetches => true);
+
+-- C10: filter on _id only (no country filter), projection on country + _id
+-- The compound index still covers the projection even if only _id is filtered.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "hint": "country_id_1", "filter": { "_id": { "$gt": 5 } }, "projection": { "country": 1, "_id": 1 } }')$$, p_ignore_heap_fetches => true);
+
+-- C11: $match on country + _id range → $group by country with $count
+-- Expected: IOS using country_id_1 for aggregation with _id filter
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('iosfp_db', '{ "aggregate": "iosfp_coll", "pipeline": [ { "$match": { "_id": { "$gt": 2 }, "country": { "$gte": "Mexico" } } }, { "$group": { "_id": "$country", "n": { "$sum": 1 } } } ], "hint": "country_id_1" }')$$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('iosfp_db', '{ "aggregate": "iosfp_coll", "pipeline": [ { "$match": { "_id": { "$gt": 2 }, "country": { "$gte": "Mexico" } } }, { "$group": { "_id": "$country", "n": { "$sum": 1 } } } ], "hint": "country_id_1" }');
+
+-- C12: $match on country + _id range → $count
+-- Expected: IOS using country_id_1 for count with _id filter
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('iosfp_db', '{ "aggregate": "iosfp_coll", "pipeline": [ { "$match": { "_id": { "$gte": 3 }, "country": { "$eq": "USA" } } }, { "$count": "total" } ], "hint": "country_id_1" }')$$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('iosfp_db', '{ "aggregate": "iosfp_coll", "pipeline": [ { "$match": { "_id": { "$gte": 3 }, "country": { "$eq": "USA" } } }, { "$count": "total" } ], "hint": "country_id_1" }');
+
+-- C13: $match on _id only → $group by _id (compound index used via hint)
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('iosfp_db', '{ "aggregate": "iosfp_coll", "pipeline": [ { "$match": { "_id": { "$lt": 6 } } }, { "$group": { "_id": "$country", "n": { "$sum": 1 } } } ], "hint": "country_id_1" }')$$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_pipeline('iosfp_db', '{ "aggregate": "iosfp_coll", "pipeline": [ { "$match": { "_id": { "$lt": 6 } } }, { "$group": { "_id": "$country", "n": { "$sum": 1 } } } ], "hint": "country_id_1" }');
 
 -- C-TODO-2: find with projection of only `_id`.
 -- TODO: Index-only scan for a projection that only includes `_id` is not yet
