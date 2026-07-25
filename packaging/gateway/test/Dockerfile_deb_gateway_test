@@ -40,6 +40,7 @@ RUN install -d -m 0755 /etc/apt/keyrings; \
         postgresql-${POSTGRES_VERSION}-cron \
         postgresql-${POSTGRES_VERSION}-pgvector \
         postgresql-${POSTGRES_VERSION}-postgis-3 \
+        jq \
         $RUM_PKG \
     ; \
     rm -rf /var/lib/apt/lists/*
