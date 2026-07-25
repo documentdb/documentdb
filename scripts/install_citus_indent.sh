@@ -32,7 +32,9 @@ curl -L https://github.com/uncrustify/uncrustify/archive/${UNCRUSTIFY_REF}.tar.g
 cd uncrustify-${UNCRUSTIFY_REF}/
 mkdir build
 cd build
-cmake ..
+# CMAKE_POLICY_VERSION_MINIMUM: uncrustify's cmake_minimum_required predates
+# CMake 4's floor (needed on Ubuntu 26.04+); a no-op on older CMake.
+cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ..
 make -j5
 make install
 cd ../..
