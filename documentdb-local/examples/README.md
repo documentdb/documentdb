@@ -67,6 +67,9 @@ per data volume — to change them later, start fresh with
 - From **another compose service**: replace `localhost` with the service
   name, e.g. `@documentdb:10260`. No `ports:` mapping is needed for
   service-to-service traffic.
+- **Nothing installed on the host?** The image ships `mongosh`; run it
+  inside the container:
+  `docker compose exec documentdb mongosh "mongodb://demo:DemoPass100@localhost:10260/?tls=true&tlsAllowInvalidCertificates=true"`
 
 The gateway serves TLS with a self-signed certificate by default, hence
 `tls=true&tlsAllowInvalidCertificates=true`. To bring your own certificate,

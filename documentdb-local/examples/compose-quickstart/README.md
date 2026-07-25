@@ -16,6 +16,13 @@ returns you can connect immediately:
 mongosh "mongodb://demo:DemoPass100@localhost:10260/?tls=true&tlsAllowInvalidCertificates=true"
 ```
 
+No `mongosh` on your machine? The image ships one — run it inside the
+container instead:
+
+```bash
+docker compose exec documentdb mongosh "mongodb://demo:DemoPass100@localhost:10260/?tls=true&tlsAllowInvalidCertificates=true"
+```
+
 Or from Python:
 
 ```python
