@@ -22,7 +22,7 @@ select count(*)*0 as count from documentdb_api_internal.command_feature_counter_
 
 -- vector index creation error
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "feature_counter_col", "indexes": [ { "key": { "a": "cosmosSearch"}, "name": "foo_1"  } ] }', true);
-ERROR:  Error in specification { "key" : { "a" : "cosmosSearch" }, "name" : "foo_1" }:Index type 'CosmosSearch' was requested, but the 'cosmosSearch' options were not provided.
+ERROR:  Error in specification { "key" : { "a" : "cosmosSearch" }, "name" : "foo_1" }:Index type 'CosmosSearch' was requested, but the 'cosmosSearch' options were not provided. Add a 'cosmosSearchOptions' document to the index specification using the createIndexes command directly (e.g. db.runCommand({ createIndexes: ..., indexes: [ { name: ..., key: ..., cosmosSearchOptions: {...} } ] })); some shell helpers such as mongosh's createIndex() drop this non-standard option.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "feature_counter_col", "indexes": [ { "key": { "a": 1 }, "name": "foo_1", "cosmosSearchOptions": { } } ] }', true);
 ERROR:  Error in specification { "key" : { "a" : 1 }, "name" : "foo_1", "cosmosSearchOptions" : {  } }:cosmosSearch index kind must be specified
 -- create collection

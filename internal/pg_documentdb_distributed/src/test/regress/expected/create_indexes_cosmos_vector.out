@@ -11,7 +11,7 @@ NOTICE:  creating collection
 
 -- now you get different errors
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "create_indexes_vector", "indexes": [ { "key": { "a": "cosmosSearch"}, "name": "foo_1"  } ] }', true);
-ERROR:  Error in specification { "key" : { "a" : "cosmosSearch" }, "name" : "foo_1" }:Index type 'CosmosSearch' was requested, but the 'cosmosSearch' options were not provided.
+ERROR:  Error in specification { "key" : { "a" : "cosmosSearch" }, "name" : "foo_1" }:Index type 'CosmosSearch' was requested, but the 'cosmosSearch' options were not provided. Add a 'cosmosSearchOptions' document to the index specification using the createIndexes command directly (e.g. db.runCommand({ createIndexes: ..., indexes: [ { name: ..., key: ..., cosmosSearchOptions: {...} } ] })); some shell helpers such as mongosh's createIndex() drop this non-standard option.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "create_indexes_vector", "indexes": [ { "key": { "a": 1 }, "name": "foo_1", "cosmosSearchOptions": { } } ] }', true);
 ERROR:  Error in specification { "key" : { "a" : 1 }, "name" : "foo_1", "cosmosSearchOptions" : {  } }:cosmosSearch index kind must be specified
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "create_indexes_vector", "indexes": [ { "key": { "a": "cosmosSearch" }, "name": "foo_1", "cosmosSearchOptions": { "kind": "vector-ivf", "numLists": 100, "similarity": "COS", "dimensions": 1 } } ] }', true);
