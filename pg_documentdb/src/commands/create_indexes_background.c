@@ -1145,7 +1145,7 @@ command_reindex_index_background_internal(PG_FUNCTION_ARGS)
 			const char *indexBuildCmd = GenerateIndexCreateSpecForUpdateOptions(indexDef,
 																				buildAsUnique);
 
-			char *suffix = strstr(indexBuildCmd, "USING");
+			const char *suffix = strstr(indexBuildCmd, "USING");
 			if (!suffix)
 			{
 				ereport(ERROR, (errmsg(
