@@ -922,24 +922,24 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- (index-pushed distinct-style group).
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$group": { "_id": "$a", "count": { "$sum": 1 } } }], "cursor": {} }');
-                                                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                                                
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                QUERY PLAN                                                                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(document, '{ "" : "$a" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true)
    ->  Seq Scan on documentdb_data.documents_2601 collection
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true), document
 (5 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$group": { "_id": "$a", "count": { "$sum": 1 } } }], "cursor": {} }');
-                                                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                                                
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                QUERY PLAN                                                                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(document, '{ "" : "$a" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true)
    ->  Seq Scan on documentdb_data.documents_2601 collection
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true), document
 (5 rows)
 
 -- Stage: $unwind (non-streamable - RequiresPersistentCursorTrue)
@@ -1003,57 +1003,57 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- Stage: $bucket (non-streamable - RequiresPersistentCursorTrue)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$bucket": { "groupBy": "$a", "boundaries": [0, 2, 4], "default": "other" } }], "cursor": {} }');
-                                                                                                                                                                                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                         
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                         QUERY PLAN                                                                                                                                                                                                                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$_bucketInternal" : { "groupBy" : "$a", "boundaries" : [ { "$numberInt" : "0" }, { "$numberInt" : "2" }, { "$numberInt" : "4" } ], "default" : "other" } } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$_bucketInternal" : { "groupBy" : "$a", "boundaries" : [ { "$numberInt" : "0" }, { "$numberInt" : "2" }, { "$numberInt" : "4" } ], "default" : "other" } } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "$_bucketInternal" : { "groupBy" : "$a", "boundaries" : [ { "$numberInt" : "0" }, { "$numberInt" : "2" }, { "$numberInt" : "4" } ], "default" : "other" } } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : { "$_bucketInternal" : { "groupBy" : "$a", "boundaries" : [ { "$numberInt" : "0" }, { "$numberInt" : "2" }, { "$numberInt" : "4" } ], "default" : "other" } } }'::bson, true)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(document, '{ "" : { "$_bucketInternal" : { "groupBy" : "$a", "boundaries" : [ { "$numberInt" : "0" }, { "$numberInt" : "2" }, { "$numberInt" : "4" } ], "default" : "other" } } }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : { "$_bucketInternal" : { "groupBy" : "$a", "boundaries" : [ { "$numberInt" : "0" }, { "$numberInt" : "2" }, { "$numberInt" : "4" } ], "default" : "other" } } }'::bson, true)
    ->  Seq Scan on documentdb_data.documents_2601 collection
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : { "$_bucketInternal" : { "groupBy" : "$a", "boundaries" : [ { "$numberInt" : "0" }, { "$numberInt" : "2" }, { "$numberInt" : "4" } ], "default" : "other" } } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : { "$_bucketInternal" : { "groupBy" : "$a", "boundaries" : [ { "$numberInt" : "0" }, { "$numberInt" : "2" }, { "$numberInt" : "4" } ], "default" : "other" } } }'::bson, true), document
 (5 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$bucket": { "groupBy": "$a", "boundaries": [0, 2, 4], "default": "other" } }], "cursor": {} }');
-                                                                                                                                                                                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                         
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                         QUERY PLAN                                                                                                                                                                                                                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$_bucketInternal" : { "groupBy" : "$a", "boundaries" : [ { "$numberInt" : "0" }, { "$numberInt" : "2" }, { "$numberInt" : "4" } ], "default" : "other" } } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$_bucketInternal" : { "groupBy" : "$a", "boundaries" : [ { "$numberInt" : "0" }, { "$numberInt" : "2" }, { "$numberInt" : "4" } ], "default" : "other" } } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "$_bucketInternal" : { "groupBy" : "$a", "boundaries" : [ { "$numberInt" : "0" }, { "$numberInt" : "2" }, { "$numberInt" : "4" } ], "default" : "other" } } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : { "$_bucketInternal" : { "groupBy" : "$a", "boundaries" : [ { "$numberInt" : "0" }, { "$numberInt" : "2" }, { "$numberInt" : "4" } ], "default" : "other" } } }'::bson, true)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(document, '{ "" : { "$_bucketInternal" : { "groupBy" : "$a", "boundaries" : [ { "$numberInt" : "0" }, { "$numberInt" : "2" }, { "$numberInt" : "4" } ], "default" : "other" } } }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : { "$_bucketInternal" : { "groupBy" : "$a", "boundaries" : [ { "$numberInt" : "0" }, { "$numberInt" : "2" }, { "$numberInt" : "4" } ], "default" : "other" } } }'::bson, true)
    ->  Seq Scan on documentdb_data.documents_2601 collection
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : { "$_bucketInternal" : { "groupBy" : "$a", "boundaries" : [ { "$numberInt" : "0" }, { "$numberInt" : "2" }, { "$numberInt" : "4" } ], "default" : "other" } } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : { "$_bucketInternal" : { "groupBy" : "$a", "boundaries" : [ { "$numberInt" : "0" }, { "$numberInt" : "2" }, { "$numberInt" : "4" } ], "default" : "other" } } }'::bson, true), document
 (5 rows)
 
 -- Stage: $sortByCount (non-streamable - RequiresPersistentCursorTrue)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sortByCount": "$a" }], "cursor": {} }');
-                                                                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                                                                 
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                 QUERY PLAN                                                                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Output: agg_stage_0.document, (bson_orderby(agg_stage_0.document, '{ "count" : { "$numberInt" : "-1" } }'::bson))
    Sort Key: (bson_orderby(agg_stage_0.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
    ->  Subquery Scan on agg_stage_0
          Output: agg_stage_0.document, bson_orderby(agg_stage_0.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)
          ->  HashAggregate
-               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true)
                ->  Seq Scan on documentdb_data.documents_2601 collection
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true), collection.document
 (10 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sortByCount": "$a" }], "cursor": {} }');
-                                                                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                                                                 
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                 QUERY PLAN                                                                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Output: agg_stage_0.document, (bson_orderby(agg_stage_0.document, '{ "count" : { "$numberInt" : "-1" } }'::bson))
    Sort Key: (bson_orderby(agg_stage_0.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
    ->  Subquery Scan on agg_stage_0
          Output: agg_stage_0.document, bson_orderby(agg_stage_0.document, '{ "count" : { "$numberInt" : "-1" } }'::bson)
          ->  HashAggregate
-               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true)
                ->  Seq Scan on documentdb_data.documents_2601 collection
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true), collection.document
 (10 rows)
 
 -- Stage: $sample (non-streamable - RequiresPersistentCursorTrue)
@@ -1161,13 +1161,13 @@ SET documentdb.enableDynamicCursors TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$bucketAuto": { "groupBy": "$a", "buckets": 2 } }], "cursor": {} }')
 $cmd$, p_normalize_window := true);
-                                                                                                                                                                                                                                                                             run_explain_and_trim                                                                                                                                                                                                                                                                              
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(bson_dollar_add_fields(agg_stage_0.document, agg_stage_0.bucket_id), '{ "" : "$bucket_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (documentdb_api_internal.bson_expression_get(bson_dollar_add_fields(agg_stage_0.document, agg_stage_0.bucket_id), '{ "" : "$bucket_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(bson_dollar_add_fields(agg_stage_0.document, agg_stage_0.bucket_id), '{ "" : "$bucket_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(bson_dollar_add_fields(agg_stage_0.document, agg_stage_0.bucket_id), '{ "" : "$bucket_id" }'::bson, true)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(bson_dollar_add_fields(agg_stage_0.document, agg_stage_0.bucket_id), '{ "" : "$bucket_id" }'::bson, true))
+   Group Key: bson_expression_get(bson_dollar_add_fields(agg_stage_0.document, agg_stage_0.bucket_id), '{ "" : "$bucket_id" }'::bson, true)
    ->  Subquery Scan on agg_stage_0
-         Output: documentdb_api_internal.bson_expression_get(bson_dollar_add_fields(agg_stage_0.document, agg_stage_0.bucket_id), '{ "" : "$bucket_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document, agg_stage_0.bucket_id
+         Output: bson_expression_get(bson_dollar_add_fields(agg_stage_0.document, agg_stage_0.bucket_id), '{ "" : "$bucket_id" }'::bson, true), agg_stage_0.document, agg_stage_0.bucket_id
          ->  WindowAgg
                Output: collection.document, documentdb_api_internal.bson_dollar_bucket_auto((documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), '{ "groupBy" : "$a", "buckets" : { "$numberInt" : "2" } }'::bson) OVER (?), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
                ->  Sort
@@ -1181,13 +1181,13 @@ SET documentdb.enableDynamicCursors TO off;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$bucketAuto": { "groupBy": "$a", "buckets": 2 } }], "cursor": {} }')
 $cmd$, p_normalize_window := true);
-                                                                                                                                                                                                                                                                             run_explain_and_trim                                                                                                                                                                                                                                                                              
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(bson_dollar_add_fields(agg_stage_0.document, agg_stage_0.bucket_id), '{ "" : "$bucket_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (documentdb_api_internal.bson_expression_get(bson_dollar_add_fields(agg_stage_0.document, agg_stage_0.bucket_id), '{ "" : "$bucket_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(bson_dollar_add_fields(agg_stage_0.document, agg_stage_0.bucket_id), '{ "" : "$bucket_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(bson_dollar_add_fields(agg_stage_0.document, agg_stage_0.bucket_id), '{ "" : "$bucket_id" }'::bson, true)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(bson_dollar_add_fields(agg_stage_0.document, agg_stage_0.bucket_id), '{ "" : "$bucket_id" }'::bson, true))
+   Group Key: bson_expression_get(bson_dollar_add_fields(agg_stage_0.document, agg_stage_0.bucket_id), '{ "" : "$bucket_id" }'::bson, true)
    ->  Subquery Scan on agg_stage_0
-         Output: documentdb_api_internal.bson_expression_get(bson_dollar_add_fields(agg_stage_0.document, agg_stage_0.bucket_id), '{ "" : "$bucket_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document, agg_stage_0.bucket_id
+         Output: bson_expression_get(bson_dollar_add_fields(agg_stage_0.document, agg_stage_0.bucket_id), '{ "" : "$bucket_id" }'::bson, true), agg_stage_0.document, agg_stage_0.bucket_id
          ->  WindowAgg
                Output: collection.document, documentdb_api_internal.bson_dollar_bucket_auto((documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), '{ "groupBy" : "$a", "buckets" : { "$numberInt" : "2" } }'::bson) OVER (?), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
                ->  Sort
@@ -1525,25 +1525,25 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- pushed to an index (index-pushed distinct-style group).
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": { "$gte": 1 } } }, { "$group": { "_id": "$a" } }], "cursor": {} }');
-                                                                                                                                                                               QUERY PLAN                                                                                                                                                                               
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                QUERY PLAN                                                                                
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true))), (bson_expression_get(document, '{ "" : "$a" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true)
    ->  Seq Scan on documentdb_data.documents_2601 collection
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true), document
          Filter: (collection.document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
 (6 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$match": { "a": { "$gte": 1 } } }, { "$group": { "_id": "$a" } }], "cursor": {} }');
-                                                                                                                                                                               QUERY PLAN                                                                                                                                                                               
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                QUERY PLAN                                                                                
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true))), (bson_expression_get(document, '{ "" : "$a" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true)
    ->  Seq Scan on documentdb_data.documents_2601 collection
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true), document
          Filter: (collection.document @>= '{ "a" : { "$numberInt" : "1" } }'::bson)
 (6 rows)
 
@@ -1892,24 +1892,24 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- TODO: $sortGroup should be streamable when the sort+group can be pushed to an index.
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sort": { "a": 1 } }, { "$group": { "_id": "$a", "count": { "$sum": 1 } } }], "cursor": {} }');
-                                                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                                                
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                QUERY PLAN                                                                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(document, '{ "" : "$a" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true)
    ->  Seq Scan on documentdb_data.documents_2601 collection
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true), document
 (5 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$sort": { "a": 1 } }, { "$group": { "_id": "$a", "count": { "$sum": 1 } } }], "cursor": {} }');
-                                                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                                                
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                QUERY PLAN                                                                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true)), 'count'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(document, '{ "" : "$a" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true)
    ->  Seq Scan on documentdb_data.documents_2601 collection
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true), document
 (5 rows)
 
 -- $lookupUnwind (internal optimization: $lookup followed by $unwind on the "as" field) — non-streamable (RequiresPersistentCursorTrue)
@@ -2022,16 +2022,16 @@ SELECT document FROM bson_aggregation_find('config', '{ "find": "databases", "fi
 (1 row)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('config', '{ "find": "databases", "filter": { "_id": "dyncurdb" } }');
-                                                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                                                
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                           QUERY PLAN                                                                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Subquery Scan on agg_stage_0
    Output: bson_dollar_add_fields(agg_stage_0.document, '{ "partitioned" : true }'::bson)
    ->  HashAggregate
-         Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(row_get_bson(collection.*), '{ "" : "$database_name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(row_get_bson(collection.*), '{ "" : "$database_name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         Group Key: documentdb_api_internal.bson_expression_get(row_get_bson(collection.*), '{ "" : "$database_name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         Output: bson_repath_and_build('_id'::text, (bson_expression_get(row_get_bson(collection.*), '{ "" : "$database_name" }'::bson, true))), (bson_expression_get(row_get_bson(collection.*), '{ "" : "$database_name" }'::bson, true))
+         Group Key: bson_expression_get(row_get_bson(collection.*), '{ "" : "$database_name" }'::bson, true)
          ->  Seq Scan on documentdb_api_catalog.collections collection
-               Output: documentdb_api_internal.bson_expression_get(row_get_bson(collection.*), '{ "" : "$database_name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.*
-               Filter: ((collection.shard_key IS NOT NULL) AND (bson_dollar_add_fields(bson_repath_and_build('_id'::text, documentdb_api_internal.bson_expression_get(row_get_bson(collection.*), '{ "" : "$database_name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), '{ "partitioned" : true }'::bson) #= '{ "_id" : "dyncurdb" }'::bsonquery))
+               Output: bson_expression_get(row_get_bson(collection.*), '{ "" : "$database_name" }'::bson, true), collection.*
+               Filter: ((collection.shard_key IS NOT NULL) AND (bson_dollar_add_fields(bson_repath_and_build('_id'::text, bson_expression_get(row_get_bson(collection.*), '{ "" : "$database_name" }'::bson, true)), '{ "partitioned" : true }'::bson) #= '{ "_id" : "dyncurdb" }'::bsonquery))
 (8 rows)
 
 -- config.chunks via find.
