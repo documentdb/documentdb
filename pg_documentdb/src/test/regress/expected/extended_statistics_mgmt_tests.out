@@ -47,10 +47,10 @@ SELECT options FROM documentdb_api_catalog.collections WHERE collection_id = 640
 (1 row)
 
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "planner_stats" }') ORDER BY 1;
-                                                                                                                                                  bson_dollar_unwind                                                                                                                                                  
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                        bson_dollar_unwind                                                                                                                         
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.planner_stats", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.planner_stats", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" } }, "name" : "b_c_1", "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.planner_stats", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "b" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" } }, "name" : "b_c_1" } }, "ok" : { "$numberDouble" : "1.0" } }
 (2 rows)
 
 -- now create an index on the collection and verify that the planner statistics are updated for the index
@@ -1041,11 +1041,11 @@ SELECT options FROM documentdb_api_catalog.collections WHERE collection_id = 640
 (1 row)
 
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('stats_db', '{ "listIndexes": "auto_on" }') ORDER BY 1;
-                                                                                                                                               bson_dollar_unwind                                                                                                                                               
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.auto_on", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "$**" : { "$numberInt" : "1" } }, "name" : "wc_1", "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+                                                                                                                     bson_dollar_unwind                                                                                                                      
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.auto_on", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "$**" : { "$numberInt" : "1" } }, "name" : "wc_1" } }, "ok" : { "$numberDouble" : "1.0" } }
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.auto_on", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.auto_on", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "x" : { "$numberInt" : "1" }, "y" : { "$numberInt" : "1" } }, "name" : "x_y_1", "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.auto_on", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "x" : { "$numberInt" : "1" }, "y" : { "$numberInt" : "1" } }, "name" : "x_y_1" } }, "ok" : { "$numberDouble" : "1.0" } }
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "stats_db.auto_on", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "z" : "hashed" }, "name" : "z_hashed" } }, "ok" : { "$numberDouble" : "1.0" } }
 (4 rows)
 

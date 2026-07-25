@@ -94,11 +94,11 @@ SELECT 'documentdb_data.documents_' || collection_id AS db_shard_data_table_name
 -- make plans (more) deterministic
 VACUUM (ANALYZE) :db_shard_data_table_name;
 SELECT * FROM documentdb_test_helpers.get_collection_indexes('db', 'reshard') ORDER BY index_id;
- collection_id | index_id |                                                                   index_spec_as_bson                                                                    | index_is_valid 
----------------+----------+---------------------------------------------------------------------------------------------------------------------------------------------------------+----------------
-          5000 |     5003 | { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }                                                           | t
-          5000 |     5004 | { "v" : { "$numberInt" : "2" }, "key" : { "a.b.c.$**" : { "$numberInt" : "1" } }, "name" : "idx_1", "storageEngine" : { "enableOrderedIndex" : true } } | t
-          5000 |     5005 | { "v" : { "$numberInt" : "2" }, "key" : { "z" : { "$numberInt" : "1" } }, "name" : "idx_2", "storageEngine" : { "enableOrderedIndex" : true } }         | t
+ collection_id | index_id |                                          index_spec_as_bson                                          | index_is_valid 
+---------------+----------+------------------------------------------------------------------------------------------------------+----------------
+          5000 |     5003 | { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }        | t
+          5000 |     5004 | { "v" : { "$numberInt" : "2" }, "key" : { "a.b.c.$**" : { "$numberInt" : "1" } }, "name" : "idx_1" } | t
+          5000 |     5005 | { "v" : { "$numberInt" : "2" }, "key" : { "z" : { "$numberInt" : "1" } }, "name" : "idx_2" }         | t
 (3 rows)
 
 SELECT documentdb_api.insert_one('db','reshard','{"value":{"$numberLong" : "134311"}, "_id":"2" }');
