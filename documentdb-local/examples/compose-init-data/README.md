@@ -25,6 +25,11 @@ mongosh "mongodb://demo:DemoPass100@localhost:10260/?tls=true&tlsAllowInvalidCer
   not been initialized before. Restarts and `docker compose down && up`
   against the same volume skip them. To re-seed from scratch:
   `docker compose down -v && docker compose up --wait`.
+- **Write idempotent scripts anyway** (guard inserts with an existence
+  check, as `init-scripts/01-books.js` does). Images published before the
+  one-shot markers existed re-run the scripts on *every* boot, so a
+  non-idempotent seed (e.g. a bare `insertMany` with fixed `_id`s) crashes
+  such a container on restart with duplicate-key errors.
 - **A failed seed stops the container** and is *not* retried on the next
   boot against the same volume (re-running a partially applied,
   non-idempotent script could corrupt data). Fix the script, then start
