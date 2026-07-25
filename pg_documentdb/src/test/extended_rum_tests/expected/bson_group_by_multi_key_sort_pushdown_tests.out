@@ -37,7 +37,7 @@ SELECT COUNT(documentdb_api.insert_one('gbmk_db', 'recs',
     )::documentdb_core.bson))
 FROM generate_series(1, 400) i;
 NOTICE:  creating collection
- count 
+ count
 -------
    400
 (1 row)
@@ -45,7 +45,7 @@ NOTICE:  creating collection
 SELECT documentdb_api_internal.create_indexes_non_concurrently('gbmk_db',
     '{ "createIndexes": "recs", "indexes": [ { "key": { "region.city": 1, "region.area": 1, "region.grade": 1, "cat": 1, "subcat": 1, "score": 1 }, "name": "idx_esr", "enableOrderedIndex": 1 } ] }',
     true);
-                                                                                                   create_indexes_non_concurrently                                                                                                    
+                                                                                                   create_indexes_non_concurrently
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
@@ -55,7 +55,7 @@ ANALYZE;
 -- cat/subcat/score are scalar.
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (VERBOSE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('gbmk_db', '{ "find": "recs", "filter": { "region": { "$elemMatch": { "city": "northgate", "area": "central grid", "grade": "pass" } }, "cat": "alpha" } }') $cmd$);
-                                                                                                                                                                                                                                                                                    run_explain_and_trim                                                                                                                                                                                                                                                                                     
+                                                                                                                                                                                                                                                                                    run_explain_and_trim
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan)
    Output: document
@@ -88,7 +88,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 set documentdb.enable_group_by_multi_key_sort_pushdown to off;
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs", "pipeline": [ { "$match": { "region": { "$elemMatch": { "city": "northgate", "area": "central grid", "grade": "pass" } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } } ], "cursor": {} }') $cmd$);
-                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                           
+                                                                                                                                                                                                                                          run_explain_and_trim
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
    Group Key: bson_expression_get(document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -105,17 +105,21 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
                Filter: (document @#? '{ "region" : { "city" : "northgate", "area" : "central grid", "grade" : "pass" } }'::bson)
 (13 rows)
 
--- Flag ON: per-path tracking proves "cat" is scalar, so the order-by is pushed
--- into the ordered index scan and the group streams via a GroupAggregate. A
--- multi-key equality prefix can still emit one index tuple per matching array
--- element, so this streamed group can over-count until de-duplication is layered
--- on top; here each document matches the region equality via a single element.
+-- Flag ON: even though per-path tracking proves "cat" is scalar, idx_esr is a
+-- reduced-correlated index (its region.city/area/grade prefix shares a common
+-- subpath) and bounds planning is off here, so the intermediate region.area and
+-- region.grade equality terms may be pruned at runtime and collapse to
+-- (MinKey, MaxKey). That leaves the trailing "cat" key non-contiguous in index
+-- order, so the reduced-correlated soundness guard blocks the order-by pushdown
+-- and the group falls back to a HashAggregate (no "Order By:" line). The flag's
+-- positive effect -- pushing the order-by when the equality prefix is genuinely
+-- bound -- is exercised by the recs2 and recs3 sections below.
 set documentdb.enable_group_by_multi_key_sort_pushdown to on;
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs", "pipeline": [ { "$match": { "region": { "$elemMatch": { "city": "northgate", "area": "central grid", "grade": "pass" } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } } ], "cursor": {} }') $cmd$);
-                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                           
+                                                                                                                                                                                                                                          run_explain_and_trim
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Group Key: bson_expression_get(document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
          namespaceName: gbmk_db.recs
@@ -127,20 +131,19 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
          indexBounds: ["region.city": ["northgate", "northgate"], "region.area": (MinKey, MaxKey), "region.grade": (MinKey, MaxKey), "cat": (MinKey, MaxKey), "subcat": (MinKey, MaxKey), "score": (MinKey, MaxKey)]
          ->  Index Scan using idx_esr on documents_13301 collection
                Index Cond: ((document @<> '{ "region.city" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "northgate", "isTopLevel" : false } ] } }'::bson) AND (document @<> '{ "region.area" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "central grid", "isTopLevel" : false } ] } }'::bson) AND (document @<> '{ "region.grade" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "pass", "isTopLevel" : false } ] } }'::bson))
-               Order By: (document |-<> '{ "cat" : { "$numberInt" : "1" } }'::bson)
                Filter: (document @#? '{ "region" : { "city" : "northgate", "area" : "central grid", "grade" : "pass" } }'::bson)
-(14 rows)
+(13 rows)
 
 -- Result values are identical regardless of the flag (each document matches the
 -- region equality via a single array element, so no over-count occurs here).
 SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs", "pipeline": [ { "$match": { "region": { "$elemMatch": { "city": "northgate", "area": "central grid", "grade": "pass" } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
-                      document                      
+                      document
 ----------------------------------------------------
  { "_id" : "alpha", "n" : { "$numberInt" : "44" } }
 (1 row)
 
 SELECT documentdb_api.drop_collection('gbmk_db', 'recs');
- drop_collection 
+ drop_collection
 -----------------
  t
 (1 row)
@@ -165,7 +168,7 @@ SELECT COUNT(documentdb_api.insert_one('gbmk_db', 'recs2',
     )::documentdb_core.bson))
 FROM generate_series(1, 300) i;
 NOTICE:  creating collection
- count 
+ count
 -------
    300
 (1 row)
@@ -173,7 +176,7 @@ NOTICE:  creating collection
 SELECT documentdb_api_internal.create_indexes_non_concurrently('gbmk_db',
     '{ "createIndexes": "recs2", "indexes": [ { "key": { "labels": 1, "cat": 1 }, "name": "idx_prefix_mk", "enableOrderedIndex": 1 } ] }',
     true);
-                                                                                                   create_indexes_non_concurrently                                                                                                    
+                                                                                                   create_indexes_non_concurrently
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
@@ -181,7 +184,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('gbmk_db',
 SELECT documentdb_api_internal.create_indexes_non_concurrently('gbmk_db',
     '{ "createIndexes": "recs2", "indexes": [ { "key": { "key": 1, "labels": 1 }, "name": "idx_sort_mk", "enableOrderedIndex": 1 } ] }',
     true);
-                                                                                                   create_indexes_non_concurrently                                                                                                    
+                                                                                                   create_indexes_non_concurrently
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
@@ -192,7 +195,7 @@ set documentdb.enable_group_by_multi_key_sort_pushdown to on;
 -- order-by IS pushed (GroupAggregate with an "Order By:" line).
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs2", "pipeline": [ { "$match": { "labels": "Lz" } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } } ], "cursor": {}, "hint": "idx_prefix_mk" }') $cmd$);
-                                                               run_explain_and_trim                                                               
+                                                               run_explain_and_trim
 --------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
    Group Key: bson_expression_get(document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -212,7 +215,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 -- (HashAggregate, no "Order By:" line) even though the flag is on.
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs2", "pipeline": [ { "$match": { "key": "k1" } }, { "$group": { "_id": "$labels", "n": { "$sum": 1 } } } ], "cursor": {}, "hint": "idx_sort_mk" }') $cmd$);
-                                                                run_explain_and_trim                                                                 
+                                                                run_explain_and_trim
 -----------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
    Group Key: bson_expression_get(document, '{ "" : "$labels" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -228,7 +231,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 (11 rows)
 
 SELECT documentdb_api.drop_collection('gbmk_db', 'recs2');
- drop_collection 
+ drop_collection
 -----------------
  t
 (1 row)
@@ -256,25 +259,25 @@ SET documentdb.enable_group_by_multi_key_sort_pushdown TO on;
 -- multi-key prefix could count it twice.
 SELECT documentdb_api.insert_one('gbmk_db', 'recs3', '{ "_id": 1, "tags": [ { "k": "x", "v": 1 }, { "k": "x", "v": 1 } ], "cat": "alpha" }');
 NOTICE:  creating collection
-                              insert_one                              
+                              insert_one
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('gbmk_db', 'recs3', '{ "_id": 2, "tags": [ { "k": "x", "v": 1 } ], "cat": "alpha" }');
-                              insert_one                              
+                              insert_one
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('gbmk_db', 'recs3', '{ "_id": 3, "tags": [ { "k": "x", "v": 1 } ], "cat": "beta" }');
-                              insert_one                              
+                              insert_one
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('gbmk_db', 'recs3', '{ "_id": 4, "tags": [ { "k": "y", "v": 2 } ], "cat": "gamma" }');
-                              insert_one                              
+                              insert_one
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
@@ -282,7 +285,7 @@ SELECT documentdb_api.insert_one('gbmk_db', 'recs3', '{ "_id": 4, "tags": [ { "k
 SELECT documentdb_api_internal.create_indexes_non_concurrently('gbmk_db',
     '{ "createIndexes": "recs3", "indexes": [ { "key": { "tags.k": 1, "tags.v": 1, "cat": 1 }, "name": "idx_tags_cat", "enableOrderedIndex": 1 } ] }',
     true);
-                                                                                                   create_indexes_non_concurrently                                                                                                    
+                                                                                                   create_indexes_non_concurrently
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
@@ -294,7 +297,7 @@ ANALYZE;
 set documentdb.enable_composite_secondary_path_order_pushdown to off;
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs3", "pipeline": [ { "$match": { "tags": { "$elemMatch": { "k": "x", "v": 1 } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } } ], "cursor": {}, "hint": "idx_tags_cat" }') $cmd$);
-                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                           
+                                                                                                                                                                                                                           run_explain_and_trim
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
    Group Key: bson_expression_get(document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -316,7 +319,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 set documentdb.enable_composite_secondary_path_order_pushdown to on;
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs3", "pipeline": [ { "$match": { "tags": { "$elemMatch": { "k": "x", "v": 1 } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } } ], "cursor": {}, "hint": "idx_tags_cat" }') $cmd$);
-                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                           
+                                                                                                                                                                                                                           run_explain_and_trim
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
    Group Key: bson_expression_get(document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -339,7 +342,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
 -- expected result is alpha:2, beta:1 regardless of the flag.
 set documentdb.enable_composite_secondary_path_order_pushdown to off;
 SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs3", "pipeline": [ { "$match": { "tags": { "$elemMatch": { "k": "x", "v": 1 } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
-                     document                      
+                     document
 ---------------------------------------------------
  { "_id" : "alpha", "n" : { "$numberInt" : "2" } }
  { "_id" : "beta", "n" : { "$numberInt" : "1" } }
@@ -347,14 +350,14 @@ SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs3
 
 set documentdb.enable_composite_secondary_path_order_pushdown to on;
 SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs3", "pipeline": [ { "$match": { "tags": { "$elemMatch": { "k": "x", "v": 1 } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
-                     document                      
+                     document
 ---------------------------------------------------
  { "_id" : "alpha", "n" : { "$numberInt" : "2" } }
  { "_id" : "beta", "n" : { "$numberInt" : "1" } }
 (2 rows)
 
 SELECT documentdb_api.drop_collection('gbmk_db', 'recs3');
- drop_collection 
+ drop_collection
 -----------------
  t
 (1 row)

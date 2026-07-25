@@ -28,6 +28,7 @@ typedef struct CompositeOpClassMetadataInfo
 	bool hasCorrelatedReducedTerms;
 	bool hasTruncation;
 	int trackedTruncatedPathCount;
+	bool isReducedCorrelatedIndex;
 } CompositeOpClassMetadataInfo;
 
 /* Result of reading composite-index opclass metadata: how much was populated. */

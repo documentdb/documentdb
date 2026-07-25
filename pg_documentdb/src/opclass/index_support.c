@@ -378,7 +378,7 @@ static bool IsMatchingPathForQueryOperator(RelOptInfo *rel, Path *path,
 										   MatchIndexPath matchIndexPath,
 										   void *matchContext);
 static RestrictInfo * MarkReducedCorrelatedIndexQualPlanned(RestrictInfo *indexQual);
-static void PruneReducedCorrelatedIndexQuals(IndexPath *indexPath, bytea *indexOptions,
+static bool PruneReducedCorrelatedIndexQuals(IndexPath *indexPath, bytea *indexOptions,
 											 uint32_t multiKeyPathBitMask);
 static Expr * ProcessFullScanForOrderBy(SupportRequestIndexCondition *req, List *args);
 static Expr * ProcessDistinctExistsForIndex(SupportRequestIndexCondition *req,
@@ -5925,6 +5925,8 @@ ProcessOrderByStatements(PlannerInfo *root,
 						 int32_t maxOrderByColumn, bool isMultiKeyIndex,
 						 bool hasPerPathMetadata,
 						 uint32_t multiKeyBitMask,
+						 bool isReducedCorrelatedIndex,
+						 bool prunedCorrelatedIndexQuals,
 						 const char *queryOrderPaths[INDEX_MAX_KEYS],
 						 bool equalityPrefixes[INDEX_MAX_KEYS],
 						 bool nonEqualityPrefixes[INDEX_MAX_KEYS],
@@ -6026,6 +6028,15 @@ ProcessOrderByStatements(PlannerInfo *root,
 			{
 				break;
 			}
+		}
+
+		if (isReducedCorrelatedIndex && !prunedCorrelatedIndexQuals &&
+			i > 0)
+		{
+			/* For reduced correlated indexes, if the order by is on a path that's not the first path,
+			 * the runtime will prune the intermediate quals, and so we must disallow the orderby
+			 */
+			break;
 		}
 
 		/* From this point, onwards, each path must either have an order or a valid filter
@@ -6598,7 +6609,7 @@ MarkReducedCorrelatedIndexQualPlanned(RestrictInfo *indexQual)
  * On the other hand, for $elemMatch queries, the predicates are correlated and must match
  * index terms, so we don't always want to trim the bounds for $elemMatch clauses.
  */
-static void
+static bool
 PruneReducedCorrelatedIndexQuals(IndexPath *indexPath, bytea *indexOptions,
 								 uint32_t multiKeyPathBitMask)
 {
@@ -6759,8 +6770,9 @@ PruneReducedCorrelatedIndexQuals(IndexPath *indexPath, bytea *indexOptions,
 
 	if (qualInfos == NIL)
 	{
+		/* No prunable plans required (pruned everything we could) */
 		hash_destroy(mapPrefixToPrefixState);
-		return;
+		return true;
 	}
 
 	/*
@@ -7065,6 +7077,8 @@ PruneReducedCorrelatedIndexQuals(IndexPath *indexPath, bytea *indexOptions,
 	{
 		list_free(newIndexClauses);
 	}
+
+	return indexPathChanged;
 }
 
 
@@ -7103,13 +7117,15 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 
 	bytea *indexOptions = indexPath->indexinfo->opclassoptions != NULL ?
 						  indexPath->indexinfo->opclassoptions[0] : NULL;
+	bool prunedCorrelatedIndexQuals = false;
 	if (EnableCompositeReducedCorrelatedBoundsPlanning &&
 		EnableCompositeReducedCorrelatedPrefixTrim &&
 		hasPerPathMetadata &&
 		indexMetadata.hasCorrelatedReducedTerms)
 	{
-		PruneReducedCorrelatedIndexQuals(indexPath, indexOptions,
-										 indexMetadata.multiKeyPathBitMask);
+		prunedCorrelatedIndexQuals =
+			PruneReducedCorrelatedIndexQuals(indexPath, indexOptions,
+											 indexMetadata.multiKeyPathBitMask);
 	}
 
 	int32_t pathSortOrders[INDEX_MAX_KEYS] = { 0 };
@@ -7220,6 +7236,8 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 			maxOrderByColumn, isMultiKeyIndex,
 			hasPerPathMetadata,
 			indexMetadata.multiKeyPathBitMask,
+			indexMetadata.isReducedCorrelatedIndex,
+			prunedCorrelatedIndexQuals,
 			queryOrderPaths, equalityPrefixes,
 			nonEqualityPrefixes,
 			pathSortOrders);

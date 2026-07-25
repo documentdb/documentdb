@@ -77,6 +77,8 @@ TryGetCompositeOpClassMetadataInfo(Oid indexOid, LOCKMODE lockmode,
 			info->hasCorrelatedReducedTerms = hasCorrelatedReducedTerms;
 			info->hasTruncation = hasTruncation;
 			info->trackedTruncatedPathCount = pg_popcount32(truncatedPathBitmask);
+			info->isReducedCorrelatedIndex = opts == NULL ? false :
+											 opts->enableCompositeReducedCorrelatedTerms;
 
 			result = CompositeOpClassMetadataReadResult_Full;
 		}
@@ -90,7 +92,8 @@ TryGetCompositeOpClassMetadataInfo(Oid indexOid, LOCKMODE lockmode,
 			info->isMultiKey = DatumGetBool(DirectFunctionCall1(multiKeyStatusFunc,
 																PointerGetDatum(
 																	indexRel)));
-
+			info->isReducedCorrelatedIndex = opts == NULL ? false :
+											 opts->enableCompositeReducedCorrelatedTerms;
 			result = CompositeOpClassMetadataReadResult_Partial;
 		}
 	}

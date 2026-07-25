@@ -70,11 +70,15 @@ set documentdb.enable_group_by_multi_key_sort_pushdown to off;
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs", "pipeline": [ { "$match": { "region": { "$elemMatch": { "city": "northgate", "area": "central grid", "grade": "pass" } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } } ], "cursor": {} }') $cmd$);
 
--- Flag ON: per-path tracking proves "cat" is scalar, so the order-by is pushed
--- into the ordered index scan and the group streams via a GroupAggregate. A
--- multi-key equality prefix can still emit one index tuple per matching array
--- element, so this streamed group can over-count until de-duplication is layered
--- on top; here each document matches the region equality via a single element.
+-- Flag ON: even though per-path tracking proves "cat" is scalar, idx_esr is a
+-- reduced-correlated index (its region.city/area/grade prefix shares a common
+-- subpath) and bounds planning is off here, so the intermediate region.area and
+-- region.grade equality terms may be pruned at runtime and collapse to
+-- (MinKey, MaxKey). That leaves the trailing "cat" key non-contiguous in index
+-- order, so the reduced-correlated soundness guard blocks the order-by pushdown
+-- and the group falls back to a HashAggregate (no "Order By:" line). The flag's
+-- positive effect -- pushing the order-by when the equality prefix is genuinely
+-- bound -- is exercised by the recs2 and recs3 sections below.
 set documentdb.enable_group_by_multi_key_sort_pushdown to on;
 SELECT documentdb_test_helpers.run_explain_and_trim( $cmd$
     EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_pipeline('gbmk_db', '{ "aggregate": "recs", "pipeline": [ { "$match": { "region": { "$elemMatch": { "city": "northgate", "area": "central grid", "grade": "pass" } } } }, { "$group": { "_id": "$cat", "n": { "$sum": 1 } } } ], "cursor": {} }') $cmd$);
