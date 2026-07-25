@@ -29,6 +29,7 @@ expectedPgExports=(
     documentdb_rum_prune_empty_entries_on_index
     documentdb_rum_repair_incomplete_split_on_index
     documentdb_rum_repair_revive_all_pages_and_tuples
+    documentdb_rum_test_set_incomplete_split_on_page
     documentdb_rumhandler
 )
 

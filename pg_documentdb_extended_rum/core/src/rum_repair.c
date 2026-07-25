@@ -36,6 +36,7 @@
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_prune_empty_entries_on_index);
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_repair_incomplete_split_on_index);
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_repair_revive_all_pages_and_tuples);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_test_set_incomplete_split_on_page);
 
 
 static void rumRepairLostPathOnIndex(Relation index, bool trackDataPages, bool
@@ -46,6 +47,44 @@ static void MarkIncompleteSplitOnPage(RumState *rumState,
 static void CheckTreeAtLevel(RumState *rumState, BlockNumber blockNumber, int level,
 							 bool trackDataPages, bool dryrunMode);
 static void RumReviveAllPagesAndTuplesOnIndex(Relation rel, bool dryrunMode);
+
+
+RMGR_PG_FUNCTION_DEF(documentdb_rum_test_set_incomplete_split_on_page)
+{
+	Oid indexRelId = PG_GETARG_OID(0);
+	BlockNumber blockNumber = PG_GETARG_UINT32(1);
+	bool setIncompleteSplit = PG_GETARG_BOOL(2);
+	Relation index = index_open(indexRelId, RowExclusiveLock);
+	Buffer buffer;
+	GenericXLogState *state;
+	Page page;
+
+	if (blockNumber >= RelationGetNumberOfBlocks(index))
+	{
+		index_close(index, RowExclusiveLock);
+		ereport(ERROR, (errmsg("block number %u is outside the index", blockNumber)));
+	}
+
+	buffer = ReadBuffer(index, blockNumber);
+	LockBuffer(buffer, RUM_EXCLUSIVE);
+	state = GenericXLogStart(index);
+	page = GenericXLogRegisterBuffer(state, buffer, 0);
+
+	if (setIncompleteSplit)
+	{
+		RumPageGetOpaque(page)->flags |= RUM_INCOMPLETE_SPLIT;
+	}
+	else
+	{
+		RumPageGetOpaque(page)->flags &= ~RUM_INCOMPLETE_SPLIT;
+	}
+
+	GenericXLogFinish(state);
+	UnlockReleaseBuffer(buffer);
+	index_close(index, RowExclusiveLock);
+
+	PG_RETURN_VOID();
+}
 
 
 /*

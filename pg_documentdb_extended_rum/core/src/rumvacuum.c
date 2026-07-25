@@ -474,6 +474,26 @@ restart:
 	rPage = BufferGetPage(rBuffer);
 
 	/*
+	 * Do not delete either half of an incomplete split. The flagged left
+	 * page is the only record that its right sibling still needs a parent
+	 * downlink. Deleting the left page would discard that repair state, while
+	 * deleting its right sibling would operate on a page that has no parent
+	 * downlink of its own.
+	 *
+	 * TODO: Finish incomplete splits during bulk delete or vacuum cleanup so
+	 * pages with no future writes are recovered.
+	 */
+	if (RumPageIsIncompleteSplit(dPage) ||
+		RumPageIsIncompleteSplit(lPage))
+	{
+		ReleaseBuffer(pBuffer);
+		UnlockReleaseBuffer(lBuffer);
+		UnlockReleaseBuffer(dBuffer);
+		UnlockReleaseBuffer(rBuffer);
+		return false;
+	}
+
+	/*
 	 * last chance to check
 	 */
 	if (!(RumPageGetOpaque(lPage)->rightlink == deleteBlkno &&
@@ -1248,6 +1268,19 @@ CheckAndPruneEmptyRumPage(RumState *rumState, BufferAccessStrategy bufferStrateg
 	 */
 	if (RumPageGetOpaque(leftPage)->rightlink != blkno ||
 		RumPageGetOpaque(rightPage)->leftlink != blkno)
+	{
+		goto cleanupState;
+	}
+
+	/*
+	 * Do not delete the flagged left half of an incomplete split or its
+	 * unparented right half. A later insertion will finish the split.
+	 *
+	 * TODO: Finish incomplete splits during bulk delete or vacuum cleanup so
+	 * pages with no future writes are recovered.
+	 */
+	if (RumPageIsIncompleteSplit(page) ||
+		RumPageIsIncompleteSplit(leftPage))
 	{
 		goto cleanupState;
 	}
