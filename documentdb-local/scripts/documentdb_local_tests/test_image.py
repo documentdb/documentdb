@@ -429,6 +429,26 @@ class DefaultContainerTests(_ContainerTestBase):
             + "\n".join(combined.splitlines()[-40:]),
         )
 
+    def test_first_boot_adopts_baked_data_template(self):
+        """Startup-time contract (issue #480): the image ships a
+        pre-initialized PostgreSQL data directory, and a default first boot
+        must adopt it instead of running initdb + CREATE EXTENSION (the
+        expensive path this feature exists to skip)."""
+        logs = _docker("logs", self.container)
+        combined = _combined_logs(logs)
+        self.assertIn(
+            "Adopting pre-initialized data directory template", combined,
+            "first boot did not adopt the image-baked data directory "
+            "template; the pre-initialized fast path regressed (issue #480). "
+            "Last 40 log lines:\n"
+            + "\n".join(combined.splitlines()[-40:]),
+        )
+        self.assertNotIn(
+            "Calling initdb", combined,
+            "first boot ran initdb even though the image ships a "
+            "pre-initialized data directory (issue #480).",
+        )
+
     def test_image_runs_as_non_root(self):
         """Security baseline: the runtime user must not be root."""
         result = _docker(
@@ -1426,6 +1446,62 @@ print('custom restart marker placed');
         finally:
             _cleanup_container(first)
             _cleanup_container(second)
+
+
+# ---------------------------------------------------------------------------
+# 11. --disable-extended-rum on a fresh container - the image ships a data
+#     directory template built WITH extended RUM, so the entrypoint must
+#     detect the mismatch on the pristine template and re-initialize with the
+#     requested options instead of silently keeping extended RUM (issue #480).
+# ---------------------------------------------------------------------------
+
+@_SKIP_UNLESS_IMAGE
+class DisableExtendedRumReinitTests(_ContainerTestBase):
+    """Catches two regressions at once: the baked-template fast path ignoring
+    --disable-extended-rum, and the flag itself degrading into a no-op (it
+    once relied on *omitting* -r, which stopped disabling extended RUM when
+    the server-side default flipped to enabled)."""
+
+    ENTRYPOINT_FLAGS = ["--skip-init-data", "--disable-extended-rum"]
+
+    def test_template_is_reinitialized(self):
+        logs = _docker("logs", self.container)
+        combined = _combined_logs(logs)
+        self.assertIn(
+            "Re-initializing data directory", combined,
+            "--disable-extended-rum on a pristine baked template must "
+            "trigger re-initialization with the requested options "
+            "(issue #480). Last 40 log lines:\n"
+            + "\n".join(combined.splitlines()[-40:]),
+        )
+
+    def test_extended_rum_extension_is_absent(self):
+        port = _container_pg_socket_port(self.container)
+        res = _docker(
+            "exec", self.container, "psql", "-p", port, "-d", "postgres",
+            "-tAqc",
+            "SELECT count(*) FROM pg_extension "
+            "WHERE extname = 'documentdb_extended_rum'",
+            check=False, timeout=30,
+        )
+        self.assertEqual(res.returncode, 0, msg=res.stderr)
+        self.assertEqual(
+            res.stdout.strip(), "0",
+            "documentdb_extended_rum is installed even though the container "
+            "was started with --disable-extended-rum.",
+        )
+
+    def test_ping_succeeds_without_extended_rum(self):
+        result = self._mongosh("db.runCommand({ping: 1}).ok")
+        self.assertEqual(
+            result.returncode, 0,
+            f"mongosh ping failed on a --disable-extended-rum container.\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+        )
+        self.assertEqual(
+            _last_nonempty_line(result.stdout), "1",
+            f"expected ping ok=1\nfull stdout:\n{result.stdout}",
+        )
 
 
 if __name__ == "__main__":

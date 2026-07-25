@@ -213,5 +213,23 @@ RUN sudo chown -R documentdb:documentdb /home/documentdb/gateway
 # Make initialization script executable
 RUN sudo chmod +x /home/documentdb/gateway/scripts/init_documentdb_data.sh
 
+# Pre-initialize the PostgreSQL data directory at image build time (issue
+# #480). initdb and CREATE EXTENSION dominate first-boot latency (both are
+# fsync- and I/O-heavy, which makes them painfully slow on Docker Desktop
+# filesystems), so run them once here. The entrypoint adopts this ready-made
+# cluster on first boot instead of initializing from scratch, and Docker
+# auto-populates a fresh named volume mounted at /data from the image content,
+# so `-v mydata:/data` gets the same fast path. The marker file tells the
+# entrypoint the directory is a pristine template with no user data (safe to
+# re-initialize when runtime flags require different init-time options).
+RUN sudo install -d -o documentdb -g documentdb "$DATA_PATH" && \
+    /home/documentdb/gateway/scripts/start_oss_server.sh -r -u "" -d "$DATA_PATH" -p "$POSTGRESQL_PORT" && \
+    bash /home/documentdb/gateway/scripts/documentdb_install_getparameter_stub.sh "$POSTGRESQL_PORT" && \
+    pg_ctl stop -D "$DATA_PATH" -m fast && \
+    rm -f "$DATA_PATH/pglog.log" && \
+    mkdir -p "$DATA_PATH/.documentdb-local" && \
+    touch "$DATA_PATH/.documentdb-local/baked_template"
+
 WORKDIR /home/documentdb/gateway/scripts
 ENTRYPOINT ["/bin/bash", "-c", "/home/documentdb/gateway/scripts/emulator_entrypoint.sh \"$@\"", "--"]
+

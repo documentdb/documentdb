@@ -1,5 +1,7 @@
 ### documentdb v0.117-0 (Unreleased) ###
 * Default the RUM index library (`documentdb.rum_library_load_option`) to `require_documentdb_extended_rum` on all supported PostgreSQL versions, instead of only on PG 18+. The option can still be set to `none` to opt out. *[Refactor]*
+* Speed up `documentdb-local` container startup: ship a pre-initialized PostgreSQL data directory in the image so first boot skips `initdb`/`CREATE EXTENSION`, skip the recursive data-directory `chown` when ownership is already correct, and poll gateway and PostgreSQL readiness at shorter intervals. *[Perf]*
+* Fix `documentdb-local --disable-extended-rum` being silently ignored on fresh data directories: the entrypoint now passes an explicit `-r false` to the server bootstrap (omitting `-r` stopped disabling extended RUM when the server-side default flipped to enabled). *[Bugfix]*
 
 ### documentdb v0.116-0 (Unreleased) ###
 * Rename the `$sample` EXPLAIN metric `Sample Heap Skips` to `Sample Heap Fetches`. *[Refactor]*

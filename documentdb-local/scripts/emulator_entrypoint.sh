@@ -18,7 +18,7 @@ cleanup() {
         echo "Stopping gateway process (PID: $gateway_pid)"
         kill $gateway_pid 2>/dev/null || true
     fi
-    
+
     echo "Cleanup completed"
     exit 0
 }
@@ -375,28 +375,75 @@ if [ "$START_POSTGRESQL" = "true" ]; then
         echo "Creating data directory: $DATA_PATH"
         sudo mkdir -p "$DATA_PATH"
     fi
-    
-    # Change ownership to the runtime user to ensure we can write/delete files
-    echo "Setting ownership of $DATA_PATH to ${DOCUMENTDB_RUNTIME_USER}:${DOCUMENTDB_RUNTIME_GROUP}"
-    sudo chown -R "${DOCUMENTDB_RUNTIME_USER}:${DOCUMENTDB_RUNTIME_GROUP}" "$DATA_PATH"
-    
-    # Ensure we have full permissions on the directory
-    echo "Setting permissions on $DATA_PATH"
-    sudo chmod -R 750 "$DATA_PATH"
-    
+
+    # Repair ownership only when the top of the data directory is not already
+    # owned by the runtime user. An unconditional recursive chown/chmod forces
+    # an overlayfs copy-up of the image-baked data directory and rewrites
+    # metadata for the entire cluster on every boot, which gets slow on large
+    # data volumes (issue #480).
+    if [ "$(stat -c '%U' "$DATA_PATH" 2>/dev/null)" != "${DOCUMENTDB_RUNTIME_USER}" ]; then
+        # Change ownership to the runtime user to ensure we can write/delete files
+        echo "Setting ownership of $DATA_PATH to ${DOCUMENTDB_RUNTIME_USER}:${DOCUMENTDB_RUNTIME_GROUP}"
+        sudo chown -R "${DOCUMENTDB_RUNTIME_USER}:${DOCUMENTDB_RUNTIME_GROUP}" "$DATA_PATH"
+
+        # Ensure we have full permissions on the directory
+        echo "Setting permissions on $DATA_PATH"
+        sudo chmod -R 750 "$DATA_PATH"
+    else
+        # PostgreSQL refuses to start when the data directory itself is more
+        # permissive than 0750; keep that guarantee without a recursive walk.
+        chmod 750 "$DATA_PATH" 2>/dev/null || sudo chmod 750 "$DATA_PATH"
+    fi
+
+    # Image-baked data directory template (issue #480). The image ships a
+    # fully-initialized cluster (initdb + CREATE EXTENSION already done at
+    # image build time) marked with a `baked_template` marker file, so first
+    # boot can skip the expensive initialization work. The marker is consumed
+    # on the boot that adopts the template; later boots treat the directory as
+    # ordinary user data (so runtime flags never wipe real data).
+    DOCUMENTDB_PGDATA_TEMPLATE=${DOCUMENTDB_PGDATA_TEMPLATE:-/data}
+    template_marker_rel=".documentdb-local/baked_template"
+    force_reinit_args=()
+    if [ -f "$DATA_PATH/$template_marker_rel" ]; then
+        if [ "$DISABLE_EXTENDED_RUM" = "true" ]; then
+            # The template was initialized with documentdb_extended_rum; a
+            # pristine template holds no user data, so simply re-initialize
+            # with the requested options (the pre-template fresh-boot path).
+            echo "Re-initializing data directory: --disable-extended-rum requested but the pre-initialized template was built with extended RUM enabled."
+            force_reinit_args+=(-c)
+        else
+            echo "Adopting pre-initialized data directory template (fast start)."
+        fi
+        rm -f "$DATA_PATH/$template_marker_rel"
+    elif [ "$DATA_PATH" != "$DOCUMENTDB_PGDATA_TEMPLATE" ] && \
+         [ -f "$DOCUMENTDB_PGDATA_TEMPLATE/$template_marker_rel" ] && \
+         [ ! -f "$DATA_PATH/PG_VERSION" ] && \
+         [ -z "$(ls -A "$DATA_PATH" 2>/dev/null)" ] && \
+         [ "$DISABLE_EXTENDED_RUM" != "true" ]; then
+        # A custom, still-empty data path: instantiate it from the pristine
+        # baked template instead of running full initialization.
+        echo "Populating empty data directory $DATA_PATH from the pre-initialized template."
+        cp -a "$DOCUMENTDB_PGDATA_TEMPLATE/." "$DATA_PATH/"
+        rm -f "$DATA_PATH/$template_marker_rel"
+    fi
+
     if ALLOW_EXTERNAL_CONNECTIONS="true"; then
         echo "Allowing external connections to PostgreSQL..."
         export PGOPTIONS="-e"
     fi
     echo "Starting OSS server..."
-    EXTENDED_RUM_FLAG="-r"
+    # Pass an explicit `-r <bool>`: the server script now defaults to extended
+    # RUM *enabled*, so merely omitting -r no longer disables it -- that
+    # silently turned --disable-extended-rum into a no-op.
+    extended_rum_bool="true"
     if [ "$DISABLE_EXTENDED_RUM" = "true" ]; then
-        EXTENDED_RUM_FLAG=""
+        extended_rum_bool="false"
     fi
     start_oss_server_args=()
-    if [ -n "$EXTENDED_RUM_FLAG" ]; then
-        start_oss_server_args+=("$EXTENDED_RUM_FLAG")
+    if [ ${#force_reinit_args[@]} -gt 0 ]; then
+        start_oss_server_args+=("${force_reinit_args[@]}")
     fi
+    start_oss_server_args+=(-r "$extended_rum_bool")
     if [ -n "${PGOPTIONS:-}" ]; then
         IFS=' ' read -r -a pgoptions_array <<< "$PGOPTIONS"
         start_oss_server_args+=("${pgoptions_array[@]}")
@@ -535,22 +582,26 @@ fi
 
 gateway_pid=$! # Capture the PID of the gateway process
 
-# Wait for the gateway to be ready before attempting initialization
+# Wait for the gateway to be ready before attempting initialization. Poll at a
+# sub-second interval so readiness is detected promptly (issue #480), but only
+# log once per second to keep the container log readable.
 echo "Waiting for gateway to be ready..."
-max_attempts=60
+max_attempts=240
 attempt=0
 while [ $attempt -lt $max_attempts ]; do
     if nc -z localhost "$DOCUMENTDB_PORT"; then
         echo "Gateway is ready on localhost:$DOCUMENTDB_PORT"
         break
     fi
-    echo "Attempt $((attempt + 1))/$max_attempts: Gateway not ready yet, waiting..."
-    sleep 1
+    if [ $((attempt % 4)) -eq 0 ]; then
+        echo "Attempt $((attempt / 4 + 1))/60: Gateway not ready yet, waiting..."
+    fi
+    sleep 0.25
     attempt=$((attempt + 1))
 done
 
 if [ $attempt -eq $max_attempts ]; then
-    echo "Error: Gateway failed to start within $max_attempts seconds"
+    echo "Error: Gateway failed to start within 60 seconds"
     exit 1
 fi
 

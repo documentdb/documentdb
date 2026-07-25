@@ -87,9 +87,12 @@ scriptDir="$(cd -P "$(dirname "$source")" && pwd)"
 
 . $scriptDir/utils.sh
 
-# Check if PostgreSQL is running with a timeout of 10 minutes
+# Check if PostgreSQL is running with a timeout of 10 minutes. Poll at a 1s
+# interval: the very first check usually succeeds (PostgreSQL is started before
+# this script), so a coarser interval only adds startup latency on the rare
+# retry path (issue #480).
 timeout=600
-interval=5
+interval=1
 elapsed=0
 
 echo "Waiting for PostgreSQL to be ready on $hostname:$port..."

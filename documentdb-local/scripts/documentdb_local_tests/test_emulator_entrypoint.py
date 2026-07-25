@@ -202,6 +202,123 @@ exit {psql_exit_code}
         )
         return sql_capture
 
+    def _configure_start_oss_args_capture(self, data_dir=None):
+        """Replace the start_oss_server.sh stub with one that records its
+        argv (one argument per line) and still creates the files the
+        entrypoint waits on. Call AFTER _configure_postgres_stubs so the psql
+        stub stays in place."""
+        data_dir = Path(data_dir) if data_dir else self.data_dir
+        args_capture = self.root / "start-oss-args.txt"
+        self._write_exec(
+            self.gateway_scripts / "start_oss_server.sh",
+            f"""#!/bin/sh
+printf '%s\\n' "$@" > "{args_capture}"
+touch "{data_dir / 'postmaster.pid'}" "{data_dir / 'pglog.log'}"
+echo oss-server-stub-started
+""",
+        )
+        return args_capture
+
+    def _seed_baked_template(self, directory):
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "PG_VERSION").write_text("17\n", encoding="utf-8")
+        marker_dir = directory / ".documentdb-local"
+        marker_dir.mkdir(parents=True, exist_ok=True)
+        (marker_dir / "baked_template").touch()
+
+    def test_baked_template_is_adopted_and_marker_consumed(self):
+        """Issue #480: a data directory carrying the image's baked-template
+        marker is adopted as-is (no forced re-initialization) and the marker
+        is consumed so later boots treat the directory as ordinary user
+        data."""
+        self._configure_postgres_stubs()
+        args_capture = self._configure_start_oss_args_capture()
+        self._seed_baked_template(self.data_dir)
+
+        result = self._run_entrypoint(extra_env={"START_POSTGRESQL": "true"})
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "Adopting pre-initialized data directory template", result.stdout
+        )
+        self.assertFalse(
+            (self.data_dir / ".documentdb-local" / "baked_template").exists(),
+            "the baked-template marker must be consumed on adoption",
+        )
+        args = args_capture.read_text(encoding="utf-8").splitlines()
+        self.assertNotIn("-c", args)
+        rum_index = args.index("-r")
+        self.assertEqual(args[rum_index + 1], "true")
+
+    def test_disable_extended_rum_reinitializes_pristine_template(self):
+        """Issue #480: --disable-extended-rum conflicts with the baked
+        template (which was built WITH extended RUM); on a pristine template
+        the entrypoint must force re-initialization (-c) and explicitly pass
+        -r false (omitting -r would keep the server-side enabled default)."""
+        self._configure_postgres_stubs()
+        args_capture = self._configure_start_oss_args_capture()
+        self._seed_baked_template(self.data_dir)
+
+        result = self._run_entrypoint(
+            "--disable-extended-rum", extra_env={"START_POSTGRESQL": "true"}
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Re-initializing data directory", result.stdout)
+        args = args_capture.read_text(encoding="utf-8").splitlines()
+        self.assertIn("-c", args)
+        rum_index = args.index("-r")
+        self.assertEqual(args[rum_index + 1], "false")
+
+    def test_disable_extended_rum_never_wipes_user_data(self):
+        """A data directory WITHOUT the pristine-template marker holds user
+        data: --disable-extended-rum must not force a cleanup (-c) there."""
+        self._configure_postgres_stubs()
+        args_capture = self._configure_start_oss_args_capture()
+        (self.data_dir / "PG_VERSION").write_text("17\n", encoding="utf-8")
+
+        result = self._run_entrypoint(
+            "--disable-extended-rum", extra_env={"START_POSTGRESQL": "true"}
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = args_capture.read_text(encoding="utf-8").splitlines()
+        self.assertNotIn("-c", args)
+
+    def test_custom_empty_data_path_is_populated_from_template(self):
+        """Issue #480: an empty custom --data-path is instantiated by copying
+        the pristine baked template instead of running full initialization;
+        the copied marker must not survive into the new data directory."""
+        template_dir = self.root / "template"
+        self._seed_baked_template(template_dir)
+        (template_dir / "postgresql.conf").write_text(
+            "shared_preload_libraries = 'stub'\n", encoding="utf-8"
+        )
+        custom_data = self.root / "custom-data"
+        custom_data.mkdir()
+        self._configure_postgres_stubs()
+        args_capture = self._configure_start_oss_args_capture(custom_data)
+
+        result = self._run_entrypoint(
+            extra_env={
+                "START_POSTGRESQL": "true",
+                "DATA_PATH": str(custom_data),
+                "DOCUMENTDB_PGDATA_TEMPLATE": str(template_dir),
+            }
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Populating empty data directory", result.stdout)
+        self.assertTrue((custom_data / "PG_VERSION").is_file())
+        self.assertTrue((custom_data / "postgresql.conf").is_file())
+        self.assertFalse(
+            (custom_data / ".documentdb-local" / "baked_template").exists(),
+            "the copied template marker must be consumed in the new data "
+            "directory",
+        )
+        args = args_capture.read_text(encoding="utf-8").splitlines()
+        self.assertNotIn("-c", args)
+
     def test_get_parameter_stub_returns_command_not_supported(self):
         sql_capture = self._configure_postgres_stubs()
 
