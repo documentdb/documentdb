@@ -729,8 +729,12 @@ async fn handle_sasl_continue(
             .map_err(DocumentDBError::pg_response_invalid)?
             != 1
         {
+            // The backend rejected the client's SCRAM proof, i.e. the
+            // password is wrong. Use MongoDB's wording: the previous
+            // "Invalid key" read like a TLS/key-file problem and sent users
+            // debugging in the wrong direction.
             return Err(DocumentDBError::authentication_failed(
-                "Invalid key".to_owned(),
+                "Authentication failed.".to_owned(),
             ));
         }
 

@@ -493,7 +493,10 @@ class DefaultContainerTests(_ContainerTestBase):
         )
 
     def test_mongosh_ping_rejected_with_wrong_password(self):
-        """Authentication must be enforced - a wrong password must fail."""
+        """Authentication must be enforced - a wrong password must fail,
+        and the client-facing message must say so. The gateway used to
+        surface 'Invalid key' here, which reads like a TLS/key-file
+        problem and sent users debugging in the wrong direction."""
         result = self._mongosh(
             "db.runCommand({ping: 1})",
             password=self.password + "-wrong",
@@ -502,6 +505,19 @@ class DefaultContainerTests(_ContainerTestBase):
             result.returncode, 0,
             "mongosh unexpectedly succeeded with a wrong password\n"
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+        )
+        combined = result.stdout + result.stderr
+        self.assertIn(
+            "Authentication failed",
+            combined,
+            "wrong-password rejection should carry the canonical "
+            f"authentication-failure message\nstdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}",
+        )
+        self.assertNotIn(
+            "Invalid key",
+            combined,
+            "the misleading 'Invalid key' wording must not come back",
         )
 
     def test_no_undefined_backend_function_errors_in_logs(self):
