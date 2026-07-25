@@ -246,7 +246,11 @@ export DATA_PATH=${DATA_PATH:-/data}
 export DOCUMENTDB_PORT=${DOCUMENTDB_PORT:-10260}
 export POSTGRESQL_PORT=${POSTGRESQL_PORT:-9712}
 export USERNAME=${USERNAME:-default_user}
-export PASSWORD=${PASSWORD:-Admin100}
+# PASSWORD deliberately has no default. It used to fall back to a well-known
+# value (Admin100), which meant a container started without credentials
+# silently accepted a password anyone could look up in this file -- while
+# --help and the README both said a password was required. The validation
+# below now actually enforces that.
 export CREATE_USER=${CREATE_USER:-true}
 export START_POSTGRESQL=${START_POSTGRESQL:-true}
 export INIT_DATA=${INIT_DATA:-}
@@ -282,7 +286,12 @@ echo "  $DOCUMENTDB_LOG_DIR/postgres/pglog.log (will be symlinked)"
 
 # Validate required parameters
 if [ -z "${PASSWORD:-}" ]; then
-    echo "Error: PASSWORD is required. Please provide a password using --password argument or PASSWORD environment variable."
+    echo "Error: no password provided. Set one with:"
+    echo "  docker run ... --password <secret>        (entrypoint flag)"
+    echo "  docker run -e PASSWORD=<secret> ...       (environment variable)"
+    echo "Earlier versions silently fell back to the well-known default password"
+    echo "'Admin100'. If you relied on that, pass it explicitly (not recommended"
+    echo "outside throwaway environments): --password Admin100"
     exit 1
 fi
 

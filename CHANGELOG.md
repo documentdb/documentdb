@@ -1,5 +1,6 @@
 ### documentdb v0.117-0 (Unreleased) ###
 * Default the RUM index library (`documentdb.rum_library_load_option`) to `require_documentdb_extended_rum` on all supported PostgreSQL versions, instead of only on PG 18+. The option can still be set to `none` to opt out. *[Refactor]*
+* **Breaking (documentdb-local):** the container now refuses to start when no password is provided, instead of silently falling back to the well-known default `Admin100`. `--help` and the README always documented the password as required; now it is. Pass `--password <secret>` or `-e PASSWORD=<secret>` (or the old default explicitly, to keep prior behavior). *[Bugfix]*
 
 ### documentdb v0.116-0 (Unreleased) ###
 * Rename the `$sample` EXPLAIN metric `Sample Heap Skips` to `Sample Heap Fetches`. *[Refactor]*

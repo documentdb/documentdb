@@ -335,6 +335,28 @@ exit 1
             result.stdout + result.stderr,
         )
 
+    def test_missing_password_fails_fast_with_actionable_message(self):
+        # Regression guard: PASSWORD used to silently default to the
+        # well-known 'Admin100', which made the "PASSWORD is required"
+        # validation unreachable and let a container started without
+        # credentials accept a password anyone could look up in the
+        # entrypoint source.
+        result = self._run_entrypoint(extra_env={"PASSWORD": ""})
+        self.assertNotEqual(result.returncode, 0)
+        out = result.stdout + result.stderr
+        self.assertIn("no password provided", out)
+        # The message must show both ways of supplying one.
+        self.assertIn("--password", out)
+        self.assertIn("PASSWORD=", out)
+        # Startup must not have proceeded past validation.
+        self.assertNotIn("Using username", out)
+
+    def test_password_flag_alone_satisfies_the_requirement(self):
+        result = self._run_entrypoint(
+            "--password", "flagpass", extra_env={"PASSWORD": ""}
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
     def test_enforce_tls_write_failure_aborts(self):
         failing_jq = """#!/usr/bin/env python3
 import json
