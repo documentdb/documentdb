@@ -165,6 +165,10 @@ json.dump(data, sys.stdout)
                 "DATA_PATH": str(self.data_dir),
                 "USERNAME": "default_user",
                 "OWNER": "documentdb",
+                # Keep the readiness marker inside the sandbox: the default
+                # (/tmp/documentdb-local.ready) would leak state between tests
+                # and onto the host.
+                "READY_MARKER_FILE": str(self.root / "documentdb-local.ready"),
             }
         )
         if extra_env:
@@ -659,6 +663,53 @@ json.dump(data, sys.stdout)
             "sample should seed on the next boot after custom is skipped",
         )
         self.assertIn("attempted but its success was not recorded", second.stdout)
+
+    def test_ready_marker_written_after_successful_startup(self):
+        # The healthcheck (documentdb_healthcheck.sh, #482) gates on this
+        # marker; it must appear once startup completes.
+        marker = self.root / "documentdb-local.ready"
+        result = self._run_entrypoint()
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertTrue(
+            marker.exists(), "readiness marker should exist after startup"
+        )
+
+    def test_ready_marker_not_written_when_custom_init_fails(self):
+        # The marker is what makes `service_healthy` imply "seeded": a failed
+        # one-shot initialization must leave the container unhealthy.
+        init_dir = self.root / "custom_init"
+        init_dir.mkdir()
+        (init_dir / "00-custom.js").write_text("// custom\n", encoding="utf-8")
+        self._write_counting_init_stub(fail_always=True)
+        marker = self.root / "documentdb-local.ready"
+
+        result = self._run_entrypoint(
+            extra_env={
+                "INIT_DATA": "false",
+                "SKIP_INIT_DATA": "",
+                "INIT_DATA_PATH": str(init_dir),
+            }
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(
+            marker.exists(),
+            "readiness marker must not exist when initialization failed",
+        )
+
+    def test_stale_ready_marker_is_removed_early_on_boot(self):
+        # /tmp survives a container restart, so a marker left by the previous
+        # boot must be cleared before startup work begins -- otherwise a
+        # restarting container would report healthy while still initializing.
+        # Simulate with a boot that fails partway (invalid tlsMode): the stale
+        # marker must be gone even though this boot never became ready.
+        marker = self.root / "documentdb-local.ready"
+        marker.touch()
+        result = self._run_entrypoint(extra_env={"TLS_MODE": "bogus"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(
+            marker.exists(),
+            "stale readiness marker from a previous boot must be removed",
+        )
 
     def test_help_does_not_advertise_force_init_data(self):
         # Re-initialization is intentionally done by starting with a fresh data

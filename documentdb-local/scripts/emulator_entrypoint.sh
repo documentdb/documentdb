@@ -274,6 +274,16 @@ export OSS_SERVER_LOG="$DOCUMENTDB_LOG_DIR/oss_server.log"
 # Note: PostgreSQL log will be symlinked after PostgreSQL starts
 export PG_LOG_FILE="$DOCUMENTDB_LOG_DIR/postgres/pglog.log"
 
+# Readiness marker consumed by documentdb_healthcheck.sh (issue #482): the
+# container reports healthy only once this file exists AND the gateway accepts
+# connections. Written at the end of startup, after one-shot data
+# initialization, so `depends_on: condition: service_healthy` dependents
+# observe seeded data. Remove any stale copy up front: /tmp survives a
+# container restart, and a leftover marker would report healthy before this
+# boot's startup completed.
+export READY_MARKER_FILE=${READY_MARKER_FILE:-/tmp/documentdb-local.ready}
+rm -f "$READY_MARKER_FILE"
+
 echo "Centralized log directory created with the following structure:"
 echo "  $DOCUMENTDB_LOG_DIR/gateway_entrypoint.log"
 echo "  $DOCUMENTDB_LOG_DIR/gateway.log"
@@ -671,6 +681,10 @@ fi
 echo "Gateway started with PID: $gateway_pid"
 echo ""
 echo "=== DocumentDB is ready ==="
+# Flip the container's health gate (see documentdb_healthcheck.sh). Everything
+# a dependent must be able to rely on -- gateway accepting authenticated
+# connections, one-shot data initialization -- has completed by this point.
+touch "$READY_MARKER_FILE"
 echo "All logs are being streamed to docker logs with prefixes:"
 echo "  [POSTGRES] - PostgreSQL database logs ($PG_LOG_FILE)"
 echo "  [POSTGRES-SYSTEM] - System PostgreSQL logs ($SYSTEM_POSTGRES_LOG)"

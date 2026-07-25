@@ -1,0 +1,45 @@
+# An application container talking to DocumentDB, started in the right order.
+#
+#   Run once and exit:   docker compose up --build --exit-code-from app
+#   Tear down:           docker compose down -v
+#
+# `depends_on: condition: service_healthy` holds the app back until
+# DocumentDB's healthcheck passes, so the app needs no retry loop for the
+# initial connection. This is also the shape to use in CI: the compose exit
+# code is the app's exit code (--exit-code-from).
+#
+# Note there is no `ports:` mapping on the documentdb service. The app
+# reaches it through the Compose network by service name
+# (mongodb://...@documentdb:10260), so nothing needs to be published to the
+# host. Add a mapping only if you also want to poke at the database from the
+# host while it runs.
+
+services:
+  documentdb:
+    image: ghcr.io/documentdb/documentdb/documentdb-local:latest
+    environment:
+      USERNAME: demo
+      PASSWORD: DemoPass100
+    volumes:
+      - documentdb-data:/data
+    healthcheck:
+      # See ../README.md#healthcheck for what this probes and why. Newer
+      # images ship it built in, making this block optional.
+      test: ["CMD-SHELL", "grep -qF '=== DocumentDB is ready ===' /var/log/documentdb/gateway_entrypoint.log && nc -z localhost 10260"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 300s
+
+  app:
+    build: ./app
+    depends_on:
+      documentdb:
+        condition: service_healthy
+    environment:
+      # `documentdb` (the service name) resolves on the Compose network;
+      # inside a sibling container, `localhost` would be the app itself.
+      DOCUMENTDB_URI: mongodb://demo:DemoPass100@documentdb:10260/?tls=true&tlsAllowInvalidCertificates=true
+
+volumes:
+  documentdb-data:

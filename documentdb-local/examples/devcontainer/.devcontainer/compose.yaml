@@ -1,0 +1,40 @@
+# Compose file backing the dev container: your development environment (dev)
+# plus DocumentDB as a sidecar. VS Code / GitHub Codespaces attaches to the
+# `dev` service; DocumentDB is reachable from it at documentdb:10260.
+
+services:
+  dev:
+    image: mcr.microsoft.com/devcontainers/python:3.13
+    volumes:
+      # Mount the example folder (the devcontainer workspace) into the
+      # container. ".." is relative to this .devcontainer directory.
+      - ..:/workspaces/app:cached
+    # Keep the container alive for the editor to attach to; a dev container
+    # has no long-running app process of its own.
+    command: sleep infinity
+    environment:
+      # The service name resolves on the Compose network; from inside the
+      # dev container, DocumentDB is NOT on localhost.
+      DOCUMENTDB_URI: mongodb://demo:DemoPass100@documentdb:10260/?tls=true&tlsAllowInvalidCertificates=true
+    depends_on:
+      documentdb:
+        condition: service_healthy
+
+  documentdb:
+    image: ghcr.io/documentdb/documentdb/documentdb-local:latest
+    environment:
+      USERNAME: demo
+      PASSWORD: DemoPass100
+    volumes:
+      - documentdb-data:/data
+    healthcheck:
+      # See ../../README.md#healthcheck for what this probes and why. Newer
+      # images ship it built in, making this block optional.
+      test: ["CMD-SHELL", "grep -qF '=== DocumentDB is ready ===' /var/log/documentdb/gateway_entrypoint.log && nc -z localhost 10260"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 300s
+
+volumes:
+  documentdb-data:

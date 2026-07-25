@@ -195,6 +195,7 @@ COPY --from=stage /home/documentdb/code/documentdb-local/scripts/emulator_entryp
 COPY --from=stage /home/documentdb/code/documentdb-local/scripts/documentdb_reserved_roles.sh /home/documentdb/gateway/scripts/documentdb_reserved_roles.sh
 COPY --from=stage /home/documentdb/code/documentdb-local/scripts/documentdb_validate_username.sh /home/documentdb/gateway/scripts/documentdb_validate_username.sh
 COPY --from=stage /home/documentdb/code/documentdb-local/scripts/documentdb_install_getparameter_stub.sh /home/documentdb/gateway/scripts/documentdb_install_getparameter_stub.sh
+COPY --from=stage /home/documentdb/code/documentdb-local/scripts/documentdb_healthcheck.sh /home/documentdb/gateway/scripts/documentdb_healthcheck.sh
 COPY --from=stage /home/documentdb/code/scripts/utils.sh /home/documentdb/gateway/scripts/utils.sh
 COPY --from=stage /home/documentdb/code/scripts/preload_libraries.sh /home/documentdb/gateway/scripts/preload_libraries.sh
 COPY --from=stage /home/documentdb/code/scripts/setup_psqlrc.sh /home/documentdb/gateway/scripts/setup_psqlrc.sh
@@ -215,3 +216,13 @@ RUN sudo chmod +x /home/documentdb/gateway/scripts/init_documentdb_data.sh
 
 WORKDIR /home/documentdb/gateway/scripts
 ENTRYPOINT ["/bin/bash", "-c", "/home/documentdb/gateway/scripts/emulator_entrypoint.sh \"$@\"", "--"]
+
+# Built-in healthcheck so `depends_on: condition: service_healthy` works out
+# of the box (issue #482); see documentdb_healthcheck.sh for what healthy
+# means. The generous start-period accommodates first-boot initdb + CREATE
+# EXTENSION on slow Docker Desktop filesystems. --start-interval probes every
+# 2s during the start period (honored by Docker Engine >= 25; older engines
+# fall back to --interval), so compose dependents unblock shortly after
+# readiness instead of at a multiple of the 30s steady-state interval.
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=300s --start-interval=2s \
+    CMD ["/bin/bash", "/home/documentdb/gateway/scripts/documentdb_healthcheck.sh"]

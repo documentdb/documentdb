@@ -1,0 +1,19 @@
+{
+    "name": "Python app + DocumentDB",
+    "dockerComposeFile": "compose.yaml",
+    "service": "dev",
+    "workspaceFolder": "/workspaces/app",
+    // Make DocumentDB reachable from the HOST too (e.g. a GUI client or
+    // mongosh on your machine) while developing inside the container.
+    "forwardPorts": [
+        "documentdb:10260"
+    ],
+    "postCreateCommand": "pip install --user -r requirements-dev.txt",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python"
+            ]
+        }
+    }
+}

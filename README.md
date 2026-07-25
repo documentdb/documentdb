@@ -74,6 +74,11 @@ Step 3. Setup DocumentDB using Docker
    > 
    > **Port Note:** Port `10260` is used by default in these instructions to avoid conflicts with other local database services. You can use port `27017` (the standard MongoDB port) or any other available port if you prefer. If you do, be sure to update the port number in both your `docker run` command and your connection string accordingly.
 
+   Prefer Docker Compose (or a dev container)? Ready-to-run examples — including
+   health-checked startup ordering for dependent services and first-boot data
+   seeding — live in
+   [`documentdb-local/examples`](documentdb-local/examples/README.md).
+
 Step 4: Initialize the pymongo client with the credentials from the previous step
 
 ```python

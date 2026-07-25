@@ -1,0 +1,42 @@
+# Seeding DocumentDB on first boot with your own data.
+#
+#   Start:      docker compose up --wait
+#   Verify:     mongosh "mongodb://demo:DemoPass100@localhost:10260/?tls=true&tlsAllowInvalidCertificates=true" \
+#                   --eval "db.getSiblingDB('library').books.countDocuments()"
+#   Re-seed:    docker compose down -v && docker compose up --wait
+#
+# Any *.js files mounted into /init_doc_db.d are executed with mongosh in
+# alphabetical order, once per fresh data volume. A restart against an
+# already-seeded volume skips them (so scripts are not re-run against data
+# they already created), which is why re-seeding requires `down -v`.
+#
+# Because the healthcheck only passes after initialization completes, anything
+# gated on `service_healthy` -- including `docker compose up --wait` itself --
+# is guaranteed to see the seeded data.
+
+services:
+  documentdb:
+    image: ghcr.io/documentdb/documentdb/documentdb-local:latest
+    ports:
+      - "10260:10260"
+    environment:
+      USERNAME: demo
+      PASSWORD: DemoPass100
+      # Optionally also load the image's built-in sample dataset (sampledb):
+      # INIT_DATA: "true"
+    volumes:
+      - documentdb-data:/data
+      # Seed scripts, read-only. Executed in alphabetical order; number the
+      # files (01-..., 02-...) to make the order explicit.
+      - ./init-scripts:/init_doc_db.d:ro
+    healthcheck:
+      # See ../README.md#healthcheck for what this probes and why. Newer
+      # images ship it built in, making this block optional.
+      test: ["CMD-SHELL", "grep -qF '=== DocumentDB is ready ===' /var/log/documentdb/gateway_entrypoint.log && nc -z localhost 10260"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 300s
+
+volumes:
+  documentdb-data:

@@ -1,5 +1,6 @@
 ### documentdb v0.117-0 (Unreleased) ###
 * Default the RUM index library (`documentdb.rum_library_load_option`) to `require_documentdb_extended_rum` on all supported PostgreSQL versions, instead of only on PG 18+. The option can still be set to `none` to opt out. *[Refactor]*
+* Ship a built-in `HEALTHCHECK` in the documentdb-local image (`documentdb_healthcheck.sh`): healthy means startup — including one-shot data initialization — completed and the gateway accepts connections on its effective port, so `depends_on: condition: service_healthy` works out of the box. Add ready-to-run Docker Compose and dev container examples under `documentdb-local/examples`. *[Feature]* (#482)
 
 ### documentdb v0.116-0 (Unreleased) ###
 * Rename the `$sample` EXPLAIN metric `Sample Heap Skips` to `Sample Heap Fetches`. *[Refactor]*

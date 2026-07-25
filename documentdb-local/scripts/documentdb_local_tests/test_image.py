@@ -827,6 +827,98 @@ class CustomDocumentDBPortTests(_ContainerTestBase):
 
 
 # ---------------------------------------------------------------------------
+# 3b. Built-in container healthcheck (issue #482). The image must declare a
+#     HEALTHCHECK, the probe must gate on the entrypoint's readiness marker,
+#     and it must honor --documentdb-port by reading the effective port from
+#     the runtime-generated gateway config (the flag is invisible to the
+#     probe's environment). The class deliberately runs on a custom port: a
+#     probe that silently fell back to the default port could never turn
+#     healthy here.
+# ---------------------------------------------------------------------------
+
+HEALTHCHECK_SCRIPT = "/home/documentdb/gateway/scripts/documentdb_healthcheck.sh"
+READY_MARKER = "/tmp/documentdb-local.ready"
+
+
+def _health_status(container: str) -> str:
+    """Return the container's health status ('' when no healthcheck)."""
+    res = _docker(
+        "inspect", "-f",
+        "{{if .State.Health}}{{.State.Health.Status}}{{end}}",
+        container, check=False,
+    )
+    return res.stdout.strip()
+
+
+@_SKIP_UNLESS_IMAGE
+class HealthcheckTests(_ContainerTestBase):
+    """Built-in HEALTHCHECK: declared, turns healthy, honors custom port."""
+
+    ENTRYPOINT_FLAGS = [
+        "--skip-init-data",
+        "--documentdb-port", str(CUSTOM_PORT),
+    ]
+
+    def test_image_declares_a_healthcheck(self):
+        res = _docker(
+            "image", "inspect", "-f", "{{json .Config.Healthcheck}}",
+            self.image,
+        )
+        self.assertNotEqual(
+            res.stdout.strip(), "null",
+            "image must declare a built-in HEALTHCHECK (issue #482)",
+        )
+
+    def test_container_reports_healthy(self):
+        # _wait_for_ready (in setUpClass) saw the readiness log line, so the
+        # marker exists; within the start period probes run every
+        # --start-interval seconds, so healthy should arrive promptly.
+        deadline = time.monotonic() + 90
+        status = _health_status(self.container)
+        while status != "healthy" and time.monotonic() < deadline:
+            time.sleep(2)
+            status = _health_status(self.container)
+        self.assertEqual(
+            status, "healthy",
+            "container did not report healthy after readiness; if the probe "
+            "assumed the default port instead of reading the runtime config, "
+            "it can never succeed in this class",
+        )
+
+    def test_probe_script_passes_in_ready_container(self):
+        res = _docker(
+            "exec", self.container, "bash", HEALTHCHECK_SCRIPT,
+            check=False, timeout=30,
+        )
+        self.assertEqual(
+            res.returncode, 0,
+            f"healthcheck script failed in a ready container\n"
+            f"stdout:\n{res.stdout}\nstderr:\n{res.stderr}",
+        )
+
+    def test_probe_script_fails_without_ready_marker(self):
+        # The marker is what keeps an initializing (or restarting) container
+        # out of `healthy`; without it the probe must fail even though the
+        # gateway is accepting connections. Restored afterwards so the
+        # container's real health state is untouched (a single failed docker
+        # probe in the window would not flip health: retries=3).
+        _docker("exec", self.container, "rm", "-f", READY_MARKER,
+                check=False, timeout=30)
+        try:
+            res = _docker(
+                "exec", self.container, "bash", HEALTHCHECK_SCRIPT,
+                check=False, timeout=30,
+            )
+            self.assertNotEqual(
+                res.returncode, 0,
+                "healthcheck must fail when the readiness marker is absent",
+            )
+        finally:
+            _docker("exec", self.container, "touch", READY_MARKER,
+                    check=False, timeout=30)
+
+
+# ---------------------------------------------------------------------------
 # 4. TLS modes. allowTLS (the default) accepts both plain (non-TLS) and TLS
 #    client connections; that default is exercised by DefaultContainerTests
 #    above, which pings over both TLS and a plain connection. The requireTLS

@@ -1,0 +1,41 @@
+# Minimal Docker Compose setup for DocumentDB local development.
+#
+#   Start:      docker compose up --wait        (returns once healthy)
+#   Connect:    mongosh "mongodb://demo:DemoPass100@localhost:10260/?tls=true&tlsAllowInvalidCertificates=true"
+#   Tear down:  docker compose down             (add -v to also delete the data)
+#
+# See ../README.md for the concepts shared by every example (healthcheck,
+# credentials, TLS, persistence).
+
+services:
+  documentdb:
+    image: ghcr.io/documentdb/documentdb/documentdb-local:latest
+    ports:
+      - "10260:10260"
+    environment:
+      # Local-development credentials. Change them here, or override without
+      # editing this file:  DOCUMENTDB_PASSWORD=... docker compose up --wait
+      USERNAME: ${DOCUMENTDB_USERNAME:-demo}
+      PASSWORD: ${DOCUMENTDB_PASSWORD:-DemoPass100}
+    volumes:
+      # Named volume so data survives `docker compose down` and container
+      # recreation. `docker compose down -v` deletes it for a fresh start.
+      - documentdb-data:/data
+    healthcheck:
+      # Healthy = the entrypoint finished startup (it prints the marker line
+      # below only after one-shot data initialization completes) AND the
+      # gateway accepts TCP connections. Newer images ship this logic as a
+      # built-in HEALTHCHECK (documentdb_healthcheck.sh), which makes this
+      # block optional; it is spelled out so the example also works with
+      # images published before the built-in healthcheck existed.
+      test: ["CMD-SHELL", "grep -qF '=== DocumentDB is ready ===' /var/log/documentdb/gateway_entrypoint.log && nc -z localhost 10260"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      # First boot runs initdb + CREATE EXTENSION, which can take minutes on
+      # slow Docker Desktop filesystems; probe failures within the start
+      # period do not count against `retries`.
+      start_period: 300s
+
+volumes:
+  documentdb-data:
