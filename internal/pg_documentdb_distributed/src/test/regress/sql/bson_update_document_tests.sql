@@ -188,6 +188,28 @@ SELECT documentdb_api_internal.update_bson_document('{ "_id": 1, "a": 1}', '{ ""
 SELECT documentdb_api_internal.update_bson_document('{ "_id": 1, "a": 1, "x": 1}', '{ "": { "$rename": { "b": "a" }, "$inc": {"x" : 1} } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
 SELECT documentdb_api_internal.update_bson_document('{ "_id": 1, "b": 1, "x": 1}', '{ "": { "$rename": { "a": "b", "x": "y" } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
 
+-- $rename target cannot be an array element (issue #502)
+-- target index out of array bounds
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[1, 2]], "b": 3}', '{ "": { "$rename": { "b": "a.0.2" } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- target index within array bounds
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[1, 2]], "b": 3}', '{ "": { "$rename": { "b": "a.0.0" } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- target index just past array end
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[1, 2]], "b": 3}', '{ "": { "$rename": { "b": "a.0.1" } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- deeply nested array target
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[[10]]], "b": 3}', '{ "": { "$rename": { "b": "a.0.0.1" } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- target through nested array with intermediate path
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [{"x": [1]}], "b": 3}', '{ "": { "$rename": { "b": "a.0.x.1" } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- target array index far beyond the array end triggers the array-backfill
+-- guard, which is reported before the array-element rename check (issue #502)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [10], "b": 2}', '{ "": { "$rename": { "b": "a.2000000" } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- array-out-of-bounds rename through an intermediate path node (NodeType_Intermediate)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[10]], "b": 2}', '{ "": { "$rename": { "b": "a.2.0" } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- source is array element (should also error)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1, 2, 3]}', '{ "": { "$rename": { "a.1": "b" } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+-- simple array target (top-level array index)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [10, 20], "b": 3}', '{ "": { "$rename": { "b": "a.0" } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [10, 20], "b": 3}', '{ "": { "$rename": { "b": "a.5" } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+
 
 -- update scenario tests: $mul
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberDouble" : "2.0"} } }', '{ "": { "$mul": { "a.b": 0 } } }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
@@ -948,3 +970,12 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 2, "key": 2,"x": {"
 -- Other stages with $replaceRoot/$replaceWith
 SELECT documentdb_api_internal.update_bson_document('{ "_id": 1, "a": { "b": 3 } }', '{ "": [ { "$set": { "a.b": 5 } }, { "$replaceWith": "$a" } ] }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
 SELECT documentdb_api_internal.update_bson_document('{ "_id": 1, "a": { "b": 3 } }', '{ "": [ { "$set": { "a.b": 5 } }, { "$replaceRoot": { "newRoot": "$a" } } ] }', '{}', NULL::documentdb_core.bson, NULL::documentdb_core.bson, NULL::TEXT);
+
+-- issue #502: a failed $rename targeting an out-of-bounds array element must not
+-- corrupt the stored document. The whole update is a no-op that reports a writeError,
+-- so the persisted document must remain byte-for-byte unchanged (exercises the
+-- distributed / multi-node write path end-to-end).
+SELECT documentdb_api.insert_one('db', 'update_rename_502', '{ "_id": 1, "a": [[1, 2]], "b": 3 }');
+SELECT documentdb_api.update('db', '{ "update": "update_rename_502", "updates": [ { "q": { "_id": 1 }, "u": { "$rename": { "b": "a.0.2" } } } ] }');
+SELECT document FROM documentdb_api.collection('db', 'update_rename_502') ORDER BY object_id;
+SELECT documentdb_api.drop_collection('db', 'update_rename_502');

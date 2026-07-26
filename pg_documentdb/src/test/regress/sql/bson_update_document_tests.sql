@@ -276,6 +276,27 @@ SELECT documentdb_api_internal.update_bson_document('{ "_id": 1, "a": 1}', '{ ""
 SELECT documentdb_api_internal.update_bson_document('{ "_id": 1, "a": 1, "x": 1}', '{ "": { "$rename": { "b": "a" }, "$inc": {"x" : 1} } }', '{}', NULL, NULL, NULL) as update_bson_document;
 SELECT documentdb_api_internal.update_bson_document('{ "_id": 1, "b": 1, "x": 1}', '{ "": { "$rename": { "a": "b", "x": "y" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
 
+-- $rename target cannot be an array element (issue #502)
+-- target index out of array bounds
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[1, 2]], "b": 3}', '{ "": { "$rename": { "b": "a.0.2" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+-- target index within array bounds
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[1, 2]], "b": 3}', '{ "": { "$rename": { "b": "a.0.0" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+-- target index just past array end
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[1, 2]], "b": 3}', '{ "": { "$rename": { "b": "a.0.1" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+-- deeply nested array target
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[[10]]], "b": 3}', '{ "": { "$rename": { "b": "a.0.0.1" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+-- target through nested array with intermediate path
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [{"x": [1]}], "b": 3}', '{ "": { "$rename": { "b": "a.0.x.1" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+-- target array index far beyond the array end triggers the array-backfill
+-- guard, which is reported before the array-element rename check (issue #502)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [10], "b": 2}', '{ "": { "$rename": { "b": "a.2000000" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+-- array-out-of-bounds rename through an intermediate path node (NodeType_Intermediate)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[10]], "b": 2}', '{ "": { "$rename": { "b": "a.2.0" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+-- source is array element (should also error)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1, 2, 3]}', '{ "": { "$rename": { "a.1": "b" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+-- simple array target (top-level array index)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [10, 20], "b": 3}', '{ "": { "$rename": { "b": "a.0" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [10, 20], "b": 3}', '{ "": { "$rename": { "b": "a.5" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
 
 -- update scenario tests: $mul
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberDouble" : "2.0"} } }', '{ "": { "$mul": { "a.b": 0 } } }', '{}', NULL, NULL, NULL) as update_bson_document;
@@ -1063,3 +1084,11 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [[1,2,3], [
 
 -- $currentDate with padded zero index: verify x[1] was changed (not null, indicating update was applied)
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [1, 2, 3]}', '{ "": { "$currentDate": { "x.001": true } } }', '{}', NULL, NULL, NULL) IS NOT NULL as update_bson_document;
+
+-- issue #502: a failed $rename targeting an out-of-bounds array element must not
+-- corrupt the stored document. The whole update is a no-op that reports a writeError,
+-- so the persisted document must remain byte-for-byte unchanged.
+SELECT documentdb_api.insert_one('db', 'update_rename_502', '{ "_id": 1, "a": [[1, 2]], "b": 3 }');
+SELECT documentdb_api.update('db', '{ "update": "update_rename_502", "updates": [ { "q": { "_id": 1 }, "u": { "$rename": { "b": "a.0.2" } } } ] }');
+SELECT document FROM documentdb_api.collection('db', 'update_rename_502') ORDER BY object_id;
+SELECT documentdb_api.drop_collection('db', 'update_rename_502');

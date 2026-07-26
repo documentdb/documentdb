@@ -870,6 +870,37 @@ SELECT documentdb_api_internal.update_bson_document('{ "_id": 1, "b": 1, "x": 1}
  { "_id" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" }, "y" : { "$numberInt" : "1" } }
 (1 row)
 
+-- $rename target cannot be an array element (issue #502)
+-- target index out of array bounds
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[1, 2]], "b": 3}', '{ "": { "$rename": { "b": "a.0.2" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+ERROR:  The target field of a rename cannot be an array element
+-- target index within array bounds
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[1, 2]], "b": 3}', '{ "": { "$rename": { "b": "a.0.0" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+ERROR:  The target field of a rename cannot be an array element
+-- target index just past array end
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[1, 2]], "b": 3}', '{ "": { "$rename": { "b": "a.0.1" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+ERROR:  The target field of a rename cannot be an array element
+-- deeply nested array target
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[[10]]], "b": 3}', '{ "": { "$rename": { "b": "a.0.0.1" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+ERROR:  The target field of a rename cannot be an array element
+-- target through nested array with intermediate path
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [{"x": [1]}], "b": 3}', '{ "": { "$rename": { "b": "a.0.x.1" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+ERROR:  The target field of a rename cannot be an array element
+-- target array index far beyond the array end triggers the array-backfill
+-- guard, which is reported before the array-element rename check (issue #502)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [10], "b": 2}', '{ "": { "$rename": { "b": "a.2000000" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+ERROR:  Backfilling is not possible for more than 1500000 elements.
+-- array-out-of-bounds rename through an intermediate path node (NodeType_Intermediate)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [[10]], "b": 2}', '{ "": { "$rename": { "b": "a.2.0" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+ERROR:  The target field of a rename cannot be an array element
+-- source is array element (should also error)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1, 2, 3]}', '{ "": { "$rename": { "a.1": "b" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+ERROR:  The source field of a rename cannot be an array element
+-- simple array target (top-level array index)
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [10, 20], "b": 3}', '{ "": { "$rename": { "b": "a.0" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+ERROR:  The target field of a rename cannot be an array element
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [10, 20], "b": 3}', '{ "": { "$rename": { "b": "a.5" } } }', '{}', NULL, NULL, NULL) as update_bson_document;
+ERROR:  The target field of a rename cannot be an array element
 -- update scenario tests: $mul
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberDouble" : "2.0"} } }', '{ "": { "$mul": { "a.b": 0 } } }', '{}', NULL, NULL, NULL) as update_bson_document;
                               update_bson_document                               
@@ -3128,6 +3159,34 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [[1,2,3], [
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "x": [1, 2, 3]}', '{ "": { "$currentDate": { "x.001": true } } }', '{}', NULL, NULL, NULL) IS NOT NULL as update_bson_document;
  update_bson_document 
 ----------------------
+ t
+(1 row)
+
+-- issue #502: a failed $rename targeting an out-of-bounds array element must not
+-- corrupt the stored document. The whole update is a no-op that reports a writeError,
+-- so the persisted document must remain byte-for-byte unchanged.
+SELECT documentdb_api.insert_one('db', 'update_rename_502', '{ "_id": 1, "a": [[1, 2]], "b": 3 }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.update('db', '{ "update": "update_rename_502", "updates": [ { "q": { "_id": 1 }, "u": { "$rename": { "b": "a.0.2" } } } ] }');
+                                                                                                                                                            update                                                                                                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" }, ""writeErrors"" : [ { ""index"" : { ""$numberInt"" : ""0"" }, ""code"" : { ""$numberInt"" : ""16777245"" }, ""errmsg"" : ""The target field of a rename cannot be an array element"" } ] }",f)
+(1 row)
+
+SELECT document FROM documentdb_api.collection('db', 'update_rename_502') ORDER BY object_id;
+                                                            document                                                            
+--------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : [ [ { "$numberInt" : "1" }, { "$numberInt" : "2" } ] ], "b" : { "$numberInt" : "3" } }
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'update_rename_502');
+ drop_collection 
+-----------------
  t
 (1 row)
 

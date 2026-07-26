@@ -2333,10 +2333,22 @@ HandleUnresolvedArrayFields(const BsonUpdateIntermediatePathNode *tree,
 		const PositionalData *positionalData = GetPositionalData(child);
 
 		/* If it's not a field node, then skip it - this includes things like
-		 * $unset - they shouldn't contribute to growing the array if necessary
+		 * $unset - they shouldn't contribute to growing the array if necessary.
+		 *
+		 * $rename is modeled as a union of a $unset on the source path and a
+		 * $set on the target path: the source becomes a NodeType_LeafExcluded
+		 * node and the target a NodeType_LeafIncluded node. We must therefore
+		 * treat NodeType_LeafIncluded (and intermediate nodes that carry
+		 * included children) like field nodes here so a $rename target that
+		 * resolves to an array element reaches the array write-loop and
+		 * triggers the proper array-element error handling, instead of being
+		 * skipped and silently dropped (issue #502).
 		 */
 		if (child->nodeType != NodeType_LeafField &&
-			!IsIntermediateNodeWithField(child))
+			child->nodeType != NodeType_LeafIncluded &&
+			!IsIntermediateNodeWithField(child) &&
+			!(IsIntermediateNode(child) &&
+			  CastAsUpdateIntermediateNode(child)->HasIntermediateIncludeChildren))
 		{
 			continue;
 		}
@@ -2391,10 +2403,11 @@ HandleUnresolvedArrayFields(const BsonUpdateIntermediatePathNode *tree,
 			{
 				case NodeType_Intermediate:
 				{
-					if (IsIntermediateNodeWithField(child))
+					const BsonUpdateIntermediatePathNode *intermediate =
+						CastAsUpdateIntermediateNode(child);
+					if (IsIntermediateNodeWithField(child) ||
+						intermediate->HasIntermediateIncludeChildren)
 					{
-						const BsonUpdateIntermediatePathNode *intermediate =
-							CastAsUpdateIntermediateNode(child);
 						pgbson_writer childWriter;
 						PgbsonElementWriterStartDocument(arrayElementWriter,
 														 &childWriter);
