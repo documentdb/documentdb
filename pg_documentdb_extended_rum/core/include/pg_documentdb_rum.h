@@ -896,6 +896,7 @@ typedef enum RumIndexTransformOperation
 	RumIndexTransform_IndexGenerateSkipBound = 1,
 	RumIndexTransform_DetermineOrderByDirection = 2,
 	RumIndexTransform_OrderedScanRequiresDedup = 3,
+	RumIndexTransform_HighKeyScalarCheck = 4,
 } RumIndexTransformOperation;
 
 /* Struct that holds information for projecting an index tuple. */
@@ -922,6 +923,9 @@ typedef struct RumOrderByScanData
 	RumBtreeData orderByBtree;
 	bool canSkipConsistentCheck;
 	void *orderByDedupState;
+	bool lastItemMatched;
+	Datum highKeyMatchDatum;
+	uint32_t highKeyEligiblePages;
 } RumOrderByScanData;
 
 typedef enum RumGetTupleScanType

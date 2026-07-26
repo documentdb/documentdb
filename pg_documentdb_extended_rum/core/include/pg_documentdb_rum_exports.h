@@ -52,6 +52,7 @@ typedef struct RumConfig
 	bool skipGenerateEmptyEntries;
 	bool compareFunctionHasRecheck;
 	bool enableOpClassMetadataStorage;
+	bool enableHighKeyOptimization;
 }   RumConfig;
 
 

@@ -261,6 +261,7 @@ pub struct IndexDetails {
     pub inner_scan_loops: Option<i64>,
     pub dead_entries_or_pages_skipped: Option<i64>,
     pub eligible_dead_items: Option<i64>,
+    pub high_key_eligible_pages: Option<i64>,
     pub parallel_scan_capable: Option<bool>,
     pub scan_key_details: Option<Vec<String>>,
     pub scan_type: Option<String>,

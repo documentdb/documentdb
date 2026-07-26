@@ -1665,6 +1665,13 @@ fn write_execution_stats_index_usage(detail: &IndexDetails, index_doc: &mut RawD
         );
     }
 
+    if let Some(num_high_key_eligible_pages) = detail.high_key_eligible_pages {
+        index_doc.append(
+            "highKeyEligiblePages",
+            smallest_from_i64(num_high_key_eligible_pages),
+        );
+    }
+
     if let Some(parallel_scan_capable) = detail.parallel_scan_capable {
         index_doc.append("parallelScanCapable", parallel_scan_capable);
     }

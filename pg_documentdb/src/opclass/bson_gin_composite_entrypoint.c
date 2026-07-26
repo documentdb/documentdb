@@ -59,6 +59,7 @@ typedef enum RumIndexTransformOperation
 	RumIndexTransform_IndexGenerateSkipBound = 1,
 	RumIndexTransform_DetermineOrderByDirection = 2,
 	RumIndexTransform_OrderedScanRequiresDedup = 3,
+	RumIndexTransform_HighKeyScalarCheck = 4,
 } RumIndexTransformOperation;
 
 
@@ -152,6 +153,7 @@ PGDLLIMPORT typedef struct RumConfig
 	bool skipGenerateEmptyEntries;
 	bool compareFunctionHasRecheck;
 	bool enableOpClassMetadataStorage;
+	bool enableHighKeyOptimization;
 }   RumConfig;
 
 /*
@@ -207,6 +209,7 @@ extern int MaxNonOrderedTermScanThreshold;
 extern bool EnableComparableTerms;
 extern bool EnablePartialMatchHasRecheck;
 extern bool EnableFailureOnParallelIndexArrays;
+extern bool EnableHighKeyOptimization;
 extern bool EnableFailureOnParallelIndexArraysForMetadataTracking;
 extern bool EnableDynamicCursorDedupTracking;
 extern bool EnableCompositeSecondaryPathOrderPushdown;
@@ -309,6 +312,7 @@ static Datum * ProcessOrderedCompositeQueryEntries(int32_t totalPathTerms,
 												   int32_t *searchMode);
 static int RunCompareOnStandardIndexSet(CompositeQueryRunData *runData,
 										SerializedCompositeTermPair *serializedTermsSet,
+										int32_t precheckedPaths,
 										bool *hasTruncation);
 
 inline static IndexTermCreateMetadata
@@ -1120,6 +1124,7 @@ gin_bson_composite_path_compare_partial(PG_FUNCTION_ARGS)
 	Pointer extraData = PG_GETARG_POINTER(3);
 
 	bool *recheckEntry = PG_NARGS() > 4 ? (bool *) PG_GETARG_POINTER(4) : NULL;
+	int32_t precheckedPaths = PG_NARGS() > 5 ? PG_GETARG_INT32(5) : 0;
 
 	CompositeQueryRunData *runData = (CompositeQueryRunData *) extraData;
 	SerializedCompositeTermPair serializedTerms[INDEX_MAX_KEYS] = { 0 };
@@ -1230,9 +1235,16 @@ gin_bson_composite_path_compare_partial(PG_FUNCTION_ARGS)
 
 	int compareResult;
 	bool hasTruncation = false;
-	if (runData->metaInfo->orderedScanEntryData == NULL)
+	if (EnableHighKeyOptimization &&
+		precheckedPaths == runData->metaInfo->numIndexPaths)
+	{
+		/* Every path is pre-checked - no need to do anything */
+		compareResult = 0;
+	}
+	else if (runData->metaInfo->orderedScanEntryData == NULL)
 	{
 		compareResult = RunCompareOnStandardIndexSet(runData, serializedTerms,
+													 precheckedPaths,
 													 &hasTruncation);
 	}
 	else
@@ -1241,6 +1253,7 @@ gin_bson_composite_path_compare_partial(PG_FUNCTION_ARGS)
 		 * If not, we need to advance the scan keys until we find a key that satisfies the bounds
 		 * or we exhaust the keys.
 		 */
+		Assert(precheckedPaths == 0);
 		compareResult = RunCompareOnOrderedIndexSet(runData, serializedTerms,
 													&hasTruncation);
 	}
@@ -1300,13 +1313,15 @@ RunCompareOnPathIndex(CompositeQueryRunData *runData,
 static int
 RunCompareOnStandardIndexSet(CompositeQueryRunData *runData,
 							 SerializedCompositeTermPair *serializedTerms,
+							 int32_t precheckedPaths,
 							 bool *hasTruncation)
 {
 	bool priorMatchesEquality = true;
 	bool hasEqualityPrefix = true;
 	bool allowSkipScanBoundaries = false;
-	for (int32_t compareIndex = 0; compareIndex < runData->metaInfo->numIndexPaths;
-		 compareIndex++)
+	int32_t compareIndex = (EnableHighKeyOptimization && precheckedPaths >= 0) ?
+						   precheckedPaths : 0;
+	for (; compareIndex < runData->metaInfo->numIndexPaths; compareIndex++)
 	{
 		bool hasUnspecifiedPrefix = false;
 		int cmp = RunCompareOnPathIndex(runData, serializedTerms,
@@ -2562,7 +2577,7 @@ CompositeIndexTermGenerateSkipBound(PG_FUNCTION_ARGS)
 
 		/* Continue using current path */
 		PG_FREE_IF_COPY(compareKeyValue, 0);
-		PG_RETURN_DATUM(usedKey);
+		return usedKey;
 	}
 
 	BsonGinCompositePathOptions *options =
@@ -2626,7 +2641,193 @@ CompositeIndexTermGenerateSkipBound(PG_FUNCTION_ARGS)
 																		 runData->metaInfo
 																		 ->numIndexPaths);
 	PG_FREE_IF_COPY(compareKeyValue, 0);
-	PG_RETURN_POINTER(serialized.indexTermVal);
+	return PointerGetDatum(serialized.indexTermVal);
+}
+
+
+inline static bool
+IsBoundCompatibleForHighKeyCheck(CompositeSingleBound *bound, bool isEqualityBound)
+{
+	switch (bound->bound.value_type)
+	{
+		case BSON_TYPE_EOD:
+		case BSON_TYPE_MINKEY:
+		case BSON_TYPE_MAXKEY:
+		{
+			/* Exists type queries are always compatble */
+			return true;
+		}
+
+		case BSON_TYPE_INT32:
+		case BSON_TYPE_INT64:
+		case BSON_TYPE_DOUBLE:
+		case BSON_TYPE_DECIMAL128:
+		case BSON_TYPE_TIMESTAMP:
+		case BSON_TYPE_BOOL:
+		case BSON_TYPE_DATE_TIME:
+		{
+			/* Ranges in the numeric types are compatible with high key checks */
+			return true;
+		}
+
+		case BSON_TYPE_OID:
+		{
+			/* Fixed length byte arrays are compatible with high key checks */
+			return true;
+		}
+
+		case BSON_TYPE_BINARY:
+		case BSON_TYPE_UTF8:
+		{
+			/* Strings and binary data are only compatible if they're an equality bound */
+			return isEqualityBound && !IsIndexTermTruncated(&bound->indexTermValue);
+		}
+
+		default:
+		{
+			/* All other types are not compatible with high key checks */
+			return false;
+		}
+	}
+}
+
+
+static bool
+RecheckFunctionsCompatibleWithHighKey(List *recheckFunctions,
+									  SerializedCompositeTermPair *serializedTerms,
+									  SerializedCompositeTermPair *lowerBoundTerms,
+									  bytea *lowKeyValue,
+									  int32_t numTerms,
+									  int32_t compareIndex)
+{
+	ListCell *lc;
+	foreach(lc, recheckFunctions)
+	{
+		IndexRecheckArgs *recheckFunction = lfirst(lc);
+		if (recheckFunction->queryStrategy == BSON_INDEX_STRATEGY_DOLLAR_EXISTS)
+		{
+			/* For exists, we need both min & max terms to be outside the null range
+			 * for exists to be valid for high key checks.
+			 */
+			InitializeBsonIndexTermIfNeeded(&serializedTerms[compareIndex]);
+
+			int sortOrderCompare =
+				CompareSortOrderType(
+					serializedTerms[compareIndex].term.element.bsonValue.value_type,
+					BSON_TYPE_NULL);
+			if (sortOrderCompare <= 0)
+			{
+				/* Type is smaller than null - skip */
+				return false;
+			}
+
+			if (lowKeyValue == NULL)
+			{
+				return false;
+			}
+
+			if (lowerBoundTerms[0].serializedTerm == NULL)
+			{
+				/* Initialize if not initialized */
+				int numLowerBoundTerms = LazyInitializeSerializedCompositeIndexTerm(
+					lowKeyValue, lowerBoundTerms);
+				if (numLowerBoundTerms != numTerms)
+				{
+					return false;
+				}
+			}
+
+			InitializeBsonIndexTermIfNeeded(&lowerBoundTerms[compareIndex]);
+			sortOrderCompare = CompareSortOrderType(
+				lowerBoundTerms[compareIndex].term.element.bsonValue.value_type,
+				BSON_TYPE_NULL);
+			if (sortOrderCompare <= 0)
+			{
+				/* Type is smaller than null - skip */
+				return false;
+			}
+
+			/* Type is larger than null - exists check is valid */
+			return true;
+		}
+
+		return false;
+	}
+
+	return true;
+}
+
+
+static Datum
+HighKeyScalarCheck(PG_FUNCTION_ARGS)
+{
+	Pointer extraData = PG_GETARG_POINTER(3);
+	CompositeQueryRunData *runData = (CompositeQueryRunData *) extraData;
+
+	if (runData->metaInfo->requiresRuntimeRecheck ||
+		runData->metaInfo->requiresRecheckOnTruncatedIndex)
+	{
+		return (Datum) 0;
+	}
+
+	if (runData->metaInfo->orderedScanEntryData != NULL || !EnableHighKeyOptimization)
+	{
+		/* TODO: Support for this case for orderedScanEntryData */
+		return (Datum) 0;
+	}
+
+	/* So we're a regular scan with no runtime recheck and no ordered scan entry data */
+	bytea *highKeyValue = PG_GETARG_BYTEA_PP(0);
+	SerializedCompositeTermPair serializedTerms[INDEX_MAX_KEYS] = { 0 };
+	int32_t numTerms = LazyInitializeSerializedCompositeIndexTerm(highKeyValue,
+																  serializedTerms);
+
+	bytea *lowKeyValue = PG_NARGS() > 4 ? PG_GETARG_BYTEA_PP(4) : NULL;
+	SerializedCompositeTermPair lowKeyTerms[INDEX_MAX_KEYS] = { 0 };
+
+	int32_t precheckedPaths = 0;
+	bool priorMatchesEquality = true;
+	bool hasEqualityPrefix = true;
+	bool allowSkipScanBoundaries = false;
+	for (int compareIndex = 0; compareIndex < numTerms; compareIndex++)
+	{
+		if (!IsBoundCompatibleForHighKeyCheck(
+				&runData->indexBounds[compareIndex].lowerBound,
+				runData->indexBounds[compareIndex].isEqualityBound) ||
+			(!runData->indexBounds[compareIndex].isEqualityBound &&
+			 !IsBoundCompatibleForHighKeyCheck(
+				 &runData->indexBounds[compareIndex].upperBound,
+				 runData->indexBounds[compareIndex].isEqualityBound)))
+		{
+			/* Either lower or upper bound is not compatible with high key checks */
+			break;
+		}
+
+		bool hasUnspecifiedPrefix = false;
+		int cmp = RunCompareOnPathIndex(runData, serializedTerms,
+										allowSkipScanBoundaries, &priorMatchesEquality,
+										&hasUnspecifiedPrefix, &hasEqualityPrefix,
+										compareIndex);
+		if (cmp != 0)
+		{
+			break;
+		}
+
+		if (!RecheckFunctionsCompatibleWithHighKey(
+				runData->indexBounds[compareIndex].indexRecheckFunctions,
+				serializedTerms, lowKeyTerms,
+				lowKeyValue, numTerms,
+				compareIndex))
+		{
+			/* If there's index recheck functions, these can't use highkey */
+			break;
+		}
+
+		precheckedPaths++;
+	}
+
+	PG_FREE_IF_COPY(highKeyValue, 0);
+	return Int32GetDatum(precheckedPaths);
 }
 
 
@@ -2762,6 +2963,11 @@ gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
 			PG_RETURN_BOOL(runData->metaInfo->hasArrayPaths);
 		}
 
+		case RumIndexTransform_HighKeyScalarCheck:
+		{
+			PG_RETURN_DATUM(HighKeyScalarCheck(fcinfo));
+		}
+
 		default:
 		{
 			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -2783,11 +2989,21 @@ gin_bson_composite_rum_config(PG_FUNCTION_ARGS)
 		config->compareFunctionHasRecheck = true;
 	}
 
+	if (EnableHighKeyOptimization)
+	{
+		config->enableHighKeyOptimization = true;
+	}
+
 	BsonGinCompositePathOptions *options =
 		(BsonGinCompositePathOptions *) PG_GET_OPCLASS_OPTIONS();
 	if (options->enableMetadataBasedTracking)
 	{
 		config->enableOpClassMetadataStorage = true;
+	}
+
+	if (EnableHighKeyOptimization)
+	{
+		config->enableHighKeyOptimization = true;
 	}
 
 	PG_RETURN_VOID();

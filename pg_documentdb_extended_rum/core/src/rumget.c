@@ -1221,6 +1221,7 @@ ValidateIndexEntry(RumScanOpaque so, Datum idatum,
 	so->scanLoops++;
 	so->recheckCurrentItem = false;
 	so->recheckCurrentItemOrderBy = false;
+	so->orderByScanData->lastItemMatched = false;
 
 	/* check if we need to skip based on page splits */
 	if (so->orderByScanData->boundEntryTuple != NULL)
@@ -1252,7 +1253,7 @@ ValidateIndexEntry(RumScanOpaque so, Datum idatum,
 
 		Assert(so->rumstate.rumConfig[orderEntry->attnum -
 									  1].compareFunctionHasRecheck);
-		cmp = DatumGetInt32(FunctionCall5Coll(
+		cmp = DatumGetInt32(FunctionCall6Coll(
 								&so->rumstate.comparePartialFn[orderEntry->attnum
 															   -
 															   1],
@@ -1262,7 +1263,8 @@ ValidateIndexEntry(RumScanOpaque so, Datum idatum,
 								idatum,
 								UInt16GetDatum(orderEntry->strategy),
 								PointerGetDatum(orderEntry->extra_data),
-								PointerGetDatum(&so->recheckCurrentItem)));
+								PointerGetDatum(&so->recheckCurrentItem),
+								so->orderByScanData->highKeyMatchDatum));
 		if (cmp < 0)
 		{
 			if (cmp < -1)
@@ -1535,7 +1537,10 @@ PrepareOrderedMatchedEntry(RumScanOpaque so, RumScanEntry entry,
 	 * This needs to be done if the current key has recheck, or if we've historically
 	 * had any entry that needed recheck since the runtime can re-evaluate any key after
 	 * a recheck was set.
+	 * Mark the last item as matched so that the order by scan logic
+	 * knows that for the highKey optimization.
 	 */
+	so->orderByScanData->lastItemMatched = true;
 	if (so->recheckCurrentItemOrderBy || so->orderByHasRecheck)
 	{
 		int i;
@@ -1988,7 +1993,6 @@ startScan(IndexScanDesc scan)
 		{
 			scanType = RumFullScan;
 		}
-
 		/* Else check keys for preConsistent method */
 		else if (scanType == RumFastScan && !so->rumstate.canPreConsistent[key->attnum -
 																		   1])
@@ -2878,7 +2882,6 @@ entryGetItem(RumState *rumstate, RumScanEntry entry,
 			entry->isFinished = true;
 		}
 	}
-
 	/* Get next item from posting tree */
 	else
 	{
@@ -3859,6 +3862,65 @@ CopyPageContents(Page sourcePage, Page targetPage)
 
 
 static bool
+TryApplyHighKeyOptimization(RumScanOpaque so)
+{
+	RumOrderByScanData *scanData = so->orderByScanData;
+
+	OffsetNumber pageMaxOff = PageGetMaxOffsetNumber(scanData->orderByEntryPageCopy);
+	OffsetNumber maxOff = ScanDirectionIsBackward(so->orderScanDirection) ?
+						  FirstOffsetNumber : pageMaxOff;
+	OffsetNumber minOff = ScanDirectionIsBackward(so->orderScanDirection) ?
+						  pageMaxOff : FirstOffsetNumber;
+	ItemId upperBoundItemId = PageGetItemId(scanData->orderByEntryPageCopy, maxOff);
+	IndexTuple upperBoundTup = (IndexTuple) PageGetItem(scanData->orderByEntryPageCopy,
+														upperBoundItemId);
+	ItemId lowerBoundItemId = PageGetItemId(scanData->orderByEntryPageCopy, minOff);
+	IndexTuple lowerBoundTup = (IndexTuple) PageGetItem(scanData->orderByEntryPageCopy,
+														lowerBoundItemId);
+
+	if (rumtuple_get_attrnum(&so->rumstate, upperBoundTup) !=
+		scanData->orderByEntry->attnum ||
+		rumtuple_get_attrnum(&so->rumstate, lowerBoundTup) !=
+		scanData->orderByEntry->attnum)
+	{
+		/* Can't apply high key optimization - we're at a path boundary */
+		return false;
+	}
+
+	RumNullCategory upperCategory;
+	Datum upperBoundDatum = rumtuple_get_key(&so->rumstate, upperBoundTup,
+											 &upperCategory);
+	RumNullCategory lowerCategory;
+	Datum lowerBoundDatum = rumtuple_get_key(&so->rumstate, lowerBoundTup,
+											 &lowerCategory);
+
+	if (upperCategory != RUM_CAT_NORM_KEY || lowerCategory != RUM_CAT_NORM_KEY)
+	{
+		/* Can't apply high key optimization - we have a null value */
+		return false;
+	}
+
+	Datum recheckDatum = FunctionCall5Coll(
+		&so->rumstate.outerOrderingFn[scanData->orderByEntry->
+									  attnum - 1],
+		so->rumstate.supportCollation[scanData->orderByEntry->
+									  attnum - 1],
+		upperBoundDatum,
+		scanData->orderByEntry->queryKey,
+		UInt16GetDatum(RumIndexTransform_HighKeyScalarCheck),
+		PointerGetDatum(scanData->orderByEntry->extra_data),
+		lowerBoundDatum);
+	if (recheckDatum != (Datum) 0)
+	{
+		scanData->highKeyMatchDatum = recheckDatum;
+		return true;
+	}
+
+	return false;
+}
+
+
+static bool
 MoveBuffersForOrderedScan(RumScanOpaque so, RumBtree btree)
 {
 	RumOrderByScanData *scanData = so->orderByScanData;
@@ -3967,6 +4029,36 @@ MoveBuffersForOrderedScan(RumScanOpaque so, RumBtree btree)
 		PageGetMaxOffsetNumber(scanData->orderByEntryPageCopy)
 		: FirstOffsetNumber;
 	LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
+
+	/* Now that the buffer is unlocked and the page is copied, apply the high key optimization
+	 * If the last item on the previous page matched the scan condition, then we can ask
+	 * the operator class if the high key of the new page also matches (and transitively matches).
+	 * It is up to the operator class to determine the transitive property (i.e. if some point lower)
+	 * matched the key fully, will everything from that point onward to this high key matches.
+	 * Operator classes that support this opt-in via the rumConfig. We also only do this if there's 1
+	 * search entry since more than 1 requires more support functions to support.
+	 */
+	scanData->highKeyMatchDatum = (Datum) 0;
+	if (so->rumstate.rumConfig[scanData->orderByEntry->attnum -
+							   1].enableHighKeyOptimization &&
+		so->totalsearchentries == 1 && scanData->boundEntryTuple == NULL &&
+		scanData->lastItemMatched &&
+		PageGetMaxOffsetNumber(scanData->orderByEntryPageCopy) > FirstOffsetNumber &&
+		so->rumstate.canOuterOrdering[so->orderByScanData->orderByEntry->
+									  attnum - 1] &&
+		so->rumstate.outerOrderingFn[so->orderByScanData->orderByEntry->
+									 attnum - 1].fn_nargs == 4)
+	{
+		if (!TryApplyHighKeyOptimization(so))
+		{
+			scanData->highKeyMatchDatum = (Datum) 0;
+		}
+		else
+		{
+			scanData->highKeyEligiblePages++;
+		}
+	}
+
 	return true;
 
 cleanupOnMissing:

@@ -1611,6 +1611,13 @@ RMGR_PG_FUNCTION_DEF(try_explain_documentdb_rum_index)
 							so->eligibleDeadItems, state);
 	}
 
+	if (so->orderByScanData != NULL &&
+		so->orderByScanData->highKeyEligiblePages > 0)
+	{
+		funcs->writeInteger("highKeyEligiblePages", "pages",
+							so->orderByScanData->highKeyEligiblePages, state);
+	}
+
 	if (scan->parallel_scan != NULL)
 	{
 		/*

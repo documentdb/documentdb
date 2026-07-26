@@ -253,6 +253,10 @@ bool EnablePartialFilterEvalOnPlanner = DEFAULT_ENABLE_PARTIAL_FILTER_EVAL_ON_PL
 #define DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS true
 bool EnableDottedValueTextIndexTerms = DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS;
 
+/* Added in v117, Pending stabilization, enable in v121 */
+#define DEFAULT_ENABLE_HIGH_KEY_OPTIMIZATION false
+bool EnableHighKeyOptimization = DEFAULT_ENABLE_HIGH_KEY_OPTIMIZATION;
+
 /* Added in v114, enabled in v114, remove after v118 */
 #define DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN true
 bool EnableDistinctIndexPushdown = DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN;
@@ -945,7 +949,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		DEFAULT_ENABLE_SKIP_DOTTED_FIELD_INDEX_TERMS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
-	/* Added in v115, enabled in v115, remove after v118 */
 	DefineCustomBoolVariable(
 		psprintf("%s.enable_partial_filter_eval_on_planner", newGucPrefix),
 		gettext_noop(
@@ -960,6 +963,13 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable generating index terms for dotted values (e.g. \"foo.bar\")."),
 		NULL, &EnableDottedValueTextIndexTerms,
 		DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_high_key_optimization", newGucPrefix),
+		gettext_noop(
+			"Whether to enable high key optimization for composite index scans."),
+		NULL, &EnableHighKeyOptimization, DEFAULT_ENABLE_HIGH_KEY_OPTIMIZATION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
