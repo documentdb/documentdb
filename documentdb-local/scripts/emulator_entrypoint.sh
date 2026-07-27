@@ -19,6 +19,11 @@ cleanup() {
         kill $gateway_pid 2>/dev/null || true
     fi
     
+    # Drop the readiness marker so the healthcheck stops reporting healthy
+    # while we shut down.
+    rm -f "${READY_MARKER_FILE:-/tmp/documentdb-local.ready}" \
+          "${READY_MARKER_FILE:-/tmp/documentdb-local.ready}.tmp" 2>/dev/null || true
+
     echo "Cleanup completed"
     exit 0
 }
@@ -275,14 +280,14 @@ export OSS_SERVER_LOG="$DOCUMENTDB_LOG_DIR/oss_server.log"
 export PG_LOG_FILE="$DOCUMENTDB_LOG_DIR/postgres/pglog.log"
 
 # Readiness marker consumed by documentdb_healthcheck.sh (issue #482): the
-# container reports healthy only once this file exists AND the gateway accepts
-# connections. Written at the end of startup, after one-shot data
+# container reports healthy only once this file exists AND the gateway is
+# still listening. Written at the end of startup, after one-shot data
 # initialization, so `depends_on: condition: service_healthy` dependents
 # observe seeded data. Remove any stale copy up front: /tmp survives a
 # container restart, and a leftover marker would report healthy before this
 # boot's startup completed.
 export READY_MARKER_FILE=${READY_MARKER_FILE:-/tmp/documentdb-local.ready}
-rm -f "$READY_MARKER_FILE"
+rm -f "$READY_MARKER_FILE" "$READY_MARKER_FILE.tmp"
 
 echo "Centralized log directory created with the following structure:"
 echo "  $DOCUMENTDB_LOG_DIR/gateway_entrypoint.log"
@@ -684,7 +689,14 @@ echo "=== DocumentDB is ready ==="
 # Flip the container's health gate (see documentdb_healthcheck.sh). Everything
 # a dependent must be able to rely on -- gateway accepting authenticated
 # connections, one-shot data initialization -- has completed by this point.
-touch "$READY_MARKER_FILE"
+# The probe runs with the container's static environment rather than this
+# script's exports, so hand it its inputs through the marker: the effective
+# gateway port on line 1, the gateway job's PID on line 2. Write to a temp
+# file and rename so a probe never reads a half-written marker.
+if ! { printf '%s\n%s\n' "$DOCUMENTDB_PORT" "$gateway_pid" > "$READY_MARKER_FILE.tmp" && \
+       mv "$READY_MARKER_FILE.tmp" "$READY_MARKER_FILE"; } 2>/dev/null; then
+    echo "Warning: could not write the readiness marker $READY_MARKER_FILE; the container healthcheck will keep reporting 'starting'."
+fi
 echo "All logs are being streamed to docker logs with prefixes:"
 echo "  [POSTGRES] - PostgreSQL database logs ($PG_LOG_FILE)"
 echo "  [POSTGRES-SYSTEM] - System PostgreSQL logs ($SYSTEM_POSTGRES_LOG)"

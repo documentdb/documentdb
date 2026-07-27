@@ -666,12 +666,45 @@ json.dump(data, sys.stdout)
 
     def test_ready_marker_written_after_successful_startup(self):
         # The healthcheck (documentdb_healthcheck.sh, #482) gates on this
-        # marker; it must appear once startup completes.
+        # marker; it must appear once startup completes, carrying the two
+        # values the probe cannot get from its own environment: the effective
+        # gateway port on line 1 and the gateway job's PID on line 2.
         marker = self.root / "documentdb-local.ready"
         result = self._run_entrypoint()
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertTrue(
             marker.exists(), "readiness marker should exist after startup"
+        )
+        lines = marker.read_text(encoding="utf-8").split()
+        self.assertEqual(
+            len(lines), 2,
+            f"marker must hold the port and the gateway PID, got {lines!r}",
+        )
+        self.assertTrue(
+            lines[0].isdigit(), f"line 1 must be the gateway port, got {lines[0]!r}"
+        )
+        self.assertTrue(
+            lines[1].isdigit(), f"line 2 must be the gateway PID, got {lines[1]!r}"
+        )
+
+    def test_ready_marker_records_the_configured_gateway_port(self):
+        # A --documentdb-port override is invisible to the probe's
+        # environment, so the marker is the only way it reaches the probe.
+        marker = self.root / "documentdb-local.ready"
+        result = self._run_entrypoint(extra_env={"DOCUMENTDB_PORT": "24680"})
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertEqual(
+            marker.read_text(encoding="utf-8").split()[0], "24680"
+        )
+
+    def test_ready_marker_leaves_no_temp_file_behind(self):
+        # The marker is written via a temp file and renamed so a probe can
+        # never read a half-written marker; the temp name must not survive.
+        result = self._run_entrypoint()
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertFalse(
+            (self.root / "documentdb-local.ready.tmp").exists(),
+            "the marker temp file must be renamed, not left on disk",
         )
 
     def test_ready_marker_not_written_when_custom_init_fails(self):

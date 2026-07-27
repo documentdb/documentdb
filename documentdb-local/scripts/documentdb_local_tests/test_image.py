@@ -830,10 +830,9 @@ class CustomDocumentDBPortTests(_ContainerTestBase):
 # 3b. Built-in container healthcheck (issue #482). The image must declare a
 #     HEALTHCHECK, the probe must gate on the entrypoint's readiness marker,
 #     and it must honor --documentdb-port by reading the effective port from
-#     the runtime-generated gateway config (the flag is invisible to the
-#     probe's environment). The class deliberately runs on a custom port: a
-#     probe that silently fell back to the default port could never turn
-#     healthy here.
+#     that marker (the flag is invisible to the probe's environment). The
+#     class deliberately runs on a custom port: a probe that silently fell
+#     back to the default port could never turn healthy here.
 # ---------------------------------------------------------------------------
 
 HEALTHCHECK_SCRIPT = "/home/documentdb/gateway/scripts/documentdb_healthcheck.sh"
@@ -881,8 +880,27 @@ class HealthcheckTests(_ContainerTestBase):
         self.assertEqual(
             status, "healthy",
             "container did not report healthy after readiness; if the probe "
-            "assumed the default port instead of reading the runtime config, "
-            "it can never succeed in this class",
+            "assumed the default port instead of reading the one recorded in "
+            "the readiness marker, it can never succeed in this class",
+        )
+
+    def test_ready_marker_records_the_effective_port_and_a_live_pid(self):
+        # The marker is the probe's only channel for these values: Docker
+        # runs healthcheck processes with the container's static environment,
+        # so --documentdb-port never reaches them any other way.
+        res = _docker("exec", self.container, "cat", READY_MARKER, timeout=30)
+        lines = res.stdout.split()
+        self.assertEqual(
+            len(lines), 2,
+            f"marker must hold the port and the gateway PID, got: {res.stdout!r}",
+        )
+        self.assertEqual(lines[0], str(CUSTOM_PORT))
+        alive = _docker(
+            "exec", self.container, "test", "-d", f"/proc/{lines[1]}",
+            check=False, timeout=30,
+        )
+        self.assertEqual(
+            alive.returncode, 0, "marker must record a live gateway PID",
         )
 
     def test_probe_script_passes_in_ready_container(self):
@@ -899,10 +917,12 @@ class HealthcheckTests(_ContainerTestBase):
     def test_probe_script_fails_without_ready_marker(self):
         # The marker is what keeps an initializing (or restarting) container
         # out of `healthy`; without it the probe must fail even though the
-        # gateway is accepting connections. Restored afterwards so the
-        # container's real health state is untouched (a single failed docker
-        # probe in the window would not flip health: retries=3).
-        _docker("exec", self.container, "rm", "-f", READY_MARKER,
+        # gateway is accepting connections. Moved aside rather than deleted
+        # so the exact contents (port + PID) come back and the container's
+        # real health state is untouched (a single failed docker probe in the
+        # window would not flip health: retries=3).
+        stashed = READY_MARKER + ".test-stash"
+        _docker("exec", self.container, "mv", READY_MARKER, stashed,
                 check=False, timeout=30)
         try:
             res = _docker(
@@ -914,7 +934,34 @@ class HealthcheckTests(_ContainerTestBase):
                 "healthcheck must fail when the readiness marker is absent",
             )
         finally:
-            _docker("exec", self.container, "touch", READY_MARKER,
+            _docker("exec", self.container, "mv", stashed, READY_MARKER,
+                    check=False, timeout=30)
+
+    def test_probe_script_fails_when_the_gateway_pid_is_dead(self):
+        # The marker outliving the gateway must not keep the container
+        # `healthy`. Rewrite the PID line to one the kernel never assigns
+        # (pid_max is an exclusive bound), then restore the real marker.
+        stashed = READY_MARKER + ".test-stash"
+        _docker("exec", self.container, "cp", READY_MARKER, stashed,
+                check=False, timeout=30)
+        try:
+            _docker(
+                "exec", self.container, "bash", "-c",
+                f"port=$(sed -n 1p {READY_MARKER}); "
+                f"dead=$(cat /proc/sys/kernel/pid_max); "
+                f"printf '%s\\n%s\\n' \"$port\" \"$dead\" > {READY_MARKER}",
+                check=False, timeout=30,
+            )
+            res = _docker(
+                "exec", self.container, "bash", HEALTHCHECK_SCRIPT,
+                check=False, timeout=30,
+            )
+            self.assertNotEqual(
+                res.returncode, 0,
+                "healthcheck must fail when the recorded gateway PID is gone",
+            )
+        finally:
+            _docker("exec", self.container, "mv", stashed, READY_MARKER,
                     check=False, timeout=30)
 
 
