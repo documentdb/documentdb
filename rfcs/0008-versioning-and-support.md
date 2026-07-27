@@ -29,6 +29,7 @@ the contract we have with users.
 The versioning and release strategy should follow these principles:
 
 * Provide a predictable release schedule so users can plan upgrades.
+* Publish a new major version every year.
 * Define clear support windows for production deployments.
 * Preserve backward compatibility within a supported major version.
 * Make it easy to identify which versions of bundled or dependent components are
@@ -38,13 +39,12 @@ The versioning and release strategy should follow these principles:
 
 The proposed release pattern is:
 
-* Breaking changes in DocumentDB require a new major version. When a new major
-  version is released, the previous major version becomes  long term support
-  release line. It will no longer receive minor updates, only patch releases for
-  backported bug fixes and security fixes.
-* When a long term support release is deemed too much effort to continue to
-  maintain, it will be marked deprecated and that will start a one year clock
-  after which it will no longer be supported.
+* DocumentDB will publish one new major version every calendar year.
+* Breaking changes in DocumentDB require a new major version.
+* When a new major version is released, the previous major version becomes a
+  long term support release line and remains supported for one more year from
+  the new major release date. It will no longer receive minor updates, only
+  patch releases for backported bug fixes and security fixes.
 
 ## Detailed Design
 
@@ -52,14 +52,30 @@ The proposed release pattern is:
 
 #### Branching strategy
 
-The current major version will be developed on the `main` branch. Before a
-breaking change is introduced, the current major version will split off into a
-new release branch into which LTS patch fixes can be added.
+The current major version will be developed on the `main` branch. Before the next
+planned annual major release, the current major version will split off into a new
+`release/v#` branch into which LTS patch fixes can be added. If a breaking change
+is in development, we will create a `next/v(x+1)` branch that will be merged after
+the old is released.
+
+For example, if we are about to release v3, and it has new breaking changes that
+have already been developed, we would have three branches:
+
+* `release/v1`
+* `main` (at v2)
+* `next/v3`
+
+Then, when we do the release, `next/v3` would be merged, `release/v1` would be
+abandoned, and `release/v2` would be cut, leaving us with:
+
+* `release/v2`
+* `main` (at v3)
 
 #### Semantic Versioning
 
-The major version is incremented when starting a new development line that may
-include breaking changes from the previous major version. Examples include:
+The major version is incremented once per year when starting the next
+development line. That new major may include breaking changes from the previous
+major version. Examples include:
 
 * Deprecated API removals
 * Dependency updates which break old versions
@@ -88,11 +104,11 @@ minor release is published. Bug fixes and security fixes during active developme
 generally roll forward into the latest release instead of being backported to
 older minor releases.
 
-After a major release becomes an LTS release line, it is supported until it is
-marked deprecated, after which there will be one more year of support. During
-that support window, patch releases may include backported bug fixes and security
-fixes. Users who require a stable production baseline should use the current LTS
-release line and apply LTS patch releases as they become available.
+After a new major release, the previous major release becomes the LTS release
+line and is supported for exactly one more year from the new major release date.
+During that support window, patch releases may include backported bug fixes and
+security fixes. Users who require a stable production baseline should use the
+current LTS release line and apply LTS patch releases as they become available.
 
 Support for a release means:
 
