@@ -171,6 +171,9 @@ typedef struct MaxMinNHeapCompareArgs
 	/* true: $maxN; false: $minN. */
 	bool isMaxN;
 
+	/* Reverse the selection ordering when producing the result. */
+	bool reverseOrder;
+
 	const char *collationString;
 } MaxMinNHeapCompareArgs;
 
@@ -3472,9 +3475,8 @@ ProcessDollarZip(bson_value_t evaluatedInputsArg, bson_value_t evaluatedLongestL
 
 
 /*
- * Comparator for the $maxN / $minN heap. binaryheap is a max-heap, so keep the
- * eviction boundary at the root: smallest value for $maxN, largest for $minN.
- * Equal values use insertion order to reproduce each operator's tie behavior.
+ * Comparator for the $maxN / $minN heap. During selection, keep the eviction
+ * boundary at the root. Reverse the complete ordering when producing results.
  */
 static int
 MaxMinNHeapComparator(Datum first, Datum second, void *arg)
@@ -3490,23 +3492,27 @@ MaxMinNHeapComparator(Datum first, Datum second, void *arg)
 												   &secondEntry->value,
 												   &ignoreIsComparisonValid,
 												   compareArgs->collationString);
+	int heapOrder;
 	if (cmp != 0)
 	{
 		/* Keep the boundary value (min for $maxN, max for $minN) at the root. */
 		int boundaryOrder = compareArgs->isMaxN ? -cmp : cmp;
-		return boundaryOrder < 0 ? -1 : 1;
+		heapOrder = boundaryOrder < 0 ? -1 : 1;
 	}
-
-	if (firstEntry->seq == secondEntry->seq)
+	else if (firstEntry->seq == secondEntry->seq)
 	{
 		return 0;
 	}
+	else
+	{
+		/* Tie: $maxN evicts the earlier value first, $minN the later one. */
+		bool firstNearerRoot = compareArgs->isMaxN ?
+							   firstEntry->seq < secondEntry->seq :
+							   firstEntry->seq > secondEntry->seq;
+		heapOrder = firstNearerRoot ? 1 : -1;
+	}
 
-	/* Tie: $maxN evicts the earlier value first, $minN the later one. */
-	bool firstNearerRoot = compareArgs->isMaxN ?
-						   firstEntry->seq < secondEntry->seq :
-						   firstEntry->seq > secondEntry->seq;
-	return firstNearerRoot ? 1 : -1;
+	return compareArgs->reverseOrder ? -heapOrder : heapOrder;
 }
 
 
@@ -3621,6 +3627,7 @@ ProcessDollarMaxAndMinN(bson_value_t *result, bson_value_t *evaluatedLimit,
 	/* Keep the eviction boundary at the root and grow the heap lazily. */
 	MaxMinNHeapCompareArgs compareArgs;
 	compareArgs.isMaxN = isMaxN;
+	compareArgs.reverseOrder = false;
 	compareArgs.collationString = collationString;
 
 	MemoryContext entryContext = NULL;
@@ -3663,19 +3670,9 @@ ProcessDollarMaxAndMinN(bson_value_t *result, bson_value_t *evaluatedLimit,
 												 sizeof(MaxMinNHeapEntry));
 			}
 
-			MemoryContext previousContext = NULL;
-			if (entryContext != NULL)
-			{
-				previousContext = MemoryContextSwitchTo(entryContext);
-			}
-
-			MaxMinNHeapEntry *entry = (MaxMinNHeapEntry *) palloc0(
+			MaxMinNHeapEntry *entry = (MaxMinNHeapEntry *) MemoryContextAllocZero(
+				entryContext != NULL ? entryContext : CurrentMemoryContext,
 				sizeof(MaxMinNHeapEntry));
-			if (previousContext != NULL)
-			{
-				MemoryContextSwitchTo(previousContext);
-			}
-
 			entry->value = *next;
 			entry->seq = seq++;
 			binaryheap_add(heap, PointerGetDatum(entry));
@@ -3702,31 +3699,15 @@ ProcessDollarMaxAndMinN(bson_value_t *result, bson_value_t *evaluatedLimit,
 		}
 	}
 
-	int64_t numEntries = entryCount;
-
 	/*
-	 * Draining the heap yields values from the boundary inward, the reverse of
-	 * the wanted order ($maxN descending, $minN ascending), so fill back to
-	 * front.
+	 * Selection and result ordering are opposite. Rebuild once with the
+	 * reversed comparator so each removal can be written directly.
 	 */
-	MaxMinNHeapEntry **orderedEntries = NULL;
-	if (numEntries > 0)
+	compareArgs.reverseOrder = true;
+	if (entryCount > 1)
 	{
-		orderedEntries = (MaxMinNHeapEntry **) palloc0(
-			sizeof(MaxMinNHeapEntry *) * numEntries);
-	}
-
-	for (int64_t i = numEntries - 1; i >= 0; i--)
-	{
-		CHECK_FOR_INTERRUPTS();
-
-		orderedEntries[i] =
-			(MaxMinNHeapEntry *) DatumGetPointer(binaryheap_remove_first(heap));
-	}
-
-	if (heap != NULL)
-	{
-		binaryheap_free(heap);
+		heap->bh_has_heap_property = false;
+		binaryheap_build(heap);
 	}
 
 	pgbson_writer writer;
@@ -3734,19 +3715,21 @@ ProcessDollarMaxAndMinN(bson_value_t *result, bson_value_t *evaluatedLimit,
 	pgbson_array_writer arrayWriter;
 	PgbsonWriterStartArray(&writer, "", 0, &arrayWriter);
 
-	for (int64_t i = 0; i < numEntries; i++)
+	for (int i = 0; i < entryCount; i++)
 	{
 		CHECK_FOR_INTERRUPTS();
-		PgbsonArrayWriterWriteValue(&arrayWriter, &orderedEntries[i]->value);
-		pfree(orderedEntries[i]);
+		MaxMinNHeapEntry *entry =
+			(MaxMinNHeapEntry *) DatumGetPointer(binaryheap_remove_first(heap));
+		PgbsonArrayWriterWriteValue(&arrayWriter, &entry->value);
+		pfree(entry);
 	}
 
 	PgbsonWriterEndArray(&writer, &arrayWriter);
 	*result = PgbsonArrayWriterGetValue(&arrayWriter);
 
-	if (orderedEntries != NULL)
+	if (heap != NULL)
 	{
-		pfree(orderedEntries);
+		binaryheap_free(heap);
 	}
 
 	if (entryContext != NULL)
