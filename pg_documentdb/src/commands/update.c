@@ -2051,7 +2051,7 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 
 		if (applyVariablSpec)
 		{
-			preparedQueryKey = QUERY_UPDATE_MANY_WITH_QUERY_FILTER_FUNCTION_NEW_FUNC;
+			preparedQueryKey = QUERY_UPDATE_MANY_WITH_QUERY_FILTER_FUNCTION;
 			appendStringInfo(&updateQuery,
 							 " WHERE %s.bson_query_match(document, $2::%s, $4::%s, $5::text) ",
 							 DocumentDBApiInternalSchemaName,
@@ -2062,7 +2062,7 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 		}
 		else
 		{
-			preparedQueryKey = QUERY_UPDATE_MANY_WITH_QUERY_FILTER_OPERATOR_NEW_FUNC;
+			preparedQueryKey = QUERY_UPDATE_MANY_WITH_QUERY_FILTER_OPERATOR;
 			appendStringInfo(&updateQuery,
 							 " WHERE document OPERATOR(%s.@@) $2::%s ",
 							 ApiCatalogSchemaName, FullBsonTypeName);
