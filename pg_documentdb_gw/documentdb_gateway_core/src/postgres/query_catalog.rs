@@ -610,7 +610,7 @@ pub fn create_query_catalog() -> QueryCatalog {
             bson_dollar_project_output_regex: "(documentdb_api_catalog.)?bson_dollar_([^\\(]+)\\([^,]+, 'BSONHEX([\\w\\d]+)'::documentdb_core.bson".to_owned(),
             index_condition_split_regex: "\\(?((\\s+AND\\s+)?(?<expr>\\S+ (OPERATOR\\(\\S+\\)|(\\S+)) '[^']+'::(documentdb_core.)?bson))+\\)?".to_owned(),
             runtime_condition_split_regex: "\\(?((\\s+AND|OR\\s+)?(?<expr>\\S+ (OPERATOR\\(\\S+\\)|(\\S+)) '[^']+'::(documentdb_core.)?bson))+\\)?".to_owned(),
-            sort_condition_split_regex: "(\\w+\\.)?bson_orderby(?:_index(?:_reverse)?)?\\(([^,]+), 'BSONHEX([\\w\\d]+)'::(documentdb_core\\.)?bson\\)".to_owned(),
+            sort_condition_split_regex: "(?:\\w+\\.)?bson_orderby(?:_index(?:_reverse)?)?\\(.*,\\s*'BSONHEX(?P<sortSpec>[\\w\\d]+)'::(?:documentdb_core\\.)?bson(?:,\\s*'(?P<collation>[^']*)'::(?:pg_catalog\\.)?text)?\\)".to_owned(),
             single_index_condition_regex: "(?<field>\\S+) (OPERATOR\\()?(documentdb_api_catalog\\.)?(?<operator>[^\\)\\s]+)\\)?\\s+'BSONHEX(?<queryBson>\\S+)'".to_owned(),
             api_catalog_name_regex: "documentdb_api_catalog.".to_owned(),
             output_count_regex: "BSONSUM('{ \"\" : { \"$numberInt\" : \"1\" } }'::documentdb_core.bson)".to_owned(),

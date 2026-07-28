@@ -2532,12 +2532,13 @@ $cmd$);
          namespaceName: coll_q_db.single_field
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["a": ["apple", "apple"]]
          ->  Index Scan using idx_a_en_s1 on documentdb_data.documents_8806 collection
                Output: document
                Index Cond: (collection.document @= '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::bson)
-(13 rows)
+(14 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$ 
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline(%L, '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$eq": "apple" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
@@ -2551,11 +2552,12 @@ SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$
          namespaceName: coll_q_db.single_field
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["a": ["apple", "apple"]]
          ->  Index Scan using idx_a_en_s1 on documents_8806 collection (actual rows=2 loops=1)
                Index Cond: (document @= '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::bson)
-(11 rows)
+(12 rows)
 
 -- 9.2: $match with $eq — no collation — index should NOT be used
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -2601,12 +2603,13 @@ $cmd$);
          namespaceName: coll_q_db.single_field
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["a": ("banana", { })]
          ->  Index Scan using idx_a_en_s1 on documentdb_data.documents_8806 collection
                Output: document
                Index Cond: (collection.document @> '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson)
-(13 rows)
+(14 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$ 
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline(%L, '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$gt": "banana" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
@@ -2620,11 +2623,12 @@ SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$
          namespaceName: coll_q_db.single_field
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["a": ("banana", { })]
          ->  Index Scan using idx_a_en_s1 on documents_8806 collection (actual rows=4 loops=1)
                Index Cond: (document @> '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson)
-(11 rows)
+(12 rows)
 
 -- 9.4: $match then $project — matching collation — index SHOULD be used for $eq
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -2640,12 +2644,13 @@ $cmd$);
          namespaceName: coll_q_db.single_field
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["a": ["cherry", "cherry"]]
          ->  Index Scan using idx_a_en_s1 on documentdb_data.documents_8806 collection
                Output: document
                Index Cond: (collection.document @= '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
-(13 rows)
+(14 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$ 
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline(%L, '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$eq": "cherry" } } }, { "$project": { "a": 1, "_id": 0 } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
@@ -2659,11 +2664,12 @@ SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$
          namespaceName: coll_q_db.single_field
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["a": ["cherry", "cherry"]]
          ->  Index Scan using idx_a_en_s1 on documents_8806 collection (actual rows=2 loops=1)
                Index Cond: (document @= '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
-(11 rows)
+(12 rows)
 
 -- 9.5: $match with $lt — matching collation — index SHOULD be used
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -2679,12 +2685,13 @@ $cmd$);
          namespaceName: coll_q_db.single_field
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["a": ["", "cherry")]
          ->  Index Scan using idx_a_en_s1 on documentdb_data.documents_8806 collection
                Output: document
                Index Cond: (collection.document @< '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
-(13 rows)
+(14 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$ 
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline(%L, '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$lt": "cherry" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
@@ -2698,11 +2705,12 @@ SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$
          namespaceName: coll_q_db.single_field
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["a": ["", "cherry")]
          ->  Index Scan using idx_a_en_s1 on documents_8806 collection (actual rows=4 loops=1)
                Index Cond: (document @< '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
-(11 rows)
+(12 rows)
 
 -- 9.6: $match with $lte — matching collation — index SHOULD be used
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -2718,12 +2726,13 @@ $cmd$);
          namespaceName: coll_q_db.single_field
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["a": ["", "banana"]]
          ->  Index Scan using idx_a_en_s1 on documentdb_data.documents_8806 collection
                Output: document
                Index Cond: (collection.document @<= '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson)
-(13 rows)
+(14 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$ 
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline(%L, '{ "aggregate": "single_field", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$lte": "banana" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
@@ -2737,11 +2746,12 @@ SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$
          namespaceName: coll_q_db.single_field
          indexName: idx_a_en_s1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["a": ["", "banana"]]
          ->  Index Scan using idx_a_en_s1 on documents_8806 collection (actual rows=4 loops=1)
                Index Cond: (document @<= '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson)
-(11 rows)
+(12 rows)
 
 -- ======================================================================
 -- SECTION 9: $lookup, $facet, $unionWith, $graphLookup, $merge
@@ -4096,11 +4106,12 @@ $cmd$);
          namespaceName: coll_q_db.coll_ios
          indexName: idx_country_id_en_s1
          indexKey: {"country": 1,"_id": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["country": ["USA", "USA"], "_id": (MinKey, MaxKey)]
          ->  Index Scan using idx_country_id_en_s1 on documentdb_data.documents_8816 collection
                Index Cond: (collection.document @= '{ "country" : "USA", "collation" : "en-u-ks-level1" }'::bson)
-(10 rows)
+(11 rows)
 
 -- Covered $count over a range predicate under collation.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -4114,11 +4125,12 @@ $cmd$);
          namespaceName: coll_q_db.coll_ios
          indexName: idx_country_id_en_s1
          indexKey: {"country": 1,"_id": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["country": ["brazil", "mexico"), "_id": (MinKey, MaxKey)]
          ->  Index Scan using idx_country_id_en_s1 on documentdb_data.documents_8816 collection
                Index Cond: ((collection.document @>= '{ "country" : "brazil", "collation" : "en-u-ks-level1" }'::bson) AND (collection.document @< '{ "country" : "mexico", "collation" : "en-u-ks-level1" }'::bson))
-(10 rows)
+(11 rows)
 
 -- A strength-3 predicate cannot use the strength-1 index; it falls back to _id_
 -- with the collation applied as a Filter.
@@ -4161,11 +4173,12 @@ $cmd$);
          namespaceName: coll_q_db.coll_id_ios
          indexName: idx_id_en_s1
          indexKey: {"_id": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["_id": ["dog", "dog"]]
          ->  Index Scan using idx_id_en_s1 on documentdb_data.documents_8817 collection
                Index Cond: (collection.document @= '{ "_id" : "dog", "collation" : "en-u-ks-level1" }'::bson)
-(10 rows)
+(11 rows)
 
 -- find on `_id` under collation uses the collation-aware _id index (the byte-wise
 -- _id_ index cannot answer a collation predicate).
@@ -4182,12 +4195,13 @@ $cmd$);
          namespaceName: coll_q_db.coll_id_ios
          indexName: idx_id_en_s1
          indexKey: {"_id": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["_id": ["cat", "cat"]]
          ->  Index Scan using idx_id_en_s1 on documentdb_data.documents_8817 collection
                Output: document
                Index Cond: (collection.document @= '{ "_id" : "cat", "collation" : "en-u-ks-level1" }'::bson)
-(13 rows)
+(14 rows)
 
 RESET enable_bitmapscan;
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_ios');
@@ -4229,12 +4243,13 @@ $cmd$);
    namespaceName: coll_q_db.coll_minmax_idx
    indexName: idx_grp_en_s1
    indexKey: {"grp": 1}
+   indexCollation: en-u-ks-level1
    isMultiKey: false
    indexBounds: ["grp": ["r", "r"]]
    ->  Index Scan using idx_grp_en_s1 on documentdb_data.documents_8818 collection
          Output: document
          Index Cond: (collection.document @= '{ "grp" : "r", "collation" : "en-u-ks-level1" }'::bson)
-(10 rows)
+(11 rows)
 
 -- No collation: the collated strength-1 index must NOT be used (binary query); falls back to runtime.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -4280,12 +4295,13 @@ $cmd$);
    namespaceName: coll_q_db.coll_minmax_idx
    indexName: idx_grp_en_s1
    indexKey: {"grp": 1}
+   indexCollation: en-u-ks-level1
    isMultiKey: false
    indexBounds: ["grp": ["a", { })]
    ->  Index Scan using idx_grp_en_s1 on documentdb_data.documents_8818 collection
          Output: document
          Index Cond: (collection.document @>= '{ "grp" : "a", "collation" : "en-u-ks-level1" }'::bson)
-(10 rows)
+(11 rows)
 
 -- $in with matching collation: the collated index SHOULD be used for the membership bounds.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -4298,12 +4314,13 @@ $cmd$);
    namespaceName: coll_q_db.coll_minmax_idx
    indexName: idx_grp_en_s1
    indexKey: {"grp": 1}
+   indexCollation: en-u-ks-level1
    isMultiKey: false
    indexBounds: ["grp": ["r", "r"]], ["grp": ["s", "s"]]
    ->  Index Scan using idx_grp_en_s1 on documentdb_data.documents_8818 collection
          Output: document
          Index Cond: (collection.document @*= '{ "grp" : [ "r", "s" ], "collation" : "en-u-ks-level1" }'::bson)
-(10 rows)
+(11 rows)
 
 SELECT documentdb_api.drop_collection('coll_q_db','coll_minmax_idx');
  drop_collection 

@@ -1430,6 +1430,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_not_intervals
          indexName: idx_intervals_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "cherry"]]
          rawBounds: ["a": [MinKey, "cherry"], ({ }, MaxKey]]
@@ -1438,7 +1439,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 17)]
          ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=17 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 -- ===== A2: Inclusive vs exclusive boundary — $not $gt (≤) vs $not $gte (<) =====
 -- $not $gt "cherry" → a ≤ "cherry" (inclusive of cherry)
@@ -1499,6 +1500,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_not_intervals
          indexName: idx_intervals_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "cherry")]
          rawBounds: ["a": [MinKey, "cherry"), ({ }, MaxKey]]
@@ -1507,7 +1509,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 14)]
          ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=14 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>=) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 -- A2c: $not $lt "cherry" — cherry IS included (≥)
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$lt": "cherry" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -1564,6 +1566,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_not_intervals
          indexName: idx_intervals_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "")]
          rawBounds: ["a": [MinKey, ""), ("cherry", MaxKey]]
@@ -1572,7 +1575,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 14)]
          ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=14 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!<=) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 -- ===== A3: Boundary at empty string =====
 -- $not $gt "" — everything ≤ "" plus non-strings.
@@ -1599,6 +1602,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_not_intervals
          indexName: idx_intervals_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, ""]]
          rawBounds: ["a": [MinKey, ""], ({ }, MaxKey]]
@@ -1607,7 +1611,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
          ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=4 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "", "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 -- $not $lt "" — everything ≥ "" plus non-strings.
 -- All strings are ≥ "" so all strings match; plus non-strings
@@ -1689,6 +1693,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_not_intervals
          indexName: idx_intervals_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "zzzzz"]]
          rawBounds: ["a": [MinKey, "zzzzz"], ({ }, MaxKey]]
@@ -1697,7 +1702,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 27)]
          ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=27 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "zzzzz", "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 -- $not $lt "a" — everything ≥ "a" — only strings starting at "a" or later
 -- Should exclude nothing because even "apple" ≥ "a" at strength-1
@@ -1757,6 +1762,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_not_intervals
          indexName: idx_intervals_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "")]
          rawBounds: ["a": [MinKey, ""), ["zzzzz", MaxKey]]
@@ -1765,7 +1771,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
          ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=4 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!<) '{ "a" : "zzzzz", "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 -- ===== A6: Overlapping negations on same field — narrow band =====
 -- $not $gt "cherry" AND $not $lt "banana" → banana ≤ a ≤ cherry (collation-wise)
@@ -1799,6 +1805,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_not_intervals
          indexName: idx_intervals_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "")]
          rawBounds: ["a": [MinKey, "cherry"], ({ }, MaxKey]], ["a": [MinKey, ""), ["banana", MaxKey]]
@@ -1807,7 +1814,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 12)]
          ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=12 loops=1)
                Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!<) '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+(16 rows)
 
 -- A6b: Exclusive band — $not $gte "cherry" AND $not $lte "banana" → banana < a < cherry
 -- Should return: blueberry, cantaloupe = 2 string docs + non-strings
@@ -1876,6 +1883,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_not_intervals
          indexName: idx_intervals_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "avocado"]]
          rawBounds: ["a": [MinKey, "avocado"], ({ }, MaxKey]]
@@ -1884,7 +1892,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 9)]
          ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=9 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "avocado", "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 -- $not $lt "lemon" — everything ≥ "lemon"
 -- Excluded: apple(x3), apricot, avocado, banana(x3), blueberry, cantaloupe,
@@ -1994,6 +2002,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_not_intervals
          indexName: idx_intervals_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey]]
          innerScanLoops: 20 loops
@@ -2001,7 +2010,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 24)]
          ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=24 loops=1)
                Index Cond: (document @!= '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
-(14 rows)
+(15 rows)
 
 -- $ne "banana" — everything except banana (all 3 case variants excluded)
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$ne": "banana" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -2271,6 +2280,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
          indexName: idx_comp_ab_en_strength1
          indexKey: {"a": 1,"b": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": ["cherry", "cherry"], "b": [MinKey, "red"]]
          rawBounds: ["a": ["cherry", "cherry"]], ["b": [MinKey, "red"], ({ }, MaxKey]]
@@ -2279,7 +2289,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 9)]
          ->  Index Scan using idx_comp_ab_en_strength1 on documents_8116 collection (actual rows=9 loops=1)
                Index Cond: ((document @= '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!>) '{ "b" : "red", "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+(16 rows)
 
 -- B2: a = "cherry" AND b: {$not: {$lt: "red"}}
 -- b ≥ "red" at strength-1.
@@ -2341,6 +2351,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
          indexName: idx_comp_ab_en_strength1
          indexKey: {"a": 1,"b": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": ("cherry", { }), "b": [MinKey, "red"]]
          rawBounds: ["a": ("cherry", { })], ["b": [MinKey, "red"], ({ }, MaxKey]]
@@ -2349,7 +2360,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
          ->  Index Scan using idx_comp_ab_en_strength1 on documents_8116 collection (actual rows=4 loops=1)
                Index Cond: ((document @> '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!>) '{ "b" : "red", "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+(16 rows)
 
 -- B5: a: {$gte: "cherry"} AND b: {$not: {$lte: "green"}}
 -- a ≥ "cherry": cherry-like(7-10,15-18,21,22,24), date(11,12), elderberry(13,14)
@@ -2408,6 +2419,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
          indexName: idx_comp_ab_en_strength1
          indexKey: {"a": 1,"b": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": ("banana", "elderberry"), "b": [MinKey, "green"]]
          rawBounds: ["a": ("banana", "elderberry")], ["b": [MinKey, "green"], ({ }, MaxKey]]
@@ -2416,7 +2428,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 7)]
          ->  Index Scan using idx_comp_ab_en_strength1 on documents_8116 collection (actual rows=7 loops=1)
                Index Cond: ((document @> '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson) AND (document @< '{ "a" : "elderberry", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!>) '{ "b" : "green", "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+(16 rows)
 
 -- ===== Section 17: Composite index (a, b) — negation on first key, positive on second =====
 -- Reuse ord_comp_pos_neg collection and index
@@ -2448,6 +2460,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
          indexName: idx_comp_ab_en_strength1
          indexKey: {"a": 1,"b": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "cherry"], "b": ["red", "red"]]
          rawBounds: ["a": [MinKey, "cherry"], ({ }, MaxKey]], ["b": ["red", "red"]]
@@ -2456,7 +2469,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 7)]
          ->  Index Scan using idx_comp_ab_en_strength1 on documents_8116 collection (actual rows=7 loops=1)
                Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document @= '{ "b" : "red", "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+(16 rows)
 
 -- C2: a: {$not: {$gt: "cherry"}} AND b: {$gt: "green"}
 -- a ≤ "cherry" (or non-string a) AND b > "green" (positive op, strings only)
@@ -2489,6 +2502,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
          indexName: idx_comp_ab_en_strength1
          indexKey: {"a": 1,"b": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "cherry"], "b": ("green", { })]
          rawBounds: ["a": [MinKey, "cherry"], ({ }, MaxKey]], ["b": ("green", { })]
@@ -2497,7 +2511,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 11)]
          ->  Index Scan using idx_comp_ab_en_strength1 on documents_8116 collection (actual rows=11 loops=1)
                Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document @> '{ "b" : "green", "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+(16 rows)
 
 -- C3: a: {$not: {$lt: "cherry"}} AND b = "green"
 -- a ≥ "cherry": cherry+green(8), Cherry+Green(16), date+green(12)
@@ -2535,6 +2549,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
          indexName: idx_comp_ab_en_strength1
          indexKey: {"a": 1,"b": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, ""), "b": ["", "red")]
          rawBounds: ["a": [MinKey, ""), ("banana", MaxKey]], ["b": ["", "red")]
@@ -2543,7 +2558,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
          ->  Index Scan using idx_comp_ab_en_strength1 on documents_8116 collection (actual rows=5 loops=1)
                Index Cond: ((document OPERATOR(documentdb_api_internal.@!<=) '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson) AND (document @< '{ "b" : "red", "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+(16 rows)
 
 -- C5: a: {$ne: "cherry"} AND b: {$gte: "red"}
 -- All docs except a="cherry" at strength-1, with b ≥ "red" (positive, strings only)
@@ -2609,6 +2624,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
          indexName: idx_comp_ab_en_strength1
          indexKey: {"a": 1,"b": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "cherry"], "b": [MinKey, "green"]]
          rawBounds: ["a": [MinKey, "cherry"], ({ }, MaxKey]], ["b": [MinKey, "green"], ({ }, MaxKey]]
@@ -2617,7 +2633,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 9)]
          ->  Index Scan using idx_comp_ab_en_strength1 on documents_8116 collection (actual rows=9 loops=1)
                Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!>) '{ "b" : "green", "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+(16 rows)
 
 -- D2: a: {$not: {$lt: "cherry"}} AND b: {$not: {$lt: "red"}}
 -- a ≥ "cherry" (or non-string a) AND b ≥ "red" (or non-string b)
@@ -2651,6 +2667,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
          indexName: idx_comp_ab_en_strength1
          indexKey: {"a": 1,"b": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, ""), "b": [MinKey, "")]
          rawBounds: ["a": [MinKey, ""), ["cherry", MaxKey]], ["b": [MinKey, ""), ["red", MaxKey]]
@@ -2659,7 +2676,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 11)]
          ->  Index Scan using idx_comp_ab_en_strength1 on documents_8116 collection (actual rows=11 loops=1)
                Index Cond: ((document OPERATOR(documentdb_api_internal.@!<) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!<) '{ "b" : "red", "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+(16 rows)
 
 -- D3: a: {$not: {$gte: "cherry"}} AND b: {$not: {$lte: "green"}}
 -- a < "cherry" (or non-string a) AND b > "green" (or non-string b)
@@ -2702,6 +2719,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
          indexName: idx_comp_ab_en_strength1
          indexKey: {"a": 1,"b": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey], "b": [MinKey, MaxKey]]
          innerScanLoops: 18 loops
@@ -2709,7 +2727,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 7)]
          ->  Index Scan using idx_comp_ab_en_strength1 on documents_8116 collection (actual rows=7 loops=1)
                Index Cond: ((document @!= '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document @!= '{ "b" : "red", "collation" : "en-u-ks-level1" }'::bson))
-(14 rows)
+(15 rows)
 
 -- D5: a: {$not: {$gt: "banana"}} AND b: {$not: {$lt: "red"}}
 -- a ≤ "banana" (or non-string a) AND b ≥ "red" (or non-string b)
@@ -2756,6 +2774,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
          indexName: idx_comp_ab_en_strength1
          indexKey: {"a": 1,"b": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": ("banana", "cherry"], "b": [MinKey, "")]
          rawBounds: ["a": ("banana", { })], ["a": [MinKey, "cherry"], ({ }, MaxKey]], ["b": [MinKey, ""), ["green", MaxKey]]
@@ -2764,7 +2783,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 10)]
          ->  Index Scan using idx_comp_ab_en_strength1 on documents_8116 collection (actual rows=10 loops=1)
                Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document @> '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!<) '{ "b" : "green", "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+(16 rows)
 
 -- ===== Section 19: Collation case-flavor variations on composite index =====
 -- Reuse ord_comp_pos_neg collection and idx_comp_ab_en_strength1 (strength-1)
@@ -2907,6 +2926,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
          indexName: idx_comp_ab_en_strength3
          indexKey: {"a": 1,"b": 1}
+         indexCollation: en-u-ks-level3
          isMultiKey: false
          startBounds: ["a": ["cherry", "cherry"], "b": [MinKey, "red"]]
          rawBounds: ["a": ["cherry", "cherry"]], ["b": [MinKey, "red"], ({ }, MaxKey]]
@@ -2915,7 +2935,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
          ->  Index Scan using idx_comp_ab_en_strength3 on documents_8116 collection (actual rows=6 loops=1)
                Index Cond: ((document @= '{ "a" : "cherry", "collation" : "en-u-ks-level3" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!>) '{ "b" : "red", "collation" : "en-u-ks-level3" }'::bson))
-(15 rows)
+(16 rows)
 
 -- F2: a = "Cherry" with strength-3 — matches Cherry docs (ids 15,16)
 -- b $not $gt "red" at strength-3: "Red"(15) > "red" (lowercase first) → excluded
@@ -2998,6 +3018,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
          indexName: idx_comp_ab_en_strength3
          indexKey: {"a": 1,"b": 1}
+         indexCollation: en-u-ks-level3
          isMultiKey: false
          startBounds: ["a": [MinKey, "cherry"], "b": [MinKey, "green"]]
          rawBounds: ["a": [MinKey, "cherry"], ({ }, MaxKey]], ["b": [MinKey, "green"], ({ }, MaxKey]]
@@ -3006,7 +3027,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 7)]
          ->  Index Scan using idx_comp_ab_en_strength3 on documents_8116 collection (actual rows=7 loops=1)
                Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level3" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!>) '{ "b" : "green", "collation" : "en-u-ks-level3" }'::bson))
-(15 rows)
+(16 rows)
 
 RESET documentdb.max_non_ordered_term_scan_threshold;
 RESET documentdb.enableExtendedExplainPlans;
@@ -3349,6 +3370,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
          indexName: idx_disjoint_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "cherry"]]
          rawBounds: ["a": [MinKey, "cherry"], ({ }, MaxKey]]
@@ -3357,7 +3379,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 28)]
          ->  Index Scan using idx_disjoint_en_strength1 on documents_8117 collection (actual rows=28 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 -- ---------------------------------------------------------------------------
 -- 21b: $not $gt "avocado" — early boundary, HUGE excluded middle
@@ -3411,6 +3433,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
          indexName: idx_disjoint_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "avocado"]]
          rawBounds: ["a": [MinKey, "avocado"], ({ }, MaxKey]]
@@ -3419,7 +3442,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 21)]
          ->  Index Scan using idx_disjoint_en_strength1 on documents_8117 collection (actual rows=21 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "avocado", "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 -- ---------------------------------------------------------------------------
 -- 21c: $not $gt "aardvark" — boundary at first value, nearly ALL excluded
@@ -3461,6 +3484,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
          indexName: idx_disjoint_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "aardvark"]]
          rawBounds: ["a": [MinKey, "aardvark"], ({ }, MaxKey]]
@@ -3469,7 +3493,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 16)]
          ->  Index Scan using idx_disjoint_en_strength1 on documents_8117 collection (actual rows=16 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "aardvark", "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 -- ---------------------------------------------------------------------------
 -- 21d: $not $lt "lemon" — late boundary, flips which bound is large
@@ -3521,6 +3545,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
          indexName: idx_disjoint_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "")]
          rawBounds: ["a": [MinKey, ""), ["lemon", MaxKey]]
@@ -3529,7 +3554,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 20)]
          ->  Index Scan using idx_disjoint_en_strength1 on documents_8117 collection (actual rows=20 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!<) '{ "a" : "lemon", "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 -- ---------------------------------------------------------------------------
 -- 21e: $not $lt "zucchini" — boundary at last value, tiny excluded set
@@ -3628,6 +3653,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
          indexName: idx_disjoint_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey]]
          innerScanLoops: 32 loops
@@ -3635,7 +3661,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 37)]
          ->  Index Scan using idx_disjoint_en_strength1 on documents_8117 collection (actual rows=37 loops=1)
                Index Cond: (document @!= '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
-(14 rows)
+(15 rows)
 
 -- ---------------------------------------------------------------------------
 -- 21g: $ne "cherry" at strength-3 — only lowercase "cherry" excluded
@@ -3739,6 +3765,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
          indexName: idx_disjoint_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "")]
          rawBounds: ["a": [MinKey, "grape"], ({ }, MaxKey]], ["a": [MinKey, ""), ["cantaloupe", MaxKey]]
@@ -3747,7 +3774,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 24)]
          ->  Index Scan using idx_disjoint_en_strength1 on documents_8117 collection (actual rows=24 loops=1)
                Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "grape", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!<) '{ "a" : "cantaloupe", "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+(16 rows)
 
 -- ---------------------------------------------------------------------------
 -- 21i: Impossible band — excluded range consumes everything
@@ -3787,6 +3814,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
          indexName: idx_disjoint_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "")]
          rawBounds: ["a": [MinKey, "avocado"], ({ }, MaxKey]], ["a": [MinKey, ""), ["lemon", MaxKey]]
@@ -3795,7 +3823,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 15)]
          ->  Index Scan using idx_disjoint_en_strength1 on documents_8117 collection (actual rows=15 loops=1)
                Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "avocado", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!<) '{ "a" : "lemon", "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+(16 rows)
 
 -- ---------------------------------------------------------------------------
 -- 21j: $not $gte "cherry" — exclusive boundary (< cherry)
@@ -3850,6 +3878,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
          indexName: idx_disjoint_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "cherry")]
          rawBounds: ["a": [MinKey, "cherry"), ({ }, MaxKey]]
@@ -3858,7 +3887,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 25)]
          ->  Index Scan using idx_disjoint_en_strength1 on documents_8117 collection (actual rows=25 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>=) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 RESET documentdb.max_non_ordered_term_scan_threshold;
 RESET documentdb.enableExtendedExplainPlans;
@@ -3941,6 +3970,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_not_intervals
          indexName: idx_intervals_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey]]
          innerScanLoops: 20 loops
@@ -3949,7 +3979,7 @@ $cmd$);
          ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=25 loops=1)
                Index Cond: (document @!= '{ "a" : null, "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 2
-(15 rows)
+(16 rows)
 
 -- G3: Duplicate collation-equivalent values — count verification
 -- At strength-1: "apple"="Apple"="APPLE" (3 docs), "cherry"="Cherry"="CHERRY" (3 docs)
@@ -4024,6 +4054,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_not_intervals
          indexName: idx_intervals_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "cherry"]]
          rawBounds: ["a": [MinKey, "cherry"], ({ }, MaxKey]]
@@ -4032,7 +4063,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 17)]
          ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=17 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 -- H1b: Descending sort with $not $lt
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$not": { "$lt": "cherry" } } }, "sort": { "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -4086,6 +4117,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
          indexName: idx_comp_ab_en_strength1
          indexKey: {"a": 1,"b": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "cherry"], "b": [MinKey, "green"]]
          rawBounds: ["a": [MinKey, "cherry"], ({ }, MaxKey]], ["b": [MinKey, "green"], ({ }, MaxKey]]
@@ -4095,7 +4127,7 @@ $cmd$);
          ->  Index Scan using idx_comp_ab_en_strength1 on documents_8116 collection (actual rows=9 loops=1)
                Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!>) '{ "b" : "green", "collation" : "en-u-ks-level1" }'::bson))
                Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(17 rows)
+(18 rows)
 
 -- H2b: Reverse compound sort {a: -1, _id: -1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$gt": "green" } } }, "sort": { "a": -1, "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -4241,6 +4273,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_accent_coll
          indexName: idx_accent_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey]]
          innerScanLoops: 6 loops
@@ -4248,7 +4281,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
          ->  Index Scan using idx_accent_en_strength1 on documents_8118 collection (actual rows=5 loops=1)
                Index Cond: (document @!= '{ "a" : "cafe", "collation" : "en-u-ks-level1" }'::bson)
-(14 rows)
+(15 rows)
 
 -- I1b: $ne "cafe" at strength-2 — excludes "cafe" and "CAFE" (case equiv) but NOT "café"/"Café" (accent differs)
 -- Should return: café(2), caff(3), apple(4), banana(5), date(6), elderberry(7), Café(8) = 7 docs
@@ -4276,6 +4309,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_accent_coll
          indexName: idx_accent_en_strength2
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level2
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey]]
          innerScanLoops: 7 loops
@@ -4283,7 +4317,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 7)]
          ->  Index Scan using idx_accent_en_strength2 on documents_8118 collection (actual rows=7 loops=1)
                Index Cond: (document @!= '{ "a" : "cafe", "collation" : "en-u-ks-level2" }'::bson)
-(14 rows)
+(15 rows)
 
 -- I1c: $not $gt "cafe" at strength-1 — a ≤ "cafe"
 -- All four cafe-variants are equal to "cafe" at primary level, so they are
@@ -4325,6 +4359,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_accent_coll
          indexName: idx_accent_en_strength2
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level2
          isMultiKey: false
          startBounds: ["a": [MinKey, "cafe"]]
          rawBounds: ["a": [MinKey, "cafe"], ({ }, MaxKey]]
@@ -4333,7 +4368,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
          ->  Index Scan using idx_accent_en_strength2 on documents_8118 collection (actual rows=4 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cafe", "collation" : "en-u-ks-level2" }'::bson)
-(15 rows)
+(16 rows)
 
 -- I1e: $not $gt "café" at strength-2 — a ≤ "café"
 -- At strength-2: "cafe" < "café" so "cafe" IS ≤ "café"
@@ -4541,6 +4576,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_three_key_coll
          indexName: idx_three_key_abc_s1
          indexKey: {"a": 1,"b": 1,"c": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": ["apple", "apple"], "b": ["red", "red"], "c": [MinKey, 15]]
          rawBounds: ["a": ["apple", "apple"]], ["b": ["red", "red"]], ["c": [MinKey, 15], (Infinity, MaxKey]]
@@ -4549,7 +4585,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
          ->  Index Scan using idx_three_key_abc_s1 on documents_8119 collection (actual rows=2 loops=1)
                Index Cond: ((document @= '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::bson) AND (document @= '{ "b" : "red", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!>) '{ "c" : { "$numberInt" : "15" }, "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+(16 rows)
 
 -- 25b: Negation on middle key — a = "cherry", b: $not $gt "green", c: $gt 5
 -- a="cherry" at s1: ids 7-10, 15, 18
@@ -4577,6 +4613,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_three_key_coll
          indexName: idx_three_key_abc_s1
          indexKey: {"a": 1,"b": 1,"c": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": ["cherry", "cherry"], "b": [MinKey, "green"], "c": (5, Infinity]]
          rawBounds: ["a": ["cherry", "cherry"]], ["b": [MinKey, "green"], ({ }, MaxKey]], ["c": (5, Infinity]]
@@ -4585,7 +4622,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
          ->  Index Scan using idx_three_key_abc_s1 on documents_8119 collection (actual rows=3 loops=1)
                Index Cond: ((document @= '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!>) '{ "b" : "green", "collation" : "en-u-ks-level1" }'::bson) AND (document @> '{ "c" : { "$numberInt" : "5" }, "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+(16 rows)
 
 -- 25c: All three keys negation
 -- a: $not $gt "cherry", b: $not $gt "red", c: $not $gt 25
@@ -4638,6 +4675,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_three_key_coll
          indexName: idx_three_key_abc_s1
          indexKey: {"a": 1,"b": 1,"c": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "cherry"], "b": [MinKey, "red"], "c": [MinKey, 25]]
          rawBounds: ["a": [MinKey, "cherry"], ({ }, MaxKey]], ["b": [MinKey, "red"], ({ }, MaxKey]], ["c": [MinKey, 25], (Infinity, MaxKey]]
@@ -4646,7 +4684,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 11)]
          ->  Index Scan using idx_three_key_abc_s1 on documents_8119 collection (actual rows=11 loops=1)
                Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!>) '{ "b" : "red", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!>) '{ "c" : { "$numberInt" : "25" }, "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+(16 rows)
 
 -- 25d: Negation on first key, equality on middle, range on third
 -- a: $not $gt "banana", b = "red", c: $gt 10
@@ -4673,6 +4711,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_three_key_coll
          indexName: idx_three_key_abc_s1
          indexKey: {"a": 1,"b": 1,"c": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "banana"], "b": ["red", "red"], "c": (10, Infinity]]
          rawBounds: ["a": [MinKey, "banana"], ({ }, MaxKey]], ["b": ["red", "red"]], ["c": (10, Infinity]]
@@ -4681,7 +4720,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
          ->  Index Scan using idx_three_key_abc_s1 on documents_8119 collection (actual rows=2 loops=1)
                Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson) AND (document @= '{ "b" : "red", "collation" : "en-u-ks-level1" }'::bson) AND (document @> '{ "c" : { "$numberInt" : "10" }, "collation" : "en-u-ks-level1" }'::bson))
-(15 rows)
+(16 rows)
 
 -- 25e: $ne on first key with equality on second — 3-key index
 -- a $ne "cherry", b = "red"
@@ -4795,6 +4834,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
          indexName: idx_disjoint_desc_s1
          indexKey: {"a": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": DESC({ }, MaxKey]]
          rawBounds: ["a": DESC({ }, MaxKey], DESC[MinKey, "cherry"]]
@@ -4803,7 +4843,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 28)]
          ->  Index Scan using idx_disjoint_desc_s1 on documents_8117 collection (actual rows=28 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 -- 26b: $not $lt "lemon" on DESCENDING index — 20 docs (same as 21d)
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$lt": "lemon" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -4886,6 +4926,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_disjoint_dense
          indexName: idx_disjoint_desc_s1
          indexKey: {"a": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["a": DESC[MinKey, MaxKey]]
          innerScanLoops: 32 loops
@@ -4893,7 +4934,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 37)]
          ->  Index Scan using idx_disjoint_desc_s1 on documents_8117 collection (actual rows=37 loops=1)
                Index Cond: (document @!= '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
-(14 rows)
+(15 rows)
 
 -- 26d: Descending sort on DESCENDING index — natural order for descending
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_disjoint_dense", "filter": { "a": { "$not": { "$gt": "avocado" } } }, "sort": { "a": -1, "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -4976,6 +5017,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
          indexName: idx_comp_ab_mixed_s1
          indexKey: {"a": 1,"b": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          startBounds: ["a": [MinKey, "cherry"], "b": DESC["green", MaxKey]]
          rawBounds: ["a": [MinKey, "cherry"], ({ }, MaxKey]], ["b": DESC["green", MaxKey], DESC[MinKey, "")]
@@ -4985,7 +5027,7 @@ $cmd$);
          ->  Index Scan using idx_comp_ab_mixed_s1 on documents_8116 collection (actual rows=19 loops=1)
                Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!<) '{ "b" : "green", "collation" : "en-u-ks-level1" }'::bson))
                Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(17 rows)
+(18 rows)
 
 -- 26f: Mixed-direction sort {a: 1, b: -1} — leverages the mixed index
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$not": { "$gt": "cherry" } }, "b": { "$not": { "$lt": "green" } } }, "sort": { "a": 1, "b": -1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5021,6 +5063,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
    indexName: idx_comp_ab_mixed_s1
    indexKey: {"a": 1,"b": -1}
+   indexCollation: en-u-ks-level1
    isMultiKey: false
    startBounds: ["a": [MinKey, "cherry"], "b": DESC["green", MaxKey]]
    rawBounds: ["a": [MinKey, "cherry"], ({ }, MaxKey]], ["b": DESC["green", MaxKey], DESC[MinKey, "")]
@@ -5030,7 +5073,7 @@ $cmd$);
    ->  Index Scan using idx_comp_ab_mixed_s1 on documents_8116 collection (actual rows=19 loops=1)
          Index Cond: ((document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson) AND (document OPERATOR(documentdb_api_internal.@!<) '{ "b" : "green", "collation" : "en-u-ks-level1" }'::bson))
          Order By: ((document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document OPERATOR(documentdb_api_internal.|<>) '{ "b" : { "$numberInt" : "-1" } }'::bson))
-(13 rows)
+(14 rows)
 
 RESET documentdb.max_non_ordered_term_scan_threshold;
 RESET documentdb.enableExtendedExplainPlans;
@@ -5152,6 +5195,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_array_coll
          indexName: idx_array_en_s1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          startBounds: ["a": [MinKey, "cherry"]]
          rawBounds: ["a": [MinKey, "cherry"], ({ }, MaxKey]]
@@ -5162,7 +5206,7 @@ $cmd$);
          ->  Index Scan using idx_array_en_s1 on documents_8120 collection (actual rows=7 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 1
-(17 rows)
+(18 rows)
 
 -- 27b: $ne "cherry" with array docs
 -- $ne excludes docs where ANY element equals "cherry" at s1.
@@ -5191,6 +5235,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_array_coll
          indexName: idx_array_en_s1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          indexBounds: ["a": [MinKey, MaxKey]]
          numDuplicates: 2 entries
@@ -5200,7 +5245,7 @@ $cmd$);
          ->  Index Scan using idx_array_en_s1 on documents_8120 collection (actual rows=6 loops=1)
                Index Cond: (document @!= '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 2
-(16 rows)
+(17 rows)
 
 -- 27c: Overlapping negations with arrays
 -- $not $gt "cherry" AND $not $lt "banana"  →  banana ≤ a ≤ cherry
@@ -5249,6 +5294,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_not_intervals
    indexName: idx_intervals_en_strength1
    indexKey: {"a": 1}
+   indexCollation: en-u-ks-level1
    isMultiKey: false
    indexBounds: ["a": ["apple", "apple"]], ["a": ["banana", "banana"]], ["a": ["cherry", "cherry"]]
    innerScanLoops: 6 loops
@@ -5257,7 +5303,7 @@ $cmd$);
    ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=9 loops=1)
          Index Cond: (document @*= '{ "a" : [ "apple", "banana", "cherry" ], "collation" : "en-u-ks-level1" }'::bson)
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(12 rows)
+(13 rows)
 
 -- 28.2: $in with sort on collated field descending — no ordered scan
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "date"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5279,6 +5325,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_not_intervals
    indexName: idx_intervals_en_strength1
    indexKey: {"a": 1}
+   indexCollation: en-u-ks-level1
    isMultiKey: false
    indexBounds: ["a": ["apple", "apple"]], ["a": ["date", "date"]]
    isBackwardScan: true
@@ -5288,7 +5335,7 @@ $cmd$);
    ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=5 loops=1)
          Index Cond: (document @*= '{ "a" : [ "apple", "date" ], "collation" : "en-u-ks-level1" }'::bson)
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "-1" } }'::bson)
-(13 rows)
+(14 rows)
 
 -- 28.3: $nin with sort on collated field ascending — no ordered scan
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["apple", "cherry"] } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5326,6 +5373,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_not_intervals
    indexName: idx_intervals_en_strength1
    indexKey: {"a": 1}
+   indexCollation: en-u-ks-level1
    isMultiKey: false
    indexBounds: ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]]
    innerScanLoops: 20 loops
@@ -5335,7 +5383,7 @@ $cmd$);
          Index Cond: (document @!*= '{ "a" : [ "apple", "cherry" ], "collation" : "en-u-ks-level1" }'::bson)
          Rows Removed by Index Recheck: 6
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(13 rows)
+(14 rows)
 
 -- 28.4: $nin with sort on collated field descending — no ordered scan
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$nin": ["banana"] } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5376,6 +5424,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_not_intervals
    indexName: idx_intervals_en_strength1
    indexKey: {"a": 1}
+   indexCollation: en-u-ks-level1
    isMultiKey: false
    indexBounds: ["a": [MinKey, MaxKey]]
    isBackwardScan: true
@@ -5385,7 +5434,7 @@ $cmd$);
    ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=24 loops=1)
          Index Cond: (document @!= '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::bson)
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "-1" } }'::bson)
-(13 rows)
+(14 rows)
 
 -- 28.5: $in on compound with sort on both keys — no ordered scan
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_comp_pos_neg", "filter": { "a": { "$in": ["apple", "cherry"] } }, "sort": { "a": 1, "b": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5417,6 +5466,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_comp_pos_neg
    indexName: idx_comp_ab_en_strength1
    indexKey: {"a": 1,"b": 1}
+   indexCollation: en-u-ks-level1
    isMultiKey: false
    indexBounds: ["a": ["apple", "apple"], "b": (MinKey, MaxKey)], ["a": ["cherry", "cherry"], "b": (MinKey, MaxKey)]
    innerScanLoops: 12 loops
@@ -5425,7 +5475,7 @@ $cmd$);
    ->  Index Scan using idx_comp_ab_en_strength1 on documents_8116 collection (actual rows=15 loops=1)
          Index Cond: (document @*= '{ "a" : [ "apple", "cherry" ], "collation" : "en-u-ks-level1" }'::bson)
          Order By: ((document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document OPERATOR(documentdb_api_internal.|<>) '{ "b" : { "$numberInt" : "1" } }'::bson))
-(12 rows)
+(13 rows)
 
 -- 28.6: $in with sort on _id (non-collated) — should work normally
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_not_intervals", "filter": { "a": { "$in": ["apple", "banana"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5451,6 +5501,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_not_intervals
          indexName: idx_intervals_en_strength1
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["a": ["apple", "apple"]], ["a": ["banana", "banana"]]
          innerScanLoops: 6 loops
@@ -5458,7 +5509,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3), (isInequality: false, estimatedEntryCount: 3)]
          ->  Index Scan using idx_intervals_en_strength1 on documents_8115 collection (actual rows=6 loops=1)
                Index Cond: (document @*= '{ "a" : [ "apple", "banana" ], "collation" : "en-u-ks-level1" }'::bson)
-(14 rows)
+(15 rows)
 
 RESET documentdb.enableExtendedExplainPlans;
 RESET enable_seqscan;
@@ -5586,6 +5637,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
          indexName: idx_ord_em_desc_s1
          indexKey: {"a": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          indexBounds: ["a": DESC["apple", "apple"]]
          innerScanLoops: 4 loops
@@ -5595,7 +5647,7 @@ $cmd$);
                Index Cond: (document @<> '{ "a" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "apple", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "a" : { "$eq" : "apple" }, "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Filter: 1
-(16 rows)
+(17 rows)
 
 -- 28b: $elemMatch $eq "apple" + sort by collated field {a: 1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "apple" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5618,6 +5670,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
          indexName: idx_ord_em_desc_s1
          indexKey: {"a": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          indexBounds: ["a": DESC["apple", "apple"]]
          innerScanLoops: 4 loops
@@ -5627,7 +5680,7 @@ $cmd$);
                Index Cond: (document @<> '{ "a" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "apple", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "a" : { "$eq" : "apple" }, "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Filter: 1
-(16 rows)
+(17 rows)
 
 -- 28c: $elemMatch range + sort {a: 1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gte": "banana", "$lte": "cherry" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5651,6 +5704,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
          indexName: idx_ord_em_desc_s1
          indexKey: {"a": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          indexBounds: ["a": DESC["banana", "cherry"]]
          numDuplicates: 2 entries
@@ -5660,7 +5714,7 @@ $cmd$);
          ->  Index Scan using idx_ord_em_desc_s1 on documents_8121 collection (actual rows=4 loops=1)
                Index Cond: (document @<> '{ "a" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "3" }, "value" : "banana", "isTopLevel" : true }, { "op" : { "$numberInt" : "5" }, "value" : "cherry", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "a" : { "$gte" : "banana", "$lte" : "cherry" }, "collation" : "en-u-ks-level1" }'::bson)
-(16 rows)
+(17 rows)
 
 -- 28d: $elemMatch $eq + descending sort {a: -1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "cherry" } } }, "sort": { "a": -1, "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5683,6 +5737,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
          indexName: idx_ord_em_desc_s1
          indexKey: {"a": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          indexBounds: ["a": DESC["cherry", "cherry"]]
          innerScanLoops: 3 loops
@@ -5691,7 +5746,7 @@ $cmd$);
          ->  Index Scan using idx_ord_em_desc_s1 on documents_8121 collection (actual rows=3 loops=1)
                Index Cond: (document @<> '{ "a" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "cherry", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "a" : { "$eq" : "cherry" }, "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 -- 28e: $elemMatch $gt (open upper bound) + sort {a: 1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gt": "cherry" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5713,6 +5768,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
          indexName: idx_ord_em_desc_s1
          indexKey: {"a": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          indexBounds: ["a": DESC("cherry", { })]
          numDuplicates: 2 entries
@@ -5722,7 +5778,7 @@ $cmd$);
          ->  Index Scan using idx_ord_em_desc_s1 on documents_8121 collection (actual rows=2 loops=1)
                Index Cond: (document @<> '{ "a" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "2" }, "value" : "cherry", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "a" : { "$gt" : "cherry" }, "collation" : "en-u-ks-level1" }'::bson)
-(16 rows)
+(17 rows)
 
 -- 28f: $elemMatch $lt (open lower bound) + sort {a: -1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$lt": "banana" } } }, "sort": { "a": -1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5745,6 +5801,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
          indexName: idx_ord_em_desc_s1
          indexKey: {"a": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          indexBounds: ["a": DESC["", "banana")]
          innerScanLoops: 3 loops
@@ -5754,7 +5811,7 @@ $cmd$);
                Index Cond: (document @<> '{ "a" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "4" }, "value" : "banana", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "a" : { "$lt" : "banana" }, "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Filter: 1
-(16 rows)
+(17 rows)
 
 -- 28g: $elemMatch with $not $gt + sort {_id: 1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$not": { "$gt": "cherry" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5806,6 +5863,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
    indexName: idx_ord_em_desc_s1
    indexKey: {"a": -1}
+   indexCollation: en-u-ks-level1
    isMultiKey: true
    indexBounds: ["a": DESC(MinKey, MaxKey)]
    numDuplicates: 9 entries
@@ -5818,7 +5876,7 @@ $cmd$);
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
          Filter: (document @#? '{ "a" : { "$ne" : "apple" }, "collation" : "en-u-ks-level1" }'::bson)
          Rows Removed by Filter: 3
-(16 rows)
+(17 rows)
 
 -- 28i: $elemMatch with mismatched collation + sort
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -5857,6 +5915,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
          indexName: idx_ord_em_desc_s1
          indexKey: {"a": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          indexBounds: ["a": DESC[42, 42]]
          innerScanLoops: 1 loops
@@ -5865,7 +5924,7 @@ $cmd$);
          ->  Index Scan using idx_ord_em_desc_s1 on documents_8121 collection (actual rows=1 loops=1)
                Index Cond: (document @<> '{ "a" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "42" }, "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "a" : { "$eq" : { "$numberInt" : "42" } }, "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 -- 28k: $elemMatch on all-case-variants + sort to verify tie ordering
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5888,6 +5947,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
          indexName: idx_ord_em_desc_s1
          indexKey: {"a": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          indexBounds: ["a": DESC["cherry", "cherry"]]
          innerScanLoops: 3 loops
@@ -5896,7 +5956,7 @@ $cmd$);
          ->  Index Scan using idx_ord_em_desc_s1 on documents_8121 collection (actual rows=3 loops=1)
                Index Cond: (document @<> '{ "a" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "cherry", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "a" : { "$eq" : "cherry" }, "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 -- 28l: $elemMatch $exists: true + sort {a: 1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$exists": true } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5920,6 +5980,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
    indexName: idx_ord_em_desc_s1
    indexKey: {"a": -1}
+   indexCollation: en-u-ks-level1
    isMultiKey: true
    indexBounds: ["a": DESC[MinKey, MaxKey]]
    numDuplicates: 9 entries
@@ -5932,7 +5993,7 @@ $cmd$);
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
          Filter: (document @#? '{ "a" : { "$exists" : true }, "collation" : "en-u-ks-level1" }'::bson)
          Rows Removed by Filter: 2
-(16 rows)
+(17 rows)
 
 -- 28m: $elemMatch $type: "string" + sort {a: 1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$type": "string" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5959,6 +6020,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
          indexName: idx_ord_em_desc_s1
          indexKey: {"a": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          indexBounds: ["a": DESC["", { })]
          numDuplicates: 6 entries
@@ -5969,7 +6031,7 @@ $cmd$);
                Index Cond: (document @<> '{ "a" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "12" }, "value" : "string", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "a" : { "$type" : "string" }, "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Filter: 1
-(17 rows)
+(18 rows)
 
 -- 28n: $elemMatch $not: {$eq: "apple"} + sort {a: 1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$not": { "$eq": "apple" } } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -5997,6 +6059,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
          indexName: idx_ord_em_desc_s1
          indexKey: {"a": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          indexBounds: ["a": DESC(MinKey, MaxKey)]
          numDuplicates: 9 entries
@@ -6009,7 +6072,7 @@ $cmd$);
                Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
                Filter: (document @#? '{ "a" : { "$not" : { "$eq" : "apple" } }, "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Filter: 3
-(20 rows)
+(21 rows)
 
 -- 28o: $elemMatch three-way ($gt + $lt + $ne) + sort {a: 1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gt": "apple", "$lt": "fox", "$ne": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -6033,6 +6096,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
          indexName: idx_ord_em_desc_s1
          indexKey: {"a": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          indexBounds: ["a": DESC("apple", "fox")]
          numDuplicates: 3 entries
@@ -6043,7 +6107,7 @@ $cmd$);
                Index Cond: (document @<> '{ "a" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "2" }, "value" : "apple", "isTopLevel" : true }, { "op" : { "$numberInt" : "4" }, "value" : "fox", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "a" : { "$gt" : "apple", "$lt" : "fox", "$ne" : "cherry" }, "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Filter: 1
-(17 rows)
+(18 rows)
 
 -- 28p: $elemMatch empty range + sort {a: 1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gte": "banana", "$lt": "banana" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -6063,6 +6127,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
          indexName: idx_ord_em_desc_s1
          indexKey: {"a": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          indexBounds: ["a": DESC["banana", "banana")]
          innerScanLoops: 2 loops
@@ -6071,7 +6136,7 @@ $cmd$);
          ->  Index Scan using idx_ord_em_desc_s1 on documents_8121 collection (actual rows=0 loops=1)
                Index Cond: (document @<> '{ "a" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "3" }, "value" : "banana", "isTopLevel" : true }, { "op" : { "$numberInt" : "4" }, "value" : "banana", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "a" : { "$gte" : "banana", "$lt" : "banana" }, "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 -- 28q: $elemMatch point range + sort {a: -1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$gte": "banana", "$lte": "banana" } } }, "sort": { "a": -1, "_id": -1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -6094,6 +6159,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
          indexName: idx_ord_em_desc_s1
          indexKey: {"a": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          indexBounds: ["a": DESC["banana", "banana"]]
          innerScanLoops: 3 loops
@@ -6102,7 +6168,7 @@ $cmd$);
          ->  Index Scan using idx_ord_em_desc_s1 on documents_8121 collection (actual rows=3 loops=1)
                Index Cond: (document @<> '{ "a" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "3" }, "value" : "banana", "isTopLevel" : true }, { "op" : { "$numberInt" : "5" }, "value" : "banana", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "a" : { "$gte" : "banana", "$lte" : "banana" }, "collation" : "en-u-ks-level1" }'::bson)
-(15 rows)
+(16 rows)
 
 -- 28r: $elemMatch $type + $gte + sort {a: 1}
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$type": "string", "$gte": "cherry" } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -6127,6 +6193,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
          indexName: idx_ord_em_desc_s1
          indexKey: {"a": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          indexBounds: ["a": DESC["cherry", { })]
          numDuplicates: 2 entries
@@ -6136,7 +6203,7 @@ $cmd$);
          ->  Index Scan using idx_ord_em_desc_s1 on documents_8121 collection (actual rows=5 loops=1)
                Index Cond: (document @<> '{ "a" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "12" }, "value" : "string", "isTopLevel" : true }, { "op" : { "$numberInt" : "3" }, "value" : "cherry", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "a" : { "$type" : "string", "$gte" : "cherry" }, "collation" : "en-u-ks-level1" }'::bson)
-(16 rows)
+(17 rows)
 
 RESET documentdb.max_non_ordered_term_scan_threshold;
 -- ===== Section 29: ORDER BY pushdown with numericOrdering ======
@@ -6201,6 +6268,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_orderby_numeric
    indexName: idx_orderby_numeric_en_num
    indexKey: {"a": 1}
+   indexCollation: en-u-ks-level3-kn-true
    isMultiKey: false
    indexBounds: ["a": (MinKey, MaxKey)]
    innerScanLoops: 6 loops
@@ -6209,7 +6277,7 @@ $cmd$);
    ->  Index Scan using idx_orderby_numeric_en_num on documents_8122 collection (actual rows=6 loops=1)
          Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(12 rows)
+(13 rows)
 
 -- 29b: DESC sort with matching numericOrdering collation
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": -1 }, "collation": { "locale": "en", "numericOrdering": true } }');
@@ -6232,6 +6300,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_orderby_numeric
    indexName: idx_orderby_numeric_en_num
    indexKey: {"a": 1}
+   indexCollation: en-u-ks-level3-kn-true
    isMultiKey: false
    indexBounds: ["a": (MinKey, MaxKey)]
    isBackwardScan: true
@@ -6241,7 +6310,7 @@ $cmd$);
    ->  Index Scan using idx_orderby_numeric_en_num on documents_8122 collection (actual rows=6 loops=1)
          Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson)
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "-1" } }'::bson)
-(13 rows)
+(14 rows)
 
 -- 29c: top-N sort with matching numericOrdering collation
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_numeric", "filter": {}, "sort": { "a": 1 }, "limit": 3, "collation": { "locale": "en", "numericOrdering": true } }');
@@ -6262,6 +6331,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_orderby_numeric
          indexName: idx_orderby_numeric_en_num
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level3-kn-true
          isMultiKey: false
          indexBounds: ["a": (MinKey, MaxKey)]
          innerScanLoops: 3 loops
@@ -6270,7 +6340,7 @@ $cmd$);
          ->  Index Scan using idx_orderby_numeric_en_num on documents_8122 collection (actual rows=3 loops=1)
                Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(13 rows)
+(14 rows)
 
 -- 29d: locale mismatch retains a separate Sort
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -6341,6 +6411,7 @@ $cmd$);
                      namespaceName: ord_coll_ordered_db.ord_orderby_numeric
                      indexName: idx_orderby_numeric_en_num
                      indexKey: {"a": 1}
+                     indexCollation: en-u-ks-level3-kn-true
                      isMultiKey: false
                      indexBounds: ["a": (MinKey, MaxKey)]
                      innerScanLoops: 5 loops
@@ -6349,7 +6420,7 @@ $cmd$);
                      ->  Index Scan using idx_orderby_numeric_en_num on documents_8122 collection (actual rows=5 loops=1)
                            Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                            Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(15 rows)
+(16 rows)
 
 -- 29z: aggregation pipeline $sort + $limit with matching numericOrdering collation
 SELECT document FROM bson_aggregation_pipeline('ord_coll_ordered_db', '{ "aggregate": "ord_orderby_numeric", "pipeline": [ { "$sort": { "a": 1 } }, { "$limit": 3 } ], "cursor": {}, "collation": { "locale": "en", "numericOrdering": true } }');
@@ -6370,6 +6441,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_orderby_numeric
          indexName: idx_orderby_numeric_en_num
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level3-kn-true
          isMultiKey: false
          indexBounds: ["a": (MinKey, MaxKey)]
          innerScanLoops: 3 loops
@@ -6378,7 +6450,7 @@ $cmd$);
          ->  Index Scan using idx_orderby_numeric_en_num on documents_8122 collection (actual rows=3 loops=1)
                Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(13 rows)
+(14 rows)
 
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_filter',
   FORMAT('{"_id": %s, "a": "%s", "tag": "%s"}', g.idx, g.a, g.tag)::documentdb_core.bson, NULL)
@@ -6467,6 +6539,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_orderby_filter
          indexName: idx_orderby_filter_en_num
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level3-kn-true
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey]]
          innerScanLoops: 12 loops
@@ -6475,7 +6548,7 @@ $cmd$);
          ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=11 loops=1)
                Index Cond: (document @>= '{ "a" : { "$minKey" : 1 }, "collation" : "en-u-ks-level3-kn-true" }'::bson)
                Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(16 rows)
+(17 rows)
 
 -- 29h: $type string + reverse sort on collated field
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$type": "string" } }, "sort": { "a": -1 }, "collation": { "locale": "en", "numericOrdering": true } }');
@@ -6501,6 +6574,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_orderby_filter
    indexName: idx_orderby_filter_en_num
    indexKey: {"a": 1}
+   indexCollation: en-u-ks-level3-kn-true
    isMultiKey: false
    indexBounds: ["a": ["", { })]
    isBackwardScan: true
@@ -6510,7 +6584,7 @@ $cmd$);
    ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=9 loops=1)
          Index Cond: (document @# '{ "a" : "string", "collation" : "en-u-ks-level3-kn-true" }'::bson)
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "-1" } }'::bson)
-(13 rows)
+(14 rows)
 
 -- 29i: equality filter + sort
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$eq": "item3" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
@@ -6528,6 +6602,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_orderby_filter
    indexName: idx_orderby_filter_en_num
    indexKey: {"a": 1}
+   indexCollation: en-u-ks-level3-kn-true
    isMultiKey: false
    indexBounds: ["a": ["item3", "item3"]]
    innerScanLoops: 2 loops
@@ -6536,7 +6611,7 @@ $cmd$);
    ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=1 loops=1)
          Index Cond: (document @= '{ "a" : "item3", "collation" : "en-u-ks-level3-kn-true" }'::bson)
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(12 rows)
+(13 rows)
 
 -- 29j: greater-than filter + sort
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$gt": "item10" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
@@ -6557,6 +6632,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_orderby_filter
    indexName: idx_orderby_filter_en_num
    indexKey: {"a": 1}
+   indexCollation: en-u-ks-level3-kn-true
    isMultiKey: false
    indexBounds: ["a": ("item10", { })]
    innerScanLoops: 5 loops
@@ -6565,7 +6641,7 @@ $cmd$);
    ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=4 loops=1)
          Index Cond: (document @> '{ "a" : "item10", "collation" : "en-u-ks-level3-kn-true" }'::bson)
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(12 rows)
+(13 rows)
 
 -- 29k: less-than filter + sort
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$lt": "item10" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
@@ -6586,6 +6662,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_orderby_filter
    indexName: idx_orderby_filter_en_num
    indexKey: {"a": 1}
+   indexCollation: en-u-ks-level3-kn-true
    isMultiKey: false
    indexBounds: ["a": ["", "item10")]
    innerScanLoops: 6 loops
@@ -6594,7 +6671,7 @@ $cmd$);
    ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=4 loops=1)
          Index Cond: (document @< '{ "a" : "item10", "collation" : "en-u-ks-level3-kn-true" }'::bson)
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(12 rows)
+(13 rows)
 
 -- 29l: bounded range filter + sort
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$gte": "item3", "$lte": "item20" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
@@ -6617,6 +6694,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_orderby_filter
    indexName: idx_orderby_filter_en_num
    indexKey: {"a": 1}
+   indexCollation: en-u-ks-level3-kn-true
    isMultiKey: false
    indexBounds: ["a": ["item3", "item20"]]
    innerScanLoops: 7 loops
@@ -6625,7 +6703,7 @@ $cmd$);
    ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=6 loops=1)
          Index Cond: ((document @>= '{ "a" : "item3", "collation" : "en-u-ks-level3-kn-true" }'::bson) AND (document @<= '{ "a" : "item20", "collation" : "en-u-ks-level3-kn-true" }'::bson))
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(12 rows)
+(13 rows)
 
 -- 29m: not-equal filter + sort
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$ne": "item3" } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
@@ -6653,6 +6731,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_orderby_filter
    indexName: idx_orderby_filter_en_num
    indexKey: {"a": 1}
+   indexCollation: en-u-ks-level3-kn-true
    isMultiKey: false
    indexBounds: ["a": [MinKey, MaxKey]]
    innerScanLoops: 12 loops
@@ -6661,7 +6740,7 @@ $cmd$);
    ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=11 loops=1)
          Index Cond: (document @!= '{ "a" : "item3", "collation" : "en-u-ks-level3-kn-true" }'::bson)
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(12 rows)
+(13 rows)
 
 -- 29n: negated comparison filter + sort
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$not": { "$gt": "item20" } } }, "sort": { "a": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
@@ -6689,6 +6768,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_orderby_filter
    indexName: idx_orderby_filter_en_num
    indexKey: {"a": 1}
+   indexCollation: en-u-ks-level3-kn-true
    isMultiKey: false
    startBounds: ["a": [MinKey, "item20"]]
    rawBounds: ["a": [MinKey, "item20"], ({ }, MaxKey]]
@@ -6698,7 +6778,7 @@ $cmd$);
    ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=11 loops=1)
          Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "item20", "collation" : "en-u-ks-level3-kn-true" }'::bson)
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(13 rows)
+(14 rows)
 
 -- 29o: filter on collated field + sort on _id
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_filter", "filter": { "a": { "$gt": "item10" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
@@ -6722,6 +6802,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_orderby_filter
          indexName: idx_orderby_filter_en_num
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level3-kn-true
          isMultiKey: false
          indexBounds: ["a": ("item10", { })]
          innerScanLoops: 5 loops
@@ -6729,7 +6810,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 4)]
          ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=4 loops=1)
                Index Cond: (document @> '{ "a" : "item10", "collation" : "en-u-ks-level3-kn-true" }'::bson)
-(14 rows)
+(15 rows)
 
 -- 29x: aggregation pipeline $match + $sort + $project with matching numericOrdering collation
 SELECT document FROM bson_aggregation_pipeline('ord_coll_ordered_db', '{ "aggregate": "ord_orderby_filter", "pipeline": [ { "$match": { "a": { "$gte": "item3" } } }, { "$sort": { "a": 1 } }, { "$project": { "_id": 0, "a": 1 } }, { "$limit": 3 } ], "cursor": {}, "collation": { "locale": "en", "numericOrdering": true } }');
@@ -6750,6 +6831,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_orderby_filter
          indexName: idx_orderby_filter_en_num
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level3-kn-true
          isMultiKey: false
          indexBounds: ["a": ["item3", { })]
          innerScanLoops: 3 loops
@@ -6758,7 +6840,7 @@ $cmd$);
          ->  Index Scan using idx_orderby_filter_en_num on documents_8123 collection (actual rows=3 loops=1)
                Index Cond: (document @>= '{ "a" : "item3", "collation" : "en-u-ks-level3-kn-true" }'::bson)
                Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(13 rows)
+(14 rows)
 
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_compound',
   FORMAT('{"_id": %s, "a": "%s", "b": "%s"}', g.idx, g.a, g.b)::documentdb_core.bson, NULL)
@@ -6816,6 +6898,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_orderby_compound
    indexName: idx_orderby_compound_en_num
    indexKey: {"a": 1,"b": 1}
+   indexCollation: en-u-ks-level3-kn-true
    isMultiKey: false
    indexBounds: ["a": (MinKey, MaxKey), "b": (MinKey, MaxKey)]
    innerScanLoops: 6 loops
@@ -6824,7 +6907,7 @@ $cmd$);
    ->  Index Scan using idx_orderby_compound_en_num on documents_8124 collection (actual rows=6 loops=1)
          Index Cond: ((document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
          Order By: ((document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document OPERATOR(documentdb_api_internal.|<>) '{ "b" : { "$numberInt" : "1" } }'::bson))
-(12 rows)
+(13 rows)
 
 -- 29q: equality on leading compound key + sort on secondary numeric string key
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_compound", "filter": { "a": "item10" }, "sort": { "b": 1, "_id": 1 }, "limit": 4, "collation": { "locale": "en", "numericOrdering": true } }');
@@ -6848,6 +6931,7 @@ $cmd$);
                namespaceName: ord_coll_ordered_db.ord_orderby_compound
                indexName: idx_orderby_compound_en_num
                indexKey: {"a": 1,"b": 1}
+               indexCollation: en-u-ks-level3-kn-true
                isMultiKey: false
                indexBounds: ["a": ["item10", "item10"], "b": (MinKey, MaxKey)]
                innerScanLoops: 2 loops
@@ -6856,7 +6940,7 @@ $cmd$);
                ->  Index Scan using idx_orderby_compound_en_num on documents_8124 collection (actual rows=2 loops=1)
                      Index Cond: (document @= '{ "a" : "item10", "collation" : "en-u-ks-level3-kn-true" }'::bson)
                      Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "b" : { "$numberInt" : "1" } }'::bson)
-(17 rows)
+(18 rows)
 
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_mixed',
   FORMAT('{"_id": %s, "a": "%s", "b": "%s"}', g.idx, g.a, g.b)::documentdb_core.bson, NULL)
@@ -6914,6 +6998,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_orderby_mixed
    indexName: idx_orderby_mixed_en_num
    indexKey: {"a": 1,"b": -1}
+   indexCollation: en-u-ks-level3-kn-true
    isMultiKey: false
    indexBounds: ["a": (MinKey, MaxKey), "b": DESC(MinKey, MaxKey)]
    innerScanLoops: 6 loops
@@ -6922,7 +7007,7 @@ $cmd$);
    ->  Index Scan using idx_orderby_mixed_en_num on documents_8125 collection (actual rows=6 loops=1)
          Index Cond: ((document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson))
          Order By: ((document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson) AND (document OPERATOR(documentdb_api_internal.|<>) '{ "b" : { "$numberInt" : "-1" } }'::bson))
-(12 rows)
+(13 rows)
 
 -- 29s: reverse mixed-direction compound sort with matching numericOrdering collation
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_mixed", "filter": {}, "sort": { "a": -1, "b": 1 }, "collation": { "locale": "en", "numericOrdering": true } }');
@@ -6945,6 +7030,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_orderby_mixed
    indexName: idx_orderby_mixed_en_num
    indexKey: {"a": 1,"b": -1}
+   indexCollation: en-u-ks-level3-kn-true
    isMultiKey: false
    indexBounds: ["a": (MinKey, MaxKey), "b": DESC(MinKey, MaxKey)]
    isBackwardScan: true
@@ -6954,7 +7040,7 @@ $cmd$);
    ->  Index Scan using idx_orderby_mixed_en_num on documents_8125 collection (actual rows=6 loops=1)
          Index Cond: ((document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "-1" } } }'::bson) AND (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
          Order By: ((document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "-1" } }'::bson) AND (document OPERATOR(documentdb_api_internal.|<>) '{ "b" : { "$numberInt" : "1" } }'::bson))
-(13 rows)
+(14 rows)
 
 -- 29t: mixed-direction mismatch retains a separate Sort
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -6970,6 +7056,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_orderby_mixed
          indexName: idx_orderby_mixed_en_num
          indexKey: {"a": 1,"b": -1}
+         indexCollation: en-u-ks-level3-kn-true
          isMultiKey: false
          indexBounds: ["a": (MinKey, MaxKey), "b": DESC(MinKey, MaxKey)]
          innerScanLoops: 6 loops
@@ -6978,7 +7065,7 @@ $cmd$);
          ->  Index Scan using idx_orderby_mixed_en_num on documents_8125 collection (actual rows=6 loops=1)
                Index Cond: ((document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
                Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(16 rows)
+(17 rows)
 
 SELECT documentdb_api.insert_one('ord_coll_ordered_db','ord_orderby_id',
   FORMAT('{"_id": "%s", "a": %s}', g.id, g.a)::documentdb_core.bson, NULL)
@@ -7129,6 +7216,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_orderby_samefield
    indexName: idx_orderby_samefield_en_num
    indexKey: {"a": 1}
+   indexCollation: en-u-ks-level3-kn-true
    isMultiKey: false
    indexBounds: ["a": (MinKey, MaxKey)]
    innerScanLoops: 6 loops
@@ -7137,7 +7225,7 @@ $cmd$);
    ->  Index Scan using idx_orderby_samefield_en_num on documents_8127 collection (actual rows=6 loops=1)
          Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(12 rows)
+(13 rows)
 
 -- 29ab: matching hint on the same field preserves ordered output
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_en_num", "collation": { "locale": "en", "numericOrdering": true } }');
@@ -7160,6 +7248,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_orderby_samefield
    indexName: idx_orderby_samefield_en_num
    indexKey: {"a": 1}
+   indexCollation: en-u-ks-level3-kn-true
    isMultiKey: false
    indexBounds: ["a": (MinKey, MaxKey)]
    innerScanLoops: 6 loops
@@ -7168,7 +7257,7 @@ $cmd$);
    ->  Index Scan using idx_orderby_samefield_en_num on documents_8127 collection (actual rows=6 loops=1)
          Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(12 rows)
+(13 rows)
 
 -- 29ac: locale-specific hint on the same field uses the matching collated index
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_fr_num", "collation": { "locale": "fr", "numericOrdering": true } }');
@@ -7191,6 +7280,7 @@ $cmd$);
    namespaceName: ord_coll_ordered_db.ord_orderby_samefield
    indexName: idx_orderby_samefield_fr_num
    indexKey: {"a": 1}
+   indexCollation: fr-u-ks-level3-kn-true
    isMultiKey: false
    indexBounds: ["a": (MinKey, MaxKey)]
    innerScanLoops: 6 loops
@@ -7199,7 +7289,7 @@ $cmd$);
    ->  Index Scan using idx_orderby_samefield_fr_num on documents_8127 collection (actual rows=6 loops=1)
          Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::bson)
-(12 rows)
+(13 rows)
 
 -- 29ad: uncollated hint on the same field uses the simple index
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_simple" }');
@@ -7256,6 +7346,7 @@ $cmd$);
          namespaceName: ord_coll_ordered_db.ord_orderby_samefield
          indexName: idx_orderby_samefield_fr_num
          indexKey: {"a": 1}
+         indexCollation: fr-u-ks-level3-kn-true
          isMultiKey: false
          indexBounds: ["a": (MinKey, MaxKey)]
          innerScanLoops: 6 loops
@@ -7263,7 +7354,7 @@ $cmd$);
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
          ->  Index Scan using idx_orderby_samefield_fr_num on documents_8127 collection (actual rows=6 loops=1)
                Index Cond: (document @<> '{ "a" : { "fullScan" : true } }'::bson)
-(14 rows)
+(15 rows)
 
 -- 29af: collated query with simple hint still returns correct order via a separate Sort
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_simple", "collation": { "locale": "en", "numericOrdering": true } }');
@@ -7366,6 +7457,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          namespaceName: ord_coll_ios_db.ios_coll
          indexName: ios_id_en_s1
          indexKey: {"_id": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["_id": ["cat", "cat"]]
          innerScanLoops: 2 loops
@@ -7374,7 +7466,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          ->  Index Only Scan using ios_id_en_s1 on documentdb_data.documents_8129 collection (actual rows=3 loops=1)
                Index Cond: (collection.document @= '{ "_id" : "cat", "collation" : "en-u-ks-level1" }'::bson)
                Heap Fetches: xxx
-(14 rows)
+(15 rows)
 
 SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "_id": "cat" } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }');
                document               
@@ -7392,6 +7484,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          namespaceName: ord_coll_ios_db.ios_coll
          indexName: ios_id_en_s1
          indexKey: {"_id": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["_id": ["cat", { })]
          innerScanLoops: 2 loops
@@ -7400,7 +7493,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          ->  Index Only Scan using ios_id_en_s1 on documentdb_data.documents_8129 collection (actual rows=5 loops=1)
                Index Cond: (collection.document @>= '{ "_id" : "cat", "collation" : "en-u-ks-level1" }'::bson)
                Heap Fetches: xxx
-(14 rows)
+(15 rows)
 
 SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "_id": { "$gte": "cat" } } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }');
                document               
@@ -7417,6 +7510,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    namespaceName: ord_coll_ios_db.ios_coll
    indexName: ios_id_en_s1
    indexKey: {"_id": 1}
+   indexCollation: en-u-ks-level1
    isMultiKey: false
    indexBounds: ["_id": ["dog", "dog"]]
    innerScanLoops: 2 loops
@@ -7425,7 +7519,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    ->  Index Scan using ios_id_en_s1 on documentdb_data.documents_8129 collection (actual rows=2 loops=1)
          Output: document
          Index Cond: (collection.document @= '{ "_id" : "dog", "collation" : "en-u-ks-level1" }'::bson)
-(13 rows)
+(14 rows)
 
 SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "_id": "dog" }, "collation": { "locale": "en", "strength": 1 } }');
                 document                 
@@ -7445,6 +7539,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          namespaceName: ord_coll_ios_db.ios_coll
          indexName: ios_id_en_s1
          indexKey: {"_id": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["_id": ["cat", { })]
          innerScanLoops: 2 loops
@@ -7452,7 +7547,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
          ->  Index Scan using ios_id_en_s1 on documentdb_data.documents_8129 collection (actual rows=5 loops=1)
                Index Cond: (collection.document @>= '{ "_id" : "cat", "collation" : "en-u-ks-level1" }'::bson)
-(13 rows)
+(14 rows)
 
 RESET enable_indexonlyscan;
 -- compound collation-aware ordered index (country, _id): covered $count on the
@@ -7473,6 +7568,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          namespaceName: ord_coll_ios_db.ios_coll
          indexName: ios_country_id_en_s1
          indexKey: {"country": 1,"_id": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["country": ["usa", "usa"], "_id": (MinKey, MaxKey)]
          innerScanLoops: 1 loops
@@ -7481,7 +7577,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          ->  Index Only Scan using ios_country_id_en_s1 on documentdb_data.documents_8129 collection (actual rows=3 loops=1)
                Index Cond: (collection.document @= '{ "country" : "usa", "collation" : "en-u-ks-level1" }'::bson)
                Heap Fetches: xxx
-(14 rows)
+(15 rows)
 
 SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa" } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }');
                document               
@@ -7498,6 +7594,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          namespaceName: ord_coll_ios_db.ios_coll
          indexName: ios_country_id_en_s1
          indexKey: {"country": 1,"_id": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["country": ["brazil", { }), "_id": (MinKey, MaxKey)]
          innerScanLoops: 3 loops
@@ -7506,7 +7603,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          ->  Index Only Scan using ios_country_id_en_s1 on documentdb_data.documents_8129 collection (actual rows=6 loops=1)
                Index Cond: (collection.document @>= '{ "country" : "brazil", "collation" : "en-u-ks-level1" }'::bson)
                Heap Fetches: xxx
-(14 rows)
+(15 rows)
 
 SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": { "$gte": "brazil" } } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }');
                document               
@@ -7526,6 +7623,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    namespaceName: ord_coll_ios_db.ios_coll
    indexName: ios_country_id_en_s1
    indexKey: {"country": 1,"_id": 1}
+   indexCollation: en-u-ks-level1
    isMultiKey: false
    indexBounds: ["country": ["usa", "usa"], "_id": ("bird", { })]
    innerScanLoops: 1 loops
@@ -7535,7 +7633,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          Output: document
          Index Cond: ((collection.document @= '{ "country" : "usa", "collation" : "en-u-ks-level1" }'::bson) AND (collection.document @> '{ "_id" : "bird", "collation" : "en-u-ks-level1" }'::bson))
          Heap Fetches: xxx
-(14 rows)
+(15 rows)
 
 SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "usa", "_id": { "$gt": "bird" } }, "projection": { "country": 1, "_id": 1 }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                document               
@@ -7554,6 +7652,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    namespaceName: ord_coll_ios_db.ios_coll
    indexName: ios_country_id_en_s1
    indexKey: {"country": 1,"_id": 1}
+   indexCollation: en-u-ks-level1
    isMultiKey: false
    indexBounds: ["country": ["usa", "usa"], "_id": ["CAT", { })]
    innerScanLoops: 1 loops
@@ -7563,7 +7662,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          Output: document
          Index Cond: ((collection.document @= '{ "country" : "usa", "collation" : "en-u-ks-level1" }'::bson) AND (collection.document @>= '{ "_id" : "CAT", "collation" : "en-u-ks-level1" }'::bson))
          Heap Fetches: xxx
-(14 rows)
+(15 rows)
 
 SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "usa", "_id": { "$gte": "CAT" } }, "projection": { "_id": 1 }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
      document      
@@ -7582,6 +7681,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    namespaceName: ord_coll_ios_db.ios_coll
    indexName: ios_country_id_en_s1
    indexKey: {"country": 1,"_id": 1}
+   indexCollation: en-u-ks-level1
    isMultiKey: false
    indexBounds: ["country": ["brazil", "brazil"], "_id": ["", "dog")]
    innerScanLoops: 2 loops
@@ -7591,7 +7691,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          Output: document
          Index Cond: ((collection.document @= '{ "country" : "brazil", "collation" : "en-u-ks-level1" }'::bson) AND (collection.document @< '{ "_id" : "dog", "collation" : "en-u-ks-level1" }'::bson))
          Heap Fetches: xxx
-(14 rows)
+(15 rows)
 
 SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "brazil", "_id": { "$lt": "dog" } }, "projection": { "country": 1, "_id": 1 }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
  document 
@@ -7608,6 +7708,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          namespaceName: ord_coll_ios_db.ios_coll
          indexName: ios_country_id_en_s1
          indexKey: {"country": 1,"_id": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          indexBounds: ["country": ["usa", "usa"], "_id": ["cat", { })]
          innerScanLoops: 1 loops
@@ -7616,7 +7717,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          ->  Index Only Scan using ios_country_id_en_s1 on documentdb_data.documents_8129 collection (actual rows=3 loops=1)
                Index Cond: ((collection.document @= '{ "country" : "usa", "collation" : "en-u-ks-level1" }'::bson) AND (collection.document @>= '{ "_id" : "cat", "collation" : "en-u-ks-level1" }'::bson))
                Heap Fetches: xxx
-(14 rows)
+(15 rows)
 
 SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa", "_id": { "$gte": "cat" } } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
              document             
@@ -7633,6 +7734,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    namespaceName: ord_coll_ios_db.ios_coll
    indexName: ios_country_id_en_s1
    indexKey: {"country": 1,"_id": 1}
+   indexCollation: en-u-ks-level1
    isMultiKey: false
    startBounds: ["country": ["usa", "usa"], "_id": ["cat", "cat"]]
    rawBounds: ["country": ["usa", "usa"]], ["_id": ["cat", "cat"], ["dog", "dog"]]
@@ -7643,7 +7745,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          Output: document
          Index Cond: ((collection.document @= '{ "country" : "usa", "collation" : "en-u-ks-level1" }'::bson) AND (collection.document @*= '{ "_id" : [ "cat", "dog" ], "collation" : "en-u-ks-level1" }'::bson))
          Heap Fetches: xxx
-(15 rows)
+(16 rows)
 
 SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "usa", "_id": { "$in": ["cat", "dog"] } }, "projection": { "country": 1, "_id": 1 }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
                document               

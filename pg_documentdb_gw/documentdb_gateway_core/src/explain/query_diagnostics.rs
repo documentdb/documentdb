@@ -20,6 +20,15 @@ static BSON_SUM_OF_ONE_OUTPUT_REGEX: std::sync::LazyLock<Regex> = std::sync::Laz
     #[expect(clippy::expect_used, reason = "static regex pattern")]
     Regex::new("^bsonsum\\(bson_expression_get\\(.+, 'BSONHEX13000000012473756d00000000000000f03f00'::bson, true\\)\\)?$").expect("Static input")
 });
+static EXPRESSION_GET_PROJECTION_REGEX: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(
+    || {
+        #[expect(clippy::expect_used, reason = "static regex pattern")]
+        Regex::new(
+            r"bson_expression_get\(.*,\s*'BSONHEX(?P<projection>[\w\d]+)'::(?:\w+\.)?bson,\s*true(?:,|\))",
+        )
+        .expect("Static input")
+    },
+);
 
 /// Matches a `$lookup` function wrapper around a BSON literal and tags the
 /// operator so it maps to `$lookup_in`. Non-lookup wrappers are left untouched
@@ -165,15 +174,40 @@ pub fn get_index_conditions(
 
 #[expect(clippy::expect_used, reason = "static regex pattern")]
 pub fn get_sort_conditions(input: &str, query_catalog: &QueryCatalog) -> Option<RawDocumentBuf> {
+    let sort_regex = Regex::new(query_catalog.sort_condition_split_regex())
+        .expect("static input")
+        .captures(input);
+
+    if let Some(capture) = sort_regex {
+        return decode_document(capture.name("sortSpec")?.as_str());
+    }
+
+    EXPRESSION_GET_PROJECTION_REGEX
+        .captures(input)
+        .and_then(|capture| capture.name("projection"))
+        .and_then(|projection| decode_document(projection.as_str()))
+}
+
+#[expect(clippy::expect_used, reason = "static regex pattern")]
+pub fn get_sort_collation<'a>(input: &'a str, query_catalog: &QueryCatalog) -> Option<&'a str> {
     Regex::new(query_catalog.sort_condition_split_regex())
         .expect("static input")
         .captures(input)
-        .and_then(|capture| capture.get(3))
-        .and_then(|opt| {
-            hex::decode(opt.as_str())
-                .ok()
-                .and_then(|f| RawDocumentBuf::from_bytes(f).ok())
-        })
+        .and_then(|capture| capture.name("collation"))
+        .map(|collation| collation.as_str())
+}
+
+pub fn get_group_key(input: &str) -> Option<RawDocumentBuf> {
+    EXPRESSION_GET_PROJECTION_REGEX
+        .captures(input)
+        .and_then(|capture| capture.name("projection"))
+        .and_then(|projection| decode_document(projection.as_str()))
+}
+
+fn decode_document(hex_string: &str) -> Option<RawDocumentBuf> {
+    hex::decode(hex_string)
+        .ok()
+        .and_then(|bytes| RawDocumentBuf::from_bytes(bytes).ok())
 }
 
 fn get_operator(input: &str) -> &'static str {
@@ -204,5 +238,82 @@ fn get_operator(input: &str) -> &'static str {
         "@|#|" => "$geoIntersects",
         "@|><|" => "$_minMaxDistance", // This is only for explain to show either $minDistance or $maxDistance was used
         _ => "$unknown",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{explain::query_diagnostics::get_sort_conditions, postgres::create_query_catalog};
+
+    #[test]
+    fn sort_condition_supports_collation_argument() {
+        let query_catalog = create_query_catalog();
+        let condition = "(documentdb_api_internal.bson_orderby_index_reverse(\
+            agg_stage.document, \
+            'BSONHEX0c0000001063000100000000'::documentdb_core.bson, \
+            'en-u-ks-level2'::text)) DESC NULLS LAST";
+
+        let Some(sort_specification) = get_sort_conditions(condition, &query_catalog) else {
+            panic!("the static sort condition should parse");
+        };
+
+        assert_eq!(sort_specification.get_i32("c"), Ok(1));
+        assert_eq!(
+            super::get_sort_collation(condition, &query_catalog),
+            Some("en-u-ks-level2")
+        );
+    }
+
+    #[test]
+    fn sort_condition_supports_nested_first_argument() {
+        let query_catalog = create_query_catalog();
+        let condition = "(documentdb_api_internal.bson_orderby(\
+            documentdb_api_catalog.bson_repath_and_build(c1, c2, c3), \
+            'BSONHEX0c000000106300ffffffff00'::documentdb_core.bson))";
+
+        let Some(sort_specification) = get_sort_conditions(condition, &query_catalog) else {
+            panic!("the static sort condition should parse");
+        };
+
+        assert_eq!(sort_specification.get_i32("c"), Ok(-1));
+    }
+
+    #[test]
+    fn expression_projection_is_used_for_group_sort_and_group_key() {
+        let query_catalog = create_query_catalog();
+        let expression = "(documentdb_api_internal.bson_expression_get(\
+            collection.document, \
+            'BSONHEX0e00000002000300000024620000'::documentdb_core.bson, \
+            true, \
+            'BSONHEX0500000000'::documentdb_core.bson))";
+
+        let Some(sort_specification) = get_sort_conditions(expression, &query_catalog) else {
+            panic!("the static group sort condition should parse");
+        };
+        let Some(group_key) = super::get_group_key(expression) else {
+            panic!("the static group key should parse");
+        };
+
+        assert_eq!(sort_specification.get_str(""), Ok("$b"));
+        assert_eq!(group_key.get_str(""), Ok("$b"));
+    }
+
+    #[test]
+    fn collation_metadata_is_separate_from_sort_field_with_same_name() {
+        let query_catalog = create_query_catalog();
+        let condition = "(documentdb_api_internal.bson_orderby(\
+            collection.document, \
+            'BSONHEX1400000010636f6c6c6174696f6e000100000000'::documentdb_core.bson, \
+            'en-u-ks-level2'::text))";
+
+        let Some(sort_specification) = get_sort_conditions(condition, &query_catalog) else {
+            panic!("the static sort condition should parse");
+        };
+
+        assert_eq!(sort_specification.get_i32("collation"), Ok(1));
+        assert_eq!(
+            super::get_sort_collation(condition, &query_catalog),
+            Some("en-u-ks-level2")
+        );
     }
 }

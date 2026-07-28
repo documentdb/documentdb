@@ -206,7 +206,18 @@
         },
         "sortKey": {
           "type": "array",
-          "description": "Array of BSON documents representing the sort key specification. Each element is a BSON document extracted from the PostgreSQL sort key expressions. Present when sort keys can be parsed into BSON form.",
+          "description": "Array of BSON documents representing the sort key specification. Each element is extracted from the PostgreSQL sort key expression.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "collation": {
+          "type": "string",
+          "description": "Normalized collation string applied by this sort stage. Kept separate from sortKey so a user field named 'collation' remains unambiguous."
+        },
+        "groupKey": {
+          "type": "array",
+          "description": "Array of BSON projection documents representing the expressions used as group keys. Collation is not included because it does not change the projected group-key expression.",
           "items": {
             "type": "object"
           }
@@ -282,9 +293,13 @@
       "type": "object",
       "description": "Detailed index usage information for a query plan stage.",
       "properties": {
-        "indexName": {
+        "indexKeyString": {
           "type": "string",
-          "description": "Name of the index being used."
+          "description": "The index key document rendered as a string."
+        },
+        "indexCollation": {
+          "type": "string",
+          "description": "Normalized collation configured on the index. Present only for collated indexes."
         },
         "isMultiKey": {
           "type": "boolean",

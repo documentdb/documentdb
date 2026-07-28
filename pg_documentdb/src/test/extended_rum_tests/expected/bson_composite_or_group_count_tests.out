@@ -367,6 +367,7 @@ $cmd$);
          namespaceName: grpq_db.docs
          indexName: idx_tags_ord_ci
          indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          multiKeyPaths: tags.name, tags.val
          hasCorrelatedTerms: true
@@ -379,7 +380,7 @@ $cmd$);
                Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
                Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) AND (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
                Rows Removed by Filter: 100
-(17 rows)
+(18 rows)
 
 SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }');
@@ -412,6 +413,7 @@ $cmd$);
          namespaceName: grpq_db.docs
          indexName: idx_tags_ord_ci
          indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          multiKeyPaths: tags.name, tags.val
          hasCorrelatedTerms: true
@@ -424,7 +426,7 @@ $cmd$);
                Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
                Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) OR (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
                Rows Removed by Filter: 79
-(17 rows)
+(18 rows)
 
 SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }');
@@ -809,6 +811,7 @@ $cmd$);
          namespaceName: grpq_db.docs
          indexName: idx_tags_ord_ci
          indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          multiKeyPaths: tags.name, tags.val
          hasCorrelatedTerms: true
@@ -821,7 +824,7 @@ $cmd$);
                Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
                Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) AND (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
                Rows Removed by Filter: 100
-(17 rows)
+(18 rows)
 
 SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$and": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }');
@@ -843,6 +846,7 @@ $cmd$);
          namespaceName: grpq_db.docs
          indexName: idx_tags_ord_ci
          indexKey: {"tags.name": 1,"tags.val": 1,"ord": -1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          multiKeyPaths: tags.name, tags.val
          hasCorrelatedTerms: true
@@ -855,7 +859,7 @@ $cmd$);
                Index Cond: ((document @>= '{ "ord" : { "$numberInt" : "50" } }'::bson) AND (document @<= '{ "ord" : { "$numberInt" : "150" } }'::bson))
                Filter: ((document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME1$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V1$", "options" : "i" } } } }'::bson) OR (document @#? '{ "tags" : { "name" : { "$regularExpression" : { "pattern" : "^NAME2$", "options" : "i" } }, "val" : { "$regularExpression" : { "pattern" : "^V2$", "options" : "i" } } } }'::bson))
                Rows Removed by Filter: 79
-(17 rows)
+(18 rows)
 
 SELECT document FROM bson_aggregation_count('grpq_db',
     '{ "count": "docs", "query": { "$and": [ { "ord": { "$gte": 50, "$lte": 150 } }, { "$or": [ { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME1$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V1$", "options": "i" } } } } }, { "tags": { "$elemMatch": { "name": { "$regularExpression": { "pattern": "^NAME2$", "options": "i" } }, "val": { "$regularExpression": { "pattern": "^V2$", "options": "i" } } } } } ] } ] }, "hint": "idx_tags_ord_ci" }');

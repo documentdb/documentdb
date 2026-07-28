@@ -64,14 +64,14 @@ $cmd$);
                                                                                   run_explain_and_trim                                                                                  
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 37_1
+   ->  Distributed Subplan 41_1
          ->  Custom Scan (Citus Adaptive)
                Task Count: 8
                Tasks Shown: One of 8
                ->  Task
                      Node: host=localhost port=58070 dbname=regression
                      ->  Seq Scan on documents_95651_95650004 collection
-   ->  Distributed Subplan 37_2
+   ->  Distributed Subplan 41_2
          ->  Custom Scan (Citus Adaptive)
                Task Count: 8
                Tasks Shown: One of 8
@@ -80,6 +80,7 @@ $cmd$);
                      ->  Custom Scan (DocumentDBApiExplainQueryScan)
                            indexName: idx_ab_en_s1
                            indexKey: {"a.b": 1}
+                           indexCollation: en-u-ks-level1
                            isMultiKey: false
                            indexBounds: ["a.b": ["cat", "cat"]], ["a.b": ["dog", "dog"]]
                            ->  Bitmap Heap Scan on documents_95651_95650004 collection_0_1
@@ -95,7 +96,7 @@ $cmd$);
                ->  Aggregate
                      ->  Function Scan on read_intermediate_result intermediate_result_1
                            Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(document, intermediate_result.lookup_filter, '_id'::text)
-(32 rows)
+(33 rows)
 
 END;
 -- ======================================================================
@@ -275,11 +276,12 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_a_en_s1
                      indexKey: {"a": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: false
                      indexBounds: ["a": ["cherry", "cherry"]]
                      ->  Index Scan using idx_a_en_s1 on documents_95653_95650024 collection
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 -- ======================================================================
@@ -348,13 +350,14 @@ $cmd$);
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
                indexName: idx_a_en_s1
                indexKey: {"a": 1}
+               indexCollation: en-u-ks-level1
                isMultiKey: false
                indexBounds: ["a": ["CaT", "CaT"]]
                ->  Bitmap Heap Scan on documents_95654_95650034 documents_95654
                      Recheck Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "CaT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
                      ->  Bitmap Index Scan on idx_a_en_s1
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "CaT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 -- deleteOne predicate when no _id and no shard-key filter
@@ -399,13 +402,14 @@ $cmd$);
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
                indexName: idx_a_en_s1
                indexKey: {"a": 1}
+               indexCollation: en-u-ks-level1
                isMultiKey: false
                indexBounds: ["a": ["CaT", "CaT"]]
                ->  Bitmap Heap Scan on documents_95654_95650034 documents_95654
                      Recheck Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "CaT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
                      ->  Bitmap Index Scan on idx_a_en_s1
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "CaT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 -- deleteOne predicate with both _id and shard key filter
@@ -428,6 +432,7 @@ $cmd$);
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
                indexName: idx_a_en_s1
                indexKey: {"a": 1}
+               indexCollation: en-u-ks-level1
                isMultiKey: false
                indexBounds: ["a": ["CaT", "CaT"]]
                ->  Bitmap Heap Scan on documents_95654_95650034 documents_95654
@@ -435,7 +440,7 @@ $cmd$);
                      Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : "CaT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
                      ->  Bitmap Index Scan on idx_a_en_s1
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "CaT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(15 rows)
+(16 rows)
 
 END;
 -- ======================================================================
@@ -460,11 +465,12 @@ $cmd$);
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
                indexName: idx_a_en_s1
                indexKey: {"a": 1}
+               indexCollation: en-u-ks-level1
                isMultiKey: false
                indexBounds: ["a": ["apple", "apple"]]
                ->  Index Scan using idx_a_en_s1 on documents_95653_95650024 documents_95653
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(12 rows)
+(13 rows)
 
 END;
 BEGIN;
@@ -486,11 +492,12 @@ $cmd$);
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
                indexName: idx_a_en_s1
                indexKey: {"a": 1}
+               indexCollation: en-u-ks-level1
                isMultiKey: false
                indexBounds: ["a": ("cherry", { })]
                ->  Index Scan using idx_a_en_s1 on documents_95653_95650024 documents_95653
                      Index Cond: (document OPERATOR(documentdb_api_catalog.@>) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(12 rows)
+(13 rows)
 
 END;
 -- ======================================================================
@@ -651,6 +658,7 @@ $cmd$);
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
                indexName: idx_a_en_s1
                indexKey: {"a": 1}
+               indexCollation: en-u-ks-level1
                isMultiKey: false
                indexBounds: ["a": ["CAT", "CAT"]]
                ->  Bitmap Heap Scan on documents_95656_95650054 documents_95656
@@ -658,7 +666,7 @@ $cmd$);
                      Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
                      ->  Bitmap Index Scan on idx_a_en_s1
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(15 rows)
+(16 rows)
 
 END;
 -- Mixed type filter: collation on string portion of compound shard key
@@ -681,6 +689,7 @@ $cmd$);
          ->  Custom Scan (DocumentDBApiExplainQueryScan)
                indexName: idx_a_en_s1
                indexKey: {"a": 1}
+               indexCollation: en-u-ks-level1
                isMultiKey: false
                indexBounds: ["a": ["CAT", "CAT"]]
                ->  Bitmap Heap Scan on documents_95656_95650054 documents_95656
@@ -688,7 +697,7 @@ $cmd$);
                      Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
                      ->  Bitmap Index Scan on idx_a_en_s1
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(15 rows)
+(16 rows)
 
 END;
 -- Cleanup

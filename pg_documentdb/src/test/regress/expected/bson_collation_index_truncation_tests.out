@@ -198,12 +198,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["short_string", "short_string"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=2 loops=1)
                Index Cond: (document @= '{ "a" : "short_string", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 2.2: $eq case-insensitive — short string — should match both cases
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$eq": "SHORT_STRING" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -225,12 +226,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["SHORT_STRING", "SHORT_STRING"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=2 loops=1)
                Index Cond: (document @= '{ "a" : "SHORT_STRING", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- ======================================================================
 -- SECTION 3: $eq on long (truncated) strings — identical prefix
@@ -256,13 +258,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["this_is_a_long_string_that_will_d", "this_is_a_long_string_that_will_d"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=2 loops=1)
                Index Cond: (document @= '{ "a" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 1
-(13 rows)
+(14 rows)
 
 -- 3.2: $eq for the other long string — should return only that doc
 SELECT document FROM bson_aggregation_find('trunc_db',
@@ -284,13 +287,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["this_is_a_long_string_that_will_d", "this_is_a_long_string_that_will_d"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=1 loops=1)
                Index Cond: (document @= '{ "a" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_BBBB", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 2
-(13 rows)
+(14 rows)
 
 -- 3.3: $eq case-insensitive — long truncated string
 SELECT document FROM bson_aggregation_find('trunc_db',
@@ -313,13 +317,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["THIS_IS_A_LONG_STRING_THAT_WILL_D", "THIS_IS_A_LONG_STRING_THAT_WILL_D"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=2 loops=1)
                Index Cond: (document @= '{ "a" : "THIS_IS_A_LONG_STRING_THAT_WILL_DEFINITELY_EXCEED_THE_INDEX_TERM_TRUNCATION_LIMIT_AND_THE_DIFFERENCE_IS_AT_THE_VERY_END_AAAA", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 1
-(13 rows)
+(14 rows)
 
 -- 3.4: $eq for a long string that does NOT exist — should return nothing
 SELECT document FROM bson_aggregation_find('trunc_db',
@@ -340,13 +345,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["this_is_a_long_string_that_will_d", "this_is_a_long_string_that_will_d"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=0 loops=1)
                Index Cond: (document @= '{ "a" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_CCCC", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 3
-(13 rows)
+(14 rows)
 
 -- ======================================================================
 -- SECTION 4: $eq on strings that differ AT the truncation boundary
@@ -371,13 +377,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["boundary_test_string_padded_to_re", "boundary_test_string_padded_to_re"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=1 loops=1)
                Index Cond: (document @= '{ "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 1
-(13 rows)
+(14 rows)
 
 -- 4.2: $eq for boundary string — beta suffix
 SELECT document FROM bson_aggregation_find('trunc_db',
@@ -399,13 +406,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["boundary_test_string_padded_to_re", "boundary_test_string_padded_to_re"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=1 loops=1)
                Index Cond: (document @= '{ "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_beta_suffix_after_cut", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 1
-(13 rows)
+(14 rows)
 
 -- ======================================================================
 -- SECTION 5: $eq on strings that differ in the middle (before truncation)
@@ -430,12 +438,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["prefix_match_AAAA_then_a_very_lon", "prefix_match_AAAA_then_a_very_lon"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=1 loops=1)
                Index Cond: (document @= '{ "a" : "prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 5.2: $eq prefix_match_BBBB — should return only _id: 41
 SELECT document FROM bson_aggregation_find('trunc_db',
@@ -457,12 +466,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["prefix_match_BBBB_then_a_very_lon", "prefix_match_BBBB_then_a_very_lon"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=1 loops=1)
                Index Cond: (document @= '{ "a" : "prefix_match_BBBB_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- ======================================================================
 -- SECTION 6: $gt, $gte on truncated strings
@@ -488,12 +498,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ("short_string", { })]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=3 loops=1)
                Index Cond: (document @> '{ "a" : "short_string", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 6.2: $gte on short string — index SHOULD be used
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$gte": "short_string" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -518,12 +529,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["short_string", { })]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=5 loops=1)
                Index Cond: (document @>= '{ "a" : "short_string", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 6.3: $gt on long truncated string — should work correctly despite truncation
 SELECT document FROM bson_aggregation_find('trunc_db',
@@ -545,13 +557,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ("this_is_a_long_string_that_will_d", { })]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=1 loops=1)
                Index Cond: (document @> '{ "a" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 2
-(13 rows)
+(14 rows)
 
 -- 6.4: $gte on long truncated string
 SELECT document FROM bson_aggregation_find('trunc_db',
@@ -575,12 +588,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["this_is_a_long_string_that_will_d", { })]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=3 loops=1)
                Index Cond: (document @>= '{ "a" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 6.5: $gt on boundary string — correctness with truncation at boundary
 SELECT document FROM bson_aggregation_find('trunc_db',
@@ -612,13 +626,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ("boundary_test_string_padded_to_re", { })]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=11 loops=1)
                Index Cond: (document @> '{ "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 1
-(13 rows)
+(14 rows)
 
 -- 6.6: $gte on boundary string
 SELECT document FROM bson_aggregation_find('trunc_db',
@@ -651,12 +666,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["boundary_test_string_padded_to_re", { })]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=12 loops=1)
                Index Cond: (document @>= '{ "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 6.7: $gt on prefix_match string — differs before truncation point
 SELECT document FROM bson_aggregation_find('trunc_db',
@@ -683,13 +699,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ("prefix_match_AAAA_then_a_very_lon", { })]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=6 loops=1)
                Index Cond: (document @> '{ "a" : "prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 1
-(13 rows)
+(14 rows)
 
 -- ======================================================================
 -- SECTION 6b: $lt, $lte on truncated strings
@@ -720,12 +737,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["", "short_string")]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=8 loops=1)
                Index Cond: (document @< '{ "a" : "short_string", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 6b.2: $lte on short string — index SHOULD be used
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$lte": "short_string" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -755,12 +773,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["", "short_string"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=10 loops=1)
                Index Cond: (document @<= '{ "a" : "short_string", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 6b.3: $lt on long truncated string — should work correctly despite truncation
 SELECT document FROM bson_aggregation_find('trunc_db',
@@ -794,13 +813,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["", "this_is_a_long_string_that_will_d")]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=12 loops=1)
                Index Cond: (document @< '{ "a" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_BBBB", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 1
-(13 rows)
+(14 rows)
 
 -- 6b.4: $lte on long truncated string
 SELECT document FROM bson_aggregation_find('trunc_db',
@@ -834,13 +854,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["", "this_is_a_long_string_that_will_d"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=12 loops=1)
                Index Cond: (document @<= '{ "a" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 1
-(13 rows)
+(14 rows)
 
 -- 6b.5: $lt on boundary string — correctness with truncation at boundary
 SELECT document FROM bson_aggregation_find('trunc_db',
@@ -864,13 +885,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["", "boundary_test_string_padded_to_re")]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=2 loops=1)
                Index Cond: (document @< '{ "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_beta_suffix_after_cut", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 1
-(13 rows)
+(14 rows)
 
 -- 6b.6: $lte on boundary string
 SELECT document FROM bson_aggregation_find('trunc_db',
@@ -894,13 +916,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["", "boundary_test_string_padded_to_re"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=2 loops=1)
                Index Cond: (document @<= '{ "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 1
-(13 rows)
+(14 rows)
 
 -- 6b.7: $lt on prefix_match string — differs before truncation point
 SELECT document FROM bson_aggregation_find('trunc_db',
@@ -929,13 +952,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["", "prefix_match_BBBB_then_a_very_lon")]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=7 loops=1)
                Index Cond: (document @< '{ "a" : "prefix_match_BBBB_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 1
-(13 rows)
+(14 rows)
 
 -- ======================================================================
 -- SECTION 7: $and combinations with truncated strings
@@ -963,13 +987,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["this_is_a_long_string_that_will_d", "this_is_a_long_string_that_will_d"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=1 loops=1)
                Index Cond: ((document @= '{ "a" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_BBBB", "collation" : "en-u-ks-level1" }'::bson) AND (document @> '{ "a" : "short_string", "collation" : "en-u-ks-level1" }'::bson))
                Rows Removed by Index Recheck: 2
-(13 rows)
+(14 rows)
 
 -- 7.2: Implicit $and — $gte + $lte range spanning truncated strings
 SELECT document FROM bson_aggregation_find('trunc_db',
@@ -992,12 +1017,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["prefix_match_AAAA_then_a_very_lon", "prefix_match_BBBB_then_a_very_lon"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=2 loops=1)
                Index Cond: ((document @>= '{ "a" : "prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end", "collation" : "en-u-ks-level1" }'::bson) AND (document @<= '{ "a" : "prefix_match_BBBB_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end", "collation" : "en-u-ks-level1" }'::bson))
-(12 rows)
+(13 rows)
 
 -- 7.3: $and $eq + $gte — both short strings
 SELECT document FROM bson_aggregation_find('trunc_db',
@@ -1023,12 +1049,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["short_string", "short_string"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=2 loops=1)
                Index Cond: ((document @= '{ "a" : "short_string", "collation" : "en-u-ks-level1" }'::bson) AND (document @>= '{ "a" : "another_short", "collation" : "en-u-ks-level1" }'::bson))
-(12 rows)
+(13 rows)
 
 -- ======================================================================
 -- SECTION 8: Non-string types are not affected by truncation+collation
@@ -1052,12 +1079,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [12345, 12345]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=1 loops=1)
                Index Cond: (document @= '{ "a" : { "$numberInt" : "12345" }, "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 8.2: $gt on numeric — index SHOULD be used
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$gt": 10000 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -1078,12 +1106,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": (10000, Infinity]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=1 loops=1)
                Index Cond: (document @> '{ "a" : { "$numberInt" : "10000" }, "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 8.3: $eq on null — index SHOULD be used
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$eq": null } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -1104,12 +1133,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": (MinKey, null]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=1 loops=1)
                Index Cond: (document @= '{ "a" : null, "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- ======================================================================
 -- SECTION 9: Collation mismatch with truncated index — should NOT use index
@@ -1216,12 +1246,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=13 loops=1)
                Index Cond: (document @!= '{ "a" : "short_string", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 10.2: $ne "SHORT_STRING" case-insensitive — excludes both "short_string" and "Short_String"
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$ne": "SHORT_STRING" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -1254,12 +1285,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=13 loops=1)
                Index Cond: (document @!= '{ "a" : "SHORT_STRING", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 10.3: $ne truncated string — index used, recheck expected due to truncation
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$ne": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -1292,13 +1324,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=13 loops=1)
                Index Cond: (document @!= '{ "a" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 2
-(13 rows)
+(14 rows)
 
 -- 10.4: $ne truncated string case-insensitive — excludes case variants
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$ne": "This_Is_A_Long_String_That_Will_Definitely_Exceed_The_Index_Term_Truncation_Limit_And_The_Difference_Is_At_The_Very_End_AAAA" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -1331,13 +1364,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=13 loops=1)
                Index Cond: (document @!= '{ "a" : "This_Is_A_Long_String_That_Will_Definitely_Exceed_The_Index_Term_Truncation_Limit_And_The_Difference_Is_At_The_Very_End_AAAA", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 2
-(13 rows)
+(14 rows)
 
 -- 10.5: $ne on numeric value — not affected by truncation or collation
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$ne": 12345 } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -1371,12 +1405,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=14 loops=1)
                Index Cond: (document @!= '{ "a" : { "$numberInt" : "12345" }, "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 10.6: $ne null with truncated index
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$ne": null } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -1410,13 +1445,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=14 loops=1)
                Index Cond: (document @!= '{ "a" : null, "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 1
-(13 rows)
+(14 rows)
 
 -- 10.7: $ne mismatched collation — index should NOT be used
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$ne": "short_string" } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }');
@@ -1543,12 +1579,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, "short_string"]], ["a": ({ }, MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=12 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "short_string", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 11.2: $not $gt "SHORT_STRING" case-insensitive — ≤ short_string at strength-1
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$gt": "SHORT_STRING" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -1600,13 +1637,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, "this_is_a_long_string_that_will_d"]], ["a": ({ }, MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=14 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 1
-(13 rows)
+(14 rows)
 
 -- 11.4: $not $gt truncated string case-insensitive — includes both case variants (≤ at strength-1)
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$gt": "This_Is_A_Long_String_That_Will_Definitely_Exceed_The_Index_Term_Truncation_Limit_And_The_Difference_Is_At_The_Very_End_AAAA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -1650,13 +1688,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, "boundary_test_string_padded_to_re"]], ["a": ({ }, MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=4 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 1
-(13 rows)
+(14 rows)
 
 -- 11.6: $not $gt prefix_match string — differs in middle before truncation point
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$gt": "prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -1759,12 +1798,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, "short_string")], ["a": ({ }, MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=10 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>=) '{ "a" : "short_string", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 11b.2: $not $gte "SHORT_STRING" case-insensitive — < short_string at strength-1
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$gte": "SHORT_STRING" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -1812,13 +1852,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, "this_is_a_long_string_that_will_d")], ["a": ({ }, MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=12 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>=) '{ "a" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 3
-(13 rows)
+(14 rows)
 
 -- 11b.4: $not $gte truncated string case-insensitive
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$gte": "This_Is_A_Long_String_That_Will_Definitely_Exceed_The_Index_Term_Truncation_Limit_And_The_Difference_Is_At_The_Very_End_AAAA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -1859,13 +1900,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, "boundary_test_string_padded_to_re")], ["a": ({ }, MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=3 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!>=) '{ "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 2
-(13 rows)
+(14 rows)
 
 -- 11b.6: $not $gte prefix_match string — differs in middle before truncation point
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$gte": "prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -1962,12 +2004,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, "")], ["a": ["short_string", MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=7 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!<) '{ "a" : "short_string", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 12.2: $not $lt "SHORT_STRING" case-insensitive — ≥ short_string at strength-1
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$lt": "SHORT_STRING" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -2005,12 +2048,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, "")], ["a": ["this_is_a_long_string_that_will_d", MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=5 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!<) '{ "a" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 12.4: $not $lt truncated string case-insensitive
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$lt": "This_Is_A_Long_String_That_Will_Definitely_Exceed_The_Index_Term_Truncation_Limit_And_The_Difference_Is_At_The_Very_End_AAAA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -2055,12 +2099,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, "")], ["a": ["boundary_test_string_padded_to_re", MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=14 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!<) '{ "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 12.6: $not $lt prefix_match string — differs in middle before truncation point
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$lt": "prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -2154,12 +2199,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, "")], ["a": ("short_string", MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=5 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!<=) '{ "a" : "short_string", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 12b.2: $not $lte "SHORT_STRING" case-insensitive — > short_string at strength-1
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$lte": "SHORT_STRING" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -2193,13 +2239,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, "")], ["a": ("this_is_a_long_string_that_will_d", MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=3 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!<=) '{ "a" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 2
-(13 rows)
+(14 rows)
 
 -- 12b.4: $not $lte truncated string case-insensitive
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$lte": "This_Is_A_Long_String_That_Will_Definitely_Exceed_The_Index_Term_Truncation_Limit_And_The_Difference_Is_At_The_Very_End_AAAA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -2241,13 +2288,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, "")], ["a": ("boundary_test_string_padded_to_re", MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=13 loops=1)
                Index Cond: (document OPERATOR(documentdb_api_internal.@!<=) '{ "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 1
-(13 rows)
+(14 rows)
 
 -- 12b.6: $not $lte prefix_match string — differs in middle before truncation point
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$not": { "$lte": "prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -2419,13 +2467,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_elemmatch
          indexName: idx_tags_en_s1_trunc
          indexKey: {"tags": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          hasTruncation: true
          indexBounds: ["tags": ["short", "short"]]
          ->  Index Scan using idx_tags_en_s1_trunc on documents_2202 collection (actual rows=3 loops=1)
                Index Cond: (document @<> '{ "tags" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "short", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "tags" : { "$eq" : "short" }, "collation" : "en-u-ks-level1" }'::bson)
-(13 rows)
+(14 rows)
 
 -- 13.2: $elemMatch $eq on long string that exceeds truncation limit
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -2448,6 +2497,7 @@ $cmd$);
          namespaceName: trunc_db.trunc_elemmatch
          indexName: idx_tags_en_s1_trunc
          indexKey: {"tags": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          hasTruncation: true
          indexBounds: ["tags": ["this_is_a_long_string_that_will_d", "this_is_a_long_string_that_will_d"]]
@@ -2455,7 +2505,7 @@ $cmd$);
                Index Cond: (document @<> '{ "tags" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "tags" : { "$eq" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" }, "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Filter: 1
-(14 rows)
+(15 rows)
 
 -- 13.3: RECHECK FALSE-POSITIVE TEST
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -2477,6 +2527,7 @@ $cmd$);
          namespaceName: trunc_db.trunc_elemmatch
          indexName: idx_tags_en_s1_trunc
          indexKey: {"tags": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          hasTruncation: true
          indexBounds: ["tags": ["this_is_a_long_string_that_will_d", "this_is_a_long_string_that_will_d"]]
@@ -2484,7 +2535,7 @@ $cmd$);
                Index Cond: (document @<> '{ "tags" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "tags" : { "$eq" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB" }, "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Filter: 2
-(14 rows)
+(15 rows)
 
 -- 13.4: $elemMatch $gt on long string near truncation boundary
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$gt": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -2506,6 +2557,7 @@ $cmd$);
          namespaceName: trunc_db.trunc_elemmatch
          indexName: idx_tags_en_s1_trunc
          indexKey: {"tags": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          hasTruncation: true
          indexBounds: ["tags": ("this_is_a_long_string_that_will_d", { })]
@@ -2513,7 +2565,7 @@ $cmd$);
                Index Cond: (document @<> '{ "tags" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "2" }, "value" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "tags" : { "$gt" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" }, "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Filter: 2
-(14 rows)
+(15 rows)
 
 -- 13.5: $elemMatch $lt on long string
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$lt": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -2540,6 +2592,7 @@ $cmd$);
          namespaceName: trunc_db.trunc_elemmatch
          indexName: idx_tags_en_s1_trunc
          indexKey: {"tags": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          hasTruncation: true
          indexBounds: ["tags": ["", "this_is_a_long_string_that_will_d")]
@@ -2547,7 +2600,7 @@ $cmd$);
                Index Cond: (document @<> '{ "tags" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "4" }, "value" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "tags" : { "$lt" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB" }, "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Filter: 1
-(14 rows)
+(15 rows)
 
 -- 13.6: $elemMatch $eq on boundary string
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -2568,13 +2621,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_elemmatch
          indexName: idx_tags_en_s1_trunc
          indexKey: {"tags": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          hasTruncation: true
          indexBounds: ["tags": ["boundary_test_string_padded_to_re", "boundary_test_string_padded_to_re"]]
          ->  Index Scan using idx_tags_en_s1_trunc on documents_2202 collection (actual rows=1 loops=1)
                Index Cond: (document @<> '{ "tags" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "tags" : { "$eq" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix" }, "collation" : "en-u-ks-level1" }'::bson)
-(13 rows)
+(14 rows)
 
 -- 13.7: $elemMatch with range on truncated strings
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$gte": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA", "$lte": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -2598,13 +2652,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_elemmatch
          indexName: idx_tags_en_s1_trunc
          indexKey: {"tags": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          hasTruncation: true
          indexBounds: ["tags": ["this_is_a_long_string_that_will_d", "this_is_a_long_string_that_will_d"]]
          ->  Index Scan using idx_tags_en_s1_trunc on documents_2202 collection (actual rows=4 loops=1)
                Index Cond: (document @<> '{ "tags" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "3" }, "value" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA", "isTopLevel" : true }, { "op" : { "$numberInt" : "5" }, "value" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "tags" : { "$gte" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA", "$lte" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB" }, "collation" : "en-u-ks-level1" }'::bson)
-(13 rows)
+(14 rows)
 
 -- 13.8: $elemMatch $ne on truncated long string
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$ne": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -2683,13 +2738,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_elemmatch
          indexName: idx_tags_en_s1_trunc
          indexKey: {"tags": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          hasTruncation: true
          indexBounds: ["tags": [42, 42]]
          ->  Index Scan using idx_tags_en_s1_trunc on documents_2202 collection (actual rows=1 loops=1)
                Index Cond: (document @<> '{ "tags" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "42" }, "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "tags" : { "$eq" : { "$numberInt" : "42" } }, "collation" : "en-u-ks-level1" }'::bson)
-(13 rows)
+(14 rows)
 
 -- 13.11: $elemMatch with mismatched collation on truncated index
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": "short" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }');
@@ -2738,13 +2794,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_elemmatch
          indexName: idx_tags_en_s1_trunc
          indexKey: {"tags": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          hasTruncation: true
          indexBounds: ["tags": ["short", "short"]]
          ->  Index Scan using idx_tags_en_s1_trunc on documents_2202 collection (actual rows=3 loops=1)
                Index Cond: (document @<> '{ "tags" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "3" }, "value" : "short", "isTopLevel" : true }, { "op" : { "$numberInt" : "5" }, "value" : "short", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "tags" : { "$gte" : "short", "$lte" : "short" }, "collation" : "en-u-ks-level1" }'::bson)
-(13 rows)
+(14 rows)
 
 -- 13.13: $elemMatch $eq with no collation on truncated index
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$eq": "short" } } }, "sort": { "_id": 1 } }');
@@ -2795,13 +2852,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_elemmatch
          indexName: idx_tags_en_s1_trunc
          indexKey: {"tags": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          hasTruncation: true
          indexBounds: ["tags": ["", { })]
          ->  Index Scan using idx_tags_en_s1_trunc on documents_2202 collection (actual rows=8 loops=1)
                Index Cond: (document @<> '{ "tags" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "12" }, "value" : "string", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "tags" : { "$type" : "string" }, "collation" : "en-u-ks-level1" }'::bson)
-(13 rows)
+(14 rows)
 
 -- 13.15: $elemMatch $exists: true on truncated index
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$exists": true } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -2829,6 +2887,7 @@ $cmd$);
          namespaceName: trunc_db.trunc_elemmatch
          indexName: idx_tags_en_s1_trunc
          indexKey: {"tags": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          hasTruncation: true
          indexBounds: ["tags": [MinKey, MaxKey]]
@@ -2836,7 +2895,7 @@ $cmd$);
                Index Cond: (document @<> '{ "tags" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "3" }, "value" : { "$minKey" : 1 }, "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "tags" : { "$exists" : true }, "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Filter: 1
-(14 rows)
+(15 rows)
 
 -- 13.16: $elemMatch three-way on truncated: $gte long + $lte long + $ne long (exercises recheck with $ne within truncated range)
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$gte": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA", "$lte": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB", "$ne": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -2858,6 +2917,7 @@ $cmd$);
          namespaceName: trunc_db.trunc_elemmatch
          indexName: idx_tags_en_s1_trunc
          indexKey: {"tags": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          hasTruncation: true
          indexBounds: ["tags": ["this_is_a_long_string_that_will_d", "this_is_a_long_string_that_will_d"]]
@@ -2865,7 +2925,7 @@ $cmd$);
                Index Cond: (document @<> '{ "tags" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "3" }, "value" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA", "isTopLevel" : true }, { "op" : { "$numberInt" : "5" }, "value" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "tags" : { "$gte" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA", "$lte" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_BBBB", "$ne" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" }, "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Filter: 2
-(14 rows)
+(15 rows)
 
 -- 13.17: $elemMatch $not: {$eq} on truncated string
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_elemmatch", "filter": { "tags": { "$elemMatch": { "$not": { "$eq": "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" } } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -2915,6 +2975,7 @@ $cmd$);
          namespaceName: trunc_db.trunc_elemmatch
          indexName: idx_tags_en_s1_trunc
          indexKey: {"tags": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: true
          hasTruncation: true
          indexBounds: ["tags": ["this_is_a_long_string_that_will_d", "this_is_a_long_string_that_will_d")]
@@ -2922,7 +2983,7 @@ $cmd$);
                Index Cond: (document @<> '{ "tags" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "3" }, "value" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA", "isTopLevel" : true }, { "op" : { "$numberInt" : "4" }, "value" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA", "isTopLevel" : true } ] } }'::bson)
                Filter: (document @#? '{ "tags" : { "$gte" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA", "$lt" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_AAAA" }, "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Filter: 4
-(14 rows)
+(15 rows)
 
 -- ======================================================================
 -- SECTION 14: $in on truncated strings
@@ -2948,12 +3009,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["short_string", "short_string"]], ["a": ["another_short", "another_short"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=3 loops=1)
                Index Cond: (document @*= '{ "a" : [ "short_string", "another_short" ], "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 14.2: $in case-insensitive short strings — "SHORT_STRING" matches short_string + Short_String
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["SHORT_STRING"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -2984,12 +3046,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["this_is_a_long_string_that_will_d", "this_is_a_long_string_that_will_d"]], ["a": ["this_is_a_long_string_that_will_d", "this_is_a_long_string_that_will_d"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=3 loops=1)
                Index Cond: (document @*= '{ "a" : [ "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_BBBB" ], "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 14.4: $in with only AAAA truncated string — case-insensitive should also match _id:22
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -3027,12 +3090,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["boundary_test_string_padded_to_re", "boundary_test_string_padded_to_re"]], ["a": ["boundary_test_string_padded_to_re", "boundary_test_string_padded_to_re"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=2 loops=1)
                Index Cond: (document @*= '{ "a" : [ "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut", "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_beta_suffix_after_cut" ], "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 14.7: $in with prefix_match strings — differ before truncation point
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -3053,12 +3117,13 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["prefix_match_AAAA_then_a_very_lon", "prefix_match_AAAA_then_a_very_lon"]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=1 loops=1)
                Index Cond: (document @= '{ "a" : "prefix_match_AAAA_then_a_very_long_tail_that_pushes_past_truncation_limit_significantly_and_keeps_going_until_end", "collation" : "en-u-ks-level1" }'::bson)
-(12 rows)
+(13 rows)
 
 -- 14.8: $in mixed short + long + numeric + null
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$in": ["short_string", "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", 12345, null] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -3084,13 +3149,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": ["short_string", "short_string"]], ["a": ["this_is_a_long_string_that_will_d", "this_is_a_long_string_that_will_d"]], ["a": [12345, 12345]], ["a": (MinKey, null]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=6 loops=1)
                Index Cond: (document @*= '{ "a" : [ "short_string", "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", { "$numberInt" : "12345" }, null ], "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 1
-(13 rows)
+(14 rows)
 
 -- 14.9: $in with no collation — index should NOT be used
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -3183,13 +3249,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=12 loops=1)
                Index Cond: (document @!*= '{ "a" : [ "short_string", "another_short" ], "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 3
-(13 rows)
+(14 rows)
 
 -- 15.2: $nin "SHORT_STRING" case-insensitive — excludes short_string + Short_String
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$nin": ["SHORT_STRING"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -3241,13 +3308,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=13 loops=1)
                Index Cond: (document @!= '{ "a" : "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 2
-(13 rows)
+(14 rows)
 
 -- 15.4: $nin with boundary strings
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$nin": ["boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut"] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -3281,13 +3349,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=14 loops=1)
                Index Cond: (document @!= '{ "a" : "boundary_test_string_padded_to_reach_exactly_near_the_truncation_point_XXXX_alpha_suffix_after_cut", "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 1
-(13 rows)
+(14 rows)
 
 -- 15.5: $nin mixed short + long + numeric — complex exclusion
 SELECT document FROM bson_aggregation_find('trunc_db', '{ "find": "trunc_coll", "filter": { "a": { "$nin": ["short_string", "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", 12345] } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -3317,13 +3386,14 @@ $cmd$);
          namespaceName: trunc_db.trunc_coll
          indexName: idx_a_en_s1_trunc
          indexKey: {"a": 1}
+         indexCollation: en-u-ks-level1
          isMultiKey: false
          hasTruncation: true
          indexBounds: ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]]
          ->  Index Scan using idx_a_en_s1_trunc on documents_2201 collection (actual rows=10 loops=1)
                Index Cond: (document @!*= '{ "a" : [ "short_string", "this_is_a_long_string_that_will_definitely_exceed_the_index_term_truncation_limit_and_the_difference_is_at_the_very_end_AAAA", { "$numberInt" : "12345" } ], "collation" : "en-u-ks-level1" }'::bson)
                Rows Removed by Index Recheck: 5
-(13 rows)
+(14 rows)
 
 -- 15.6: $nin with mismatched collation — index should NOT be used
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$

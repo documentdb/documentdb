@@ -246,11 +246,12 @@ pub struct VectorSearchParams {
     pub l_search: Option<f64>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct IndexDetails {
     pub index_name: Option<String>,
     pub index_key: Option<String>,
+    pub index_collation: Option<String>,
     pub is_multi_key: Option<bool>,
     pub multi_key_paths: Option<Vec<String>>,
     pub has_truncation: Option<bool>,

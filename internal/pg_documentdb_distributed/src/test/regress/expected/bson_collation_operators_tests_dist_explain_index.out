@@ -118,11 +118,12 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_a_en_s1
                      indexKey: {"a": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: false
                      indexBounds: ["a": ["apple", "apple"]]
                      ->  Index Scan using idx_a_en_s1 on documents_95211_95210004 collection
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 BEGIN;
@@ -145,11 +146,12 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_a_en_s1
                      indexKey: {"a": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: false
                      indexBounds: ["a": ("banana", { })]
                      ->  Index Scan using idx_a_en_s1 on documents_95211_95210004 collection
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@>) '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 -- ======================================================================
@@ -175,11 +177,12 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_a_en_s1
                      indexKey: {"a": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: false
                      indexBounds: ["a": ["cherry", "cherry"]]
                      ->  Index Scan using idx_a_en_s1 on documents_95211_95210004 collection
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 -- ======================================================================
@@ -229,11 +232,12 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_a_en_s1
                      indexKey: {"a": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: false
                      indexBounds: ["a": [MinKey, MaxKey]]
                      ->  Index Scan using idx_a_en_s1 on documents_95211_95210004 collection
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@!=) '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 -- ======================================================================
@@ -260,11 +264,12 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_a_en_s1
                      indexKey: {"a": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: false
                      indexBounds: ["a": [MinKey, "BANANA"]], ["a": ({ }, MaxKey]]
                      ->  Index Scan using idx_a_en_s1 on documents_95211_95210004 collection
                            Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "BANANA", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 -- $not $gte "Cherry" at strength-1 — returns docs < cherry plus non-strings
@@ -288,11 +293,12 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_a_en_s1
                      indexKey: {"a": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: false
                      indexBounds: ["a": [MinKey, "Cherry")], ["a": ({ }, MaxKey]]
                      ->  Index Scan using idx_a_en_s1 on documents_95211_95210004 collection
                            Index Cond: (document OPERATOR(documentdb_api_internal.@!>=) '{ "a" : "Cherry", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 -- ======================================================================
@@ -319,11 +325,12 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_a_en_s1
                      indexKey: {"a": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: false
                      indexBounds: ["a": [MinKey, "")], ["a": ["CHERRY", MaxKey]]
                      ->  Index Scan using idx_a_en_s1 on documents_95211_95210004 collection
                            Index Cond: (document OPERATOR(documentdb_api_internal.@!<) '{ "a" : "CHERRY", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 -- $not $lte "banana" at strength-1 — returns docs > banana plus non-strings
@@ -347,11 +354,12 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_a_en_s1
                      indexKey: {"a": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: false
                      indexBounds: ["a": [MinKey, "")], ["a": ("banana", MaxKey]]
                      ->  Index Scan using idx_a_en_s1 on documents_95211_95210004 collection
                            Index Cond: (document OPERATOR(documentdb_api_internal.@!<=) '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 -- $not $lt numeric with matching collation — non-string bypasses collation
@@ -375,11 +383,12 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_a_en_s1
                      indexKey: {"a": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: false
                      indexBounds: ["a": [MinKey, -Infinity)], ["a": [100, MaxKey]]
                      ->  Index Scan using idx_a_en_s1 on documents_95211_95210004 collection
                            Index Cond: (document OPERATOR(documentdb_api_internal.@!<) '{ "a" : { "$numberInt" : "100" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 -- ======================================================================
@@ -469,11 +478,12 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_ab_en_s1_d
                      indexKey: {"a": 1,"b": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: false
                      indexBounds: ["a": ["dog", "dog"], "b": (10, Infinity]]
                      ->  Index Scan using idx_ab_en_s1_d on documents_95212_95210014 collection
                            Index Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "dog", "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>) '{ "b" : { "$numberInt" : "10" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson))
-(14 rows)
+(15 rows)
 
 END;
 -- Compound: $not $gt on "a" — matching collation
@@ -497,11 +507,12 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_ab_en_s1_d
                      indexKey: {"a": 1,"b": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: false
                      indexBounds: ["a": [MinKey, "cat"], "b": (MinKey, MaxKey)], ["a": ({ }, MaxKey], "b": (MinKey, MaxKey)]
                      ->  Index Scan using idx_ab_en_s1_d on documents_95212_95210014 collection
                            Index Cond: (document OPERATOR(documentdb_api_internal.@!>) '{ "a" : "cat", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 -- Compound: matching collation — index used end-to-end
@@ -525,11 +536,12 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_ab_en_s1_d
                      indexKey: {"a": 1,"b": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: false
                      indexBounds: ["a": ["dog", "dog"], "b": (10, Infinity]]
                      ->  Index Scan using idx_ab_en_s1_d on documents_95212_95210014 collection
                            Index Cond: ((document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "dog", "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>) '{ "b" : { "$numberInt" : "10" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson))
-(14 rows)
+(15 rows)
 
 END;
 -- ======================================================================
@@ -554,11 +566,12 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dis
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_a_en_s1
                      indexKey: {"a": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: false
                      indexBounds: ["a": ["apple", "apple"]], ["a": ["CHERRY", "CHERRY"]]
                      ->  Index Scan using idx_a_en_s1 on documents_95211_95210004 collection
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@*=) '{ "a" : [ "apple", "CHERRY" ], "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 -- $nin with matching collation — results span shards correctly
@@ -580,11 +593,12 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dis
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_a_en_s1
                      indexKey: {"a": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: false
                      indexBounds: ["a": [MinKey, MaxKey]], ["a": [MinKey, MaxKey]]
                      ->  Index Scan using idx_a_en_s1 on documents_95211_95210004 collection
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@!*=) '{ "a" : [ "apple", "banana" ], "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 -- $in on compound — matching collation
@@ -606,11 +620,12 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dis
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_ab_en_s1_d
                      indexKey: {"a": 1,"b": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: false
                      indexBounds: ["a": ["dog", "dog"], "b": (20, Infinity]], ["a": ["cat", "cat"], "b": (20, Infinity]]
                      ->  Index Scan using idx_ab_en_s1_d on documents_95212_95210014 collection
                            Index Cond: ((document OPERATOR(documentdb_api_catalog.@*=) '{ "a" : [ "dog", "cat" ], "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND (document OPERATOR(documentdb_api_catalog.@>) '{ "b" : { "$numberInt" : "20" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson))
-(14 rows)
+(15 rows)
 
 END;
 -- ======================================================================
@@ -699,12 +714,13 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_items_en_s1_d
                      indexKey: {"items": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: true
                      indexBounds: ["items": ["APPLE", "APPLE"]]
                      ->  Index Scan using idx_items_en_s1_d on documents_95213_95210024 collection
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@<>) '{ "items" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "APPLE", "isTopLevel" : true } ] } }'::documentdb_core.bson)
                            Filter: (document OPERATOR(documentdb_api_catalog.@#?) '{ "items" : { "$eq" : "APPLE" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(15 rows)
+(16 rows)
 
 END;
 -- 9.2: numeric needle bypasses collation — index still used across shards
@@ -728,12 +744,13 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_items_en_s1_d
                      indexKey: {"items": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: true
                      indexBounds: ["items": [42, 42]]
                      ->  Index Scan using idx_items_en_s1_d on documents_95213_95210024 collection
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@<>) '{ "items" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "42" }, "isTopLevel" : true } ] } }'::documentdb_core.bson)
                            Filter: (document OPERATOR(documentdb_api_catalog.@#?) '{ "items" : { "$eq" : { "$numberInt" : "42" } }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(15 rows)
+(16 rows)
 
 END;
 -- 9.3: mixed-case range across shards — both bounds collation-aware
@@ -757,12 +774,13 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_items_en_s1_d
                      indexKey: {"items": 1}
+                     indexCollation: en-u-ks-level1
                      isMultiKey: true
                      indexBounds: ["items": ["Banana", "Dog"]]
                      ->  Index Scan using idx_items_en_s1_d on documents_95213_95210024 collection
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@<>) '{ "items" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "3" }, "value" : "Banana", "isTopLevel" : true }, { "op" : { "$numberInt" : "5" }, "value" : "Dog", "isTopLevel" : true } ] } }'::documentdb_core.bson)
                            Filter: (document OPERATOR(documentdb_api_catalog.@#?) '{ "items" : { "$gte" : "Banana", "$lte" : "Dog" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(15 rows)
+(16 rows)
 
 END;
 -- 9.4: mismatched query collation — index pushdown declined; runtime fallback
@@ -984,11 +1002,12 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_a_en_num_ord_pure
                      indexKey: {"a": 1}
+                     indexCollation: en-u-ks-level3-kn-true
                      isMultiKey: false
                      indexBounds: ["a": [MinKey, MaxKey]]
                      ->  Index Scan using idx_a_en_num_ord_pure on documents_95214_95210034 collection
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "$minKey" : 1 }, "collation" : "en-u-ks-level3-kn-true" }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 -- 11b: ASC sort + LIMIT — per-shard Index Scan with Order By: |<> pushdown
@@ -1017,12 +1036,13 @@ $cmd$);
                            ->  Custom Scan (DocumentDBApiExplainQueryScan)
                                  indexName: idx_a_en_num_ord_pure
                                  indexKey: {"a": 1}
+                                 indexCollation: en-u-ks-level3-kn-true
                                  isMultiKey: false
                                  indexBounds: ["a": [MinKey, MaxKey]]
                                  ->  Index Scan using idx_a_en_num_ord_pure on documents_95214_95210034 collection
                                        Index Cond: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "$minKey" : 1 }, "collation" : "en-u-ks-level3-kn-true" }'::documentdb_core.bson)
                                        Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-(17 rows)
+(18 rows)
 
 END;
 -- 11c: DESC sort + LIMIT — per-shard Index Scan with Order By: |<> pushdown (DESC);
@@ -1051,12 +1071,13 @@ $cmd$);
                            ->  Custom Scan (DocumentDBApiExplainQueryScan)
                                  indexName: idx_a_en_num_ord_pure
                                  indexKey: {"a": 1}
+                                 indexCollation: en-u-ks-level3-kn-true
                                  isMultiKey: false
                                  indexBounds: ["a": [MinKey, MaxKey]]
                                  ->  Index Scan using idx_a_en_num_ord_pure on documents_95214_95210034 collection
                                        Index Cond: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "$minKey" : 1 }, "collation" : "en-u-ks-level3-kn-true" }'::documentdb_core.bson)
                                        Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "-1" } }'::documentdb_core.bson)
-(17 rows)
+(18 rows)
 
 END;
 -- 11d: bounded filter + ASC sort + LIMIT — per-shard Index Scan with bounded Index Cond
@@ -1085,12 +1106,13 @@ $cmd$);
                            ->  Custom Scan (DocumentDBApiExplainQueryScan)
                                  indexName: idx_a_en_num_ord_pure
                                  indexKey: {"a": 1}
+                                 indexCollation: en-u-ks-level3-kn-true
                                  isMultiKey: false
                                  indexBounds: ["a": ["item10", { })]
                                  ->  Index Scan using idx_a_en_num_ord_pure on documents_95214_95210034 collection
                                        Index Cond: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : "item10", "collation" : "en-u-ks-level3-kn-true" }'::documentdb_core.bson)
                                        Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-(17 rows)
+(18 rows)
 
 END;
 -- 11e: compound — equality on leading key + sort on second key + LIMIT — per-shard
@@ -1120,12 +1142,13 @@ $cmd$);
                            ->  Custom Scan (DocumentDBApiExplainQueryScan)
                                  indexName: idx_ab_en_num_ord_compound
                                  indexKey: {"a": 1,"b": 1}
+                                 indexCollation: en-u-ks-level3-kn-true
                                  isMultiKey: false
                                  indexBounds: ["a": ["item10", "item10"], "b": (MinKey, MaxKey)]
                                  ->  Index Scan using idx_ab_en_num_ord_compound on documents_95215_95210044 collection
                                        Index Cond: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "item10", "collation" : "en-u-ks-level3-kn-true" }'::documentdb_core.bson)
                                        Order By: (document OPERATOR(documentdb_api_internal.|<>) '{ "b" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-(17 rows)
+(18 rows)
 
 END;
 -- 11f: locale mismatch (query fr vs index en) — existence scan still uses the index;
@@ -1152,11 +1175,12 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_a_en_num_ord_pure
                      indexKey: {"a": 1}
+                     indexCollation: en-u-ks-level3-kn-true
                      isMultiKey: false
                      indexBounds: ["a": [MinKey, MaxKey]]
                      ->  Index Scan using idx_a_en_num_ord_pure on documents_95214_95210034 collection
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "$minKey" : 1 }, "collation" : "fr-u-ks-level3-kn-true" }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 -- 11g: numericOrdering mismatch (query default vs index numericOrdering true) — existence scan still uses the index;
@@ -1183,11 +1207,12 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_a_en_num_ord_pure
                      indexKey: {"a": 1}
+                     indexCollation: en-u-ks-level3-kn-true
                      isMultiKey: false
                      indexBounds: ["a": [MinKey, MaxKey]]
                      ->  Index Scan using idx_a_en_num_ord_pure on documents_95214_95210034 collection
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "$minKey" : 1 }, "collation" : "en-u-ks-level3" }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 -- 11h: _id ASC sort with collation — _id_ PK rejected under collation; falls back to per-shard Seq Scan
@@ -1288,11 +1313,12 @@ $cmd$);
                ->  Custom Scan (DocumentDBApiExplainQueryScan)
                      indexName: idx_a_en_num_ord_pure
                      indexKey: {"a": 1}
+                     indexCollation: en-u-ks-level3-kn-true
                      isMultiKey: false
                      indexBounds: ["a": [MinKey, MaxKey]]
                      ->  Index Scan using idx_a_en_num_ord_pure on documents_95214_95210034 collection
                            Index Cond: (document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "$minKey" : 1 } }'::documentdb_core.bson)
-(14 rows)
+(15 rows)
 
 END;
 -- ======================================================================

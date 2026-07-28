@@ -1346,6 +1346,15 @@ ExplainRawCompositeScanToWriter(Relation index_rel, List *indexQuals, List *inde
 		SerializeCompositeIndexKeyForExplainToWriter(
 			index_rel->rd_opcoptions[0], &keyWriter);
 		PgbsonWriterEndDocument(writer, &keyWriter);
+
+		const char *indexCollation = NULL;
+		int indexCollationLength = 0;
+		Get_Index_Collation_Option((&options->base), collation,
+								   indexCollation, indexCollationLength);
+		if (indexCollationLength > 0 && indexCollation != NULL)
+		{
+			PgbsonWriterAppendUtf8(writer, "indexCollation", -1, indexCollation);
+		}
 	}
 
 	ExplainCompositeProperties(writer, multiKeyStatusFunc, index_rel,
@@ -1379,6 +1388,16 @@ ExplainRawCompositeScan(Relation index_rel, List *indexQuals, List *indexOrderBy
 		const char *keyString = SerializeCompositeIndexKeyForExplain(
 			index_rel->rd_opcoptions[0]);
 		ExplainPropertyText("indexKey", keyString, es);
+
+		const char *indexCollation = NULL;
+		int indexCollationLength = 0;
+		Get_Index_Collation_Option((&options->base), collation,
+								   indexCollation, indexCollationLength);
+
+		if (indexCollationLength > 0 && indexCollation != NULL)
+		{
+			ExplainPropertyText("indexCollation", indexCollation, es);
+		}
 	}
 
 	ExplainCompositeProperties(es, multiKeyStatusFunc, index_rel,
@@ -1575,9 +1594,21 @@ ExplainCompositeScan(IndexScanDesc scan, ExplainState *es)
 
 	if (scan->indexRelation->rd_opcoptions != NULL)
 	{
+		BsonGinCompositePathOptions *options =
+			(BsonGinCompositePathOptions *) scan->indexRelation->rd_opcoptions[0];
 		const char *keyString = SerializeCompositeIndexKeyForExplain(
 			scan->indexRelation->rd_opcoptions[0]);
 		ExplainPropertyText("indexKey", keyString, es);
+
+		const char *indexCollation = NULL;
+		int indexCollationLength = 0;
+		Get_Index_Collation_Option((&options->base), collation,
+								   indexCollation, indexCollationLength);
+
+		if (indexCollationLength > 0 && indexCollation != NULL)
+		{
+			ExplainPropertyText("indexCollation", indexCollation, es);
+		}
 	}
 
 	ExplainWriterFuncs writerFuncs = GetForExplain();

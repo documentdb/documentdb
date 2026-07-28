@@ -1464,6 +1464,20 @@ fn query_planner(
                 }
             }
 
+            if stage_name == "GROUP" {
+                if let Some(group_keys) = plan.group_key.as_ref() {
+                    let mut group_keys_array = RawArrayBuf::new();
+                    for group_key in group_keys {
+                        if let Some(group_key) = query_diagnostics::get_group_key(group_key) {
+                            group_keys_array.push(group_key);
+                        }
+                    }
+                    if !group_keys_array.is_empty() {
+                        doc.append("groupKey", group_keys_array);
+                    }
+                }
+            }
+
             if let Some(join_type) = plan.join_type.as_deref() {
                 if plan.node_type == "Nested Loop" {
                     doc.append("joinType", join_type);
@@ -1519,6 +1533,11 @@ fn query_planner(
                 }
                 if !sort_keys_arr.is_empty() {
                     doc.append("sortKey", sort_keys_arr);
+                }
+                if let Some(collation) = sort_keys.iter().find_map(|sort_key| {
+                    query_diagnostics::get_sort_collation(sort_key, query_catalog)
+                }) {
+                    doc.append("collation", collation);
                 }
             }
             if let Some(presorted_keys) = plan.presorted_key.as_ref() {
@@ -1589,6 +1608,10 @@ fn query_planner(
 fn write_query_planner_index_usage(detail: &IndexDetails, index_doc: &mut RawDocumentBuf) {
     if let Some(index_key) = detail.index_key.as_deref() {
         index_doc.append("indexKeyString", index_key);
+    }
+
+    if let Some(index_collation) = detail.index_collation.as_deref() {
+        index_doc.append("indexCollation", index_collation);
     }
 
     if let Some(multi_key_val) = detail.is_multi_key {
@@ -2277,10 +2300,10 @@ fn smallest_from_i64(value: i64) -> RawBson {
 mod tests {
     use bson::rawdoc;
 
-    use crate::postgres::QueryCatalog;
+    use crate::postgres::{create_query_catalog, QueryCatalog};
 
-    use super::model::ExplainPlan;
-    use super::{get_stage_from_plan, get_subtype_and_collection_name};
+    use super::model::{ExplainPlan, IndexDetails};
+    use super::{get_stage_from_plan, get_subtype_and_collection_name, query_planner};
     use crate::requests::{ExplainTarget, RequestType};
 
     /// Helper that builds a minimal [`ExplainPlan`] with the given `node_type`.
@@ -2329,6 +2352,113 @@ mod tests {
         let plan = plan_with_node_type("Merge Append");
         let (stage, _) = get_stage_from_plan(&plan, None, &catalog);
         assert_eq!(stage, "SORT_MERGE");
+    }
+
+    #[test]
+    fn collation_group_plan_includes_sort_and_group_metadata() {
+        let projection = "(documentdb_api_internal.bson_expression_get(collection.document, \
+             'BSONHEX0e00000002000300000024620000'::documentdb_core.bson, true))";
+        let group_sort = ExplainPlan {
+            node_type: "Sort".to_owned(),
+            sort_keys: Some(vec![projection.to_owned()]),
+            ..Default::default()
+        };
+        let group = ExplainPlan {
+            node_type: "Aggregate".to_owned(),
+            strategy: Some("Sorted".to_owned()),
+            group_key: Some(vec![projection.to_owned()]),
+            inner_plans: Some(vec![group_sort]),
+            ..Default::default()
+        };
+        let sort = ExplainPlan {
+            node_type: "Sort".to_owned(),
+            sort_keys: Some(vec![
+                "(documentdb_api_internal.bson_orderby(agg_stage.document, \
+                 'BSONHEX0c0000001063000100000000'::documentdb_core.bson, \
+                 'en-u-ks-level2'::text))"
+                    .to_owned(),
+            ]),
+            inner_plans: Some(vec![group]),
+            ..Default::default()
+        };
+
+        let planner = query_planner(sort, "db.collection", true, &create_query_catalog());
+        let winning_plan = planner
+            .get_document("winningPlan")
+            .expect("winning plan should be present");
+        let sort_keys = winning_plan
+            .get_array("sortKey")
+            .expect("sort key should be present");
+        let sort_key = sort_keys
+            .into_iter()
+            .next()
+            .expect("sort key array should not be empty")
+            .expect("sort key should be valid BSON")
+            .as_document()
+            .expect("sort key should be a document");
+        assert_eq!(sort_key.get_i32("c"), Ok(1));
+        assert_eq!(winning_plan.get_str("collation"), Ok("en-u-ks-level2"));
+
+        let group_plan = winning_plan
+            .get_document("inputStage")
+            .expect("group stage should be present");
+        let group_keys = group_plan
+            .get_array("groupKey")
+            .expect("group key should be present");
+        let group_key = group_keys
+            .into_iter()
+            .next()
+            .expect("group key array should not be empty")
+            .expect("group key should be valid BSON")
+            .as_document()
+            .expect("group key should be a document");
+        assert_eq!(group_key.get_str(""), Ok("$b"));
+
+        let group_sort_plan = group_plan
+            .get_document("inputStage")
+            .expect("group sort stage should be present");
+        let group_sort_keys = group_sort_plan
+            .get_array("sortKey")
+            .expect("group sort key should be present");
+        let group_sort_key = group_sort_keys
+            .into_iter()
+            .next()
+            .expect("group sort key array should not be empty")
+            .expect("group sort key should be valid BSON")
+            .as_document()
+            .expect("group sort key should be a document");
+        assert_eq!(group_sort_key.get_str(""), Ok("$b"));
+    }
+
+    #[test]
+    fn index_usage_includes_index_collation() {
+        let index_details = IndexDetails {
+            index_name: Some("idx_x_en".to_owned()),
+            index_key: Some(r#"{"x": 1}"#.to_owned()),
+            index_collation: Some("en-u-ks-level2".to_owned()),
+            is_multi_key: Some(false),
+            ..Default::default()
+        };
+        let plan = ExplainPlan {
+            node_type: "Index Scan".to_owned(),
+            index_name: Some("idx_x_en".to_owned()),
+            index_details: Some(vec![index_details]),
+            ..Default::default()
+        };
+
+        let planner = query_planner(plan, "db.collection", false, &create_query_catalog());
+        let winning_plan = planner
+            .get_document("winningPlan")
+            .expect("winning plan should be present");
+        let index_stage = winning_plan
+            .get_document("inputStage")
+            .expect("index stage should be present");
+        let index_usage = index_stage
+            .get_document("indexUsage")
+            .expect("index usage should be present");
+
+        assert_eq!(index_usage.get_str("indexKeyString"), Ok(r#"{"x": 1}"#));
+        assert_eq!(index_usage.get_str("indexCollation"), Ok("en-u-ks-level2"));
     }
 
     #[test]
