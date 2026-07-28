@@ -29,6 +29,9 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('highkeydb',
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
+SELECT collection_id AS single_key_collection_id
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'highkeydb' AND collection_name = 'single_key' \gset
 -- Compound composite index over two fields.
 SELECT documentdb_api.create_collection('highkeydb', 'compound_key');
 NOTICE:  creating collection
@@ -50,6 +53,42 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('highkeydb',
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
+-- Compound data with a non-monotonic suffix. Most page endpoints satisfy
+-- b > 50, while every seventh tuple does not.
+SELECT documentdb_api.create_collection('highkeydb', 'page_isolated_suffix');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one(
+    'highkeydb',
+    'page_isolated_suffix',
+    bson_build_document(
+        '_id', i,
+        'a', i,
+        'b', CASE WHEN i % 7 = 0 THEN 0 ELSE 100 END)))
+FROM generate_series(1, 5000) i;
+ count 
+-------
+  5000
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'highkeydb',
+    '{ "createIndexes": "page_isolated_suffix", "indexes": [
+        { "key": { "a": 1, "b": 1 }, "name": "a_1_b_1", "enableCompositeTerm": true }
+    ] }'::bson,
+    TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT collection_id AS page_isolated_suffix_collection_id
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'highkeydb' AND collection_name = 'page_isolated_suffix' \gset
 set documentdb.enableExtendedExplainPlans to on;
 set documentdb.enableExplainScanIndexCosts to off;
 set documentdb.forceDisableSeqScan to on;
@@ -301,6 +340,249 @@ SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_find('highkeydb', '{
 (1 row)
 
 -- ============================================================================
+-- Parallel scans do not depend on predecessor-page state. After processing the
+-- first few tuples on an isolated page, both page bounds must satisfy the scan
+-- before the remaining per-item comparisons can use the high key result.
+-- ============================================================================
+SELECT FORMAT(
+    'ALTER TABLE documentdb_data.documents_%s SET (parallel_workers = 2)',
+    :single_key_collection_id) \gexec
+ALTER TABLE documentdb_data.documents_22001 SET (parallel_workers = 2)
+SELECT FORMAT(
+    'VACUUM (FREEZE, ANALYZE) documentdb_data.documents_%s',
+    :single_key_collection_id) \gexec
+VACUUM (FREEZE, ANALYZE) documentdb_data.documents_22001
+set documentdb.enableCompositeParallelIndexScan to off;
+set documentdb.forceParallelScanIfAvailable to off;
+set max_parallel_workers_per_gather to 0;
+CREATE TEMP TABLE serial_parallel_high_key_results AS
+SELECT document
+FROM bson_aggregation_find(
+    'highkeydb',
+    '{ "find": "single_key", "filter": { "a": { "$gte": 1 } }, "sort": { "a": 1 } }'::bson);
+ALTER TABLE serial_parallel_high_key_results
+    ADD COLUMN result_order bigint GENERATED ALWAYS AS IDENTITY;
+set documentdb.enableCompositeParallelIndexScan to on;
+set documentdb.forceParallelScanIfAvailable to on;
+set documentdb.enableAddShardKeyOnlyOnPrimaryKeyFilters to on;
+set min_parallel_index_scan_size to 0;
+set min_parallel_table_scan_size to 0;
+set parallel_setup_cost to 0;
+set parallel_tuple_cost to 0;
+set max_parallel_workers_per_gather to 2;
+set parallel_leader_participation to on;
+SELECT
+    BOOL_OR(explain_line LIKE '%Workers Planned:%')
+        AS uses_parallel_index_scan,
+    BOOL_OR(explain_line ~ 'highKeyEligiblePages: [1-9][0-9]* pages')
+        AS uses_page_isolated_high_key
+FROM documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find(
+        'highkeydb',
+        '{ "find": "single_key", "filter": { "a": { "$gte": 1 } }, "sort": { "a": 1 } }'::bson)
+$cmd$) AS explain_line;
+ uses_parallel_index_scan | uses_page_isolated_high_key 
+--------------------------+-----------------------------
+ t                        | t
+(1 row)
+
+CREATE TEMP TABLE parallel_high_key_results AS
+SELECT document
+FROM bson_aggregation_find(
+    'highkeydb',
+    '{ "find": "single_key", "filter": { "a": { "$gte": 1 } }, "sort": { "a": 1 } }'::bson);
+ALTER TABLE parallel_high_key_results
+    ADD COLUMN result_order bigint GENERATED ALWAYS AS IDENTITY;
+SELECT COUNT(*) FROM parallel_high_key_results;
+ count 
+-------
+  5000
+(1 row)
+
+SELECT COUNT(*) FROM (
+    SELECT result_order, document FROM serial_parallel_high_key_results
+    EXCEPT
+    SELECT result_order, document FROM parallel_high_key_results
+) missing_or_misordered_results;
+ count 
+-------
+     0
+(1 row)
+
+SELECT COUNT(*) FROM (
+    SELECT result_order, document FROM parallel_high_key_results
+    EXCEPT
+    SELECT result_order, document FROM serial_parallel_high_key_results
+) extra_or_misordered_results;
+ count 
+-------
+     0
+(1 row)
+
+-- Page endpoints cannot prove suffix bounds after a non-equality leading path.
+-- Verify the page-isolated operation does not skip the b > 50 comparison.
+SELECT FORMAT(
+    'ALTER TABLE documentdb_data.documents_%s SET (parallel_workers = 2)',
+    :page_isolated_suffix_collection_id) \gexec
+ALTER TABLE documentdb_data.documents_22003 SET (parallel_workers = 2)
+SELECT FORMAT(
+    'VACUUM (FREEZE, ANALYZE) documentdb_data.documents_%s',
+    :page_isolated_suffix_collection_id) \gexec
+VACUUM (FREEZE, ANALYZE) documentdb_data.documents_22003
+set documentdb.enableCompositeParallelIndexScan to off;
+set documentdb.forceParallelScanIfAvailable to off;
+set max_parallel_workers_per_gather to 0;
+CREATE TEMP TABLE serial_page_isolated_suffix_results AS
+SELECT document
+FROM bson_aggregation_find(
+    'highkeydb',
+    '{ "find": "page_isolated_suffix",
+       "filter": { "a": { "$gte": 1, "$lte": 5000 }, "b": { "$gt": 50 } },
+       "sort": { "a": 1 } }'::bson);
+ALTER TABLE serial_page_isolated_suffix_results
+    ADD COLUMN result_order bigint GENERATED ALWAYS AS IDENTITY;
+set documentdb.enableCompositeParallelIndexScan to on;
+set documentdb.forceParallelScanIfAvailable to on;
+set max_parallel_workers_per_gather to 2;
+SELECT
+    BOOL_OR(explain_line LIKE '%Workers Planned:%')
+        AS uses_parallel_index_scan,
+    BOOL_OR(explain_line ~ 'highKeyEligiblePages: [1-9][0-9]* pages')
+        AS uses_page_isolated_high_key
+FROM documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find(
+        'highkeydb',
+        '{ "find": "page_isolated_suffix",
+           "filter": { "a": { "$gte": 1, "$lte": 5000 }, "b": { "$gt": 50 } },
+           "sort": { "a": 1 } }'::bson)
+$cmd$) AS explain_line;
+ uses_parallel_index_scan | uses_page_isolated_high_key 
+--------------------------+-----------------------------
+ t                        | t
+(1 row)
+
+CREATE TEMP TABLE parallel_page_isolated_suffix_results AS
+SELECT document
+FROM bson_aggregation_find(
+    'highkeydb',
+    '{ "find": "page_isolated_suffix",
+       "filter": { "a": { "$gte": 1, "$lte": 5000 }, "b": { "$gt": 50 } },
+       "sort": { "a": 1 } }'::bson);
+ALTER TABLE parallel_page_isolated_suffix_results
+    ADD COLUMN result_order bigint GENERATED ALWAYS AS IDENTITY;
+SELECT COUNT(*) FROM parallel_page_isolated_suffix_results;
+ count 
+-------
+  4286
+(1 row)
+
+SELECT COUNT(*) FROM (
+    SELECT result_order, document FROM serial_page_isolated_suffix_results
+    EXCEPT
+    SELECT result_order, document FROM parallel_page_isolated_suffix_results
+) missing_or_misordered_results;
+ count 
+-------
+     0
+(1 row)
+
+SELECT COUNT(*) FROM (
+    SELECT result_order, document FROM parallel_page_isolated_suffix_results
+    EXCEPT
+    SELECT result_order, document FROM serial_page_isolated_suffix_results
+) extra_or_misordered_results;
+ count 
+-------
+     0
+(1 row)
+
+-- A scalar-array skip rewalk resets the inherited state. Verify that the
+-- parallel reposition preserves the complete ordered result while later pages
+-- remain free to establish new high key state from their own processed tuples.
+set documentdb.max_non_ordered_term_scan_threshold to 1;
+WITH raw_values AS (
+    SELECT ARRAY[10] || ARRAY_AGG(i) AS a_values
+    FROM generate_series(4001, 5000) AS i
+)
+SELECT bson_build_document(
+    'find', 'single_key'::text,
+    'filter', bson_build_document(
+        'a', bson_build_document('$in', a_values)),
+    'sort', bson_build_document('a', 1))::bson AS high_key_saop_query_spec
+FROM raw_values \gset
+set documentdb.enableCompositeParallelIndexScan to off;
+set documentdb.forceParallelScanIfAvailable to off;
+set max_parallel_workers_per_gather to 0;
+CREATE TEMP TABLE serial_high_key_saop_results AS
+SELECT document
+FROM bson_aggregation_find(
+    'highkeydb',
+    :'high_key_saop_query_spec'::bson);
+ALTER TABLE serial_high_key_saop_results
+    ADD COLUMN result_order bigint GENERATED ALWAYS AS IDENTITY;
+set documentdb.enableCompositeParallelIndexScan to on;
+set documentdb.forceParallelScanIfAvailable to on;
+set max_parallel_workers_per_gather to 2;
+SELECT
+    BOOL_OR(explain_line LIKE '%Workers Planned:%')
+        AS uses_parallel_index_scan
+FROM documentdb_test_helpers.run_explain_and_trim(
+    FORMAT(
+        'EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) ' ||
+        'SELECT document FROM bson_aggregation_find(%L, %L::bson)',
+        'highkeydb',
+        :'high_key_saop_query_spec')) AS explain_line;
+ uses_parallel_index_scan 
+--------------------------
+ t
+(1 row)
+
+CREATE TEMP TABLE parallel_high_key_saop_results AS
+SELECT document
+FROM bson_aggregation_find(
+    'highkeydb',
+    :'high_key_saop_query_spec'::bson);
+ALTER TABLE parallel_high_key_saop_results
+    ADD COLUMN result_order bigint GENERATED ALWAYS AS IDENTITY;
+SELECT COUNT(*) FROM parallel_high_key_saop_results;
+ count 
+-------
+  1001
+(1 row)
+
+SELECT COUNT(*) FROM (
+    SELECT result_order, document FROM serial_high_key_saop_results
+    EXCEPT
+    SELECT result_order, document FROM parallel_high_key_saop_results
+) missing_or_misordered_results;
+ count 
+-------
+     0
+(1 row)
+
+SELECT COUNT(*) FROM (
+    SELECT result_order, document FROM parallel_high_key_saop_results
+    EXCEPT
+    SELECT result_order, document FROM serial_high_key_saop_results
+) extra_or_misordered_results;
+ count 
+-------
+     0
+(1 row)
+
+reset documentdb.max_non_ordered_term_scan_threshold;
+reset documentdb.enableCompositeParallelIndexScan;
+reset documentdb.forceParallelScanIfAvailable;
+reset documentdb.enableAddShardKeyOnlyOnPrimaryKeyFilters;
+reset min_parallel_index_scan_size;
+reset min_parallel_table_scan_size;
+reset parallel_setup_cost;
+reset parallel_tuple_cost;
+reset max_parallel_workers_per_gather;
+reset parallel_leader_participation;
+-- ============================================================================
 -- Index recheck predicates disable the high key optimization.
 --
 -- When a bound carries an index recheck function (predicates such as
@@ -350,7 +632,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
          highKeyEligiblePages: 33 pages
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22003 collection (actual rows=5000 loops=1)
+         ->  Bitmap Heap Scan on documents_22004 collection (actual rows=5000 loops=1)
                Recheck Cond: (document @>= '{ "n" : { "$numberInt" : "1" } }'::bson)
                Heap Blocks: exact=47
                ->  Bitmap Index Scan on n_1 (actual rows=5000 loops=1)
@@ -373,7 +655,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
    innerScanLoops: 5000 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2500), (isInequality: true, estimatedEntryCount: 0)]
-   ->  Index Scan using n_1 on documents_22003 collection (actual rows=2500 loops=1)
+   ->  Index Scan using n_1 on documents_22004 collection (actual rows=2500 loops=1)
          Index Cond: ((document @>= '{ "n" : { "$numberInt" : "1" } }'::bson) AND (document @!& '{ "n" : [ { "$numberInt" : "0" } ] }'::bson))
          Order By: (document |-<> '{ "n" : { "$numberInt" : "1" } }'::bson)
 (12 rows)
@@ -393,7 +675,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
    innerScanLoops: 5000 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2500), (isInequality: true, estimatedEntryCount: 0)]
-   ->  Index Scan using n_1 on documents_22003 collection (actual rows=2500 loops=1)
+   ->  Index Scan using n_1 on documents_22004 collection (actual rows=2500 loops=1)
          Index Cond: ((document @>= '{ "n" : { "$numberInt" : "1" } }'::bson) AND (document @& '{ "n" : [ { "$numberInt" : "0" } ] }'::bson))
          Order By: (document |-<> '{ "n" : { "$numberInt" : "1" } }'::bson)
 (12 rows)
@@ -413,7 +695,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
    innerScanLoops: 5000 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2500)]
-   ->  Index Scan using n_1 on documents_22003 collection (actual rows=2500 loops=1)
+   ->  Index Scan using n_1 on documents_22004 collection (actual rows=2500 loops=1)
          Index Cond: ((document @>= '{ "n" : { "$numberInt" : "1" } }'::bson) AND (document @% '{ "n" : [ { "$numberInt" : "2" }, { "$numberInt" : "0" } ] }'::bson))
          Order By: (document |-<> '{ "n" : { "$numberInt" : "1" } }'::bson)
 (12 rows)
@@ -454,7 +736,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
    innerScanLoops: 5000 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2500), (isInequality: true, estimatedEntryCount: 0)]
-   ->  Index Scan using n_1 on documents_22003 collection (actual rows=2500 loops=1)
+   ->  Index Scan using n_1 on documents_22004 collection (actual rows=2500 loops=1)
          Index Cond: ((document @<= '{ "n" : { "$numberInt" : "5000" } }'::bson) AND (document @!& '{ "n" : [ { "$numberInt" : "0" } ] }'::bson))
          Order By: (document OPERATOR(documentdb_api_internal.<>-|) '{ "n" : { "$numberInt" : "-1" } }'::bson)
 (13 rows)
@@ -510,7 +792,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
          highKeyEligiblePages: 33 pages
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22004 collection (actual rows=5000 loops=1)
+         ->  Bitmap Heap Scan on documents_22005 collection (actual rows=5000 loops=1)
                Recheck Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
                Heap Blocks: exact=47
                ->  Bitmap Index Scan on a_1 (actual rows=5000 loops=1)
@@ -536,7 +818,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
          highKeyEligiblePages: 33 pages
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22004 collection (actual rows=5000 loops=1)
+         ->  Bitmap Heap Scan on documents_22005 collection (actual rows=5000 loops=1)
                Recheck Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
                Heap Blocks: exact=47
                ->  Bitmap Index Scan on a_1 (actual rows=5000 loops=1)
@@ -599,7 +881,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
          highKeyEligiblePages: 20 pages
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22005 collection (actual rows=5000 loops=1)
+         ->  Bitmap Heap Scan on documents_22006 collection (actual rows=5000 loops=1)
                Recheck Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
                Heap Blocks: exact=45
                ->  Bitmap Index Scan on a_1 (actual rows=5000 loops=1)
@@ -625,7 +907,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
          highKeyEligiblePages: 20 pages
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22005 collection (actual rows=5000 loops=1)
+         ->  Bitmap Heap Scan on documents_22006 collection (actual rows=5000 loops=1)
                Recheck Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
                Heap Blocks: exact=45
                ->  Bitmap Index Scan on a_1 (actual rows=5000 loops=1)
@@ -689,7 +971,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
          innerScanLoops: 5000 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22006 collection (actual rows=5000 loops=1)
+         ->  Bitmap Heap Scan on documents_22007 collection (actual rows=5000 loops=1)
                Recheck Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
                Heap Blocks: exact=52
                ->  Bitmap Index Scan on a_1_b_1_c_1 (actual rows=5000 loops=1)
@@ -714,7 +996,7 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
          innerScanLoops: 5000 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5000)]
-         ->  Bitmap Heap Scan on documents_22006 collection (actual rows=5000 loops=1)
+         ->  Bitmap Heap Scan on documents_22007 collection (actual rows=5000 loops=1)
                Recheck Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
                Heap Blocks: exact=52
                ->  Bitmap Index Scan on a_1_b_1_c_1 (actual rows=5000 loops=1)

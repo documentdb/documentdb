@@ -60,6 +60,7 @@ typedef enum RumIndexTransformOperation
 	RumIndexTransform_DetermineOrderByDirection = 2,
 	RumIndexTransform_OrderedScanRequiresDedup = 3,
 	RumIndexTransform_HighKeyScalarCheck = 4,
+	RumIndexTransform_HighKeyPageIsolated = 5,
 } RumIndexTransformOperation;
 
 
@@ -2759,7 +2760,7 @@ RecheckFunctionsCompatibleWithHighKey(List *recheckFunctions,
 
 
 static Datum
-HighKeyScalarCheck(PG_FUNCTION_ARGS)
+HighKeyScalarCheck(PG_FUNCTION_ARGS, bool pageIsolated)
 {
 	Pointer extraData = PG_GETARG_POINTER(3);
 	CompositeQueryRunData *runData = (CompositeQueryRunData *) extraData;
@@ -2784,13 +2785,40 @@ HighKeyScalarCheck(PG_FUNCTION_ARGS)
 
 	bytea *lowKeyValue = PG_NARGS() > 4 ? PG_GETARG_BYTEA_PP(4) : NULL;
 	SerializedCompositeTermPair lowKeyTerms[INDEX_MAX_KEYS] = { 0 };
+	if (pageIsolated)
+	{
+		if (lowKeyValue == NULL ||
+			LazyInitializeSerializedCompositeIndexTerm(lowKeyValue, lowKeyTerms) !=
+			numTerms)
+		{
+			PG_FREE_IF_COPY(highKeyValue, 0);
+			PG_FREE_IF_COPY(lowKeyValue, 4);
+			return (Datum) 0;
+		}
+	}
 
 	int32_t precheckedPaths = 0;
 	bool priorMatchesEquality = true;
 	bool hasEqualityPrefix = true;
+	bool lowPriorMatchesEquality = true;
+	bool lowHasEqualityPrefix = true;
 	bool allowSkipScanBoundaries = false;
 	for (int compareIndex = 0; compareIndex < numTerms; compareIndex++)
 	{
+		if (compareIndex > 0 && !priorMatchesEquality)
+		{
+			/*
+			 * Suffix values are not monotonic after a non-equality prefix.
+			 * A high key can only prove the equality prefix and its first
+			 * range path.
+			 */
+			break;
+		}
+		if (pageIsolated && compareIndex > 0 && !lowPriorMatchesEquality)
+		{
+			break;
+		}
+
 		if (!IsBoundCompatibleForHighKeyCheck(
 				&runData->indexBounds[compareIndex].lowerBound,
 				runData->indexBounds[compareIndex].isEqualityBound) ||
@@ -2813,6 +2841,19 @@ HighKeyScalarCheck(PG_FUNCTION_ARGS)
 			break;
 		}
 
+		if (pageIsolated)
+		{
+			bool lowHasUnspecifiedPrefix = false;
+			int lowCmp = RunCompareOnPathIndex(
+				runData, lowKeyTerms, allowSkipScanBoundaries,
+				&lowPriorMatchesEquality, &lowHasUnspecifiedPrefix,
+				&lowHasEqualityPrefix, compareIndex);
+			if (lowCmp != 0)
+			{
+				break;
+			}
+		}
+
 		if (!RecheckFunctionsCompatibleWithHighKey(
 				runData->indexBounds[compareIndex].indexRecheckFunctions,
 				serializedTerms, lowKeyTerms,
@@ -2827,6 +2868,11 @@ HighKeyScalarCheck(PG_FUNCTION_ARGS)
 	}
 
 	PG_FREE_IF_COPY(highKeyValue, 0);
+
+	if (lowKeyValue != NULL)
+	{
+		PG_FREE_IF_COPY(lowKeyValue, 4);
+	}
 	return Int32GetDatum(precheckedPaths);
 }
 
@@ -2965,7 +3011,14 @@ gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
 
 		case RumIndexTransform_HighKeyScalarCheck:
 		{
-			PG_RETURN_DATUM(HighKeyScalarCheck(fcinfo));
+			bool pageIsolated = false;
+			PG_RETURN_DATUM(HighKeyScalarCheck(fcinfo, pageIsolated));
+		}
+
+		case RumIndexTransform_HighKeyPageIsolated:
+		{
+			bool pageIsolated = true;
+			PG_RETURN_DATUM(HighKeyScalarCheck(fcinfo, pageIsolated));
 		}
 
 		default:

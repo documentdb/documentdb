@@ -1639,6 +1639,12 @@ fn write_execution_stats_index_usage(detail: &IndexDetails, index_doc: &mut RawD
         }
     }
 
+    if let Some(parallel_scan_loops) = detail.parallel_scan_loops {
+        if parallel_scan_loops > 0 {
+            index_doc.append("parallelScanLoops", smallest_from_i64(parallel_scan_loops));
+        }
+    }
+
     if let Some(scan_type) = detail.scan_type.as_deref() {
         if !scan_type.is_empty() {
             index_doc.append("scanType", scan_type);

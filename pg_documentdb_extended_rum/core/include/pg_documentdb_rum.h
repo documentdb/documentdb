@@ -891,12 +891,21 @@ typedef enum
 }   RumScanType;
 
 
+typedef enum RumParallelScanAction
+{
+	RumParallelScanAction_Proceed,
+	RumParallelScanAction_Rejoin,
+	RumParallelScanAction_Stop,
+} RumParallelScanAction;
+
+
 typedef enum RumIndexTransformOperation
 {
 	RumIndexTransform_IndexGenerateSkipBound = 1,
 	RumIndexTransform_DetermineOrderByDirection = 2,
 	RumIndexTransform_OrderedScanRequiresDedup = 3,
 	RumIndexTransform_HighKeyScalarCheck = 4,
+	RumIndexTransform_HighKeyPageIsolated = 5,
 } RumIndexTransformOperation;
 
 /* Struct that holds information for projecting an index tuple. */
@@ -974,6 +983,9 @@ typedef struct RumScanOpaqueData
 
 	/* on a regular scan, how many loops of scans were done. */
 	uint32_t scanLoops;
+	uint32_t parallelScanLoopsReported;
+	uint32_t parallelScanLoops;
+	int32_t parallelScanEntryIndex;
 	uint32_t numDuplicates;
 
 	/* In an ordered scan, the key pointing to the order by key */
@@ -1029,10 +1041,33 @@ extern void rumparallelrescan(IndexScanDesc scan);
 extern bool rum_parallel_scan_start(IndexScanDesc scan, bool *startScan);
 extern bool rum_parallel_scan_start_notify(IndexScanDesc scan);
 
-extern bool rum_parallel_seize(ParallelIndexScanDesc parallelScan,
-							   BlockNumber *blockNumber);
-extern void rum_parallel_release(ParallelIndexScanDesc parallelScan, BlockNumber
-								 nextBlock);
+extern RumParallelScanAction rum_parallel_seize(ParallelIndexScanDesc parallelScan,
+												RumScanOpaque so,
+												BlockNumber *blockNumber,
+												int32_t *sharedEntryIndex);
+
+extern RumParallelScanAction rum_parallel_seize_for_move(ParallelIndexScanDesc
+														 parallelScan,
+														 RumScanOpaque so,
+														 BlockNumber currentBlock,
+														 int32_t *sharedEntryIndex);
+extern RumParallelScanAction rum_parallel_seize_for_rewalk(ParallelIndexScanDesc
+														   parallelScan,
+														   RumScanOpaque so,
+														   BlockNumber currentBlock,
+														   int32_t *sharedEntryIndex);
+extern void rum_parallel_release(ParallelIndexScanDesc parallelScan,
+								 BlockNumber nextBlock,
+								 BlockNumber currentBlock);
+extern void rum_parallel_release_for_move(ParallelIndexScanDesc parallelScan,
+										  BlockNumber nextBlock,
+										  BlockNumber currentBlock,
+										  int32_t foundEntryIndex);
+extern void rum_parallel_scan_done(ParallelIndexScanDesc parallelScan,
+								   RumScanOpaque so);
+extern void rum_parallel_move_scan_done(ParallelIndexScanDesc parallelScan,
+										RumScanOpaque so,
+										int32_t newEntryIndex);
 
 /* rumget.c */
 extern int64 rumgetbitmap(IndexScanDesc scan, TIDBitmap *tbm);

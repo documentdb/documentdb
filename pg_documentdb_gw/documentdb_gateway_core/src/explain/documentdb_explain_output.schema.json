@@ -535,6 +535,10 @@
           "type": "boolean",
           "description": "Indicates whether the index scan is capable of parallel execution in the current execution. Omitted if not reported by the index."
         },
+        "parallelScanLoops": {
+          "type": "integer",
+          "description": "Number of inner scan loop iterations observed by the reporting backend from participating parallel index scan workers. This is a backend-local snapshot and may not represent the finalized global total because shared parallel scan state may no longer be available when explain output is produced. Omitted for non-parallel scans."
+        },
         "isBackwardScan": {
           "type": "boolean",
           "description": "Indicates whether the index scan is scanning in backward (descending) direction. Omitted if not reported by the index."

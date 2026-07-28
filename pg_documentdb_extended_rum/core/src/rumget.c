@@ -1708,6 +1708,8 @@ startScanEntryOrderedCore(RumScanOpaque so, RumScanEntry minScanEntry, Snapshot 
 	{
 		so->orderByScanData->isPageValid = false;
 	}
+	so->orderByScanData->lastItemMatched = false;
+	so->orderByScanData->highKeyMatchDatum = (Datum) 0;
 
 	so->orderByScanData->canSkipConsistentCheck = false;
 	if (so->nkeys == 1 && !so->keys[0]->orderBy &&
@@ -3862,7 +3864,7 @@ CopyPageContents(Page sourcePage, Page targetPage)
 
 
 static bool
-TryApplyHighKeyOptimization(RumScanOpaque so)
+TryApplyHighKeyOptimization(RumScanOpaque so, RumIndexTransformOperation operation)
 {
 	RumOrderByScanData *scanData = so->orderByScanData;
 
@@ -3907,7 +3909,7 @@ TryApplyHighKeyOptimization(RumScanOpaque so)
 									  attnum - 1],
 		upperBoundDatum,
 		scanData->orderByEntry->queryKey,
-		UInt16GetDatum(RumIndexTransform_HighKeyScalarCheck),
+		UInt16GetDatum(operation),
 		PointerGetDatum(scanData->orderByEntry->extra_data),
 		lowerBoundDatum);
 	if (recheckDatum != (Datum) 0)
@@ -3917,6 +3919,50 @@ TryApplyHighKeyOptimization(RumScanOpaque so)
 	}
 
 	return false;
+}
+
+
+static void
+ApplyHighKeyOptimization(RumScanOpaque so, bool lastItemMatched)
+{
+	RumOrderByScanData *scanData = so->orderByScanData;
+
+	scanData->highKeyMatchDatum = (Datum) 0;
+	if (so->rumstate.rumConfig[scanData->orderByEntry->attnum -
+							   1].enableHighKeyOptimization &&
+		so->totalsearchentries == 1 && scanData->boundEntryTuple == NULL &&
+		lastItemMatched &&
+		PageGetMaxOffsetNumber(scanData->orderByEntryPageCopy) > FirstOffsetNumber &&
+		so->rumstate.canOuterOrdering[scanData->orderByEntry->attnum - 1] &&
+		so->rumstate.outerOrderingFn[scanData->orderByEntry->attnum - 1].fn_nargs == 4)
+	{
+		if (TryApplyHighKeyOptimization(so, RumIndexTransform_HighKeyScalarCheck))
+		{
+			scanData->highKeyEligiblePages++;
+		}
+	}
+}
+
+
+static void
+ApplyParallelHighKeyOptimization(RumScanOpaque so)
+{
+	RumOrderByScanData *scanData = so->orderByScanData;
+
+	scanData->highKeyMatchDatum = (Datum) 0;
+	if (so->rumstate.rumConfig[scanData->orderByEntry->attnum -
+							   1].enableHighKeyOptimization &&
+		so->totalsearchentries == 1 && scanData->boundEntryTuple == NULL &&
+		PageGetMaxOffsetNumber(scanData->orderByEntryPageCopy) > FirstOffsetNumber &&
+		so->rumstate.canOuterOrdering[scanData->orderByEntry->attnum - 1] &&
+		so->rumstate.outerOrderingFn[scanData->orderByEntry->attnum - 1].fn_nargs == 4)
+	{
+		if (TryApplyHighKeyOptimization(so,
+										RumIndexTransform_HighKeyPageIsolated))
+		{
+			scanData->highKeyEligiblePages++;
+		}
+	}
 }
 
 
@@ -4038,26 +4084,7 @@ MoveBuffersForOrderedScan(RumScanOpaque so, RumBtree btree)
 	 * Operator classes that support this opt-in via the rumConfig. We also only do this if there's 1
 	 * search entry since more than 1 requires more support functions to support.
 	 */
-	scanData->highKeyMatchDatum = (Datum) 0;
-	if (so->rumstate.rumConfig[scanData->orderByEntry->attnum -
-							   1].enableHighKeyOptimization &&
-		so->totalsearchentries == 1 && scanData->boundEntryTuple == NULL &&
-		scanData->lastItemMatched &&
-		PageGetMaxOffsetNumber(scanData->orderByEntryPageCopy) > FirstOffsetNumber &&
-		so->rumstate.canOuterOrdering[so->orderByScanData->orderByEntry->
-									  attnum - 1] &&
-		so->rumstate.outerOrderingFn[so->orderByScanData->orderByEntry->
-									 attnum - 1].fn_nargs == 4)
-	{
-		if (!TryApplyHighKeyOptimization(so))
-		{
-			scanData->highKeyMatchDatum = (Datum) 0;
-		}
-		else
-		{
-			scanData->highKeyEligiblePages++;
-		}
-	}
+	ApplyHighKeyOptimization(so, scanData->lastItemMatched);
 
 	return true;
 
@@ -4066,6 +4093,72 @@ cleanupOnMissing:
 	scanData->orderByEntry->isFinished = true;
 	LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
 	return false;
+}
+
+
+static void
+SynchronizeParallelOrderedScanEntry(RumScanOpaque so, int32_t sharedEntryIndex)
+{
+	RumOrderByScanData *scanData = so->orderByScanData;
+	RumScanEntry sharedEntry;
+
+	if (sharedEntryIndex < 0 || sharedEntryIndex >= (int32_t) so->totalentries)
+	{
+		ereport(ERROR, (errmsg("invalid shared ordered scan entry index %d",
+							   sharedEntryIndex)));
+	}
+	if (sharedEntryIndex >= (int32_t) so->totalsearchentries)
+	{
+		ereport(ERROR, (errmsg("shared ordered scan entry is not a search entry")));
+	}
+
+	sharedEntry = so->entries[sharedEntryIndex];
+	if (sharedEntry == NULL)
+	{
+		ereport(ERROR, (errmsg("shared ordered scan entry is null")));
+	}
+
+	if (so->numKilled > 0)
+	{
+		rumFlushKilledEntries(so);
+	}
+
+	for (int32_t i = 0; i < (int32_t) so->totalsearchentries; i++)
+	{
+		RumScanEntry candidate = so->entries[i];
+
+		if (candidate == sharedEntry)
+		{
+			ResetEntryItem(candidate);
+			continue;
+		}
+		if (candidate->isFinished)
+		{
+			continue;
+		}
+
+		/* If entries now become finished due to us advancing forward, mark them as such */
+		int cmp = rumCompareAttEntries(&so->rumstate,
+									   candidate->attnum,
+									   candidate->queryKey,
+									   candidate->queryCategory,
+									   sharedEntry->attnum,
+									   sharedEntry->queryKey,
+									   sharedEntry->queryCategory);
+
+		if (ScanDirectionIsBackward(so->orderScanDirection))
+		{
+			cmp = -cmp;
+		}
+
+		candidate->isFinished = cmp < 0;
+	}
+
+	scanData->orderByEntry = sharedEntry;
+	sharedEntry->isFinished = false;
+	so->parallelScanEntryIndex = sharedEntryIndex;
+	scanData->isPageValid = false;
+	scanData->needsParallelSeize = true;
 }
 
 
@@ -4095,13 +4188,28 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 			LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
 		}
 
+		scanData->highKeyMatchDatum = (Datum) 0;
 		while (true)
 		{
 			BlockNumber startingBlock;
-			bool hasMore = rum_parallel_seize(parallelScan, &startingBlock);
-			if (!hasMore)
+			int32_t sharedEntryIndex = -1;
+			RumParallelScanAction action = rum_parallel_seize(
+				parallelScan, so, &startingBlock, &sharedEntryIndex);
+
+			if (action == RumParallelScanAction_Stop)
 			{
+				/* Some other worker scanned and hit the end of the scan
+				 * No more items to scan.
+				 */
 				return false;
+			}
+			else if (action == RumParallelScanAction_Rejoin)
+			{
+				/* Some other thread hit an end of a scanEntry and moved the scan
+				 * forward to a different entry - synchronize with the other worker.
+				 */
+				SynchronizeParallelOrderedScanEntry(so, sharedEntryIndex);
+				continue;
 			}
 
 			scanData->needsParallelSeize = false;
@@ -4118,7 +4226,8 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 					page = BufferGetPage(scanData->orderStack->buffer);
 					CopyPageContents(page, scanData->orderByEntryPageCopy);
 					scanData->isPageValid = true;
-					rum_parallel_release(parallelScan, RumPageRightLink(page));
+					rum_parallel_release(parallelScan, RumPageRightLink(page),
+										 scanData->orderStack->blkno);
 					LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
 				}
 				else
@@ -4126,8 +4235,11 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 					/* Page already copied in startScanEntryOrderedCore — just register rightlink */
 					rum_parallel_release(parallelScan,
 										 RumPageGetOpaque(
-											 scanData->orderByEntryPageCopy)->rightlink);
+											 scanData->orderByEntryPageCopy)->rightlink,
+										 scanData->orderStack->blkno);
 				}
+
+				/* This is the first page, don't apply high key here */
 				return true;
 			}
 
@@ -4148,7 +4260,7 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 
 			/* Let other threads move on with the next buffer */
 			/* In the forward scan we store the right link as read right now in the parallel data */
-			rum_parallel_release(parallelScan, RumPageRightLink(page));
+			rum_parallel_release(parallelScan, RumPageRightLink(page), startingBlock);
 			if (RumPageIsDeleted(page) || RumPageIsHalfDead(page))
 			{
 				LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
@@ -4162,6 +4274,12 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 				scanData->orderStack->off = FirstOffsetNumber;
 
 				LockBuffer(scanData->orderStack->buffer, RUM_UNLOCK);
+
+				/* Only apply if there's more than lowkey, highkey and one element */
+				if (PageGetMaxOffsetNumber(scanData->orderByEntryPageCopy) > 3)
+				{
+					ApplyParallelHighKeyOptimization(so);
+				}
 				return true;
 			}
 		}
@@ -4175,6 +4293,122 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 
 
 static bool
+FindScanEntryIndex(RumScanOpaque so, RumScanEntry targetEntry, int32_t *entryIndex)
+{
+	for (int32 i = 0; i < so->totalentries; i++)
+	{
+		if (so->entries[i] == targetEntry)
+		{
+			*entryIndex = i;
+			return true;
+		}
+	}
+
+	*entryIndex = -1;
+	return false;
+}
+
+
+static void
+SetParallelScanEntryIndex(RumScanOpaque so)
+{
+	if (!FindScanEntryIndex(so, so->orderByScanData->orderByEntry,
+							&so->parallelScanEntryIndex))
+	{
+		ereport(ERROR, (errmsg("Could not find orderByEntry in entries")));
+	}
+}
+
+
+static RumParallelScanAction
+ResetScanForwardWithEntryForParallel(RumScanOpaque so, ParallelIndexScanDesc parallelScan,
+									 RumScanEntry newMinEntry, Snapshot snapshot)
+{
+	/* Find the index of the entry */
+	int32_t newEntryIndex = -1;
+	if (!FindScanEntryIndex(so, newMinEntry, &newEntryIndex))
+	{
+		ereport(ERROR, (errmsg("Could not find ordered scan entry in entries")));
+	}
+
+	int32_t sharedEntryIndex = -1;
+	BlockNumber currentBlock = so->orderByScanData->orderStack->blkno;
+	RumParallelScanAction action = rum_parallel_seize_for_move(
+		parallelScan, so, currentBlock, &sharedEntryIndex);
+
+	if (action == RumParallelScanAction_Rejoin)
+	{
+		SynchronizeParallelOrderedScanEntry(so, sharedEntryIndex);
+		return RumParallelScanAction_Rejoin;
+	}
+	else if (action == RumParallelScanAction_Stop)
+	{
+		return RumParallelScanAction_Stop;
+	}
+
+	/* We are responsible for moving the entry forward. */
+	rumFlushKilledEntries(so);
+	startScanEntryOrderedCore(so, newMinEntry, snapshot);
+	newMinEntry->isFinished = false;
+
+	if (!so->orderByScanData->orderStack)
+	{
+		/* There is no entry left - close scan */
+		rum_parallel_move_scan_done(parallelScan, so, newEntryIndex);
+		return RumParallelScanAction_Stop;
+	}
+
+	/* We have a buffer and a page from the walk ready */
+	so->orderByScanData->needsParallelSeize = false;
+	so->parallelScanEntryIndex = newEntryIndex;
+	rum_parallel_release_for_move(
+		parallelScan,
+		RumPageGetOpaque(so->orderByScanData->orderByEntryPageCopy)->rightlink,
+		so->orderByScanData->orderStack->blkno,
+		newEntryIndex);
+	return RumParallelScanAction_Proceed;
+}
+
+
+static RumParallelScanAction
+RewalkScanForwardForParallel(RumScanOpaque so, ParallelIndexScanDesc parallelScan,
+							 RumScanEntry entry, Snapshot snapshot)
+{
+	int32_t sharedEntryIndex = -1;
+	BlockNumber currentBlock = so->orderByScanData->orderStack->blkno;
+	RumParallelScanAction action = rum_parallel_seize_for_rewalk(
+		parallelScan, so, currentBlock, &sharedEntryIndex);
+
+	if (action == RumParallelScanAction_Rejoin)
+	{
+		SynchronizeParallelOrderedScanEntry(so, sharedEntryIndex);
+		return RumParallelScanAction_Rejoin;
+	}
+	else if (action == RumParallelScanAction_Stop)
+	{
+		return RumParallelScanAction_Stop;
+	}
+
+	rumFlushKilledEntries(so);
+	startScanEntryOrderedCore(so, entry, snapshot);
+	entry->isFinished = false;
+
+	if (!so->orderByScanData->orderStack)
+	{
+		rum_parallel_scan_done(parallelScan, so);
+		return RumParallelScanAction_Stop;
+	}
+
+	so->orderByScanData->needsParallelSeize = false;
+	rum_parallel_release(
+		parallelScan,
+		RumPageGetOpaque(so->orderByScanData->orderByEntryPageCopy)->rightlink,
+		so->orderByScanData->orderStack->blkno);
+	return RumParallelScanAction_Proceed;
+}
+
+
+static bool
 MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc parallelScan)
 {
 	Page page;
@@ -4184,6 +4418,7 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 	bool isIndexMatch;
 	bool markedEntryFinished = false;
 	bool scanFinished = false, canSkipCheck = false;
+	bool isParallelPageScan = parallelScan != NULL && so->isParallelEnabled;
 	RumScanEntry entry = so->orderByScanData->orderByEntry;
 	RumBtree orderedBtree = &so->orderByScanData->orderByBtree;
 
@@ -4198,7 +4433,7 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 		/*
 		 * stack->off points to the interested entry, buffer is already locked
 		 */
-		bool moveResult = (parallelScan && so->isParallelEnabled) ?
+		bool moveResult = isParallelPageScan ?
 						  MoveBuffersForOrderedScanParallel(so, orderedBtree,
 															parallelScan) :
 						  MoveBuffersForOrderedScan(so, orderedBtree);
@@ -4207,6 +4442,7 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 		{
 			return false;
 		}
+		entry = so->orderByScanData->orderByEntry;
 
 		page = so->orderByScanData->orderByEntryPageCopy;
 
@@ -4227,6 +4463,10 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 
 			ItemPointerSetInvalid(&entry->curItem.iptr);
 			entry->isFinished = true;
+			if (isParallelPageScan)
+			{
+				rum_parallel_scan_done(parallelScan, so);
+			}
 			return false;
 		}
 
@@ -4262,6 +4502,10 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 		{
 			if (scanFinished)
 			{
+				if (isParallelPageScan)
+				{
+					rum_parallel_scan_done(parallelScan, so);
+				}
 				return false;
 			}
 
@@ -4279,20 +4523,59 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 														 newMinEntry->queryCategory);
 					if (cmp > 0)
 					{
-						/* start the orderedScan again with the new entry now */
-						rumFlushKilledEntries(so);
-						startScanEntryOrderedCore(so, newMinEntry, snapshot);
-						newMinEntry->isFinished = false;
-						entry = so->orderByScanData->orderByEntry;
-						if (!so->orderByScanData->orderStack)
+						if (!isParallelPageScan)
 						{
-							/* There is no entry left - close scan */
-							return false;
+							/* start the orderedScan again with the new entry now */
+							rumFlushKilledEntries(so);
+							startScanEntryOrderedCore(so, newMinEntry, snapshot);
+							newMinEntry->isFinished = false;
+							entry = so->orderByScanData->orderByEntry;
+							if (!so->orderByScanData->orderStack)
+							{
+								/* There is no entry left - close scan */
+								return false;
+							}
+							else
+							{
+								/* move right and continue */
+								continue;
+							}
 						}
 						else
 						{
-							/* move right and continue */
-							continue;
+							orderedBtree->entryKey = newMinEntry->queryKey;
+							if (entryIsMoveRight(orderedBtree, page))
+							{
+								/* If resetting the scan key means moving off this page,
+								 * Then, move forward
+								 */
+								RumParallelScanAction action =
+									ResetScanForwardWithEntryForParallel(
+										so, parallelScan, newMinEntry, snapshot);
+								if (action == RumParallelScanAction_Stop)
+								{
+									return false;
+								}
+
+								entry = so->orderByScanData->orderByEntry;
+								continue;
+							}
+							else
+							{
+								/* The new key is found directly on this page continue - but skip to that offset */
+								OffsetNumber targetOffset =
+									so->orderByScanData->orderStack->off;
+								entryLocateLeafEntryBounds(orderedBtree, page,
+														   so->orderByScanData->orderStack
+														   ->off,
+														   PageGetMaxOffsetNumber(page),
+														   &targetOffset);
+								if (targetOffset > so->orderByScanData->orderStack->off)
+								{
+									so->orderByScanData->orderStack->off = targetOffset;
+									continue;
+								}
+							}
 						}
 					}
 
@@ -4345,23 +4628,39 @@ MoveScanForward(RumScanOpaque so, Snapshot snapshot, ParallelIndexScanDesc paral
 
 				MemoryContextReset(so->tempCtx);
 
-				if (resetScan && parallelScan == NULL)
+				if (resetScan)
 				{
 					/* Check if it's worth moving to the next page */
 					orderedBtree->entryKey = entry->queryKeyOverride;
 					if (entryIsMoveRight(orderedBtree, page))
 					{
-						rumFlushKilledEntries(so);
-						startScanEntryOrderedCore(so, entry, snapshot);
-						entry->isFinished = false;
-						if (!so->orderByScanData->orderStack)
+						if (!isParallelPageScan)
 						{
-							/* There is no entry left - close scan */
-							return false;
+							rumFlushKilledEntries(so);
+							startScanEntryOrderedCore(so, entry, snapshot);
+							entry->isFinished = false;
+							if (!so->orderByScanData->orderStack)
+							{
+								/* There is no entry left - close scan */
+								return false;
+							}
+							else
+							{
+								/* move right and continue */
+								continue;
+							}
 						}
 						else
 						{
-							/* move right and continue */
+							RumParallelScanAction action =
+								RewalkScanForwardForParallel(
+									so, parallelScan, entry, snapshot);
+							if (action == RumParallelScanAction_Stop)
+							{
+								return false;
+							}
+
+							entry = so->orderByScanData->orderByEntry;
 							continue;
 						}
 					}
@@ -4892,6 +5191,10 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 			if (runStartScan)
 			{
 				startScan(scan);
+				if (so->scanType == RumOrderedScan)
+				{
+					SetParallelScanEntryIndex(so);
+				}
 				so->isParallelEnabled = rum_parallel_scan_start_notify(scan);
 			}
 			else if (!isScanParallelValid)
@@ -4912,6 +5215,7 @@ rumgettuple(IndexScanDesc scan, ScanDirection direction)
 				 */
 				so->isParallelEnabled = true;
 				startScan(scan);
+				SetParallelScanEntryIndex(so);
 			}
 		}
 		else

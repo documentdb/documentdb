@@ -16,12 +16,36 @@ SELECT documentdb_api.create_collection('highkeydb', 'single_key');
 SELECT COUNT(documentdb_api.insert_one('highkeydb', 'single_key', bson_build_document('_id', i, 'a', i, 'b', i))) FROM generate_series(1, 5000) i;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('highkeydb',
     '{ "createIndexes": "single_key", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableCompositeTerm": true } ] }'::bson, TRUE);
+SELECT collection_id AS single_key_collection_id
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'highkeydb' AND collection_name = 'single_key' \gset
 
 -- Compound composite index over two fields.
 SELECT documentdb_api.create_collection('highkeydb', 'compound_key');
 SELECT COUNT(documentdb_api.insert_one('highkeydb', 'compound_key', bson_build_document('_id', i, 'a', i, 'b', i * 2))) FROM generate_series(1, 5000) i;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('highkeydb',
     '{ "createIndexes": "compound_key", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_1_b_1", "enableCompositeTerm": true } ] }'::bson, TRUE);
+
+-- Compound data with a non-monotonic suffix. Most page endpoints satisfy
+-- b > 50, while every seventh tuple does not.
+SELECT documentdb_api.create_collection('highkeydb', 'page_isolated_suffix');
+SELECT COUNT(documentdb_api.insert_one(
+    'highkeydb',
+    'page_isolated_suffix',
+    bson_build_document(
+        '_id', i,
+        'a', i,
+        'b', CASE WHEN i % 7 = 0 THEN 0 ELSE 100 END)))
+FROM generate_series(1, 5000) i;
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'highkeydb',
+    '{ "createIndexes": "page_isolated_suffix", "indexes": [
+        { "key": { "a": 1, "b": 1 }, "name": "a_1_b_1", "enableCompositeTerm": true }
+    ] }'::bson,
+    TRUE);
+SELECT collection_id AS page_isolated_suffix_collection_id
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'highkeydb' AND collection_name = 'page_isolated_suffix' \gset
 
 set documentdb.enableExtendedExplainPlans to on;
 set documentdb.enableExplainScanIndexCosts to off;
@@ -85,6 +109,208 @@ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OF
 -- Sanity check that the optimization does not change query results.
 SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "single_key", "filter": { "a": { "$gte": 4000 } }, "sort": { "a": 1 } }'::bson)) sub;
 SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_find('highkeydb', '{ "find": "single_key", "filter": { "a": { "$lte": 2500 } }, "sort": { "a": 1 } }'::bson)) sub;
+
+-- ============================================================================
+-- Parallel scans do not depend on predecessor-page state. After processing the
+-- first few tuples on an isolated page, both page bounds must satisfy the scan
+-- before the remaining per-item comparisons can use the high key result.
+-- ============================================================================
+SELECT FORMAT(
+    'ALTER TABLE documentdb_data.documents_%s SET (parallel_workers = 2)',
+    :single_key_collection_id) \gexec
+SELECT FORMAT(
+    'VACUUM (FREEZE, ANALYZE) documentdb_data.documents_%s',
+    :single_key_collection_id) \gexec
+
+set documentdb.enableCompositeParallelIndexScan to off;
+set documentdb.forceParallelScanIfAvailable to off;
+set max_parallel_workers_per_gather to 0;
+
+CREATE TEMP TABLE serial_parallel_high_key_results AS
+SELECT document
+FROM bson_aggregation_find(
+    'highkeydb',
+    '{ "find": "single_key", "filter": { "a": { "$gte": 1 } }, "sort": { "a": 1 } }'::bson);
+ALTER TABLE serial_parallel_high_key_results
+    ADD COLUMN result_order bigint GENERATED ALWAYS AS IDENTITY;
+
+set documentdb.enableCompositeParallelIndexScan to on;
+set documentdb.forceParallelScanIfAvailable to on;
+set documentdb.enableAddShardKeyOnlyOnPrimaryKeyFilters to on;
+set min_parallel_index_scan_size to 0;
+set min_parallel_table_scan_size to 0;
+set parallel_setup_cost to 0;
+set parallel_tuple_cost to 0;
+set max_parallel_workers_per_gather to 2;
+set parallel_leader_participation to on;
+
+SELECT
+    BOOL_OR(explain_line LIKE '%Workers Planned:%')
+        AS uses_parallel_index_scan,
+    BOOL_OR(explain_line ~ 'highKeyEligiblePages: [1-9][0-9]* pages')
+        AS uses_page_isolated_high_key
+FROM documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find(
+        'highkeydb',
+        '{ "find": "single_key", "filter": { "a": { "$gte": 1 } }, "sort": { "a": 1 } }'::bson)
+$cmd$) AS explain_line;
+
+CREATE TEMP TABLE parallel_high_key_results AS
+SELECT document
+FROM bson_aggregation_find(
+    'highkeydb',
+    '{ "find": "single_key", "filter": { "a": { "$gte": 1 } }, "sort": { "a": 1 } }'::bson);
+ALTER TABLE parallel_high_key_results
+    ADD COLUMN result_order bigint GENERATED ALWAYS AS IDENTITY;
+
+SELECT COUNT(*) FROM parallel_high_key_results;
+SELECT COUNT(*) FROM (
+    SELECT result_order, document FROM serial_parallel_high_key_results
+    EXCEPT
+    SELECT result_order, document FROM parallel_high_key_results
+) missing_or_misordered_results;
+SELECT COUNT(*) FROM (
+    SELECT result_order, document FROM parallel_high_key_results
+    EXCEPT
+    SELECT result_order, document FROM serial_parallel_high_key_results
+) extra_or_misordered_results;
+
+-- Page endpoints cannot prove suffix bounds after a non-equality leading path.
+-- Verify the page-isolated operation does not skip the b > 50 comparison.
+SELECT FORMAT(
+    'ALTER TABLE documentdb_data.documents_%s SET (parallel_workers = 2)',
+    :page_isolated_suffix_collection_id) \gexec
+SELECT FORMAT(
+    'VACUUM (FREEZE, ANALYZE) documentdb_data.documents_%s',
+    :page_isolated_suffix_collection_id) \gexec
+
+set documentdb.enableCompositeParallelIndexScan to off;
+set documentdb.forceParallelScanIfAvailable to off;
+set max_parallel_workers_per_gather to 0;
+
+CREATE TEMP TABLE serial_page_isolated_suffix_results AS
+SELECT document
+FROM bson_aggregation_find(
+    'highkeydb',
+    '{ "find": "page_isolated_suffix",
+       "filter": { "a": { "$gte": 1, "$lte": 5000 }, "b": { "$gt": 50 } },
+       "sort": { "a": 1 } }'::bson);
+ALTER TABLE serial_page_isolated_suffix_results
+    ADD COLUMN result_order bigint GENERATED ALWAYS AS IDENTITY;
+
+set documentdb.enableCompositeParallelIndexScan to on;
+set documentdb.forceParallelScanIfAvailable to on;
+set max_parallel_workers_per_gather to 2;
+
+SELECT
+    BOOL_OR(explain_line LIKE '%Workers Planned:%')
+        AS uses_parallel_index_scan,
+    BOOL_OR(explain_line ~ 'highKeyEligiblePages: [1-9][0-9]* pages')
+        AS uses_page_isolated_high_key
+FROM documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find(
+        'highkeydb',
+        '{ "find": "page_isolated_suffix",
+           "filter": { "a": { "$gte": 1, "$lte": 5000 }, "b": { "$gt": 50 } },
+           "sort": { "a": 1 } }'::bson)
+$cmd$) AS explain_line;
+
+CREATE TEMP TABLE parallel_page_isolated_suffix_results AS
+SELECT document
+FROM bson_aggregation_find(
+    'highkeydb',
+    '{ "find": "page_isolated_suffix",
+       "filter": { "a": { "$gte": 1, "$lte": 5000 }, "b": { "$gt": 50 } },
+       "sort": { "a": 1 } }'::bson);
+ALTER TABLE parallel_page_isolated_suffix_results
+    ADD COLUMN result_order bigint GENERATED ALWAYS AS IDENTITY;
+
+SELECT COUNT(*) FROM parallel_page_isolated_suffix_results;
+SELECT COUNT(*) FROM (
+    SELECT result_order, document FROM serial_page_isolated_suffix_results
+    EXCEPT
+    SELECT result_order, document FROM parallel_page_isolated_suffix_results
+) missing_or_misordered_results;
+SELECT COUNT(*) FROM (
+    SELECT result_order, document FROM parallel_page_isolated_suffix_results
+    EXCEPT
+    SELECT result_order, document FROM serial_page_isolated_suffix_results
+) extra_or_misordered_results;
+
+-- A scalar-array skip rewalk resets the inherited state. Verify that the
+-- parallel reposition preserves the complete ordered result while later pages
+-- remain free to establish new high key state from their own processed tuples.
+set documentdb.max_non_ordered_term_scan_threshold to 1;
+
+WITH raw_values AS (
+    SELECT ARRAY[10] || ARRAY_AGG(i) AS a_values
+    FROM generate_series(4001, 5000) AS i
+)
+SELECT bson_build_document(
+    'find', 'single_key'::text,
+    'filter', bson_build_document(
+        'a', bson_build_document('$in', a_values)),
+    'sort', bson_build_document('a', 1))::bson AS high_key_saop_query_spec
+FROM raw_values \gset
+
+set documentdb.enableCompositeParallelIndexScan to off;
+set documentdb.forceParallelScanIfAvailable to off;
+set max_parallel_workers_per_gather to 0;
+
+CREATE TEMP TABLE serial_high_key_saop_results AS
+SELECT document
+FROM bson_aggregation_find(
+    'highkeydb',
+    :'high_key_saop_query_spec'::bson);
+ALTER TABLE serial_high_key_saop_results
+    ADD COLUMN result_order bigint GENERATED ALWAYS AS IDENTITY;
+
+set documentdb.enableCompositeParallelIndexScan to on;
+set documentdb.forceParallelScanIfAvailable to on;
+set max_parallel_workers_per_gather to 2;
+
+SELECT
+    BOOL_OR(explain_line LIKE '%Workers Planned:%')
+        AS uses_parallel_index_scan
+FROM documentdb_test_helpers.run_explain_and_trim(
+    FORMAT(
+        'EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) ' ||
+        'SELECT document FROM bson_aggregation_find(%L, %L::bson)',
+        'highkeydb',
+        :'high_key_saop_query_spec')) AS explain_line;
+
+CREATE TEMP TABLE parallel_high_key_saop_results AS
+SELECT document
+FROM bson_aggregation_find(
+    'highkeydb',
+    :'high_key_saop_query_spec'::bson);
+ALTER TABLE parallel_high_key_saop_results
+    ADD COLUMN result_order bigint GENERATED ALWAYS AS IDENTITY;
+
+SELECT COUNT(*) FROM parallel_high_key_saop_results;
+SELECT COUNT(*) FROM (
+    SELECT result_order, document FROM serial_high_key_saop_results
+    EXCEPT
+    SELECT result_order, document FROM parallel_high_key_saop_results
+) missing_or_misordered_results;
+SELECT COUNT(*) FROM (
+    SELECT result_order, document FROM parallel_high_key_saop_results
+    EXCEPT
+    SELECT result_order, document FROM serial_high_key_saop_results
+) extra_or_misordered_results;
+
+reset documentdb.max_non_ordered_term_scan_threshold;
+reset documentdb.enableCompositeParallelIndexScan;
+reset documentdb.forceParallelScanIfAvailable;
+reset documentdb.enableAddShardKeyOnlyOnPrimaryKeyFilters;
+reset min_parallel_index_scan_size;
+reset min_parallel_table_scan_size;
+reset parallel_setup_cost;
+reset parallel_tuple_cost;
+reset max_parallel_workers_per_gather;
+reset parallel_leader_participation;
 
 -- ============================================================================
 -- Index recheck predicates disable the high key optimization.

@@ -43,15 +43,26 @@ typedef enum RumParallelScanState
 	RumParallelScanState_StartScanDone = 2,
 	RumParallelScanState_Idle = 3,
 	RumParallelScanState_ScanningTree = 4,
-	RumParallelScanState_Done = 5,
+	RumParallelScanState_MovingEntry = 5,
+	RumParallelScanState_Done = 6,
 } RumParallelScanState;
+
+typedef enum RumParallelSeizePurpose
+{
+	RumParallelSeizePage,
+	RumParallelSeizeEntryMove,
+	RumParallelSeizeTreeRewalk,
+} RumParallelSeizePurpose;
 
 typedef struct RumParallelScanDescData
 {
 	BlockNumber rum_ps_current_page; /* latest or next page to be scanned */
+	BlockNumber rum_ps_last_current_page; /* page that supplied current page */
 	RumParallelScanState parallel_scan_state;
 	bool isParallelScanEligible;
 	RumScanType exec_scan_type;
+	uint32 parallelScanLoops;
+	int32_t entryIndex;
 	slock_t rum_ps_mutex;           /* protects shared parallel state */
 	ConditionVariable rum_ps_cv;    /* used to synchronize parallel scan */
 } RumParallelScanDescData;
@@ -64,6 +75,15 @@ typedef struct ExplainWriterFuncs
 	void (*writeInteger)(const char *name, const char *label, int32_t value,
 						 void *writer);
 } ExplainWriterFuncs;
+
+static inline void
+ReportParallelScanLoops(RumParallelScanDescData *psdata, RumScanOpaque so)
+{
+	psdata->parallelScanLoops += so->scanLoops - so->parallelScanLoopsReported;
+	so->parallelScanLoopsReported = so->scanLoops;
+	so->parallelScanLoops = psdata->parallelScanLoops;
+}
+
 
 RMGR_PG_FUNCTION_INFO_V1(try_explain_documentdb_rum_index);
 
@@ -80,23 +100,10 @@ rumbeginscan(Relation rel, int nkeys, int norderbys)
 	rumValidateIndexVersion(scan->indexRelation);
 
 	/* allocate private workspace */
-	so = (RumScanOpaque) palloc(sizeof(RumScanOpaqueData));
-	so->sortstate = NULL;
-	so->keys = NULL;
-	so->nkeys = 0;
+	so = (RumScanOpaque) palloc0(sizeof(RumScanOpaqueData));
 	so->firstCall = true;
-	so->isParallelEnabled = false;
-	so->totalentries = 0;
-	so->totalsearchentries = 0;
-	so->sortedEntries = NULL;
-	so->orderByScanData = NULL;
-	so->scanLoops = 0;
-	so->numDuplicates = 0;
-	so->killedItems = NULL;
-	so->numKilled = 0;
-	so->killedItemsSkipped = 0;
-	so->eligibleDeadItems = 0;
 	so->scanType = RumFastScan;
+	so->parallelScanEntryIndex = -1;
 	so->orderByKeyIndex = -1;
 	so->scanNumberOfKeys = nkeys;
 	so->orderScanDirection = ForwardScanDirection;
@@ -1227,10 +1234,34 @@ ruminitparallelscan(void *target)
 {
 	RumParallelScanDescData *rum_ps_target = (RumParallelScanDescData *) target;
 
+	/*
+	 * Parallel ordered scans rely on these invariants:
+	 *
+	 * - Each worker owns independent scan entries, posting state, page copies,
+	 *   and finished flags. During an active scan, a worker that observes a
+	 *   different shared entry must rejoin and synchronize that local state
+	 *   outside the spinlock.
+	 * - Shared entries advance monotonically in scan-key order; entryIndex is
+	 *   only the identity of the active entry. Only the worker whose current
+	 *   page is rum_ps_last_current_page may move the entry or rewalk the tree,
+	 *   so the shared frontier cannot move backward.
+	 * - Skip bounds remain worker-local in queryKeyOverride. Shared page
+	 *   allocation already advances beyond a successful skip, while other
+	 *   workers may independently recompute their next bound.
+	 * - A copied page and its copied sibling link form one consistent page
+	 *   view. Tuples moved by a later split remain in that copy, so bypassing
+	 *   the newly inserted sibling does not omit snapshot-visible entries.
+	 * - Done is terminal. A release that races with completion must not
+	 *   overwrite Done; workers may finish pages they already own, while later
+	 *   seizure attempts stop.
+	 */
 	SpinLockInit(&rum_ps_target->rum_ps_mutex);
 	rum_ps_target->rum_ps_current_page = InvalidBlockNumber;
+	rum_ps_target->rum_ps_last_current_page = InvalidBlockNumber;
 	rum_ps_target->parallel_scan_state = RumParallelScanState_NotInitialized;
 	rum_ps_target->isParallelScanEligible = false;
+	rum_ps_target->parallelScanLoops = 0;
+	rum_ps_target->entryIndex = -1;
 	rum_ps_target->exec_scan_type = RumFastScan;
 	ConditionVariableInit(&rum_ps_target->rum_ps_cv);
 }
@@ -1257,10 +1288,15 @@ rumparallelrescan(IndexScanDesc scan)
 	 */
 	SpinLockAcquire(&psdata->rum_ps_mutex);
 	psdata->rum_ps_current_page = InvalidBlockNumber;
+	psdata->rum_ps_last_current_page = InvalidBlockNumber;
 	psdata->parallel_scan_state = RumParallelScanState_NotInitialized;
 	psdata->isParallelScanEligible = false;
+	psdata->entryIndex = -1;
 	psdata->exec_scan_type = RumFastScan;
 	SpinLockRelease(&psdata->rum_ps_mutex);
+
+	RumScanOpaque so = (RumScanOpaque) scan->opaque;
+	so->parallelScanEntryIndex = -1;
 }
 
 
@@ -1291,6 +1327,11 @@ rum_parallel_scan_start(IndexScanDesc scan, bool *startScan)
 			case RumParallelScanState_NotInitialized:
 			{
 				/* First thread to get here - start parallel scan */
+				psdata->rum_ps_current_page = InvalidBlockNumber;
+				psdata->rum_ps_last_current_page = InvalidBlockNumber;
+				psdata->isParallelScanEligible = false;
+				psdata->entryIndex = -1;
+				psdata->exec_scan_type = RumFastScan;
 				psdata->parallel_scan_state = RumParallelScanState_RunningStartScan;
 				*startScan = true;
 				result = true;
@@ -1310,6 +1351,7 @@ rum_parallel_scan_start(IndexScanDesc scan, bool *startScan)
 			case RumParallelScanState_StartScanDone:
 			case RumParallelScanState_Idle:
 			case RumParallelScanState_ScanningTree:
+			case RumParallelScanState_MovingEntry:
 			case RumParallelScanState_Done:
 			{
 				/* StartScan phase is complete — read the first worker's result */
@@ -1350,14 +1392,22 @@ rum_parallel_scan_start(IndexScanDesc scan, bool *startScan)
 }
 
 
-bool
-rum_parallel_seize(ParallelIndexScanDesc parallelScan, BlockNumber *blockNumber)
+static RumParallelScanAction
+rum_parallel_seize_core(ParallelIndexScanDesc parallelScan, RumScanOpaque so,
+						RumParallelSeizePurpose purpose,
+						BlockNumber currentBlock, BlockNumber *blockNumber,
+						int32_t *sharedEntryIndex)
 {
 	RumParallelScanDescData *psdata;
-	bool result = false;
+	RumParallelScanAction result = RumParallelScanAction_Stop;
 	bool exitLoop = false;
+	bool broadcastWaiters = false;
 
 	Assert(parallelScan);
+	Assert(purpose == RumParallelSeizePage ||
+		   purpose == RumParallelSeizeEntryMove ||
+		   purpose == RumParallelSeizeTreeRewalk);
+	Assert((purpose == RumParallelSeizePage) == (blockNumber != NULL));
 
 	psdata = (RumParallelScanDescData *) ParallelScanGetOpaque(parallelScan);
 
@@ -1372,6 +1422,9 @@ rum_parallel_seize(ParallelIndexScanDesc parallelScan, BlockNumber *blockNumber)
 		 * The error paths below release the spinlock BEFORE calling ereport.
 		 */
 		SpinLockAcquire(&psdata->rum_ps_mutex);
+		ReportParallelScanLoops(psdata, so);
+		*sharedEntryIndex = psdata->entryIndex;
+
 		switch (psdata->parallel_scan_state)
 		{
 			case RumParallelScanState_NotInitialized:
@@ -1385,25 +1438,103 @@ rum_parallel_seize(ParallelIndexScanDesc parallelScan, BlockNumber *blockNumber)
 			}
 
 			case RumParallelScanState_StartScanDone:
+			{
+				if (purpose != RumParallelSeizePage)
+				{
+					SpinLockRelease(&psdata->rum_ps_mutex);
+					ereport(ERROR, (errmsg(
+										"Parallel scan reposition called before page scanning started")));
+				}
+
+				if (so->parallelScanEntryIndex != psdata->entryIndex)
+				{
+					result = RumParallelScanAction_Rejoin;
+					exitLoop = true;
+				}
+				else
+				{
+					*blockNumber = psdata->rum_ps_current_page;
+					psdata->parallel_scan_state = RumParallelScanState_ScanningTree;
+					result = RumParallelScanAction_Proceed;
+					exitLoop = true;
+				}
+				break;
+			}
+
 			case RumParallelScanState_Idle:
 			{
-				*blockNumber = psdata->rum_ps_current_page;
-				result = true;
-				exitLoop = true;
-				psdata->parallel_scan_state = RumParallelScanState_ScanningTree;
+				if (so->parallelScanEntryIndex != psdata->entryIndex)
+				{
+					result = RumParallelScanAction_Rejoin;
+					exitLoop = true;
+				}
+				else if (purpose != RumParallelSeizePage)
+				{
+					if (psdata->rum_ps_last_current_page == currentBlock)
+					{
+						psdata->parallel_scan_state =
+							purpose == RumParallelSeizeEntryMove ?
+							RumParallelScanState_MovingEntry :
+							RumParallelScanState_ScanningTree;
+						result = RumParallelScanAction_Proceed;
+						exitLoop = true;
+					}
+					else
+					{
+						/*
+						 * This worker is behind the shared frontier. Rejoin the
+						 * current entry scan so page handoff can continue.
+						 */
+						result = RumParallelScanAction_Rejoin;
+						exitLoop = true;
+					}
+				}
+				else if (psdata->rum_ps_current_page == InvalidBlockNumber)
+				{
+					if (so->orderByScanData->orderStack != NULL &&
+						so->orderByScanData->orderStack->blkno ==
+						psdata->rum_ps_last_current_page)
+					{
+						psdata->parallel_scan_state = RumParallelScanState_Done;
+						psdata->rum_ps_last_current_page = InvalidBlockNumber;
+						broadcastWaiters = true;
+					}
+					result = RumParallelScanAction_Stop;
+					exitLoop = true;
+				}
+				else
+				{
+					*blockNumber = psdata->rum_ps_current_page;
+					psdata->parallel_scan_state = RumParallelScanState_ScanningTree;
+					result = RumParallelScanAction_Proceed;
+					exitLoop = true;
+				}
 				break;
 			}
 
 			case RumParallelScanState_ScanningTree:
+			case RumParallelScanState_MovingEntry:
 			{
-				result = false;
-				exitLoop = false;
+				if (so->parallelScanEntryIndex != psdata->entryIndex)
+				{
+					/*
+					 * The generation advanced before this worker acquired the
+					 * lock, and another worker already claimed its shared work.
+					 * Synchronize local entry state before waiting on that work.
+					 */
+					result = RumParallelScanAction_Rejoin;
+					exitLoop = true;
+				}
+				else
+				{
+					exitLoop = false;
+				}
 				break;
 			}
 
 			case RumParallelScanState_Done:
 			{
-				result = false;
+				result = RumParallelScanAction_Stop;
 				exitLoop = true;
 				break;
 			}
@@ -1420,6 +1551,12 @@ rum_parallel_seize(ParallelIndexScanDesc parallelScan, BlockNumber *blockNumber)
 		}
 		SpinLockRelease(&psdata->rum_ps_mutex);
 
+		if (broadcastWaiters)
+		{
+			ConditionVariableBroadcast(&psdata->rum_ps_cv);
+			broadcastWaiters = false;
+		}
+
 		if (!exitLoop)
 		{
 			/* Wait for notification */
@@ -1432,11 +1569,48 @@ rum_parallel_seize(ParallelIndexScanDesc parallelScan, BlockNumber *blockNumber)
 }
 
 
-void
-rum_parallel_release(ParallelIndexScanDesc parallelScan, BlockNumber nextBlock)
+RumParallelScanAction
+rum_parallel_seize_for_move(ParallelIndexScanDesc parallelScan,
+							RumScanOpaque so,
+							BlockNumber currentBlock,
+							int32_t *sharedEntryIndex)
+{
+	BlockNumber *blockNumber = NULL;
+	return rum_parallel_seize_core(parallelScan, so, RumParallelSeizeEntryMove,
+								   currentBlock, blockNumber, sharedEntryIndex);
+}
+
+
+RumParallelScanAction
+rum_parallel_seize_for_rewalk(ParallelIndexScanDesc parallelScan,
+							  RumScanOpaque so,
+							  BlockNumber currentBlock,
+							  int32_t *sharedEntryIndex)
+{
+	BlockNumber *blockNumber = NULL;
+	return rum_parallel_seize_core(parallelScan, so, RumParallelSeizeTreeRewalk,
+								   currentBlock, blockNumber, sharedEntryIndex);
+}
+
+
+RumParallelScanAction
+rum_parallel_seize(ParallelIndexScanDesc parallelScan, RumScanOpaque so,
+				   BlockNumber *blockNumber, int32_t *sharedEntryIndex)
+{
+	BlockNumber currentBlock = InvalidBlockNumber;
+	return rum_parallel_seize_core(parallelScan, so, RumParallelSeizePage,
+								   currentBlock, blockNumber, sharedEntryIndex);
+}
+
+
+static void
+rum_parallel_release_core(ParallelIndexScanDesc parallelScan,
+						  BlockNumber nextBlock, BlockNumber currentBlock,
+						  int32_t foundEntryIndex)
 {
 	RumParallelScanDescData *psdata;
-	bool isDone;
+	bool movedEntry = foundEntryIndex >= 0;
+	bool broadcastWaiters = movedEntry || nextBlock == InvalidBlockNumber;
 
 	Assert(parallelScan);
 
@@ -1450,27 +1624,32 @@ rum_parallel_release(ParallelIndexScanDesc parallelScan, BlockNumber nextBlock)
 	 * The error path releases the spinlock BEFORE calling ereport.
 	 */
 	SpinLockAcquire(&psdata->rum_ps_mutex);
-	Assert(psdata->parallel_scan_state == RumParallelScanState_ScanningTree);
-
-	if (nextBlock == InvalidBlockNumber)
+	if (psdata->parallel_scan_state == RumParallelScanState_Done)
 	{
-		psdata->parallel_scan_state = RumParallelScanState_Done;
+		broadcastWaiters = true;
+	}
+	else if (foundEntryIndex >= 0)
+	{
+		Assert(psdata->parallel_scan_state == RumParallelScanState_MovingEntry);
+		psdata->parallel_scan_state = RumParallelScanState_Idle;
 		psdata->rum_ps_current_page = nextBlock;
-		isDone = true;
+		psdata->rum_ps_last_current_page = currentBlock;
+		psdata->entryIndex = foundEntryIndex;
 	}
 	else
 	{
+		Assert(psdata->parallel_scan_state == RumParallelScanState_ScanningTree);
 		psdata->parallel_scan_state = RumParallelScanState_Idle;
 		psdata->rum_ps_current_page = nextBlock;
-		isDone = false;
+		psdata->rum_ps_last_current_page = currentBlock;
 	}
 	SpinLockRelease(&psdata->rum_ps_mutex);
 
 	/*
-	 * Use Signal for Idle (only one worker can seize next) and Broadcast
-	 * for Done (all waiting workers must wake up and exit).
+	 * A generation change or terminal page must wake every waiter. Ordinary
+	 * page handoff only needs one worker.
 	 */
-	if (isDone)
+	if (broadcastWaiters)
 	{
 		ConditionVariableBroadcast(&psdata->rum_ps_cv);
 	}
@@ -1478,6 +1657,70 @@ rum_parallel_release(ParallelIndexScanDesc parallelScan, BlockNumber nextBlock)
 	{
 		ConditionVariableSignal(&psdata->rum_ps_cv);
 	}
+}
+
+
+void
+rum_parallel_release_for_move(ParallelIndexScanDesc parallelScan,
+							  BlockNumber nextBlock, BlockNumber currentBlock,
+							  int32_t foundEntryIndex)
+{
+	rum_parallel_release_core(parallelScan, nextBlock, currentBlock, foundEntryIndex);
+}
+
+
+void
+rum_parallel_release(ParallelIndexScanDesc parallelScan, BlockNumber nextBlock,
+					 BlockNumber currentBlock)
+{
+	int32_t foundEntryIndex = -1;
+	rum_parallel_release_core(parallelScan, nextBlock, currentBlock, foundEntryIndex);
+}
+
+
+void
+rum_parallel_scan_done(ParallelIndexScanDesc parallelScan, RumScanOpaque so)
+{
+	RumParallelScanDescData *psdata =
+		(RumParallelScanDescData *) ParallelScanGetOpaque(parallelScan);
+
+	SpinLockAcquire(&psdata->rum_ps_mutex);
+	ReportParallelScanLoops(psdata, so);
+
+	if (so->parallelScanEntryIndex == psdata->entryIndex)
+	{
+		if (psdata->parallel_scan_state != RumParallelScanState_MovingEntry)
+		{
+			psdata->rum_ps_current_page = InvalidBlockNumber;
+			psdata->rum_ps_last_current_page = InvalidBlockNumber;
+			psdata->parallel_scan_state = RumParallelScanState_Done;
+		}
+	}
+	SpinLockRelease(&psdata->rum_ps_mutex);
+
+	ConditionVariableBroadcast(&psdata->rum_ps_cv);
+}
+
+
+void
+rum_parallel_move_scan_done(ParallelIndexScanDesc parallelScan, RumScanOpaque so,
+							int32_t newEntryIndex)
+{
+	RumParallelScanDescData *psdata =
+		(RumParallelScanDescData *) ParallelScanGetOpaque(parallelScan);
+
+	SpinLockAcquire(&psdata->rum_ps_mutex);
+	Assert(psdata->parallel_scan_state == RumParallelScanState_MovingEntry);
+	ReportParallelScanLoops(psdata, so);
+
+	psdata->entryIndex = newEntryIndex;
+	psdata->rum_ps_current_page = InvalidBlockNumber;
+	psdata->rum_ps_last_current_page = InvalidBlockNumber;
+	psdata->parallel_scan_state = RumParallelScanState_Done;
+	so->parallelScanEntryIndex = newEntryIndex;
+	SpinLockRelease(&psdata->rum_ps_mutex);
+
+	ConditionVariableBroadcast(&psdata->rum_ps_cv);
 }
 
 
@@ -1493,6 +1736,14 @@ rum_parallel_scan_start_notify(IndexScanDesc scan)
 
 	psdata = (RumParallelScanDescData *) ParallelScanGetOpaque(parallel_scan);
 
+	bool isParallelScanEligible =
+		so->scanType == RumOrderedScan &&
+		ScanDirectionIsForward(so->orderScanDirection) &&
+		so->orderByScanData->orderByDedupState == NULL;
+
+	int32_t entryIndex = isParallelScanEligible ? so->parallelScanEntryIndex : -1;
+	Assert(!isParallelScanEligible || entryIndex >= 0);
+
 	/*
 	 * WARNING: SpinLock critical section below — only read/write shared
 	 * state fields. Must not call any function that could block, allocate
@@ -1504,12 +1755,13 @@ rum_parallel_scan_start_notify(IndexScanDesc scan)
 
 	/* Can't do parallel scans if there's a need to dedup TIDs across pages */
 	psdata->exec_scan_type = so->scanType;
-	psdata->isParallelScanEligible = so->scanType == RumOrderedScan &&
-									 ScanDirectionIsForward(so->orderScanDirection) &&
-									 so->orderByScanData->orderByDedupState == NULL;
+	psdata->entryIndex = entryIndex;
+	psdata->isParallelScanEligible = isParallelScanEligible;
 	psdata->rum_ps_current_page = InvalidBlockNumber;
+	psdata->rum_ps_last_current_page = InvalidBlockNumber;
 	isParallelEnabled = psdata->isParallelScanEligible;
 	SpinLockRelease(&psdata->rum_ps_mutex);
+	so->parallelScanEntryIndex = entryIndex;
 	ConditionVariableBroadcast(&psdata->rum_ps_cv);
 	return isParallelEnabled;
 }
@@ -1598,6 +1850,10 @@ RMGR_PG_FUNCTION_DEF(try_explain_documentdb_rum_index)
 	}
 
 	funcs->writeInteger("innerScanLoops", "loops", so->scanLoops, state);
+	if (so->isParallelEnabled)
+	{
+		funcs->writeInteger("parallelScanLoops", "loops", so->parallelScanLoops, state);
+	}
 
 	if (so->killedItemsSkipped > 0)
 	{

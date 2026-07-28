@@ -81,12 +81,6 @@ typedef struct TidDedupScanState
 
 	/* EXPLAIN ANALYZE: number of duplicate rows dropped. */
 	int64 numDuplicatesDropped;
-
-	/*
-	 * Frees the roaring bitmap if the scan is torn down without EndScan being
-	 * called (e.g. an error/cancellation aborts execution).
-	 */
-	MemoryContextCallback cleanupCallback;
 } TidDedupScanState;
 
 
