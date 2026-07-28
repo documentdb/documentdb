@@ -7358,16 +7358,29 @@ class GatewayListenerPidSafetyTests(unittest.TestCase):
             # for the daemon; single echo field standing in for the record),
             # then the cmdline captured in the SAME shell
             # AFTER the group, from the pid the group recorded. The daemon
-            # (sleep 30) is alive throughout, so the read is race-free, and
-            # nothing appended can mask the group's own behaviour because (a)
-            # asserts file contents, not rc.
+            # (sleep 30) is alive throughout, so the recorded pid cannot vanish
+            # mid-read -- but the read itself must RETRY past the fork->exec
+            # window: immediately after `&` the child still shows the parent
+            # shell's image ("bash -lc ...") in /proc/<pid>/cmdline until it
+            # execs nohup/sleep, so on a slow or loaded host (2-core CI agents)
+            # a single immediate read loses that race and misreads a CORRECT
+            # daemon pid as the subshell. Only the '-lc' shell image is
+            # retried; a pid that never leaves it (a real regression that
+            # recorded the enclosing subshell, whose image is '-lc' for life)
+            # still fails below once the ~5s budget lapses. Nothing appended
+            # can mask the group's own behaviour because (a) asserts file
+            # contents, not rc.
             cmd_a = (
                 f"cd {tmp} && set -a && . {envfile} && set +a && "
                 f"{{ nohup sleep 30 > {tmp}/gw.log 2>&1 & "
                 f"{{ echo $! > {pidfile}; }} 2>/dev/null || true; }}; "
                 f"gwpid=$(cat {pidfile} 2>/dev/null); "
+                f"for _ in $(seq 1 50); do "
                 f"tr '\\0' ' ' < /proc/$gwpid/cmdline > {cmdfile} 2>/dev/null"
-                f" || true"
+                f" || true; "
+                f"grep -q -- -lc {cmdfile} 2>/dev/null || break; "
+                f"sleep 0.1; "
+                f"done"
             )
             subprocess.run([shell, "-lc", cmd_a], capture_output=True,
                            text=True, timeout=20)

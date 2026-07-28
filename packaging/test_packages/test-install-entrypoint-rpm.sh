@@ -42,6 +42,15 @@ echo "NOTE: running the regression suite against the repo copy at" \
      "/usr/src/documentdb (test-image COPY). The package ships no source tree."
 cd /usr/src/documentdb
 
+# Keep the internal directory out of the testing, exactly as the DEB entrypoint
+# (test-install-entrypoint.sh) does: the internal distributed suite preloads
+# citus, which this test container does not install -- and the RPM under test
+# ships only the OSS extensions, so the internal suite tests nothing the
+# package delivers. Without this, `make check` recurses into
+# internal/pg_documentdb_distributed and its postmaster fails to start on the
+# missing citus library.
+sed -i '/internal/d' Makefile
+
 # Set up environment for make check
 export PG_CONFIG=/usr/pgsql-${POSTGRES_VERSION}/bin/pg_config
 export PATH=/usr/pgsql-${POSTGRES_VERSION}/bin:$PATH

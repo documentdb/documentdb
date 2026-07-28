@@ -112,6 +112,14 @@ jobs:
         env:
           DOCUMENTDB_LOCAL_IMAGE: ${{ env.IMAGE_REF }}
           DOCUMENTDB_LOCAL_LOG_DIR: .test-results/image-test
+          # test_image.py raises unconditionally (not unittest.SkipTest) on a
+          # setUpClass boot failure or missing image (see the "#650"
+          # backend-contract gate), so a broken image already fails this
+          # workflow. Pair a generous ready timeout so a slow-but-healthy boot on
+          # a 2-core runner is not misread as a failure; a crashed container
+          # still fails fast via the container-exit check, so this does not risk
+          # the job budget.
+          DOCUMENTDB_READY_TIMEOUT: '480'
         run: |
           python3 -m unittest discover -v \
             -s documentdb-local/scripts/documentdb_local_tests \
