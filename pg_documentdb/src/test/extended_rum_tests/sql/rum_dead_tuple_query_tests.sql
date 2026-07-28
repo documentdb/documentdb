@@ -10,29 +10,6 @@ RETURNS bson
 LANGUAGE c
 AS '$libdir/pg_documentdb', 'gin_bson_index_term_to_bson';
 
-
--- debug function to read index pages
-CREATE OR REPLACE FUNCTION rum_dead_tuple_test.documentdb_rum_page_get_entries(page bytea, indexOid Oid)
-RETURNS SETOF jsonb
-LANGUAGE c
-AS '$libdir/pg_documentdb_extended_rum_core', 'documentdb_rum_page_get_entries';
-
-CREATE OR REPLACE FUNCTION rum_dead_tuple_test.documentdb_rum_page_get_data_items(page bytea)
-RETURNS SETOF jsonb
-LANGUAGE c
-AS '$libdir/pg_documentdb_extended_rum_core', 'documentdb_rum_page_get_data_items';
-
-CREATE OR REPLACE FUNCTION rum_dead_tuple_test.documentdb_rum_page_get_stats(page bytea)
-RETURNS jsonb
-LANGUAGE c
-AS '$libdir/pg_documentdb_extended_rum_core', 'documentdb_rum_page_get_stats';
-
-
-CREATE OR REPLACE FUNCTION rum_dead_tuple_test.documentdb_rum_revive_index_tuples(index_oid oid, dry_run bool)
-RETURNS void
-LANGUAGE c
-AS '$libdir/pg_documentdb_extended_rum_core', 'documentdb_rum_repair_revive_all_pages_and_tuples';
-
 SELECT documentdb_api.drop_collection('pvacuum_db_2', 'p_dead_tup');
 SELECT documentdb_api.create_collection('pvacuum_db_2', 'p_dead_tup');
 
@@ -84,7 +61,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
 SELECT entry->> 'offset' AS offset,
     entry->> 'entryFlags' AS flags,
     rum_dead_tuple_test.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$' AS index_value
-        FROM rum_dead_tuple_test.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3), 'documentdb_data.documents_rum_index_602'::regclass) entry
+        FROM documentdb_api_internal.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3), 'documentdb_data.documents_rum_index_602'::regclass) entry
     LIMIT 20;
 
 -- update a single node and write to it. The index term is "revived"
@@ -94,7 +71,7 @@ SELECT documentdb_api.insert_one('pvacuum_db_2', 'p_dead_tup',  '{ "_id": -1, "a
 SELECT entry->> 'offset' AS offset,
     entry->> 'entryFlags' AS flags,
     rum_dead_tuple_test.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$' AS index_value
-        FROM rum_dead_tuple_test.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3), 'documentdb_data.documents_rum_index_602'::regclass) entry
+        FROM documentdb_api_internal.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3), 'documentdb_data.documents_rum_index_602'::regclass) entry
     LIMIT 20;
 
 -- that row is returned properly but the count of rows is correct.
@@ -152,7 +129,7 @@ set documentdb_rum.enable_support_dead_index_items to off;
 SELECT entry->> 'offset' AS offset,
     entry->> 'entryFlags' AS flags,
     rum_dead_tuple_test.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$' AS index_value
-        FROM rum_dead_tuple_test.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3),  'documentdb_data.documents_rum_index_602'::regclass) entry
+        FROM documentdb_api_internal.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3),  'documentdb_data.documents_rum_index_602'::regclass) entry
     LIMIT 20;
 
 -- update a single node and write to it. The index term is "revived"
@@ -162,15 +139,15 @@ SELECT documentdb_api.insert_one('pvacuum_db_2', 'p_dead_tup',  '{ "_id": -1, "a
 SELECT entry->> 'offset' AS offset,
     entry->> 'entryFlags' AS flags,
     rum_dead_tuple_test.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$' AS index_value
-        FROM rum_dead_tuple_test.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3),  'documentdb_data.documents_rum_index_602'::regclass) entry
+        FROM documentdb_api_internal.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3),  'documentdb_data.documents_rum_index_602'::regclass) entry
     LIMIT 20;
 
 -- now revive all the tuples using the repair function
-SELECT rum_dead_tuple_test.documentdb_rum_revive_index_tuples('documentdb_data.documents_rum_index_602'::regclass::oid, false);
+SELECT documentdb_api_internal.documentdb_rum_repair_revive_all_pages_and_tuples('documentdb_data.documents_rum_index_602'::regclass::oid, false);
 
 -- check which entries are dead (should be none)
 SELECT entry->> 'offset' AS offset, entry->> 'entryFlags' AS flags
-        FROM rum_dead_tuple_test.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3),  'documentdb_data.documents_rum_index_602'::regclass) entry
+        FROM documentdb_api_internal.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 3),  'documentdb_data.documents_rum_index_602'::regclass) entry
     WHERE entry->> 'entryFlags' != '1' LIMIT 20;
 
 -- now repeat the scenarios above with posting trees.
@@ -192,13 +169,13 @@ SELECT entry->> 'offset' AS offset,
     entry ->> 'entryType' AS postingType,
     entry ->> 'tupleTid' AS postingTreeRoot,
     rum_dead_tuple_test.gin_bson_index_term_to_bson((entry->>'firstEntry')::bytea) ->> '$' AS index_value
-        FROM rum_dead_tuple_test.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 1),  'documentdb_data.documents_rum_index_602'::regclass) entry
+        FROM documentdb_api_internal.documentdb_rum_page_get_entries(public.get_raw_page('documentdb_data.documents_rum_index_602', 1),  'documentdb_data.documents_rum_index_602'::regclass) entry
     LIMIT 20;
 
 -- read the posting root
-SELECT entry FROM rum_dead_tuple_test.documentdb_rum_page_get_data_items(public.get_raw_page('documentdb_data.documents_rum_index_602', 2)) entry OFFSET 1;
+SELECT entry FROM documentdb_api_internal.documentdb_rum_page_get_data_items(public.get_raw_page('documentdb_data.documents_rum_index_602', 2)) entry OFFSET 1;
 
-WITH r1 AS (SELECT i, rum_dead_tuple_test.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_602', i)) as entry FROM generate_series(3, 8) i)
+WITH r1 AS (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_602', i)) as entry FROM generate_series(3, 8) i)
 SELECT i AS pageId, entry-> 'flagsStr' AS flagsStr, entry-> 'leftLink' AS leftLink, entry->'rightLink' AS rightLink FROM r1 ORDER by i ASC;
 
 -- query right after delete: estimatedEntryCount shows up at 1000
@@ -216,13 +193,13 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
     $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('pvacuum_db_2', '{ "find": "p_dead_tup", "filter": { "a": { "$exists": true } } }') $cmd$);
 
 -- check page metadata
-WITH r1 AS (SELECT i, rum_dead_tuple_test.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_602', i)) as entry FROM generate_series(3, 8) i)
+WITH r1 AS (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_602', i)) as entry FROM generate_series(3, 8) i)
 SELECT i AS pageId, entry-> 'flagsStr' AS flagsStr, entry-> 'leftLink' AS leftLink, entry->'rightLink' AS rightLink FROM r1 ORDER by i ASC;
 
 
 WITH r1 AS (SELECT i AS pageId FROM generate_series(3, 8) i)
 SELECT pageId, rightQuery.* FROM r1 JOIN LATERAL (
-    SELECT COUNT(entry) FROM rum_dead_tuple_test.documentdb_rum_page_get_data_items(public.get_raw_page('documentdb_data.documents_rum_index_602', pageId)) entry
+    SELECT COUNT(entry) FROM documentdb_api_internal.documentdb_rum_page_get_data_items(public.get_raw_page('documentdb_data.documents_rum_index_602', pageId)) entry
 ) AS rightQuery ON true ORDER BY pageId ASC;
 
 -- kill the remaining rows
@@ -237,7 +214,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
     $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('pvacuum_db_2', '{ "find": "p_dead_tup", "filter": { "a": { "$exists": true } } }') $cmd$);
 
 -- check page metadata
-WITH r1 AS (SELECT i, rum_dead_tuple_test.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_602', i)) as entry FROM generate_series(3, 8) i)
+WITH r1 AS (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_602', i)) as entry FROM generate_series(3, 8) i)
 SELECT i AS pageId, entry-> 'flagsStr' AS flagsStr, entry-> 'leftLink' AS leftLink, entry->'rightLink' AS rightLink FROM r1 ORDER by i ASC;
 
 
@@ -245,13 +222,13 @@ SELECT i AS pageId, entry-> 'flagsStr' AS flagsStr, entry-> 'leftLink' AS leftLi
 SELECT COUNT(documentdb_api.insert_one('pvacuum_db_2', 'p_dead_tup',  FORMAT('{ "_id": %s, "a": 5 }', i, i)::bson)) FROM generate_series(-100, -1) AS i;
 
 
-WITH r1 AS (SELECT i, rum_dead_tuple_test.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_602', i)) as entry FROM generate_series(3, 8) i)
+WITH r1 AS (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_602', i)) as entry FROM generate_series(3, 8) i)
 SELECT i AS pageId, entry-> 'flagsStr' AS flagsStr, entry-> 'leftLink' AS leftLink, entry->'rightLink' AS rightLink FROM r1 ORDER by i ASC;
 
 
 WITH r1 AS (SELECT i AS pageId FROM generate_series(3, 8) i)
 SELECT pageId, rightQuery.* FROM r1 JOIN LATERAL (
-    SELECT COUNT(entry) FROM rum_dead_tuple_test.documentdb_rum_page_get_data_items(public.get_raw_page('documentdb_data.documents_rum_index_602', pageId)) entry
+    SELECT COUNT(entry) FROM documentdb_api_internal.documentdb_rum_page_get_data_items(public.get_raw_page('documentdb_data.documents_rum_index_602', pageId)) entry
 ) AS rightQuery ON true ORDER BY pageId ASC;
 
 -- query returns correct rows
@@ -259,6 +236,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim(
     $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('pvacuum_db_2', '{ "find": "p_dead_tup", "filter": { "a": { "$exists": true } } }') $cmd$);
 
 -- revive and print
-SELECT rum_dead_tuple_test.documentdb_rum_revive_index_tuples('documentdb_data.documents_rum_index_602'::regclass::oid, false);
-WITH r1 AS (SELECT i, rum_dead_tuple_test.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_602', i)) as entry FROM generate_series(3, 8) i)
+SELECT documentdb_api_internal.documentdb_rum_repair_revive_all_pages_and_tuples('documentdb_data.documents_rum_index_602'::regclass::oid, false);
+WITH r1 AS (SELECT i, documentdb_api_internal.documentdb_rum_page_get_stats(public.get_raw_page('documentdb_data.documents_rum_index_602', i)) as entry FROM generate_series(3, 8) i)
 SELECT i AS pageId, entry-> 'flagsStr' AS flagsStr, entry-> 'leftLink' AS leftLink, entry->'rightLink' AS rightLink FROM r1 ORDER by i ASC;

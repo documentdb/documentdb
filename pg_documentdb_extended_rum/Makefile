@@ -28,7 +28,6 @@ sql_file_inputs = $(wildcard sql/**/*.sql)
 
 OSS_COMMON_SQL_HEADER = $(wildcard $(OSS_SRC_DIR)/common_header.sql)
 
-# INCLUDES = rum.h rumsort.h
 RELATIVE_INCLUDES = $(addprefix src/, $(INCLUDES))
 
 LDFLAGS_SL += $(filter -lm, $(LIBS))
@@ -40,7 +39,7 @@ CORE_SCHEMA_NAME=documentdb_core
 EXTENSION_OBJECT_PREFIX=documentdb_extended
 include $(OSS_SRC_DIR)/Makefile.cflags
 
-PG_LDFLAGS += -l:$(RUM_CORE_LIB_NAME) -L$(RUM_CORE_LIB_DIR)
+PG_LDFLAGS += -l:$(RUM_CORE_LIB_NAME) -L$(RUM_CORE_LIB_DIR) -l:$(RUM_CORE_LIB_BUILTIN_RMGR_NAME) -L$(RUM_CORE_BUILTIN_RMGR_LIB_DIR)
 
 PG_CPPFLAGS += -I $(CURDIR)/core/include/
 PG_CFLAGS += -Wno-sign-compare -Wno-type-limits
@@ -71,7 +70,10 @@ clean: clean_core clean_core_rmgr
 install_core:
 	$(MAKE) -C $(RUM_CORE_LIB_DIR) install
 
-install: install_core
+install_core_builtin_rmgr:
+	$(MAKE) -C $(RUM_CORE_BUILTIN_RMGR_LIB_DIR) install
+
+install: install_core install_core_builtin_rmgr
 
 clean-sql:
 	rm -rf .deps/ build/
@@ -79,7 +81,10 @@ clean-sql:
 uninstall_core:
 	$(MAKE) -C $(RUM_CORE_LIB_DIR) uninstall
 
-uninstall: uninstall_core
+uninstall_core_builtin_rmgr:
+	$(MAKE) -C $(RUM_CORE_BUILTIN_RMGR_LIB_DIR) uninstall
+
+uninstall: uninstall_core uninstall_core_builtin_rmgr
 
 build-sql: $(generated_sql_files)
 

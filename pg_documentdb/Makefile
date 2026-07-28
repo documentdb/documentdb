@@ -80,6 +80,12 @@ check-documentdb-minimal: check-minimal
 check-extended-rum-minimal:
 	$(MAKE) -C src/test/extended_rum_tests check-minimal
 
+check-extended-rum-builtin-rmgr-minimal:
+	$(MAKE) -C src/test/extended_rum_tests check-builtin-rmgr-minimal
+
+check-extended-rum-builtin-rmgr:
+	$(MAKE) -C src/test/extended_rum_tests check-rum-builtin-rmgr
+
 check-extended-rum-recovery:
 	$(MAKE) -C src/test/extended_rum_recovery_tests all
 

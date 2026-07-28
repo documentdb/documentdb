@@ -5,15 +5,6 @@ SET documentdb.next_collection_index_id TO 2300;
 
 CREATE SCHEMA rum_incomplete_split_page_deletion_test;
 
-CREATE FUNCTION rum_incomplete_split_page_deletion_test.set_incomplete_split(
-    index_relid regclass,
-    block_number integer,
-    set_incomplete_split boolean)
-RETURNS void
-LANGUAGE c
-AS '$libdir/pg_documentdb_extended_rum_core',
-   'documentdb_rum_test_set_incomplete_split_on_page';
-
 -- Entry-tree page deletion must preserve both halves of an incomplete split.
 SELECT documentdb_api.create_collection(
     'rum_incomplete_split_deletion_db', 'entry_pages');
@@ -77,7 +68,7 @@ WHERE page_stats->>'flagsStr' = 'LEAF'
 ORDER BY page_number
 LIMIT 1 \gset
 
-SELECT rum_incomplete_split_page_deletion_test.set_incomplete_split(
+SELECT documentdb_api_internal.documentdb_rum_test_set_incomplete_split_on_page(
     :'entry_index_name'::regclass, :entry_target_page, true);
 
 SET documentdb_rum.fix_incomplete_split TO off;
@@ -94,9 +85,9 @@ FROM (
         public.get_raw_page(:'entry_index_name', :entry_target_page)) AS page_stats
 ) AS page;
 
-SELECT rum_incomplete_split_page_deletion_test.set_incomplete_split(
+SELECT documentdb_api_internal.documentdb_rum_test_set_incomplete_split_on_page(
     :'entry_index_name'::regclass, :entry_target_page, false);
-SELECT rum_incomplete_split_page_deletion_test.set_incomplete_split(
+SELECT documentdb_api_internal.documentdb_rum_test_set_incomplete_split_on_page(
     :'entry_index_name'::regclass, :entry_left_page, true);
 
 SELECT documentdb_api_internal.rum_prune_empty_entries_on_index(
@@ -113,7 +104,7 @@ FROM (
                public.get_raw_page(:'entry_index_name', :entry_left_page)) AS left_stats
 ) AS pages;
 
-SELECT rum_incomplete_split_page_deletion_test.set_incomplete_split(
+SELECT documentdb_api_internal.documentdb_rum_test_set_incomplete_split_on_page(
     :'entry_index_name'::regclass, :entry_left_page, false);
 RESET documentdb_rum.fix_incomplete_split;
 
@@ -189,9 +180,9 @@ SELECT MAX(page_number) FILTER (WHERE candidate_number = 1)
            AS posting_right_half_left_page
 FROM candidates \gset
 
-SELECT rum_incomplete_split_page_deletion_test.set_incomplete_split(
+SELECT documentdb_api_internal.documentdb_rum_test_set_incomplete_split_on_page(
     :'posting_index_name'::regclass, :posting_incomplete_page, true);
-SELECT rum_incomplete_split_page_deletion_test.set_incomplete_split(
+SELECT documentdb_api_internal.documentdb_rum_test_set_incomplete_split_on_page(
     :'posting_index_name'::regclass, :posting_right_half_left_page, true);
 
 SET documentdb_rum.fix_incomplete_split TO off;
@@ -223,9 +214,9 @@ FROM (
                    :'posting_index_name', :posting_right_half_left_page)) AS left_stats
 ) AS pages;
 
-SELECT rum_incomplete_split_page_deletion_test.set_incomplete_split(
+SELECT documentdb_api_internal.documentdb_rum_test_set_incomplete_split_on_page(
     :'posting_index_name'::regclass, :posting_incomplete_page, false);
-SELECT rum_incomplete_split_page_deletion_test.set_incomplete_split(
+SELECT documentdb_api_internal.documentdb_rum_test_set_incomplete_split_on_page(
     :'posting_index_name'::regclass, :posting_right_half_left_page, false);
 RESET documentdb_rum.fix_incomplete_split;
 

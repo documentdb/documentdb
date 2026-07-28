@@ -32,21 +32,6 @@ RETURNS text LANGUAGE sql IMMUTABLE AS $$
         md5(seed::text || '29'), md5(seed::text || '30'), md5(seed::text || '31'), md5(seed::text || '32'))
 $$;
 
-CREATE OR REPLACE FUNCTION rum_incomplete_split_test.documentdb_rum_page_get_stats(page bytea)
-RETURNS jsonb
-LANGUAGE c
-AS '$libdir/pg_documentdb_extended_rum_core', 'documentdb_rum_page_get_stats';
-
-CREATE OR REPLACE FUNCTION rum_incomplete_split_test.documentdb_rum_get_meta_page_info(page bytea)
-RETURNS jsonb
-LANGUAGE c
-AS '$libdir/pg_documentdb_extended_rum_core', 'documentdb_rum_get_meta_page_info';
-
-CREATE OR REPLACE FUNCTION rum_incomplete_split_test.documentdb_rum_page_get_entries(page bytea, indexOid Oid)
-RETURNS SETOF jsonb
-LANGUAGE c
-AS '$libdir/pg_documentdb_extended_rum_core', 'documentdb_rum_page_get_entries';
-
 -- Create a collection with a compound key index.
 -- Using a long string prefix ("c") with a varying integer suffix ("a")
 -- produces large entry keys that fill internal pages quickly,
@@ -110,16 +95,16 @@ SET client_min_messages = error;
 WITH internal_pages AS (
     SELECT i AS pageno FROM generate_series(1,
         (pg_relation_size(FORMAT('documentdb_data.documents_rum_index_%s', :isplit_idx)::regclass) / current_setting('block_size')::int)::int - 1) i
-    WHERE (rum_incomplete_split_test.documentdb_rum_page_get_stats(
+    WHERE (documentdb_api_internal.documentdb_rum_page_get_stats(
         public.get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :isplit_idx), i))
         ->>'flagsStr') NOT LIKE '%LEAF%'
-    AND (rum_incomplete_split_test.documentdb_rum_page_get_stats(
+    AND (documentdb_api_internal.documentdb_rum_page_get_stats(
         public.get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :isplit_idx), i))
         ->>'flagsStr') NOT LIKE '%DELETED%'
-    AND (rum_incomplete_split_test.documentdb_rum_page_get_stats(
+    AND (documentdb_api_internal.documentdb_rum_page_get_stats(
         public.get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :isplit_idx), i))
         ->>'flagsStr') NOT LIKE '%META%'
-    AND (rum_incomplete_split_test.documentdb_rum_page_get_stats(
+    AND (documentdb_api_internal.documentdb_rum_page_get_stats(
         public.get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :isplit_idx), i))
         ->>'flagsStr') NOT LIKE '%DATA%'
 ),
@@ -127,7 +112,7 @@ all_downlinks AS (
     SELECT ip.pageno,
            (regexp_match(e.entry->>'tupleTid', '^\((\d+),'))[1]::int AS downlink
     FROM internal_pages ip
-    CROSS JOIN LATERAL rum_incomplete_split_test.documentdb_rum_page_get_entries(
+    CROSS JOIN LATERAL documentdb_api_internal.documentdb_rum_page_get_entries(
         public.get_raw_page(FORMAT('documentdb_data.documents_rum_index_%s', :isplit_idx), ip.pageno),
         FORMAT('documentdb_data.documents_rum_index_%s', :isplit_idx)::regclass
     ) AS e(entry)

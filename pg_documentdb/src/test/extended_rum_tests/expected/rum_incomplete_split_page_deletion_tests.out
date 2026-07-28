@@ -2,14 +2,6 @@ SET search_path TO documentdb_api_catalog, documentdb_core, public;
 SET documentdb.next_collection_id TO 2300;
 SET documentdb.next_collection_index_id TO 2300;
 CREATE SCHEMA rum_incomplete_split_page_deletion_test;
-CREATE FUNCTION rum_incomplete_split_page_deletion_test.set_incomplete_split(
-    index_relid regclass,
-    block_number integer,
-    set_incomplete_split boolean)
-RETURNS void
-LANGUAGE c
-AS '$libdir/pg_documentdb_extended_rum_core',
-   'documentdb_rum_test_set_incomplete_split_on_page';
 -- Entry-tree page deletion must preserve both halves of an incomplete split.
 SELECT documentdb_api.create_collection(
     'rum_incomplete_split_deletion_db', 'entry_pages');
@@ -92,10 +84,10 @@ WHERE page_stats->>'flagsStr' = 'LEAF'
   AND page_stats->>'rightLink' IS NOT NULL
 ORDER BY page_number
 LIMIT 1 \gset
-SELECT rum_incomplete_split_page_deletion_test.set_incomplete_split(
+SELECT documentdb_api_internal.documentdb_rum_test_set_incomplete_split_on_page(
     :'entry_index_name'::regclass, :entry_target_page, true);
- set_incomplete_split 
-----------------------
+ documentdb_rum_test_set_incomplete_split_on_page 
+--------------------------------------------------
  
 (1 row)
 
@@ -122,17 +114,17 @@ FROM (
  t
 (1 row)
 
-SELECT rum_incomplete_split_page_deletion_test.set_incomplete_split(
+SELECT documentdb_api_internal.documentdb_rum_test_set_incomplete_split_on_page(
     :'entry_index_name'::regclass, :entry_target_page, false);
- set_incomplete_split 
-----------------------
+ documentdb_rum_test_set_incomplete_split_on_page 
+--------------------------------------------------
  
 (1 row)
 
-SELECT rum_incomplete_split_page_deletion_test.set_incomplete_split(
+SELECT documentdb_api_internal.documentdb_rum_test_set_incomplete_split_on_page(
     :'entry_index_name'::regclass, :entry_left_page, true);
- set_incomplete_split 
-----------------------
+ documentdb_rum_test_set_incomplete_split_on_page 
+--------------------------------------------------
  
 (1 row)
 
@@ -159,10 +151,10 @@ FROM (
  t
 (1 row)
 
-SELECT rum_incomplete_split_page_deletion_test.set_incomplete_split(
+SELECT documentdb_api_internal.documentdb_rum_test_set_incomplete_split_on_page(
     :'entry_index_name'::regclass, :entry_left_page, false);
- set_incomplete_split 
-----------------------
+ documentdb_rum_test_set_incomplete_split_on_page 
+--------------------------------------------------
  
 (1 row)
 
@@ -252,17 +244,17 @@ SELECT MAX(page_number) FILTER (WHERE candidate_number = 1)
        MAX(left_page) FILTER (WHERE candidate_number = 3)
            AS posting_right_half_left_page
 FROM candidates \gset
-SELECT rum_incomplete_split_page_deletion_test.set_incomplete_split(
+SELECT documentdb_api_internal.documentdb_rum_test_set_incomplete_split_on_page(
     :'posting_index_name'::regclass, :posting_incomplete_page, true);
- set_incomplete_split 
-----------------------
+ documentdb_rum_test_set_incomplete_split_on_page 
+--------------------------------------------------
  
 (1 row)
 
-SELECT rum_incomplete_split_page_deletion_test.set_incomplete_split(
+SELECT documentdb_api_internal.documentdb_rum_test_set_incomplete_split_on_page(
     :'posting_index_name'::regclass, :posting_right_half_left_page, true);
- set_incomplete_split 
-----------------------
+ documentdb_rum_test_set_incomplete_split_on_page 
+--------------------------------------------------
  
 (1 row)
 
@@ -308,17 +300,17 @@ FROM (
  t
 (1 row)
 
-SELECT rum_incomplete_split_page_deletion_test.set_incomplete_split(
+SELECT documentdb_api_internal.documentdb_rum_test_set_incomplete_split_on_page(
     :'posting_index_name'::regclass, :posting_incomplete_page, false);
- set_incomplete_split 
-----------------------
+ documentdb_rum_test_set_incomplete_split_on_page 
+--------------------------------------------------
  
 (1 row)
 
-SELECT rum_incomplete_split_page_deletion_test.set_incomplete_split(
+SELECT documentdb_api_internal.documentdb_rum_test_set_incomplete_split_on_page(
     :'posting_index_name'::regclass, :posting_right_half_left_page, false);
- set_incomplete_split 
-----------------------
+ documentdb_rum_test_set_incomplete_split_on_page 
+--------------------------------------------------
  
 (1 row)
 
@@ -341,4 +333,3 @@ SELECT documentdb_api.drop_collection(
 (1 row)
 
 DROP SCHEMA rum_incomplete_split_page_deletion_test CASCADE;
-NOTICE:  drop cascades to function rum_incomplete_split_page_deletion_test.set_incomplete_split(regclass,integer,boolean)

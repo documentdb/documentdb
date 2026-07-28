@@ -19,11 +19,14 @@
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 #include "commands/defrem.h"
+#include "utils/guc.h"
 
 #include "index_am/index_am_exports.h"
 #include "index_am/documentdb_rum.h"
 #include "query/bson_dollar_selectivity.h"
 #include "index_am/documentdb_rum_impl.h"
+
+#include "documentdb_extended_rum_function_catalog.h"
 
 
 PG_MODULE_MAGIC;
@@ -53,52 +56,31 @@ static bool documentdb_rum_get_truncation_status(Relation indexRelation);
 static bool documentdb_rum_is_path_key_summarization_scan(void);
 static bool documentdb_rum_get_reduced_terms_status(Relation indexRelation);
 
-extern PGDLLIMPORT Datum try_explain_documentdb_rum_index(PG_FUNCTION_ARGS);
-extern PGDLLIMPORT Datum documentdb_rumhandler(PG_FUNCTION_ARGS);
-extern PGDLLIMPORT Datum documentdb_rum_get_multi_key_status(PG_FUNCTION_ARGS);
-extern PGDLLIMPORT Datum documentdb_rum_get_opclass_metadata(PG_FUNCTION_ARGS);
-extern PGDLLIMPORT Datum documentdb_rum_update_multi_key_status(PG_FUNCTION_ARGS);
-extern PGDLLIMPORT Datum documentdb_rum_get_current_index_key(PG_FUNCTION_ARGS);
-extern PGDLLIMPORT Datum documentdb_rum_skip_tids_on_current_entry(PG_FUNCTION_ARGS);
-extern PGDLLIMPORT Datum DocumentDBRumOrderedCostEstimate(PG_FUNCTION_ARGS);
 
 /* Static Globals */
-static BsonIndexAmEntry DocumentDBIndexAmEntry = {
-	.is_single_path_index_supported = true,
-	.is_wild_card_supported = true,
-	.is_wild_card_projection_supported = false,
-	.is_order_by_supported = true,
-	.is_backwards_scan_supported = true,
-	.is_index_only_scan_supported = true,
-	.can_support_parallel_scans = true,
-	.get_am_oid = DocumentDBExtendedRumIndexAmId,
-	.get_single_path_op_family_oid = DocumentDBExtendedRumSinglePathOpFamilyOid,
-	.get_composite_path_op_family_oid = DocumentDBExtendedRumCompositePathOpFamilyOid,
-	.get_text_path_op_family_oid = NULL,
-	.get_unique_path_op_family_oid = DocumentDbExtendedRumUniquePathOperatorFamilyOid,
-	.get_hashed_path_op_family_oid = DocumentdbExtendedRumHashedPathOpsFamilyOid,
-	.add_explain_output = try_explain_documentdb_rum_index,
-	.am_name = "extended_rum",
-	.get_opclass_catalog_schema = GetDocumentDBCatalogSchema,
-	.get_opclass_internal_catalog_schema = GetDocumentDBCatalogSchema,
-	.get_multikey_status = documentdb_rum_get_multi_key_status,
-	.get_opclass_metadata = documentdb_rum_get_opclass_metadata,
-	.get_truncation_status = documentdb_rum_get_truncation_status,
-	.supports_ordered_operator_scans = true,
-	.create_indexes_support_funcs = NULL,
-	.query_index_path_support_funcs = NULL,
-	.get_current_index_key = documentdb_rum_get_current_index_key,
-	.skip_tids_on_current_entry = documentdb_rum_skip_tids_on_current_entry,
-	.get_reduced_terms_status = documentdb_rum_get_reduced_terms_status,
-	.is_path_key_summarization_scan = documentdb_rum_is_path_key_summarization_scan,
-};
 static DocumentDBRumOidCacheData Cache = { 0 };
 static bool has_custom_routine = false;
 static IndexAmRoutine core_rum_routine = { 0 };
+static CoreFunctionCatalog core_function_catalog = { 0 };
 static void InitializeDocumentDBRum(void);
+static void InitializeDocumentDBAdapterGUCs(void);
+
+
+/* Configs */
+
+/* SystemConfig */
+#define DEFAULT_RUM_USE_BUILTIN_RMGR_MODULES false
+bool RumUseBuiltinRmgrModules = DEFAULT_RUM_USE_BUILTIN_RMGR_MODULES;
 
 /* Top level method exports */
 PG_FUNCTION_INFO_V1(documentdb_extended_rumhandler);
+PG_FUNCTION_INFO_V1(documentdb_extended_rum_get_meta_page_info);
+PG_FUNCTION_INFO_V1(documentdb_extended_rum_prune_empty_entries_on_index);
+PG_FUNCTION_INFO_V1(documentdb_extended_rum_page_get_stats);
+PG_FUNCTION_INFO_V1(documentdb_extended_rum_page_get_entries);
+PG_FUNCTION_INFO_V1(documentdb_extended_rum_page_get_data_items);
+PG_FUNCTION_INFO_V1(documentdb_extended_rum_repair_revive_all_pages_and_tuples);
+PG_FUNCTION_INFO_V1(documentdb_extended_rum_test_set_incomplete_split_on_page);
 
 PGDLLEXPORT void
 _PG_init(void)
@@ -119,8 +101,50 @@ InitializeDocumentDBRum(void)
 							"variable in postgresql.conf. ")));
 	}
 
+	InitializeDocumentDBAdapterGUCs();
+
 	LoadBaseIndexAmRoutine();
-	RegisterIndexAm(DocumentDBIndexAmEntry);
+
+	static BsonIndexAmEntry documentDBIndexAmEntry = {
+		.is_single_path_index_supported = true,
+		.is_wild_card_supported = true,
+		.is_wild_card_projection_supported = false,
+		.is_order_by_supported = true,
+		.is_backwards_scan_supported = true,
+		.is_index_only_scan_supported = true,
+		.can_support_parallel_scans = true,
+		.get_am_oid = DocumentDBExtendedRumIndexAmId,
+		.get_single_path_op_family_oid = DocumentDBExtendedRumSinglePathOpFamilyOid,
+		.get_composite_path_op_family_oid = DocumentDBExtendedRumCompositePathOpFamilyOid,
+		.get_text_path_op_family_oid = NULL,
+		.get_unique_path_op_family_oid = DocumentDbExtendedRumUniquePathOperatorFamilyOid,
+		.get_hashed_path_op_family_oid = DocumentdbExtendedRumHashedPathOpsFamilyOid,
+		.add_explain_output = NULL, /* added below */
+		.am_name = "extended_rum",
+		.get_opclass_catalog_schema = GetDocumentDBCatalogSchema,
+		.get_opclass_internal_catalog_schema = GetDocumentDBCatalogSchema,
+		.get_multikey_status = NULL, /* added below */
+		.get_opclass_metadata = NULL, /* added below */
+		.get_truncation_status = documentdb_rum_get_truncation_status,
+		.supports_ordered_operator_scans = true,
+		.create_indexes_support_funcs = NULL,
+		.query_index_path_support_funcs = NULL,
+		.get_current_index_key = NULL, /* added below */
+		.skip_tids_on_current_entry = NULL, /* added below */
+		.get_reduced_terms_status = documentdb_rum_get_reduced_terms_status,
+		.is_path_key_summarization_scan = documentdb_rum_is_path_key_summarization_scan,
+	};
+	documentDBIndexAmEntry.add_explain_output =
+		core_function_catalog.try_explain_documentdb_rum_index;
+	documentDBIndexAmEntry.get_multikey_status =
+		core_function_catalog.documentdb_rum_get_multi_key_status;
+	documentDBIndexAmEntry.get_opclass_metadata =
+		core_function_catalog.documentdb_rum_get_opclass_metadata;
+	documentDBIndexAmEntry.get_current_index_key =
+		core_function_catalog.documentdb_rum_get_current_index_key;
+	documentDBIndexAmEntry.skip_tids_on_current_entry =
+		core_function_catalog.documentdb_rum_skip_tids_on_current_entry;
+	RegisterIndexAm(documentDBIndexAmEntry);
 }
 
 
@@ -164,6 +188,7 @@ extension_documentdb_extended_rumbuild(Relation heapRelation,
 {
 	return extension_rumbuild_core(heapRelation, indexRelation,
 								   indexInfo, &core_rum_routine,
+								   core_function_catalog.
 								   documentdb_rum_update_multi_key_status);
 }
 
@@ -182,6 +207,7 @@ extension_documentdb_extended_ruminsert(Relation indexRelation,
 									heap_tid, heapRelation, checkUnique,
 									indexUnchanged, indexInfo,
 									&core_rum_routine,
+									core_function_catalog.
 									documentdb_rum_update_multi_key_status);
 }
 
@@ -190,9 +216,20 @@ static void
 LoadBaseIndexAmRoutine(void)
 {
 	LOCAL_FCINFO(fcinfo, 0);
+
+	/* Load the core documentdb_rum functions */
+	if (RumUseBuiltinRmgrModules)
+	{
+		core_function_catalog = GetBuiltInRmgrFunctionCatalog();
+	}
+	else
+	{
+		core_function_catalog = GetCoreFunctionCatalog();
+	}
+
 	InitFunctionCallInfoData(*fcinfo, NULL, 1, InvalidOid, NULL, NULL);
-	IndexAmRoutine *amroutine = (IndexAmRoutine *) DatumGetPointer(documentdb_rumhandler(
-																	   fcinfo));
+	IndexAmRoutine *amroutine = (IndexAmRoutine *) DatumGetPointer(
+		core_function_catalog.documentdb_rumhandler(fcinfo));
 
 	/* Store the base routine */
 	core_rum_routine = *amroutine;
@@ -315,7 +352,7 @@ extension_documentdb_extended_rumcostestimate(PlannerInfo *root, IndexPath *path
 								   indexTotalCost, indexSelectivity, indexCorrelation,
 								   indexPages, &core_rum_routine,
 								   forceIndexCostToZero, enableCompositePlannerCosts,
-								   DocumentDBRumOrderedCostEstimate);
+								   core_function_catalog.DocumentDBRumOrderedCostEstimate);
 }
 
 
@@ -340,6 +377,63 @@ documentdb_extended_rumhandler(PG_FUNCTION_ARGS)
 }
 
 
+PGDLLEXPORT Datum
+documentdb_extended_rum_get_meta_page_info(PG_FUNCTION_ARGS)
+{
+	EnsureDocumentDBExtendedRumLib();
+	return core_function_catalog.documentdb_rum_get_meta_page_info(fcinfo);
+}
+
+
+PGDLLEXPORT Datum
+documentdb_extended_rum_prune_empty_entries_on_index(PG_FUNCTION_ARGS)
+{
+	EnsureDocumentDBExtendedRumLib();
+	return core_function_catalog.documentdb_rum_prune_empty_entries_on_index(fcinfo);
+}
+
+
+PGDLLEXPORT Datum
+documentdb_extended_rum_page_get_stats(PG_FUNCTION_ARGS)
+{
+	EnsureDocumentDBExtendedRumLib();
+	return core_function_catalog.documentdb_rum_page_get_stats(fcinfo);
+}
+
+
+PGDLLEXPORT Datum
+documentdb_extended_rum_page_get_entries(PG_FUNCTION_ARGS)
+{
+	EnsureDocumentDBExtendedRumLib();
+	return core_function_catalog.documentdb_rum_page_get_entries(fcinfo);
+}
+
+
+PGDLLEXPORT Datum
+documentdb_extended_rum_page_get_data_items(PG_FUNCTION_ARGS)
+{
+	EnsureDocumentDBExtendedRumLib();
+	return core_function_catalog.documentdb_rum_page_get_data_items(fcinfo);
+}
+
+
+PGDLLEXPORT Datum
+documentdb_extended_rum_repair_revive_all_pages_and_tuples(PG_FUNCTION_ARGS)
+{
+	EnsureDocumentDBExtendedRumLib();
+	return core_function_catalog.documentdb_rum_repair_revive_all_pages_and_tuples(
+		fcinfo);
+}
+
+
+PGDLLEXPORT Datum
+documentdb_extended_rum_test_set_incomplete_split_on_page(PG_FUNCTION_ARGS)
+{
+	EnsureDocumentDBExtendedRumLib();
+	return core_function_catalog.documentdb_rum_test_set_incomplete_split_on_page(fcinfo);
+}
+
+
 static bool
 documentdb_rum_get_truncation_status(Relation indexRelation)
 {
@@ -360,4 +454,18 @@ documentdb_rum_get_reduced_terms_status(Relation indexRelation)
 {
 	EnsureDocumentDBExtendedRumLib();
 	return CheckIndexHasReducedTerms(indexRelation, &core_rum_routine);
+}
+
+
+static void
+InitializeDocumentDBAdapterGUCs(void)
+{
+	DefineCustomBoolVariable(
+		"documentdb_extended_rum.rum_use_builtin_rmgr_modules",
+		"Sets whether or not to use built-in rmgr modules",
+		NULL,
+		&RumUseBuiltinRmgrModules,
+		DEFAULT_RUM_USE_BUILTIN_RMGR_MODULES,
+		PGC_POSTMASTER, 0,
+		NULL, NULL, NULL);
 }
