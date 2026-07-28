@@ -114,7 +114,19 @@ impl PoolManager {
     }
 
     /// # Errors
-    /// Returns error if the operation fails.
+    /// Returns [`ErrorCode::ReauthenticationRequired`] (wire code 391) if no
+    /// pool exists for the user.
+    ///
+    /// A missing pool is not an internal fault: pools are created at
+    /// authentication (the only point where the user's password is available)
+    /// and legitimately disappear when [`Self::clean_unused_pools`] disposes
+    /// of one that has sat idle past its threshold. The gateway cannot rebuild
+    /// it on its own — but the client can, by re-authenticating. Surfacing 391
+    /// tells the driver exactly that, instead of the previous
+    /// `InternalError`, which presented to clients as "An unexpected internal
+    /// error has occurred." with no recovery path short of a manual reconnect.
+    ///
+    /// [`ErrorCode::ReauthenticationRequired`]: crate::error::ErrorCode::ReauthenticationRequired
     pub fn get_data_pool(
         &self,
         username: &str,
@@ -123,9 +135,16 @@ impl PoolManager {
         let settings = PgPoolSettings::from_configuration(dynamic_configuration);
 
         match self.user_data_pools.get(&(username.to_owned(), settings)) {
-            None => Err(DocumentDBError::internal_error(
-                "Connection pool missing for user.".to_owned(),
-            )),
+            None => {
+                tracing::warn!(
+                    event_id = EventId::ConnectionPool.code(),
+                    "Connection pool missing for user; requesting client re-authentication."
+                );
+                Err(DocumentDBError::reauthentication_required(
+                    "Connection pool for this session was released. Please re-authenticate."
+                        .to_owned(),
+                ))
+            }
             Some(pool_ref) => Ok(Arc::clone(pool_ref.value())),
         }
     }
@@ -610,7 +629,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_data_pool_with_missing_user_returns_internal_error() {
+    async fn test_get_data_pool_with_missing_user_returns_reauthentication_required() {
         // We still need an async context to create the connection pool (see ConnectionPool::new_with_user),
         // but the test itself doesn't need to be async since we are not awaiting anything after the pool creation,
         // so we can use yield_now to just get into async context and then proceed with sync code.
@@ -626,7 +645,40 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(err.kind(), &ErrorKind::Gateway);
-        assert_eq!(err.error_code(), ErrorCode::InternalError);
+        assert_eq!(err.error_code(), ErrorCode::ReauthenticationRequired);
+    }
+
+    #[tokio::test]
+    async fn test_get_data_pool_after_eviction_recovers_via_reauthentication() {
+        yield_now().await;
+
+        let dynamic_configuration = MaxConnectionConfig {
+            max_conn: 100.into(),
+        };
+        let pool_manager = test_pool_manager();
+
+        pool_manager
+            .allocate_data_pool("user", "password", &dynamic_configuration)
+            .unwrap();
+        sleep(Duration::from_millis(1)).await;
+        pool_manager.clean_unused_pools(Duration::from_millis(0));
+
+        // An evicted pool must surface as a re-authentication request, not an
+        // internal error: the client can recover from 391, but has no recourse
+        // against "An unexpected internal error has occurred."
+        let err = pool_manager
+            .get_data_pool("user", &dynamic_configuration)
+            .unwrap_err();
+        assert_eq!(err.error_code(), ErrorCode::ReauthenticationRequired);
+
+        // Re-authenticating re-allocates the pool, completing the recovery
+        // cycle the 391 asks the client to perform.
+        pool_manager
+            .allocate_data_pool("user", "password", &dynamic_configuration)
+            .unwrap();
+        pool_manager
+            .get_data_pool("user", &dynamic_configuration)
+            .expect("pool should be reachable again after re-authentication");
     }
 
     #[tokio::test]
