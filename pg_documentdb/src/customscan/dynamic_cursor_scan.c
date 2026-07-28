@@ -533,9 +533,8 @@ CreateCustomScanPathForStreaming(PlannerInfo *root, RelOptInfo *rel, Path *input
 static bool
 GetIndexSupportsGetIndexKey(Oid relam, Oid opfamily)
 {
-	bool pathKeySummarizedIgnore = false;
 	return EnableRumCursorDynamicIndexScans &&
-		   GetIndexKeyCurrentKeyFunc(relam, opfamily, &pathKeySummarizedIgnore) != NULL;
+		   GetIndexKeyCurrentKeyFunc(relam, opfamily) != NULL;
 }
 
 
@@ -1644,7 +1643,6 @@ ExtensionCursorScanNextWithIndexContinuation(CustomScanState *node)
 	TupleTableSlot *slot = NULL;
 	IndexScanDesc scanDesc = NULL;
 	PGFunction skipTidsFunc = NULL;
-	bool pathKeySummarizationForced = false;
 	double numSkipped = 0;
 
 	/*
@@ -1682,7 +1680,7 @@ ExtensionCursorScanNextWithIndexContinuation(CustomScanState *node)
 			skipTidsFunc = GetSkipTidsOnCurrentEntryFunc(
 				scanDesc->indexRelation->rd_rel->relam,
 				scanDesc->indexRelation->
-				rd_opfamily[0], &pathKeySummarizationForced);
+				rd_opfamily[0]);
 		}
 
 		bytea **dedupBytes = NULL;
@@ -1723,7 +1721,7 @@ ExtensionCursorScanNextWithIndexContinuation(CustomScanState *node)
 		{
 			/* See if the index can push forward until the Block of the TID exclusive */
 			DocumentDBRumSkipTidsForCurrentEntry(
-				scanDesc, skipTidsFunc, pathKeySummarizationForced,
+				scanDesc, skipTidsFunc,
 				&scanState->userContinuationState);
 			continue;
 		}

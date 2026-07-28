@@ -34,6 +34,7 @@ RELATIVE_INCLUDES = $(addprefix src/, $(INCLUDES))
 LDFLAGS_SL += $(filter -lm, $(LIBS))
 
 USE_DOCUMENTDB = 1
+USE_DOCUMENTDB_CORE = 1
 SKIP_API_SCHEMA = yes
 CORE_SCHEMA_NAME=documentdb_core
 EXTENSION_OBJECT_PREFIX=documentdb_extended

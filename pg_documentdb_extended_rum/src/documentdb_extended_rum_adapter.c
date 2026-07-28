@@ -23,6 +23,7 @@
 #include "index_am/index_am_exports.h"
 #include "index_am/documentdb_rum.h"
 #include "query/bson_dollar_selectivity.h"
+#include "index_am/documentdb_rum_impl.h"
 
 
 PG_MODULE_MAGIC;
@@ -48,6 +49,9 @@ static Oid DocumentdbExtendedRumHashedPathOpsFamilyOid(void);
 static Oid DocumentDbExtendedRumUniquePathOperatorFamilyOid(void);
 static const char * GetDocumentDBCatalogSchema(void);
 static void LoadBaseIndexAmRoutine(void);
+static bool documentdb_rum_get_truncation_status(Relation indexRelation);
+static bool documentdb_rum_is_path_key_summarization_scan(void);
+static bool documentdb_rum_get_reduced_terms_status(Relation indexRelation);
 
 extern PGDLLIMPORT Datum try_explain_documentdb_rum_index(PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum documentdb_rumhandler(PG_FUNCTION_ARGS);
@@ -79,13 +83,14 @@ static BsonIndexAmEntry DocumentDBIndexAmEntry = {
 	.get_opclass_internal_catalog_schema = GetDocumentDBCatalogSchema,
 	.get_multikey_status = documentdb_rum_get_multi_key_status,
 	.get_opclass_metadata = documentdb_rum_get_opclass_metadata,
-	.get_truncation_status = RumGetTruncationStatus,
+	.get_truncation_status = documentdb_rum_get_truncation_status,
 	.supports_ordered_operator_scans = true,
 	.create_indexes_support_funcs = NULL,
 	.query_index_path_support_funcs = NULL,
 	.get_current_index_key = documentdb_rum_get_current_index_key,
 	.skip_tids_on_current_entry = documentdb_rum_skip_tids_on_current_entry,
-	.force_path_key_summarization = true,
+	.get_reduced_terms_status = documentdb_rum_get_reduced_terms_status,
+	.is_path_key_summarization_scan = documentdb_rum_is_path_key_summarization_scan,
 };
 static DocumentDBRumOidCacheData Cache = { 0 };
 static bool has_custom_routine = false;
@@ -332,4 +337,27 @@ documentdb_extended_rumhandler(PG_FUNCTION_ARGS)
 	amroutine->aminsert = extension_documentdb_extended_ruminsert;
 	amroutine->amcostestimate = extension_documentdb_extended_rumcostestimate;
 	PG_RETURN_POINTER(amroutine);
+}
+
+
+static bool
+documentdb_rum_get_truncation_status(Relation indexRelation)
+{
+	EnsureDocumentDBExtendedRumLib();
+	return RumGetTruncationStatusCore(indexRelation, &core_rum_routine);
+}
+
+
+static bool
+documentdb_rum_is_path_key_summarization_scan(void)
+{
+	return true;
+}
+
+
+static bool
+documentdb_rum_get_reduced_terms_status(Relation indexRelation)
+{
+	EnsureDocumentDBExtendedRumLib();
+	return CheckIndexHasReducedTerms(indexRelation, &core_rum_routine);
 }

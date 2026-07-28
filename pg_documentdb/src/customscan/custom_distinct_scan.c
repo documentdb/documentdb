@@ -71,9 +71,6 @@ typedef struct DistinctQueryScanState
 	/* Function to skip TIDs for the current entry */
 	PGFunction skipTidsFunc;
 
-	/* Whether path summarization is forced */
-	bool isPathSummarizationForced;
-
 	/* IndexScanDesc for the current scan */
 	IndexScanDesc scanDesc;
 
@@ -244,10 +241,8 @@ AddDistinctCustomPathCore(PlannerInfo *root, List *pathList)
 			continue;
 		}
 
-		bool isPathSummarizationForced = false;
 		PGFunction skipTidsFunc = GetSkipTidsOnCurrentEntryFunc(
-			indexPath->indexinfo->relam, indexPath->indexinfo->opfamily[0],
-			&isPathSummarizationForced);
+			indexPath->indexinfo->relam, indexPath->indexinfo->opfamily[0]);
 
 		if (skipTidsFunc == NULL)
 		{
@@ -587,8 +582,7 @@ DistinctQueryScanNext(CustomScanState *node)
 
 		Relation indexRel = extensionScanState->scanDesc->indexRelation;
 		extensionScanState->skipTidsFunc = GetSkipTidsOnCurrentEntryFunc(
-			indexRel->rd_rel->relam, indexRel->rd_opfamily[0],
-			&extensionScanState->isPathSummarizationForced);
+			indexRel->rd_rel->relam, indexRel->rd_opfamily[0]);
 	}
 
 	ItemPointerData tid;
@@ -596,7 +590,6 @@ DistinctQueryScanNext(CustomScanState *node)
 	tid.ip_posid = 0;
 	DocumentDBRumSkipTidsForCurrentEntry(extensionScanState->scanDesc,
 										 extensionScanState->skipTidsFunc,
-										 extensionScanState->isPathSummarizationForced,
 										 &tid);
 
 	/* Copy the slot onto our own query state for projection */

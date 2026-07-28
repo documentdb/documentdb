@@ -70,6 +70,18 @@ typedef struct
 	/* Optional function to that returns the truncation status of an index */
 	GetTruncationStatusFunc get_truncation_status;
 
+	/*
+	 * Optional predicate that returns whether the index currently tracks any
+	 * correlated reduced terms via a full index check (slow path).
+	 */
+	bool (*get_reduced_terms_status)(Relation indexRelation);
+
+	/*
+	 * Optional predicate that returns whether scans on this index perform
+	 * path-key summarization at the access-method level.
+	 */
+	bool (*is_path_key_summarization_scan)(void);
+
 	/* Indicates whether the index supports ordered operator scans */
 	bool supports_ordered_operator_scans;
 
@@ -84,9 +96,6 @@ typedef struct
 
 	/* Optional function to skip TIDs on the current entry */
 	PGFunction skip_tids_on_current_entry;
-
-	/* Whether or not the indexam has forced pathkey summarization */
-	bool force_path_key_summarization;
 } BsonIndexAmEntry;
 
 /*

@@ -1419,7 +1419,7 @@ $cmd$, p_ignore_heap_fetches => true);
                            namespaceName: db.dist_push
                            indexName: idx_a
                            indexKey: {"a": 1}
-                           isMultiKey: false
+                           isMultiKey: true
                            indexBounds: ["a": [5, Infinity]]
                            innerScanLoops: 6 loops
                            scanType: ordered

@@ -90,13 +90,32 @@ bool GetIndexAmSupportsIndexOnlyScan(Oid indexAm, Oid opFamilyOid,
 									 GetTruncationStatusFunc *getTruncationStatus,
 									 PGFunction *getOpclassMetadata);
 
+/*
+ * Returns whether the index reports its entries as truncated, dispatching to
+ * the registered access method. Returns false when the AM does not implement
+ * a truncation-status check.
+ */
+bool GetIndexTruncationStatus(Relation indexRelation);
+
+/*
+ * Returns whether the index currently tracks any correlated reduced terms via
+ * a full index check (slow path), dispatching to the registered access method.
+ * Returns false when the AM does not implement a reduced-terms check.
+ */
+bool GetIndexReducedTermsStatus(Relation indexRelation);
+
+/*
+ * Returns whether scans on this index perform path-key summarization at the
+ * access-method level, dispatching to the registered access method. Returns
+ * false when the AM does not perform path-key summarization.
+ */
+bool IsPathKeySummarizationScan(Oid relam);
+
 void TryExplainByIndexAm(struct IndexScanDescData *scan, ExplainWriterFuncs *writeFuncs,
 						 void *writerState);
 
-PGFunction GetIndexKeyCurrentKeyFunc(Oid relam, Oid opFamily,
-									 bool *pathKeySummarizationForced);
-PGFunction GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily,
-										 bool *pathKeySummarizationForced);
+PGFunction GetIndexKeyCurrentKeyFunc(Oid relam, Oid opFamily);
+PGFunction GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily);
 
 bool GetCompositeOpClassPropsByOid(Oid relAm, Oid opFamilyOid,
 								   bool *supportsOrderedOperatorScans,

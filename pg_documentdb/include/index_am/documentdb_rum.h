@@ -33,53 +33,6 @@ typedef enum RumLibraryLoadOptions
 extern RumLibraryLoadOptions DocumentDBRumLibraryLoadOption;
 void LoadRumRoutine(void);
 
-IndexScanDesc extension_rumbeginscan_core(Relation rel, int nkeys, int norderbys,
-										  IndexAmRoutine *coreRoutine);
-IndexScanDesc extension_documentdb_rumbeginscan_core(Relation rel, int nkeys, int
-													 norderbys,
-													 IndexAmRoutine *coreRoutine);
-void extension_rumendscan_core(IndexScanDesc scan, IndexAmRoutine *coreRoutine);
-void extension_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int nscankeys,
-							  ScanKey orderbys, int norderbys,
-							  IndexAmRoutine *coreRoutine);
-void extension_documentdb_rumrescan_core(IndexScanDesc scan, ScanKey scankey, int
-										 nscankeys,
-										 ScanKey orderbys, int norderbys,
-										 IndexAmRoutine *coreRoutine);
-int64 extension_rumgetbitmap_core(IndexScanDesc scan, TIDBitmap *tbm,
-								  IndexAmRoutine *coreRoutine);
-bool extension_rumgettuple_core(IndexScanDesc scan, ScanDirection direction,
-								IndexAmRoutine *coreRoutine);
-
-typedef List *(*BoundaryQualsSelectorFunc)(IndexPath *indexPath, int32_t *num_sa_scans);
-
-void extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double
-									loop_count,
-									Cost *indexStartupCost, Cost *indexTotalCost,
-									Selectivity *indexSelectivity,
-									double *indexCorrelation,
-									double *indexPages, IndexAmRoutine *coreRoutine,
-									bool forceIndexPushdownCostToZero,
-									bool enableCompositePlannerCosts,
-									PGFunction orderedCostEstimateCoreFunc);
-
-IndexBuildResult * extension_rumbuild_core(Relation heapRelation, Relation indexRelation,
-										   struct IndexInfo *indexInfo,
-										   IndexAmRoutine *coreRoutine,
-										   PGFunction updateMultikeyStatus);
-
-bool extension_ruminsert_core(Relation indexRelation,
-							  Datum *values,
-							  bool *isnull,
-							  ItemPointer heap_tid,
-							  Relation heapRelation,
-							  IndexUniqueCheck checkUnique,
-							  bool indexUnchanged,
-							  struct IndexInfo *indexInfo,
-							  IndexAmRoutine *coreRoutine,
-							  PGFunction updateMultikeyStatus);
-
-bool RumGetTruncationStatus(Relation indexRelation);
 
 struct ExplainState;
 typedef struct pgbson_writer pgbson_writer;
@@ -107,6 +60,6 @@ void RecordCostEstimateForIndex(Oid indexOid, Oid relOid, Cost indexStartupCost,
 Datum DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan, bytea **dedupState);
 
 void DocumentDBRumSkipTidsForCurrentEntry(IndexScanDesc scan, PGFunction
-										  skipTidsFunc, bool pathKeySummarizationForced,
-										  ItemPointer userContinuationState);
+										  skipTidsFunc, ItemPointer
+										  userContinuationState);
 #endif
