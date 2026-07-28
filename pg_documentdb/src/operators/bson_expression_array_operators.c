@@ -13,6 +13,8 @@
 #include <miscadmin.h>
 #include <nodes/pg_list.h>
 #include <utils/hsearch.h>
+#include <utils/memutils.h>
+#include <lib/binaryheap.h>
 
 #include "io/bson_core.h"
 #include "query/bson_compare.h"
@@ -22,7 +24,6 @@
 #include "utils/hashset_utils.h"
 #include "commands/commands_common.h"
 #include "utils/sort_utils.h"
-#include "utils/heap_utils.h"
 
 #include "planner/documentdb_planner.h"
 #include "aggregation/bson_aggregation_pipeline.h"
@@ -30,6 +31,7 @@
 
 #define MAX_BUFFER_SIZE_DOLLAR_RANGE (64 * 1024 * 1024)
 #define EMPTY_BSON_ARRAY_SIZE_BYTES 5 /* size of empty array is fixed as 5 bytes. */
+#define INITIAL_MAX_MIN_N_HEAP_CAPACITY 64
 
 /*
  * This value is required as array can't exist alone.
@@ -138,7 +140,39 @@ typedef struct DollarMaxMinNArguments
 
 	/* This bool serves both maxn and minn. true: maxn; false: minn;*/
 	bool isMaxN;
+
+	/* Collation for comparisons; empty when not applicable. */
+	const char collationString[MAX_ICU_COLLATION_LENGTH];
 } DollarMaxMinNArguments;
+
+/* Struct that represents the parsed arguments to a $min / $max expression. */
+typedef struct DollarMinMaxArguments
+{
+	/* The input expression evaluated to obtain the value(s) to reduce. */
+	AggregationExpressionData *input;
+
+	/* Collation for comparisons; empty when not applicable. */
+	const char collationString[MAX_ICU_COLLATION_LENGTH];
+} DollarMinMaxArguments;
+
+/* A value kept during $maxN / $minN selection. */
+typedef struct MaxMinNHeapEntry
+{
+	bson_value_t value;
+
+	/* Insertion order; breaks ties between equal values. */
+	int64_t seq;
+} MaxMinNHeapEntry;
+
+
+/* Extra inputs for the $maxN / $minN heap comparator. */
+typedef struct MaxMinNHeapCompareArgs
+{
+	/* true: $maxN; false: $minN. */
+	bool isMaxN;
+
+	const char *collationString;
+} MaxMinNHeapCompareArgs;
 
 /* Struct that represents the parsed arguments to a $reduce expression. */
 typedef struct DollarReduceArguments
@@ -231,7 +265,8 @@ static void ProcessDollarObjectToArray(const bson_value_t *currentValue,
 static bool ProcessDollarConcatArraysElement(const bson_value_t *currentValue,
 											 void *state, bson_value_t *result);
 static void ProcessDollarMaxAndMinN(bson_value_t *result, bson_value_t *evaluatedInput,
-									bson_value_t *evaluatedLimit, bool isMaxN);
+									bson_value_t *evaluatedLimit, bool isMaxN,
+									const char *collationString);
 static void ProcessDollarConcatArraysElementResult(void *state, bson_value_t *result);
 
 static void ValidateElementForFirstAndLastN(bson_value_t *elementsToFetch,
@@ -259,11 +294,14 @@ static int32 FindIndexInArrayFor(bson_value_t *array, bson_value_t *element,
 								 const char *collationString);
 static void SetResultArrayForDollarReverse(bson_value_t *array, bson_value_t *result);
 static void SetResultValueForDollarMaxMin(const bson_value_t *inputArgument,
-										  bson_value_t *result, bool isFindMax);
+										  bson_value_t *result, bool isFindMax,
+										  const char *collationString);
 static void SetResultValueForDollarSumAvg(const bson_value_t *inputArgument,
 										  bson_value_t *result, bool isSum);
-static bool HeapSortComparatorMaxN(const bson_value_t *first, const bson_value_t *second);
-static bool HeapSortComparatorMinN(const bson_value_t *first, const bson_value_t *second);
+static int MaxMinNHeapComparator(Datum first, Datum second, void *arg);
+static void GrowMaxMinNHeap(binaryheap **heap, int entryCount, int *heapCapacity,
+							int maximumCapacity,
+							MaxMinNHeapCompareArgs *compareArgs);
 static inline void DollarSliceInputValidation(bson_value_t *inputValue, bool isSecondArg);
 static bson_value_t * ParseZipDefaultsArgument(int rowNum, bson_value_t
 											   evaluatedDefaultsArg, bool
@@ -1285,16 +1323,18 @@ void
 HandlePreParsedDollarMin(pgbson *doc, void *arguments,
 						 ExpressionResult *expressionResult)
 {
+	DollarMinMaxArguments *minMaxArguments = (DollarMinMaxArguments *) arguments;
 	bool isNullOnEmpty = false;
 	ExpressionResult childResult = ExpressionResultCreateChild(expressionResult);
 	EvaluateAggregationExpressionData(
-		(AggregationExpressionData *) arguments, doc,
+		minMaxArguments->input, doc,
 		&childResult,
 		isNullOnEmpty);
 
 	bson_value_t result = { 0 };
 	bool isFindMax = false;
-	SetResultValueForDollarMaxMin(&childResult.value, &result, isFindMax);
+	SetResultValueForDollarMaxMin(&childResult.value, &result, isFindMax,
+								  minMaxArguments->collationString);
 	ExpressionResultSetValue(expressionResult, &result);
 }
 
@@ -1320,16 +1360,18 @@ void
 HandlePreParsedDollarMax(pgbson *doc, void *arguments,
 						 ExpressionResult *expressionResult)
 {
+	DollarMinMaxArguments *minMaxArguments = (DollarMinMaxArguments *) arguments;
 	bool isNullOnEmpty = false;
 	ExpressionResult childResult = ExpressionResultCreateChild(expressionResult);
 	EvaluateAggregationExpressionData(
-		(AggregationExpressionData *) arguments, doc,
+		minMaxArguments->input, doc,
 		&childResult,
 		isNullOnEmpty);
 
 	bson_value_t result = { 0 };
 	bool isFindMax = true;
-	SetResultValueForDollarMaxMin(&childResult.value, &result, isFindMax);
+	SetResultValueForDollarMaxMin(&childResult.value, &result, isFindMax,
+								  minMaxArguments->collationString);
 	ExpressionResultSetValue(expressionResult, &result);
 }
 
@@ -1450,7 +1492,8 @@ HandlePreParsedDollarMaxMinN(pgbson *doc, void *arguments,
 
 	bson_value_t result;
 
-	ProcessDollarMaxAndMinN(&result, &evaluatedLimit, &evaluatedInput, isMaxN);
+	ProcessDollarMaxAndMinN(&result, &evaluatedLimit, &evaluatedInput, isMaxN,
+							maxMinNArguments->collationString);
 
 	ExpressionResultSetValue(expressionResult, &result);
 }
@@ -2468,13 +2511,22 @@ ParseDollarMinAndMax(bool isMax, const bson_value_t *argument,
 
 	if (IsAggregationExpressionConstant(argumentData))
 	{
-		SetResultValueForDollarMaxMin(&argumentData->value, &data->value, isMax);
+		SetResultValueForDollarMaxMin(&argumentData->value, &data->value, isMax,
+									  context->collationString);
 		data->kind = AggregationExpressionKind_Constant;
 		pfree(argumentData);
 		return;
 	}
 
-	data->operator.arguments = argumentData;
+	DollarMinMaxArguments *arguments = palloc0(sizeof(DollarMinMaxArguments));
+	arguments->input = argumentData;
+	if (IsCollationApplicable(context->collationString))
+	{
+		strlcpy((char *) arguments->collationString, context->collationString,
+				MAX_ICU_COLLATION_LENGTH);
+	}
+
+	data->operator.arguments = arguments;
 	data->operator.argumentsKind = AggregationExpressionArgumentsKind_Palloc;
 }
 
@@ -2552,12 +2604,18 @@ ParseDollarMaxMinN(const bson_value_t *argument, AggregationExpressionData *data
 	{
 		ProcessDollarMaxAndMinN(&data->value, &arguments->n.value,
 								&arguments->input.value,
-								isMaxN);
+								isMaxN, context->collationString);
 		data->kind = AggregationExpressionKind_Constant;
 		pfree(arguments);
 	}
 	else
 	{
+		if (IsCollationApplicable(context->collationString))
+		{
+			strlcpy((char *) arguments->collationString, context->collationString,
+					MAX_ICU_COLLATION_LENGTH);
+		}
+
 		data->operator.arguments = arguments;
 		data->operator.argumentsKind = AggregationExpressionArgumentsKind_Palloc;
 	}
@@ -3413,12 +3471,97 @@ ProcessDollarZip(bson_value_t evaluatedInputsArg, bson_value_t evaluatedLongestL
 }
 
 
+/*
+ * Comparator for the $maxN / $minN heap. binaryheap is a max-heap, so keep the
+ * eviction boundary at the root: smallest value for $maxN, largest for $minN.
+ * Equal values use insertion order to reproduce each operator's tie behavior.
+ */
+static int
+MaxMinNHeapComparator(Datum first, Datum second, void *arg)
+{
+	const MaxMinNHeapCompareArgs *compareArgs = (const MaxMinNHeapCompareArgs *) arg;
+	const MaxMinNHeapEntry *firstEntry =
+		(const MaxMinNHeapEntry *) DatumGetPointer(first);
+	const MaxMinNHeapEntry *secondEntry =
+		(const MaxMinNHeapEntry *) DatumGetPointer(second);
+
+	bool ignoreIsComparisonValid = false;
+	int cmp = CompareBsonValueAndTypeWithCollation(&firstEntry->value,
+												   &secondEntry->value,
+												   &ignoreIsComparisonValid,
+												   compareArgs->collationString);
+	if (cmp != 0)
+	{
+		/* Keep the boundary value (min for $maxN, max for $minN) at the root. */
+		int boundaryOrder = compareArgs->isMaxN ? -cmp : cmp;
+		return boundaryOrder < 0 ? -1 : 1;
+	}
+
+	if (firstEntry->seq == secondEntry->seq)
+	{
+		return 0;
+	}
+
+	/* Tie: $maxN evicts the earlier value first, $minN the later one. */
+	bool firstNearerRoot = compareArgs->isMaxN ?
+						   firstEntry->seq < secondEntry->seq :
+						   firstEntry->seq > secondEntry->seq;
+	return firstNearerRoot ? 1 : -1;
+}
+
+
+/* Grow the heap geometrically while preserving its existing entry pointers. */
+static void
+GrowMaxMinNHeap(binaryheap **heap, int entryCount, int *heapCapacity,
+				int maximumCapacity,
+				MaxMinNHeapCompareArgs *compareArgs)
+{
+	Assert(*heapCapacity < maximumCapacity);
+
+	int newCapacity;
+	if (*heapCapacity == 0)
+	{
+		newCapacity = Min(INITIAL_MAX_MIN_N_HEAP_CAPACITY, maximumCapacity);
+	}
+	else if (*heapCapacity > maximumCapacity / 2)
+	{
+		newCapacity = maximumCapacity;
+	}
+	else
+	{
+		newCapacity = *heapCapacity * 2;
+	}
+
+	binaryheap *newHeap = binaryheap_allocate(newCapacity, MaxMinNHeapComparator,
+											  compareArgs);
+	for (int i = 0; i < entryCount; i++)
+	{
+		CHECK_FOR_INTERRUPTS();
+		binaryheap_add_unordered(newHeap, (*heap)->bh_nodes[i]);
+	}
+
+	if (entryCount > 0)
+	{
+		binaryheap_build(newHeap);
+	}
+
+	if (*heap != NULL)
+	{
+		binaryheap_free(*heap);
+	}
+
+	*heap = newHeap;
+	*heapCapacity = newCapacity;
+}
+
+
 /* Function that processes arguments for $maxN/MinN and calculate result.
  * Validates if arguments are specified correctly
  */
 static void
 ProcessDollarMaxAndMinN(bson_value_t *result, bson_value_t *evaluatedLimit,
-						bson_value_t *evaluatedInput, bool isMaxN)
+						bson_value_t *evaluatedInput, bool isMaxN,
+						const char *collationString)
 {
 	int64_t nValue;
 	if (!IsExpressionResultNullOrUndefined(evaluatedLimit) &&
@@ -3475,22 +3618,23 @@ ProcessDollarMaxAndMinN(bson_value_t *result, bson_value_t *evaluatedLimit,
 	bson_iter_t arrayIter;
 	BsonValueInitIterator(evaluatedInput, &arrayIter);
 
-	int64_t nElementsInArray = BsonDocumentValueCountKeys(evaluatedInput);
+	/* Keep the eviction boundary at the root and grow the heap lazily. */
+	MaxMinNHeapCompareArgs compareArgs;
+	compareArgs.isMaxN = isMaxN;
+	compareArgs.collationString = collationString;
 
-	if (nValue > nElementsInArray)
-	{
-		nValue = nElementsInArray;  /* n val result will at most be the size of the array */
-	}
+	MemoryContext entryContext = NULL;
+	binaryheap *heap = NULL;
+	int maximumCapacity = (int) Min(nValue, (int64_t) INT_MAX);
+	int heapCapacity = 0;
+	int entryCount = 0;
+	int64_t seq = 0;
 
-	HeapComparator comparator = isMaxN == true ? HeapSortComparatorMaxN :
-								HeapSortComparatorMinN;
-
-	BinaryHeap *valueHeap = AllocateHeap(nValue, comparator);
-
-	/* Insert all the elements into a heap */
 	while (bson_iter_next(&arrayIter))
 	{
-		const bson_value_t *next = (bson_iter_value(&arrayIter));
+		CHECK_FOR_INTERRUPTS();
+
+		const bson_value_t *next = bson_iter_value(&arrayIter);
 
 		/* skip if value is null or undefined */
 		if (IsExpressionResultNullOrUndefined(next))
@@ -3498,31 +3642,91 @@ ProcessDollarMaxAndMinN(bson_value_t *result, bson_value_t *evaluatedLimit,
 			continue;
 		}
 
-		/* Heap is full, replace the top & heapify if the new value should be included instead */
-		if (valueHeap->heapSize == valueHeap->heapSpace)
+		if (entryCount < maximumCapacity)
 		{
-			const bson_value_t topHeap = TopHeap(valueHeap);
-			if (!valueHeap->heapComparator(next, &topHeap))
+			if (entryCount == heapCapacity)
 			{
-				PopFromHeap(valueHeap);
-				PushToHeap(valueHeap, next);
+				GrowMaxMinNHeap(&heap, entryCount, &heapCapacity, maximumCapacity,
+								&compareArgs);
 			}
+
+			/*
+			 * Keep small heaps in the current context rather than creating a
+			 * dedicated slab that would be mostly empty.
+			 */
+			if (entryCount >= INITIAL_MAX_MIN_N_HEAP_CAPACITY &&
+				entryContext == NULL)
+			{
+				entryContext = SlabContextCreate(CurrentMemoryContext,
+												 "MaxMinNHeapEntries",
+												 SLAB_DEFAULT_BLOCK_SIZE,
+												 sizeof(MaxMinNHeapEntry));
+			}
+
+			MemoryContext previousContext = NULL;
+			if (entryContext != NULL)
+			{
+				previousContext = MemoryContextSwitchTo(entryContext);
+			}
+
+			MaxMinNHeapEntry *entry = (MaxMinNHeapEntry *) palloc0(
+				sizeof(MaxMinNHeapEntry));
+			if (previousContext != NULL)
+			{
+				MemoryContextSwitchTo(previousContext);
+			}
+
+			entry->value = *next;
+			entry->seq = seq++;
+			binaryheap_add(heap, PointerGetDatum(entry));
+			entryCount++;
+			continue;
 		}
-		else
+
+		/*
+		 * Equal values do not displace the boundary, preserving the documented
+		 * tie selection for both binary and collated comparisons.
+		 */
+		MaxMinNHeapEntry *boundary =
+			(MaxMinNHeapEntry *) DatumGetPointer(binaryheap_first(heap));
+		bool ignoreIsComparisonValid = false;
+		int cmp = CompareBsonValueAndTypeWithCollation(next, &boundary->value,
+													   &ignoreIsComparisonValid,
+													   collationString);
+		bool shouldReplaceBoundary = isMaxN ? (cmp > 0) : (cmp < 0);
+		if (shouldReplaceBoundary)
 		{
-			PushToHeap(valueHeap, next);
+			boundary->value = *next;
+			boundary->seq = seq++;
+			binaryheap_replace_first(heap, PointerGetDatum(boundary));
 		}
 	}
 
-	int64_t numEntries = valueHeap->heapSize;
+	int64_t numEntries = entryCount;
 
-	bson_value_t *valueArray = (bson_value_t *) palloc(
-		sizeof(bson_value_t) * numEntries);
-
-	/* Write the array in sorted order */
-	while (valueHeap->heapSize > 0)
+	/*
+	 * Draining the heap yields values from the boundary inward, the reverse of
+	 * the wanted order ($maxN descending, $minN ascending), so fill back to
+	 * front.
+	 */
+	MaxMinNHeapEntry **orderedEntries = NULL;
+	if (numEntries > 0)
 	{
-		valueArray[valueHeap->heapSize - 1] = PopFromHeap(valueHeap);
+		orderedEntries = (MaxMinNHeapEntry **) palloc0(
+			sizeof(MaxMinNHeapEntry *) * numEntries);
+	}
+
+	for (int64_t i = numEntries - 1; i >= 0; i--)
+	{
+		CHECK_FOR_INTERRUPTS();
+
+		orderedEntries[i] =
+			(MaxMinNHeapEntry *) DatumGetPointer(binaryheap_remove_first(heap));
+	}
+
+	if (heap != NULL)
+	{
+		binaryheap_free(heap);
 	}
 
 	pgbson_writer writer;
@@ -3530,18 +3734,25 @@ ProcessDollarMaxAndMinN(bson_value_t *result, bson_value_t *evaluatedLimit,
 	pgbson_array_writer arrayWriter;
 	PgbsonWriterStartArray(&writer, "", 0, &arrayWriter);
 
-
-	/* Write the elements in cArray into result */
 	for (int64_t i = 0; i < numEntries; i++)
 	{
-		PgbsonArrayWriterWriteValue(&arrayWriter, &valueArray[i]);
+		CHECK_FOR_INTERRUPTS();
+		PgbsonArrayWriterWriteValue(&arrayWriter, &orderedEntries[i]->value);
+		pfree(orderedEntries[i]);
 	}
 
 	PgbsonWriterEndArray(&writer, &arrayWriter);
 	*result = PgbsonArrayWriterGetValue(&arrayWriter);
 
-	pfree(valueArray);
-	FreeHeap(valueHeap);
+	if (orderedEntries != NULL)
+	{
+		pfree(orderedEntries);
+	}
+
+	if (entryContext != NULL)
+	{
+		MemoryContextDelete(entryContext);
+	}
 }
 
 
@@ -4180,34 +4391,6 @@ DollarSliceInputValidation(bson_value_t *inputValue, bool isSecondArg)
 }
 
 
-/*
- * Comparator function for heap utils. For MaxN, we need to build min-heap
- */
-static bool
-HeapSortComparatorMaxN(const bson_value_t *first,
-					   const bson_value_t *second)
-{
-	bool ignoreIsComparisonValid = false; /* IsComparable ensures this is taken care of */
-	return CompareBsonValueAndType((const bson_value_t *) first,
-								   (const bson_value_t *) second,
-								   &ignoreIsComparisonValid) < 0;
-}
-
-
-/*
- * Comparator function for heap utils. For MinN, we need to build max-heap
- */
-static bool
-HeapSortComparatorMinN(const bson_value_t *first,
-					   const bson_value_t *second)
-{
-	bool ignoreIsComparisonValid = false; /* IsComparable ensures this is taken care of */
-	return CompareBsonValueAndType((const bson_value_t *) first,
-								   (const bson_value_t *) second,
-								   &ignoreIsComparisonValid) > 0;
-}
-
-
 /* Function that sets result for $zip operator*/
 static void
 SetResultArrayForDollarZip(int rowNum, ZipParseInputsResult parsedInputs,
@@ -4262,7 +4445,7 @@ SetResultArrayForDollarZip(int rowNum, ZipParseInputsResult parsedInputs,
  */
 static void
 SetResultValueForDollarMaxMin(const bson_value_t *inputArgument, bson_value_t *result,
-							  bool isFindMax)
+							  bool isFindMax, const char *collationString)
 {
 	result->value_type = BSON_TYPE_NULL;
 
@@ -4287,6 +4470,8 @@ SetResultValueForDollarMaxMin(const bson_value_t *inputArgument, bson_value_t *r
 
 	while (bson_iter_next(&arrayIterator))
 	{
+		CHECK_FOR_INTERRUPTS();
+
 		arrayElem = (bson_value_t *) bson_iter_value(&arrayIterator);
 
 		/* As per the the expected behaviour operator only considers the non-null and the non-missing values for the comparison. */
@@ -4305,7 +4490,9 @@ SetResultValueForDollarMaxMin(const bson_value_t *inputArgument, bson_value_t *r
 		}
 
 		bool isComparisonValid = true;
-		int cmp = CompareBsonValueAndType(result, arrayElem, &isComparisonValid);
+		int cmp = CompareBsonValueAndTypeWithCollation(result, arrayElem,
+													   &isComparisonValid,
+													   collationString);
 
 		/* This part sets the value for result based on $max and $min */
 		if ((cmp < 0 && isFindMax) || (cmp > 0 && !isFindMax))

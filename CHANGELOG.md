@@ -4,6 +4,7 @@
 * Default the RUM index library (`documentdb.rum_library_load_option`) to `require_documentdb_extended_rum` on all supported PostgreSQL versions, instead of only on PG 18+. The option can still be set to `none` to opt out. *[Refactor]*
 * Extend the field-pruning `$project` injection before `$unwind` to pipelines with multiple `$unwind` stages (previously a second `$unwind` disabled the optimization); the injected projection now unions the top-level fields consumed by every `$unwind`, `$match`, and the terminal `$group` in the window. Still guarded by the `enableProjectPushUpBeforeUnwindWithGroup` feature flag. *[Perf]*
 * Prefer an equality `$elemMatch` owner when multiple predicates constrain the leading reduced-correlated composite-index path, retaining its same-element secondary bounds while runtime-rechecking competing owners. A default-off first-owner fallback for predicates without a leading equality is available through `documentdb.enable_composite_reduced_correlated_first_owner_fallback`. *[Bugfix/Perf]*
+* Make the `$max`, `$min`, `$maxN`, and `$minN` expressions collation-aware, and align `$maxN`/`$minN` equal-value selection with the documented tie semantics. *[Feature/Bugfix]*
 
 ### documentdb v0.116-0 (Unreleased) ###
 * Rename the `$sample` EXPLAIN metric `Sample Heap Skips` to `Sample Heap Fetches`. *[Refactor]*

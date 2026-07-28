@@ -1038,6 +1038,7 @@ SELECT documentdb_api.drop_collection('coll_q_db','coll_merge_src');
 SELECT documentdb_api.drop_collection('coll_q_db','coll_merge_dst');
 
 -- ======================================================================
+-- ======================================================================
 -- SECTION: collation-aware index usage on `_id` and compound keys
 -- ======================================================================
 -- Exercises a collation-aware ordered index on `_id` and a compound
@@ -1109,3 +1110,36 @@ RESET enable_bitmapscan;
 
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_ios');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_id_ios');
+
+-- ======================================================================
+-- SECTION: $max/$min/$maxN/$minN
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_q_db','coll_minmax_idx', '{ "_id": 1, "grp": "r", "vals": ["apple", "Banana"] }', NULL);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "coll_minmax_idx", "indexes": [ { "key": {"grp": 1}, "name": "idx_grp_en_s1", "collation": {"locale":"en","strength":1} } ] }', TRUE);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_minmax_idx", "pipeline": [ { "$match": { "grp": "r" } }, { "$project": { "mx": { "$max": "$vals" }, "mn": { "$min": "$vals" }, "mxn": { "$maxN": { "input": "$vals", "n": 1 } }, "mnn": { "$minN": { "input": "$vals", "n": 1 } }, "_id": 0 } } ], "collation": { "locale": "en", "strength": 1 }, "cursor": {} }')
+$cmd$);
+
+-- No collation: the collated strength-1 index must NOT be used (binary query); falls back to runtime.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_minmax_idx", "pipeline": [ { "$match": { "grp": "r" } }, { "$project": { "mx": { "$max": "$vals" }, "_id": 0 } } ], "cursor": {} }')
+$cmd$);
+
+-- Mismatched collation (numericOrdering -> different ICU string): the strength-1 index must NOT
+-- be used, but the $project $max still honors the requested collation at runtime.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_minmax_idx", "pipeline": [ { "$match": { "grp": "r" } }, { "$project": { "mx": { "$max": "$vals" }, "_id": 0 } } ], "collation": { "locale": "en", "numericOrdering": true }, "cursor": {} }')
+$cmd$);
+
+-- Range $gte with matching collation: the collated index SHOULD be used for the bounds.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_minmax_idx", "pipeline": [ { "$match": { "grp": { "$gte": "a" } } }, { "$project": { "mx": { "$max": "$vals" }, "_id": 0 } } ], "collation": { "locale": "en", "strength": 1 }, "cursor": {} }')
+$cmd$);
+
+-- $in with matching collation: the collated index SHOULD be used for the membership bounds.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_minmax_idx", "pipeline": [ { "$match": { "grp": { "$in": ["r", "s"] } } }, { "$project": { "mx": { "$max": "$vals" }, "_id": 0 } } ], "collation": { "locale": "en", "strength": 1 }, "cursor": {} }')
+$cmd$);
+
+SELECT documentdb_api.drop_collection('coll_q_db','coll_minmax_idx');

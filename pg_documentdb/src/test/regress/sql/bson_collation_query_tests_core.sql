@@ -1105,6 +1105,124 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "col
 -- Range on _id under collation.
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_id_ios", "filter": { "_id": { "$gte": "cat", "$lte": "dog" } }, "sort": { "v": 1 }, "collation": { "locale": "en", "strength": 1 } }');
 
+-- ==============================================================================
+-- SECTION 22: expression $max/$min/$maxN/$minN honor collation
+-- ==============================================================================
+
+-- $max / $min over an array — the selected element changes under numericOrdering collation.
+-- Binary: "10" < "2" (lexical, '1' < '2'), so $max="2", $min="10".
+-- numericOrdering (en-u-kn-true): "10" > "2" (numeric), so $max="10", $min="2".
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["10", "2"] }'::bson, '{ "result": { "$max": "$a" } }'::bson, false, '{}'::bson, '');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["10", "2"] }'::bson, '{ "result": { "$max": "$a" } }'::bson, false, '{}'::bson, 'en-u-kn-true');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["10", "2"] }'::bson, '{ "result": { "$min": "$a" } }'::bson, false, '{}'::bson, '');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["10", "2"] }'::bson, '{ "result": { "$min": "$a" } }'::bson, false, '{}'::bson, 'en-u-kn-true');
+
+-- $max / $min with a constant array argument — exercises the parse-time constant-folding path under numericOrdering.
+SELECT documentdb_api_internal.bson_expression_get(
+  '{}'::bson, '{ "result": { "$max": ["10", "2"] } }'::bson, false, '{}'::bson, '');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{}'::bson, '{ "result": { "$max": ["10", "2"] } }'::bson, false, '{}'::bson, 'en-u-kn-true');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{}'::bson, '{ "result": { "$min": ["10", "2"] } }'::bson, false, '{}'::bson, '');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{}'::bson, '{ "result": { "$min": ["10", "2"] } }'::bson, false, '{}'::bson, 'en-u-kn-true');
+
+-- $maxN / $minN over an array with numericOrdering — the n selected elements compare as numbers.
+-- Binary: "2" > "10" > "1"; numericOrdering: 10 > 2 > 1.
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["10", "2", "1"] }'::bson, '{ "result": { "$maxN": { "input": "$a", "n": 2 } } }'::bson, false, '{}'::bson, '');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["10", "2", "1"] }'::bson, '{ "result": { "$maxN": { "input": "$a", "n": 2 } } }'::bson, false, '{}'::bson, 'en-u-kn-true');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["10", "2", "1"] }'::bson, '{ "result": { "$minN": { "input": "$a", "n": 2 } } }'::bson, false, '{}'::bson, '');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["10", "2", "1"] }'::bson, '{ "result": { "$minN": { "input": "$a", "n": 2 } } }'::bson, false, '{}'::bson, 'en-u-kn-true');
+
+-- $maxN / $minN with a constant input array — exercises the parse-time constant-folding path under numericOrdering.
+SELECT documentdb_api_internal.bson_expression_get(
+  '{}'::bson, '{ "result": { "$maxN": { "input": ["10", "2", "1"], "n": 2 } } }'::bson, false, '{}'::bson, 'en-u-kn-true');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{}'::bson, '{ "result": { "$minN": { "input": ["10", "2", "1"], "n": 2 } } }'::bson, false, '{}'::bson, 'en-u-kn-true');
+
+-- All-null arrays retain no candidates and return an empty array.
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": [null, null] }'::bson, '{ "result": { "$maxN": { "input": "$a", "n": 2 } } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": [null, null] }'::bson, '{ "result": { "$minN": { "input": "$a", "n": 2 } } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+
+-- More than the initial heap capacity exercises single-pass heap growth.
+SELECT documentdb_api_internal.bson_expression_get(
+  '{}'::bson, '{ "result": { "$arrayElemAt": [ { "$maxN": { "input": { "$range": [0, 70] }, "n": 65 } }, -1 ] } }'::bson, false, '{}'::bson, '');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{}'::bson, '{ "result": { "$arrayElemAt": [ { "$minN": { "input": { "$range": [0, 70] }, "n": 65 } }, -1 ] } }'::bson, false, '{}'::bson, '');
+
+-- Equal-under-collation tie handling: strength-1 "en" collates "a" == "A" == "á", all < "b".
+-- The selected equal values follow the operator-specific tie order:
+--   $maxN(n:2) -> ["b", "A"]  ("b" is max; earliest equal "a" is evicted when "b" arrives, leaving "A")
+--   $minN(n:2) -> ["a", "A"]  ("a" is min; "A" is the next equal kept in input order)
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["a", "A", "á", "b"] }'::bson, '{ "result": { "$maxN": { "input": "$a", "n": 2 } } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["a", "A", "á", "b"] }'::bson, '{ "result": { "$minN": { "input": "$a", "n": 2 } } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+-- Single $max is unique ("b"); $min ties across "a"/"A"/"á" and keeps the first in input order ("a").
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["a", "A", "á", "b"] }'::bson, '{ "result": { "$max": "$a" } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["a", "A", "á", "b"] }'::bson, '{ "result": { "$min": "$a" } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+
+-- More equal values than n forces eviction among the equal keys.
+--   $maxN(n:3) -> ["b","á","A"] (earliest equal "a" is evicted when "b" arrives)
+--   $minN(n:3) -> ["a","A","á"] (the equal trio kept in input order)
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["a", "A", "á", "b"] }'::bson, '{ "result": { "$maxN": { "input": "$a", "n": 3 } } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["a", "A", "á", "b"] }'::bson, '{ "result": { "$minN": { "input": "$a", "n": 3 } } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+-- n = 1 keeps a single boundary value: $maxN -> ["b"], $minN -> ["a"].
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["a", "A", "á", "b"] }'::bson, '{ "result": { "$maxN": { "input": "$a", "n": 1 } } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["a", "A", "á", "b"] }'::bson, '{ "result": { "$minN": { "input": "$a", "n": 1 } } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+-- n beyond the array size clamps to it and returns every value in sorted order.
+--   $maxN(n:5) -> ["b","á","A","a"], $minN(n:5) -> ["a","A","á","b"]
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["a", "A", "á", "b"] }'::bson, '{ "result": { "$maxN": { "input": "$a", "n": 5 } } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["a", "A", "á", "b"] }'::bson, '{ "result": { "$minN": { "input": "$a", "n": 5 } } }'::bson, false, '{}'::bson, 'en-u-ks-level1');
+
+-- Strength 2 collates "a" == "A" but keeps "á" distinct (accent-sensitive), so a < á < b.
+--   $maxN(n:2) -> ["b","á"] (no tie in the top two)
+--   $minN(n:2) -> ["a","A"] (the equal pair in input order); $max -> "b"; $min -> "a"
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["a", "A", "á", "b"] }'::bson, '{ "result": { "$maxN": { "input": "$a", "n": 2 } } }'::bson, false, '{}'::bson, 'en-u-ks-level2');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["a", "A", "á", "b"] }'::bson, '{ "result": { "$minN": { "input": "$a", "n": 2 } } }'::bson, false, '{}'::bson, 'en-u-ks-level2');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["a", "A", "á", "b"] }'::bson, '{ "result": { "$max": "$a" } }'::bson, false, '{}'::bson, 'en-u-ks-level2');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": ["a", "A", "á", "b"] }'::bson, '{ "result": { "$min": "$a" } }'::bson, false, '{}'::bson, 'en-u-ks-level2');
+
+-- Equal-by-value across numeric types (binary compare): int 5 == double 5.0 stay distinct.
+-- $maxN keeps the later equal (5.0) when evicting for 7; $minN keeps the earlier equal (5) when evicting for 3.
+--   $maxN(n:2) -> [7, 5.0], $minN(n:2) -> [3, 5]
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": [{ "$numberInt": "5" }, { "$numberDouble": "5.0" }, { "$numberInt": "3" }, { "$numberInt": "7" }] }'::bson, '{ "result": { "$maxN": { "input": "$a", "n": 2 } } }'::bson, false, '{}'::bson, '');
+SELECT documentdb_api_internal.bson_expression_get(
+  '{ "a": [{ "$numberInt": "5" }, { "$numberDouble": "5.0" }, { "$numberInt": "3" }, { "$numberInt": "7" }] }'::bson, '{ "result": { "$minN": { "input": "$a", "n": 2 } } }'::bson, false, '{}'::bson, '');
+
+-- End-to-end aggregate: $match on the collated-indexed "grp" field (served by the collated index
+-- in the index variant); $project verifies $max/$min/$maxN/$minN honor the command collation, which
+-- flows command -> pipeline -> expression parse (the bson_expression_get tests above bypass this).
+-- Binary: $max "apple" / $min "Banana"; collation strength 1: $max "Banana" / $min "apple".
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_minmax_idx', '{ "_id": 1, "grp": "r", "vals": ["apple", "Banana"] }');
+
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_minmax_idx", "pipeline": [ { "$match": { "grp": "r" } }, { "$project": { "mx": { "$max": "$vals" }, "mn": { "$min": "$vals" }, "mxn": { "$maxN": { "input": "$vals", "n": 1 } }, "mnn": { "$minN": { "input": "$vals", "n": 1 } }, "_id": 0 } } ], "collation": { "locale": "en", "strength": 1 }, "cursor": {} }');
+
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_minmax_idx", "pipeline": [ { "$match": { "grp": "r" } }, { "$project": { "mx": { "$max": "$vals" }, "mn": { "$min": "$vals" }, "mxn": { "$maxN": { "input": "$vals", "n": 1 } }, "mnn": { "$minN": { "input": "$vals", "n": 1 } }, "_id": 0 } } ], "cursor": {} }');
+
 -- ======================================================================
 -- CLEANUP
 -- ======================================================================
@@ -1118,6 +1236,7 @@ SELECT documentdb_api.drop_collection('coll_q_db', 'coll_id_ios');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_in_empty');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_ios');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_lookup_src');
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_minmax_idx');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_multi_collation');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_order_tests0');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_order_tests1');

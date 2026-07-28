@@ -17,67 +17,7 @@ static void Heapify(bson_value_t *array, int64_t itemsInArray, int64_t index,
 					HeapComparator comparator);
 static void InitHeapFields(BinaryHeap *heap, int64_t heapSpace, int64_t maximumHeapSpace,
 						   HeapComparator comparator, HeapType type);
-static void PushToHeapCommon(BinaryHeap *heap, const bson_value_t *value);
-
-
-/*
- *
- * Returns a pointer to a newly-allocated heap that has the capacity to
- * store the given number of nodes, with the heap property defined by
- * the given comparator function
- *
- * The capacity parameter defines the maximum space of the heap.
- * The comparator parameter defines how the heap is sorted.
- */
-BinaryHeap *
-AllocateHeap(int64_t capacity, HeapComparator comparator)
-{
-	BinaryHeap *heap = palloc(sizeof(BinaryHeap));
-	InitHeapFields(heap, capacity, capacity, comparator, HeapType_Regular);
-	return heap;
-}
-
-
-/*
- * Stores the provided value into the heap memory.
- */
-void
-PushToHeap(BinaryHeap *heap, const bson_value_t *value)
-{
-	Assert(heap->type == HeapType_Regular);
-
-	if (heap->heapSize >= heap->heapSpace)
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-						errmsg("Heap capacity exceeded while pushing new value")));
-	}
-
-	PushToHeapCommon(heap, value);
-}
-
-
-/*
- * Pops the top of the heap.
- */
-bson_value_t
-PopFromHeap(BinaryHeap *heap)
-{
-	Assert(heap->type == HeapType_Regular);
-	Assert(heap->heapSize > 0);
-
-	bson_value_t result = heap->heapNodes[0];
-
-	if (heap->heapSize == 1)
-	{
-		heap->heapSize--;
-		return result;
-	}
-
-	heap->heapNodes[0] = heap->heapNodes[--heap->heapSize];
-	Heapify(heap->heapNodes, heap->heapSize, 0, heap->heapComparator);
-
-	return result;
-}
+static void PushToDynamicHeapCommon(BinaryHeap *heap, const bson_value_t *value);
 
 
 /*
@@ -161,7 +101,7 @@ PushToDynamicHeap(BinaryHeap *heap, const bson_value_t *value)
 													heap->heapSpace);
 	}
 
-	PushToHeapCommon(heap, value);
+	PushToDynamicHeapCommon(heap, value);
 }
 
 
@@ -208,7 +148,7 @@ PopFromDynamicHeap(BinaryHeap *heap)
 
 
 /*
- * Shared initializer for both static and dynamic heaps.
+ * Initializes a dynamically growing heap.
  */
 static void
 InitHeapFields(BinaryHeap *heap, int64_t heapSpace, int64_t maximumHeapSpace,
@@ -238,7 +178,7 @@ InitHeapFields(BinaryHeap *heap, int64_t heapSpace, int64_t maximumHeapSpace,
  * the heap property defined by the comparator.
  */
 static void
-PushToHeapCommon(BinaryHeap *heap, const bson_value_t *value)
+PushToDynamicHeapCommon(BinaryHeap *heap, const bson_value_t *value)
 {
 	int64_t index = heap->heapSize++;
 	heap->heapNodes[index] = *value;

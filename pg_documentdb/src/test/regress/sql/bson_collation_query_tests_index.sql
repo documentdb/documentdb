@@ -91,6 +91,13 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
      "indexes": [{ "key": {"_id": 1}, "name": "idx_id_en_s1",
                    "collation": {"locale": "en", "strength": 1} }] }', TRUE);
 
+-- Section 22 coll_minmax_idx: collated index on the "grp" match field so the
+-- $match in the aggregate is served by the index under the matching collation.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "coll_minmax_idx",
+     "indexes": [{ "key": {"grp": 1}, "name": "idx_grp_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
 -- ======================================================================
 -- Source the core body so all queries run against indexed collections.
 -- ======================================================================

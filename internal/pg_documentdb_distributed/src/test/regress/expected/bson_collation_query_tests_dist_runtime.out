@@ -546,9 +546,88 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
 
 END;
 -- ======================================================================
+-- SECTION: $max/$min/$maxN/$minN expression honors collation across shards
+-- ======================================================================
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_minmax_d', '{ "_id": 1, "vals": ["a", "A", "á", "b"] }');
+psql:sql/bson_collation_query_tests_dist_core.sql:246: NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_minmax_d', '{ "_id": 2, "vals": ["10", "2", "1"] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_minmax_d', '{ "_id": 3, "vals": ["apple", "Banana", "cherry", "APPLE"] }');
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.shard_collection('coll_q_dist_db', 'coll_minmax_d', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- Strength 1 (case- and accent-insensitive): values that compare equal under the
+-- collation follow the documented operator-specific tie order even though
+-- rows fan out across shards ($sort on _id makes the cross-shard order stable).
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL citus.enable_local_execution TO OFF;
+SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db', '{ "aggregate": "coll_minmax_d", "pipeline": [ { "$project": { "mx": { "$max": "$vals" }, "mn": { "$min": "$vals" }, "mxn": { "$maxN": { "input": "$vals", "n": 2 } }, "mnn": { "$minN": { "input": "$vals", "n": 2 } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 }, "cursor": {} }');
+                                                             document                                                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "mx" : "b", "mn" : "a", "mxn" : [ "b", "A" ], "mnn" : [ "a", "A" ] }
+ { "_id" : { "$numberInt" : "2" }, "mx" : "2", "mn" : "1", "mxn" : [ "2", "10" ], "mnn" : [ "1", "10" ] }
+ { "_id" : { "$numberInt" : "3" }, "mx" : "cherry", "mn" : "apple", "mxn" : [ "cherry", "Banana" ], "mnn" : [ "apple", "APPLE" ] }
+(3 rows)
+
+END;
+-- numericOrdering on a single-shard route (numeric _id equality): "1" < "2" < "10".
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL citus.enable_local_execution TO OFF;
+SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db', '{ "aggregate": "coll_minmax_d", "pipeline": [ { "$match": { "_id": 2 } }, { "$project": { "mx": { "$max": "$vals" }, "mn": { "$min": "$vals" }, "mxn": { "$maxN": { "input": "$vals", "n": 2 } }, "mnn": { "$minN": { "input": "$vals", "n": 2 } } } } ], "collation": { "locale": "en", "numericOrdering": true }, "cursor": {} }');
+                                                 document                                                 
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "mx" : "10", "mn" : "1", "mxn" : [ "10", "2" ], "mnn" : [ "1", "2" ] }
+(1 row)
+
+END;
+-- Without a command collation the same pipeline falls back to binary comparison.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL citus.enable_local_execution TO OFF;
+SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db', '{ "aggregate": "coll_minmax_d", "pipeline": [ { "$project": { "mx": { "$max": "$vals" }, "mn": { "$min": "$vals" }, "mxn": { "$maxN": { "input": "$vals", "n": 2 } }, "mnn": { "$minN": { "input": "$vals", "n": 2 } } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
+                                                             document                                                              
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "mx" : "á", "mn" : "A", "mxn" : [ "á", "b" ], "mnn" : [ "A", "a" ] }
+ { "_id" : { "$numberInt" : "2" }, "mx" : "2", "mn" : "1", "mxn" : [ "2", "10" ], "mnn" : [ "1", "10" ] }
+ { "_id" : { "$numberInt" : "3" }, "mx" : "cherry", "mn" : "APPLE", "mxn" : [ "cherry", "apple" ], "mnn" : [ "APPLE", "Banana" ] }
+(3 rows)
+
+END;
+-- ======================================================================
 -- CLEANUP
 -- ======================================================================
 SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_agg_d');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_dist_db', 'coll_minmax_d');
  drop_collection 
 ---------------------------------------------------------------------
  t
