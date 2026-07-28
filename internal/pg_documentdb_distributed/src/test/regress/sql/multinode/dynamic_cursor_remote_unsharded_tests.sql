@@ -38,7 +38,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncur_sp_db',
 ANALYZE;
 
 -- Move sp_coll shard to worker node 1 to force remote-unsharded code path
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'sp_coll', 1);
+CALL documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'sp_coll', 1);
 
 -- ===========================================================================
 -- Helper: drain all pages and report batch sizes + cursor type from continuation
@@ -535,7 +535,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncur_sp_db',
 ANALYZE;
 
 -- Move sp_sort_coll shard to worker node 1 to force remote-unsharded code path
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'sp_sort_coll', 1);
+CALL documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'sp_sort_coll', 1);
 
 -- ---------------------------------------------------------------------------
 -- Test F1: sortKeys < numPathsOfIndex (1 sort key, 3-path index)
@@ -820,7 +820,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncur_sp_db',
 ANALYZE;
 
 -- Move sp_order_coll shard to worker node 1 to force remote-unsharded code path
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'sp_order_coll', 1);
+CALL documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'sp_order_coll', 1);
 
 -- Helper: drain cursor and return projected docs from all pages in order
 CREATE OR REPLACE FUNCTION sp_drain_ordered(
@@ -1084,7 +1084,7 @@ FROM generate_series(1, 20) AS i;
 ANALYZE;
 
 -- Move sp_pk_coll shard to worker node 1 to force remote-unsharded code path
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'sp_pk_coll', 1);
+CALL documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'sp_pk_coll', 1);
 
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
 

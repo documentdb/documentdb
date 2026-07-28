@@ -10,7 +10,7 @@ SET documentdb.enableExplainScanIndexCosts TO off;
 SET citus.propagate_set_commands TO 'local';
 
 SELECT documentdb_api.create_collection('rct_dist_db', 'items');
-SELECT documentdb_distributed_test_helpers.place_collection_on_node(
+CALL documentdb_distributed_test_helpers.place_collection_on_node(
     'rct_dist_db', 'items', 1);
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'rct_dist_db',

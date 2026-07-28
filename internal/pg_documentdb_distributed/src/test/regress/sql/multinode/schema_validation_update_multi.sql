@@ -49,7 +49,7 @@ SELECT documentdb_api.create_collection_view('sv_multinode', '{ "create": "col_u
 SELECT documentdb_api.insert('sv_multinode', '{"insert":"col_unsharded", "documents":[{"_id":"1", "value":10}, {"_id":"2", "value":20}, {"_id":"3", "value":30}]}');
 
 -- Move collection to worker node (node 1) to test remote execution path
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('sv_multinode', 'col_unsharded', 1);
+CALL documentdb_distributed_test_helpers.place_collection_on_node('sv_multinode', 'col_unsharded', 1);
 
 -- Verify collection is unsharded (shard_key is NULL)
 SELECT collection_id, shard_key IS NULL as is_unsharded FROM documentdb_api_catalog.collections WHERE collection_name = 'col_unsharded';

@@ -26,7 +26,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncur_sp_db',
 
 ANALYZE;
 
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'remote_e2e_coll', 1);
+CALL documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'remote_e2e_coll', 1);
 
 \d documentdb_data.documents_41001
 -- ===========================================================================
@@ -772,7 +772,7 @@ END $$;
 -- Setup: an empty (but existing) remote-unsharded collection.
 SELECT documentdb_api.drop_collection('dyncur_sp_db', 'remote_e2e_empty_coll');
 SELECT documentdb_api.create_collection('dyncur_sp_db', 'remote_e2e_empty_coll');
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'remote_e2e_empty_coll', 1);
+CALL documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'remote_e2e_empty_coll', 1);
 ANALYZE;
 
 -- ---------------------------------------------------------------------------
@@ -848,7 +848,7 @@ SELECT COUNT(documentdb_api.insert_one('dyncur_sp_db', 'pointLookup',
         i, 1744859493000 + i * 1000, i)::documentdb_core.bson))
 FROM generate_series(1, 99) AS i;
 
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'pointLookup', 1);
+CALL documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'pointLookup', 1);
 
 ANALYZE;
 
@@ -934,7 +934,7 @@ FROM generate_series(1, 500) AS i;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncur_sp_db',
     '{"createIndexes": "runtime_sort_coll", "indexes": [{"key": {"val": 1}, "name": "idx_val_asc", "enableOrderedIndex": true}]}', true);
 
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'runtime_sort_coll', 1);
+CALL documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'runtime_sort_coll', 1);
 
 -- Reporter: drain the cursor fully and report only the deterministic signal —
 -- whether the plan streamed (index-order) or fell back to a persistent runtime

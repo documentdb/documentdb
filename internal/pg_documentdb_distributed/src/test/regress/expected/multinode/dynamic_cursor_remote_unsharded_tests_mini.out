@@ -34,12 +34,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncur_sp_db',
 (1 row)
 
 ANALYZE;
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'remote_e2e_coll', 1);
- place_collection_on_node 
----------------------------------------------------------------------
- t
-(1 row)
-
+CALL documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'remote_e2e_coll', 1);
 \d documentdb_data.documents_41001
 -- ===========================================================================
 -- Helper UDF: drain a remote cursor and report per-page summary
@@ -1039,12 +1034,7 @@ NOTICE:  creating collection
  t
 (1 row)
 
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'remote_e2e_empty_coll', 1);
- place_collection_on_node 
----------------------------------------------------------------------
- t
-(1 row)
-
+CALL documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'remote_e2e_empty_coll', 1);
 ANALYZE;
 -- ---------------------------------------------------------------------------
 -- Test R-AGG-COUNT-0B: $count with batchSize 0 on an EMPTY collection.
@@ -1151,12 +1141,7 @@ FROM generate_series(1, 99) AS i;
     99
 (1 row)
 
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'pointLookup', 1);
- place_collection_on_node 
----------------------------------------------------------------------
- t
-(1 row)
-
+CALL documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'pointLookup', 1);
 ANALYZE;
 -- ---------------------------------------------------------------------------
 -- Test R-PointLookup: find({ _id: "dsds..." }) sort { createdDateTime: -1 }, batchSize 1
@@ -1296,12 +1281,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncur_sp_db',
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'runtime_sort_coll', 1);
- place_collection_on_node 
----------------------------------------------------------------------
- t
-(1 row)
-
+CALL documentdb_distributed_test_helpers.place_collection_on_node('dyncur_sp_db', 'runtime_sort_coll', 1);
 -- Reporter: drain the cursor fully and report only the deterministic signal —
 -- whether the plan streamed (index-order) or fell back to a persistent runtime
 -- Sort, and for the persistent case whether the worker materialized a

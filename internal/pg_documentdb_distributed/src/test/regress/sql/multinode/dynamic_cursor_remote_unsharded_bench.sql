@@ -45,7 +45,7 @@ END $$;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('bench_db',
   '{"createIndexes": "bench_coll", "indexes": [{"key": {"a": 1}, "name": "idx_a", "enableOrderedIndex": true}]}', true);
 ANALYZE;
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('bench_db', 'bench_coll', 1);
+CALL documentdb_distributed_test_helpers.place_collection_on_node('bench_db', 'bench_coll', 1);
 
 SET documentdb.useLocalExecutionShardQueries TO off;
 

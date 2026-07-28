@@ -6,4 +6,5 @@ test: multinode/dynamic_cursor_remote_unsharded_tests_mini
 test: multinode/dynamic_cursor_remote_unsharded_tests
 test: multinode/reservoir_sample_unsharded
 test: multinode/reservoir_sample_heap_skip
+test: multinode/move_collection_local_execution
 test: multinode/bson_composite_rct_planner_pruning_tests

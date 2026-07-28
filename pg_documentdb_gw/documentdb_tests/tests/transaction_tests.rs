@@ -69,3 +69,9 @@ async fn create_indexes_blocked_in_transaction() -> Result<(), Error> {
     let client = initialize::initialize().await?;
     transaction::validate_create_indexes_blocked_in_transaction(&client).await
 }
+
+#[tokio::test]
+async fn move_collection_blocked_in_transaction() -> Result<(), Error> {
+    let client = initialize::initialize().await?;
+    transaction::validate_move_collection_blocked_in_transaction(&client).await
+}

@@ -25,7 +25,7 @@ SELECT documentdb_api.drop_database('rsampledb');
 -- -----------------------------------------------------------------------------
 SELECT documentdb_api.create_collection('rsampledb', 'heapskip_unsharded');
 SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('rsampledb', 'heapskip_unsharded', FORMAT('{ "_id": %s, "value": %s }', g, g)::documentdb_core.bson) FROM generate_series(1, 200) g) ig;
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('rsampledb', 'heapskip_unsharded', 1);
+CALL documentdb_distributed_test_helpers.place_collection_on_node('rsampledb', 'heapskip_unsharded', 1);
 
 -- $match on _id folds shard_key_value + object_id into the _id_ Index Cond with
 -- no residual Filter, so heap skip engages: "Sample Reservoir Method: Heap Skip".
@@ -69,7 +69,7 @@ ROLLBACK;
 SELECT documentdb_api.create_collection('rsampledb', 'heapskip_bmp');
 SELECT COUNT(*) FROM (SELECT documentdb_api.insert_one('rsampledb', 'heapskip_bmp', FORMAT('{ "_id": %s, "value": %s }', g, g)::documentdb_core.bson) FROM generate_series(1, 200) g) ig;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('rsampledb', '{ "createIndexes": "heapskip_bmp", "indexes": [ { "key": { "value": 1 }, "name": "value_1" } ] }', TRUE);
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('rsampledb', 'heapskip_bmp', 1);
+CALL documentdb_distributed_test_helpers.place_collection_on_node('rsampledb', 'heapskip_bmp', 1);
 SELECT documentdb_distributed_test_helpers.drop_primary_key('rsampledb', 'heapskip_bmp');
 
 -- Flag on: enable_indexscan=off + enable_seqscan=off force the value_1 path to a

@@ -19,7 +19,7 @@ SELECT documentdb_api.insert_one('rsampledb', 'sample_node1', '{"_id": 9, "categ
 SELECT documentdb_api.insert_one('rsampledb', 'sample_node1', '{"_id": 10, "category": "A", "value": 100}');
 
 -- Place collection on the worker node and force remote execution
-SELECT documentdb_distributed_test_helpers.place_collection_on_node('rsampledb', 'sample_node1', 1);
+CALL documentdb_distributed_test_helpers.place_collection_on_node('rsampledb', 'sample_node1', 1);
 SET citus.enable_local_execution TO off;
 
 -- ============================================================

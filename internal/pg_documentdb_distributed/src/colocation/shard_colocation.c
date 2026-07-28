@@ -9,6 +9,7 @@
  */
 
 #include <postgres.h>
+#include <access/xact.h>
 #include <utils/builtins.h>
 #include <parser/parse_node.h>
 #include <parser/parse_relation.h>
@@ -22,6 +23,7 @@
 
 #include "io/bson_core.h"
 #include "utils/documentdb_errors.h"
+#include "utils/guc_utils.h"
 #include "utils/query_utils.h"
 #include "sharding/sharding.h"
 #include "commands/commands_common.h"
@@ -168,6 +170,37 @@ documentdb_command_move_collection(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 						errmsg("moveCollection is not supported yet")));
 	}
+
+	/*
+	 * moveCollection is not permitted inside a transaction block. The
+	 * documented semantics disallow relocating a collection within a
+	 * multi-document transaction, and the command relocates a shard which must
+	 * run in its own transaction. Reject it here so the restriction applies to
+	 * every caller (direct SQL / psql, PL/pgSQL, and the gateway), not just the
+	 * gateway. Because moveCollection therefore always runs as the sole
+	 * statement of its (implicit) transaction, no placement has been accessed
+	 * locally yet and disabling local execution below is always safe.
+	 */
+	bool isTopLevel = true;
+	if (IsInTransactionBlock(isTopLevel))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_OPERATIONNOTSUPPORTEDINTRANSACTION),
+						errmsg(
+							"Cannot run 'moveCollection' in a multi-document transaction.")));
+	}
+
+	/*
+	 * Disable local execution for this transaction. The statements run below
+	 * (breaking colocation, dropping the per-node retry table) can otherwise
+	 * execute locally against a placement that resides on this node. Once a
+	 * placement has been accessed locally, citus_move_shard_placement cannot run
+	 * because it requires parallel/remote execution, failing with "a local
+	 * execution has accessed a placement in the transaction". Forcing adaptive
+	 * (connection based) execution avoids poisoning the transaction. This is
+	 * always safe because the guard above guarantees moveCollection is the sole
+	 * statement of its transaction.
+	 */
+	SetGUCLocally("citus.enable_local_execution", "off");
 
 	bson_iter_t moveSpecIter;
 	PgbsonInitIterator(moveSpec, &moveSpecIter);

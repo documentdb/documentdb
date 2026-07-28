@@ -480,6 +480,7 @@ impl RequestType {
                 | Self::Drop
                 | Self::CurrentOp
                 | Self::KillOp
+                | Self::MoveCollection
         )
     }
 }

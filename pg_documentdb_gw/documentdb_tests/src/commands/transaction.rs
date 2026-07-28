@@ -153,3 +153,12 @@ pub async fn validate_create_indexes_blocked_in_transaction(client: &Client) -> 
     )
     .await
 }
+
+pub async fn validate_move_collection_blocked_in_transaction(client: &Client) -> Result<(), Error> {
+    assert_blocked_in_transaction(
+        client,
+        "admin",
+        doc! { "moveCollection": "txn_move_test.some_collection", "toShard": "shard_1" },
+    )
+    .await
+}
