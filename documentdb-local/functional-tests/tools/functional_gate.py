@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
-DocumentDB Functional Test Gate Tooling.
+DocumentDB Functional Test Gate Tooling. Two live gate models:
 
-Provides config validation, PR gate result summarization, and daily delta
-reporting for the allowlist PR gate framework (RFC-0007).
+* Allowlist (RFC-0007) — the upstream GitHub workflow: validate-config,
+  shard-allowlist/shard-collection, summarize-gate/daily vs allowlist.yml.
+* Known-failures xfail — the ADO functional pipeline: report-failures,
+  merge-reports, reconcile vs the per-gateway ci_*_tests.txt pairs read by
+  conftest_known_failures.py.
+
+compare-engines serves both (reference-engine comparison).
 """
 
 from __future__ import annotations
@@ -471,6 +476,32 @@ def cmd_reconcile(args):
             print(f"    {n}")
     if result["flaky_passes"]:
         print(f"  flaky-list entries that passed this run (pruning candidates): {len(result['flaky_passes'])}")
+
+    if getattr(args, "summary_json", ""):
+        # Machine-readable classification for the auto-reconcile bot. "clean" is
+        # true when the reconcile is safe to auto-apply: it ONLY drops XPASS(strict)
+        # entries — no new failures to triage, no listed-but-errored tests, no
+        # flaky-overlap conflicts, and no uncollected entries. Uncollected entries
+        # (a listed test the run did not collect — deleted/renamed upstream, or a
+        # run that did not cover the list) make it false whether or not they were
+        # pruned: dropping them is a suite-composition change beyond XPASS drift,
+        # so a human should confirm. A red gate with clean=true is baseline drift a
+        # bot can PR; clean=false means a human must look.
+        clean = (not result["added"] and not result["kept_errored"]
+                 and not result["skipped_flaky"] and not result["uncollected"])
+        summary = {
+            "added": result["added"],
+            "removed": result["removed"],
+            "kept_errored": result["kept_errored"],
+            "skipped_flaky": result["skipped_flaky"],
+            "uncollected": result["uncollected"],
+            "pruned": result["pruned"],
+            "flaky_passes": result["flaky_passes"],
+            "changed": bool(result["added"] or result["removed"] or result["pruned"]),
+            "clean": clean,
+        }
+        with open(args.summary_json, "w") as f:
+            json.dump(summary, f, indent=2)
     return 0
 
 
@@ -1440,6 +1471,10 @@ def main():
     reconcile_parser.add_argument("--prune-uncollected", action="store_true",
                                   help="Also drop list entries whose test no longer exists in the "
                                        "report (only safe when reconciling from a FULL-suite run)")
+    reconcile_parser.add_argument("--summary-json", default="",
+                                  help="Also write a machine-readable classification (added/removed/"
+                                       "kept_errored/skipped_flaky/changed/clean) here for the "
+                                       "auto-reconcile bot")
 
     args = parser.parse_args()
 
