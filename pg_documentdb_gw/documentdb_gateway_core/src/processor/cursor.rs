@@ -242,10 +242,6 @@ async fn poll_tailable_cursor(
     Ok((current_results, final_continuation))
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "helper extracted from process_get_more"
-)]
 async fn post_process_get_more_results(
     request_context: &RequestContext<'_>,
     connection_context: &ConnectionContext,
@@ -254,21 +250,7 @@ async fn post_process_get_more_results(
     cursor_id: i64,
     cursor_connection: Option<&Arc<Connection>>,
     db: &str,
-    cursor_timeout: &mut Duration,
 ) -> Result<(Vec<tokio_postgres::Row>, Option<RawDocumentBuf>)> {
-    if !connection_context
-        .service_context
-        .dynamic_configuration()
-        .enable_stateless_cursor_timeout()
-    {
-        *cursor_timeout = Duration::from_secs(
-            connection_context
-                .service_context
-                .dynamic_configuration()
-                .default_cursor_idle_timeout_sec(),
-        );
-    }
-
     // Check if the backend returned maxAwaitTimeMS (column index 2 when present).
     // If > 0, this is a tailable cursor with an empty batch — poll until data arrives
     // or the timeout expires. Polling is gated by the enableTailableCursorMaxAwaitTime config.
@@ -352,7 +334,7 @@ pub async fn process_get_more(
         collection,
         lsid,
         transaction_number,
-        mut cursor_timeout,
+        cursor_timeout,
         ..
     } = connection_context
         .get_cursor(id, caller)
@@ -382,7 +364,6 @@ pub async fn process_get_more(
         id,
         cursor_connection.as_ref(),
         &db,
-        &mut cursor_timeout,
     )
     .await?;
 

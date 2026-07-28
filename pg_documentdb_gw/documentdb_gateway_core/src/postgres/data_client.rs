@@ -528,13 +528,11 @@ pub trait PgDataClient: Send + Sync {
 
             let dynamic_config = self.service_context().dynamic_configuration();
 
-            let cursor_timeout = Duration::from_secs(
-                if dynamic_config.enable_stateless_cursor_timeout() && connection.is_none() {
-                    dynamic_config.stateless_cursor_idle_timeout_sec()
-                } else {
-                    dynamic_config.default_cursor_idle_timeout_sec()
-                },
-            );
+            let cursor_timeout = Duration::from_secs(if connection.is_none() {
+                dynamic_config.stateless_cursor_idle_timeout_sec()
+            } else {
+                dynamic_config.default_cursor_idle_timeout_sec()
+            });
 
             let request = request_context.request();
             let lsid = request.lsid().cloned();

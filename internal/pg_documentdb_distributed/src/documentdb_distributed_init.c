@@ -17,18 +17,25 @@
 /* GUCs and default values */
 /* --------------------------------------------------------- */
 
+/* SystemConfig */
 #define DEFAULT_ENABLE_METADATA_REFERENCE_SYNC true
 bool EnableMetadataReferenceTableSync = DEFAULT_ENABLE_METADATA_REFERENCE_SYNC;
 
+/* SystemConfig */
 #define DEFAULT_ENABLE_SHARD_REBALANCER false
 bool EnableShardRebalancer = DEFAULT_ENABLE_SHARD_REBALANCER;
 
+/* SystemConfig */
 #define DEFAULT_CLUSTER_ADMIN_ROLE ""
 char *ClusterAdminRole = DEFAULT_CLUSTER_ADMIN_ROLE;
 
+/* FeatureFlag */
+/* Added in v114, enabled in v114, remove after v119 */
 #define DEFAULT_ENABLE_MOVE_COLLECTION true
 bool EnableMoveCollection = DEFAULT_ENABLE_MOVE_COLLECTION;
 
+/* FeatureFlag */
+/* Added in v116, Pending stabilization, enable in v118 */
 #define DEFAULT_ENABLE_SKIP_UPGRADE_FOR_UNINITIALIZED_CLUSTER false
 bool EnableSkipUpgradeForUninitializedCluster =
 	DEFAULT_ENABLE_SKIP_UPGRADE_FOR_UNINITIALIZED_CLUSTER;

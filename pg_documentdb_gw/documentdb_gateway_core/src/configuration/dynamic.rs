@@ -153,10 +153,6 @@ pub trait DynamicConfiguration: Send + Sync + Debug {
             .unwrap_or(Version::Seven)
     }
 
-    fn enable_stateless_cursor_timeout(&self) -> bool {
-        self.get_bool("enableStatelessCursorTimeout", false)
-    }
-
     fn default_cursor_idle_timeout_sec(&self) -> u64 {
         self.get_u64("mongoCursorIdleTimeoutInSeconds", 60)
     }
