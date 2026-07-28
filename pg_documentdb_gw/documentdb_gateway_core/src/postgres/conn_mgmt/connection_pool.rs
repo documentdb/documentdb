@@ -9,10 +9,7 @@
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
+    sync::Arc,
 };
 
 use deadpool::{
@@ -42,7 +39,7 @@ use crate::{
         QueryCatalog,
     },
     telemetry::TracingConfig,
-    time,
+    time::AtomicInstant,
 };
 
 fn pg_configuration(
@@ -147,16 +144,13 @@ pub struct ConnectionPool {
     /// `RecyclingMethod::Clean` to reset all session state when a
     /// connection is returned
     timeout_pool: DeadpoolPool<InstrumentedManager>,
-    /// Nanosecond offset from the process epoch of the last
-    /// `acquire_connection` call. Only ever written through
-    /// [`ConnectionPool::touch_last_used`] and read through
-    /// [`ConnectionPool::last_used`], which own that encoding — writing a
-    /// timestamp in any other unit or base here silently corrupts every
-    /// idleness decision made about this pool.
-    ///
-    /// Uses `AtomicU64` instead of `RwLock<Instant>` to avoid async lock
-    /// overhead on the hot acquire path.
-    last_used_nanos: AtomicU64,
+    /// Instant of the last `acquire_connection` call, the sole input to the
+    /// pool reaper's idleness decision. [`AtomicInstant`] owns the encoding,
+    /// so a timestamp in the wrong unit or base cannot be written here — the
+    /// v0.114 regression that evicted in-use pools after 2h of uptime is
+    /// unrepresentable at this call site. Lock-free to keep async lock
+    /// overhead off the hot acquire path.
+    last_used: AtomicInstant,
     metrics: Arc<ConnectionPoolMetrics>,
     identifier: String,
     prune_task: JoinHandle<()>,
@@ -258,9 +252,7 @@ impl ConnectionPool {
         Ok(Self {
             pool,
             timeout_pool,
-            // Use the exact `Instant::now()` at pool creation time to avoid reporting
-            // an earlier cached timestamp for a freshly constructed pool.
-            last_used_nanos: AtomicU64::new(time::instant_to_u64(Instant::now())),
+            last_used: AtomicInstant::now(),
             metrics,
             identifier: pool_identifier,
             prune_task,
@@ -337,28 +329,15 @@ impl ConnectionPool {
         self.metrics.record_connection_timeout();
     }
 
-    /// Marks the pool as used as of now.
-    ///
-    /// Deliberately uses the precise `Instant::now()` rather than either of the
-    /// `EpochClock` coarse readings. This stamp is the sole input to the pool
-    /// reaper, so it must not depend on the coarse clock's updater task still
-    /// being alive on the runtime that happened to initialise it, and it must
-    /// stay in the encoding [`Self::last_used`] decodes: nanoseconds since the
-    /// process epoch. `EpochClock::almost_now_timestamp()` in particular looks
-    /// interchangeable here and is not — it returns *seconds since the UNIX
-    /// epoch*, which decodes as a point roughly two seconds after process start
-    /// that then advances by a nanosecond per second, making every pool look
-    /// idle for as long as the process has been up.
-    ///
-    /// The `Instant::now()` syscall costs ~20ns against a call that goes on to
-    /// check out a pooled connection, so the coarse clock buys nothing here.
+    /// Marks the pool as used as of now. See [`AtomicInstant`] for why the
+    /// stamp is written with the precise clock and why the encoding is owned
+    /// by the cell rather than this call site.
     fn touch_last_used(&self) {
-        self.last_used_nanos
-            .store(time::instant_to_u64(Instant::now()), Ordering::Relaxed);
+        self.last_used.store_now();
     }
 
     pub fn last_used(&self) -> Instant {
-        time::u64_to_instant(self.last_used_nanos.load(Ordering::Relaxed))
+        self.last_used.load()
     }
 
     /// Whether sampled queries from this pool should carry a `SQLCommenter`

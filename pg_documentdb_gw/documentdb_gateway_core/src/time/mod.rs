@@ -6,7 +6,10 @@
  *-------------------------------------------------------------------------
  */
 
-use std::sync::OnceLock;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    OnceLock,
+};
 
 use tokio::time::{Duration, Instant};
 
@@ -25,6 +28,42 @@ pub fn instant_to_u64(instant: Instant) -> u64 {
 #[must_use]
 pub fn u64_to_instant(nanos: u64) -> Instant {
     EpochClock::epoch() + Duration::from_nanos(nanos)
+}
+
+/// A lock-free timestamp cell that can only hold "now".
+///
+/// Owns its wire encoding (nanoseconds since [`EpochClock::epoch`]) entirely:
+/// callers can store the current instant and load an [`Instant`] back, but can
+/// never supply a raw integer. This makes the class of bug where a timestamp in
+/// a different unit or base is written into an atomic and silently mis-decoded
+/// on read — the cause of the v0.114 connection-pool reaper regression —
+/// unrepresentable at the call site.
+///
+/// Writes use the precise `Instant::now()` (~20ns) rather than the coarse
+/// `EpochClock` readings: the coarse clock's updater is a tokio task bound to
+/// whichever runtime first initialised the global clock, and a liveness
+/// decision must not depend on that task still running.
+#[derive(Debug)]
+pub struct AtomicInstant(AtomicU64);
+
+impl AtomicInstant {
+    /// Creates a cell initialised to the current instant.
+    #[must_use]
+    pub fn now() -> Self {
+        Self(AtomicU64::new(instant_to_u64(Instant::now())))
+    }
+
+    /// Overwrites the cell with the current instant.
+    pub fn store_now(&self) {
+        self.0
+            .store(instant_to_u64(Instant::now()), Ordering::Relaxed);
+    }
+
+    /// Returns the most recently stored instant.
+    #[must_use]
+    pub fn load(&self) -> Instant {
+        u64_to_instant(self.0.load(Ordering::Relaxed))
+    }
 }
 
 #[cfg(test)]
