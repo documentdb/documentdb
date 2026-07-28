@@ -1,4 +1,5 @@
 ### documentdb v0.117-0 (Unreleased) ###
+* Fix gateway data connection pools being reaped while still in active use once the gateway process had been up for ~2 hours, after which every request for an already-authenticated user failed with an internal error and `Connection pool missing for user.` in the logs. The pool's last-used timestamp was written as seconds since the UNIX epoch but read back as nanoseconds since the process epoch, so it no longer tracked actual usage and the pool reaper compared its idle threshold against process uptime instead. Regression introduced in v0.114-0. *[Bugfix]*
 * Default the RUM index library (`documentdb.rum_library_load_option`) to `require_documentdb_extended_rum` on all supported PostgreSQL versions, instead of only on PG 18+. The option can still be set to `none` to opt out. *[Refactor]*
 
 ### documentdb v0.116-0 (Unreleased) ###

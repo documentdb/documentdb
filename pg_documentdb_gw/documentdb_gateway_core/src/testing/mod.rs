@@ -24,7 +24,7 @@ pub use op_msg::{
     build_document_sequence_section, build_op_msg_parts, build_op_msg_parts_with_sections,
     build_op_msg_request, build_raw_document, decode_op_msg_response, decode_op_msg_responses,
 };
-pub use pool::{test_connection_pool, test_setup_configuration};
+pub use pool::{test_connection_pool, test_setup_configuration, wait_for_epoch_uptime};
 pub use request_documents::{
     invalid_transaction_find_document, logout_document, malformed_sasl_start_document,
     ping_document,

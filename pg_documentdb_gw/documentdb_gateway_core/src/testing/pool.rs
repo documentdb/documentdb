@@ -9,7 +9,10 @@
  *-------------------------------------------------------------------------
  */
 
-use tokio::task::yield_now;
+use tokio::{
+    task::yield_now,
+    time::{sleep, Duration},
+};
 
 use crate::{
     configuration::{CertInputType, CertificateOptions, DocumentDBSetupConfiguration},
@@ -17,6 +20,7 @@ use crate::{
         conn_mgmt::{ConnectionPool, PgPoolSettings},
         create_query_catalog,
     },
+    time::EpochClock,
 };
 
 /// Returns a baseline `DocumentDBSetupConfiguration` suitable for connection
@@ -67,4 +71,19 @@ pub async fn test_connection_pool(
         PgPoolSettings::system_pool_settings(max_connections),
     )
     .expect("Failed to create connection pool")
+}
+
+/// Waits until the process-wide [`EpochClock`] epoch is at least `uptime` old.
+///
+/// `ConnectionPool::last_used` decodes its stored stamp as a nanosecond offset
+/// from that epoch. A stamp accidentally written in a different unit or base
+/// still decodes to *some* instant close to the epoch, so it only becomes
+/// distinguishable from a correct stamp once the process has been running for
+/// longer than the offset the bogus stamp decodes to. Tests that assert on pool
+/// idleness use this to get a deterministic result instead of one that depends
+/// on how far into the test binary's lifetime they happen to run.
+pub async fn wait_for_epoch_uptime(uptime: Duration) {
+    if let Some(remaining) = uptime.checked_sub(EpochClock::epoch().elapsed()) {
+        sleep(remaining).await;
+    }
 }

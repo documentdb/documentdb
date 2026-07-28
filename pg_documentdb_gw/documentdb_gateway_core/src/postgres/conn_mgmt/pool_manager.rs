@@ -342,6 +342,7 @@ mod tests {
         configuration::{CertInputType, CertificateOptions, DocumentDBSetupConfiguration},
         error::{ErrorCode, ErrorKind},
         postgres::create_query_catalog,
+        testing::wait_for_epoch_uptime,
     };
 
     #[derive(Debug)]
@@ -747,6 +748,44 @@ mod tests {
 
         // only 2 system pools should remain since user and shared pools are expired
         assert_eq!(2, pool_manager.report_pool_stats().len());
+    }
+
+    #[tokio::test]
+    async fn test_clean_unused_pools_with_actively_used_pool_keeps_pool_reachable() {
+        yield_now().await;
+
+        let dynamic_configuration = MaxConnectionConfig {
+            max_conn: 100.into(),
+        };
+        let pool_manager = test_pool_manager();
+
+        pool_manager
+            .allocate_data_pool("user", "password", &dynamic_configuration)
+            .unwrap();
+
+        wait_for_epoch_uptime(Duration::from_secs(5)).await;
+
+        // Drive the pool the way a live request does. The acquisition itself may
+        // fail without a local Postgres, but the last-used stamp is written
+        // before the pool is touched, which is what the reaper reads.
+        let _ = pool_manager
+            .get_data_pool("user", &dynamic_configuration)
+            .unwrap()
+            .acquire_connection()
+            .await;
+
+        pool_manager.clean_unused_pools(Duration::from_secs(1));
+
+        // The reaper has to key off how long a pool has been idle, not off how
+        // long the process has been running. Evicting a pool that is still in
+        // active use makes every subsequent request for that user fail with
+        // "Connection pool missing for user." until the client re-authenticates.
+        assert!(
+            pool_manager
+                .get_data_pool("user", &dynamic_configuration)
+                .is_ok(),
+            "a data pool that was just used was reaped as unused"
+        );
     }
 
     #[tokio::test]

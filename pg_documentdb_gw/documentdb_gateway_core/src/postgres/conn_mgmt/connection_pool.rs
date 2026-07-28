@@ -42,7 +42,7 @@ use crate::{
         QueryCatalog,
     },
     telemetry::TracingConfig,
-    time::{self, EpochClock},
+    time,
 };
 
 fn pg_configuration(
@@ -147,7 +147,13 @@ pub struct ConnectionPool {
     /// `RecyclingMethod::Clean` to reset all session state when a
     /// connection is returned
     timeout_pool: DeadpoolPool<InstrumentedManager>,
-    /// Nanosecond offset from `EPOCH` of the last `acquire_connection` call.
+    /// Nanosecond offset from the process epoch of the last
+    /// `acquire_connection` call. Only ever written through
+    /// [`ConnectionPool::touch_last_used`] and read through
+    /// [`ConnectionPool::last_used`], which own that encoding — writing a
+    /// timestamp in any other unit or base here silently corrupts every
+    /// idleness decision made about this pool.
+    ///
     /// Uses `AtomicU64` instead of `RwLock<Instant>` to avoid async lock
     /// overhead on the hot acquire path.
     last_used_nanos: AtomicU64,
@@ -278,8 +284,7 @@ impl ConnectionPool {
     pub async fn acquire_connection(
         &self,
     ) -> std::result::Result<PoolConnection, deadpool_postgres::PoolError> {
-        self.last_used_nanos
-            .store(EpochClock::almost_now_timestamp(), Ordering::Relaxed);
+        self.touch_last_used();
 
         self.pool.get().await.inspect_err(|error| {
             self.metrics.record_timeout_if_pool_timeout(error);
@@ -306,8 +311,7 @@ impl ConnectionPool {
     pub async fn acquire_timeout_connection(
         &self,
     ) -> std::result::Result<PoolConnection, deadpool_postgres::PoolError> {
-        self.last_used_nanos
-            .store(EpochClock::almost_now_timestamp(), Ordering::Relaxed);
+        self.touch_last_used();
 
         self.timeout_pool.get().await.inspect_err(|error| {
             self.metrics.record_timeout_if_pool_timeout(error);
@@ -331,6 +335,26 @@ impl ConnectionPool {
     #[cfg(test)]
     pub(crate) fn record_connection_timeout(&self) {
         self.metrics.record_connection_timeout();
+    }
+
+    /// Marks the pool as used as of now.
+    ///
+    /// Deliberately uses the precise `Instant::now()` rather than either of the
+    /// `EpochClock` coarse readings. This stamp is the sole input to the pool
+    /// reaper, so it must not depend on the coarse clock's updater task still
+    /// being alive on the runtime that happened to initialise it, and it must
+    /// stay in the encoding [`Self::last_used`] decodes: nanoseconds since the
+    /// process epoch. `EpochClock::almost_now_timestamp()` in particular looks
+    /// interchangeable here and is not — it returns *seconds since the UNIX
+    /// epoch*, which decodes as a point roughly two seconds after process start
+    /// that then advances by a nanosecond per second, making every pool look
+    /// idle for as long as the process has been up.
+    ///
+    /// The `Instant::now()` syscall costs ~20ns against a call that goes on to
+    /// check out a pooled connection, so the coarse clock buys nothing here.
+    fn touch_last_used(&self) {
+        self.last_used_nanos
+            .store(time::instant_to_u64(Instant::now()), Ordering::Relaxed);
     }
 
     pub fn last_used(&self) -> Instant {
@@ -391,8 +415,13 @@ mod tests {
 
     use crate::{
         postgres::create_query_catalog,
-        testing::{test_connection_pool, test_setup_configuration},
+        testing::{test_connection_pool, test_setup_configuration, wait_for_epoch_uptime},
     };
+
+    /// Long enough that a stamp written in the wrong unit or base cannot look
+    /// recent: such a stamp decodes to roughly two seconds past the epoch and
+    /// then stays effectively frozen there.
+    const EPOCH_UPTIME_FOR_IDLENESS_ASSERTS: Duration = Duration::from_secs(5);
 
     #[tokio::test]
     async fn test_new_with_user_with_valid_config_creates_pool() {
@@ -523,6 +552,46 @@ mod tests {
 
         assert!(pool.last_used() >= before);
         assert!(pool.last_used().elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn test_last_used_after_acquire_connection_reports_pool_as_recently_used() {
+        let setup_config = test_setup_configuration();
+        let pool =
+            test_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 2)
+                .await;
+
+        wait_for_epoch_uptime(EPOCH_UPTIME_FOR_IDLENESS_ASSERTS).await;
+
+        // The last-used stamp is written before the pool is touched, so whether
+        // a local Postgres is reachable does not affect what is asserted here.
+        let _ = pool.acquire_connection().await;
+
+        let idle_for = pool.last_used().elapsed();
+        assert!(
+            idle_for < Duration::from_secs(1),
+            "a just-acquired pool must not look idle, but last_used() reports {idle_for:?} of \
+             idleness"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_last_used_after_acquire_timeout_connection_reports_pool_as_recently_used() {
+        let setup_config = test_setup_configuration();
+        let pool =
+            test_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 2)
+                .await;
+
+        wait_for_epoch_uptime(EPOCH_UPTIME_FOR_IDLENESS_ASSERTS).await;
+
+        let _ = pool.acquire_timeout_connection().await;
+
+        let idle_for = pool.last_used().elapsed();
+        assert!(
+            idle_for < Duration::from_secs(1),
+            "a just-acquired pool must not look idle, but last_used() reports {idle_for:?} of \
+             idleness"
+        );
     }
 
     #[test]
