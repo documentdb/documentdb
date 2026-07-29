@@ -233,6 +233,11 @@ bool EnablePartialFilterEvalOnPlanner = DEFAULT_ENABLE_PARTIAL_FILTER_EVAL_ON_PL
 #define DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS true
 bool EnableDottedValueTextIndexTerms = DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS;
 
+/* Support textIndexVersion 3 (diacritic folding via the unaccent extension).
+ * Off by default: the unaccent extension may not be installed. */
+#define DEFAULT_ENABLE_TEXT_INDEX_VERSION_3 false
+bool EnableTextIndexVersion3 = DEFAULT_ENABLE_TEXT_INDEX_VERSION_3;
+
 /* Added in v114, enabled in v114, remove after v118 */
 #define DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN true
 bool EnableDistinctIndexPushdown = DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN;
@@ -927,6 +932,18 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable generating index terms for dotted values (e.g. \"foo.bar\")."),
 		NULL, &EnableDottedValueTextIndexTerms,
 		DEFAULT_ENABLE_DOTTED_VALUE_TEXT_INDEX_TERMS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableTextIndexVersion3", newGucPrefix),
+		gettext_noop(
+			"Support textIndexVersion 3 (MongoDB's default since 3.2): text "
+			"index terms and $text queries are diacritic folded via the "
+			"unaccent extension, matching v3's diacritic insensitivity. "
+			"Requires the unaccent extension; when off, version-3 specs are "
+			"accepted but built with version-2 semantics."),
+		NULL, &EnableTextIndexVersion3,
+		DEFAULT_ENABLE_TEXT_INDEX_VERSION_3,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

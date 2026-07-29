@@ -22,6 +22,7 @@
 #include <catalog/namespace.h>
 #include <utils/array.h>
 #include <nodes/makefuncs.h>
+#include <parser/parse_func.h>
 
 #include "io/bson_core.h"
 #include "opclass/bson_gin_common.h"
@@ -300,7 +301,65 @@ rum_bson_text_path_options(PG_FUNCTION_ARGS)
 							   "The name of the path within the document that has the language override",
 							   NULL, NULL, NULL,
 							   offsetof(BsonGinTextPathOptions, languageOverride));
+	add_local_int_reloption(relopts, "textversion",
+							"The mongo textIndexVersion (3 = diacritic insensitive via unaccent)",
+							2, /* default value */
+							2, /* min */
+							3, /* max */
+							offsetof(BsonGinTextPathOptions, textIndexVersion));
 	PG_RETURN_VOID();
+}
+
+
+/*
+ * Resolves (and caches) the unaccent(text) function from the unaccent
+ * extension, honoring the search path with a fallback to the public schema.
+ * Version-3 text indexes require it for diacritic folding.
+ */
+static Oid
+GetUnaccentFunctionOid(void)
+{
+	static Oid unaccentOid = InvalidOid;
+	if (OidIsValid(unaccentOid))
+	{
+		return unaccentOid;
+	}
+
+	Oid argTypes[1] = { TEXTOID };
+	bool missingOk = true;
+	unaccentOid = LookupFuncName(list_make1(makeString("unaccent")), 1,
+								 argTypes, missingOk);
+	if (!OidIsValid(unaccentOid))
+	{
+		unaccentOid = LookupFuncName(list_make2(makeString("public"),
+												makeString("unaccent")), 1,
+									 argTypes, missingOk);
+	}
+	if (!OidIsValid(unaccentOid))
+	{
+		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_FUNCTION),
+						errmsg(
+							"textIndexVersion 3 requires the unaccent extension"),
+						errhint(
+							"Run CREATE EXTENSION unaccent, or disable "
+							"enableTextIndexVersion3.")));
+	}
+	return unaccentOid;
+}
+
+
+/*
+ * Applies version-3 diacritic folding via unaccent(). Returns a palloc'd
+ * NUL-terminated string and updates *length.
+ */
+static char *
+ApplyDiacriticFolding(const char *str, uint32 *length)
+{
+	Datum input = PointerGetDatum(cstring_to_text_with_len(str, *length));
+	Datum folded = OidFunctionCall1(GetUnaccentFunctionOid(), input);
+	char *foldedStr = text_to_cstring(DatumGetTextPP(folded));
+	*length = strlen(foldedStr);
+	return foldedStr;
 }
 
 
@@ -564,6 +623,18 @@ BsonTextGenerateTSQueryCore(const bson_value_t *queryValue, bytea *indexOptions,
 
 	char *searchStr = SanitizeDotsForTextSearch(searchValue.value.v_utf8.str,
 												options);
+
+	/* Version 3: fold diacritics in the search string so it matches the
+	 * folded index terms (see GenerateTsVectorWithOptions). The size guard
+	 * skips options blobs serialized before the textversion reloption
+	 * existed — such indexes are version 2 by definition. */
+	if (indexOptions != NULL &&
+		VARSIZE_ANY(indexOptions) >= sizeof(BsonGinTextPathOptions) &&
+		options->textIndexVersion >= 3)
+	{
+		uint32 searchStrLength = strlen(searchStr);
+		searchStr = ApplyDiacriticFolding(searchStr, &searchStrLength);
+	}
 
 	/* we have a valid ts_query string. */
 	/* first pass: we use the websearch_to_tsquery as it has the closest rules to native mongo; */
@@ -1431,6 +1502,13 @@ GenerateTsVectorWithOptions(pgbson *document,
 			char *indexStr = term.element.bsonValue.value.v_utf8.str;
 			uint32 indexStrLen = term.element.bsonValue.value.v_utf8.len;
 			indexStr = SanitizeDotsForTextSearch(indexStr, options);
+
+			/* Version 3: fold diacritics so index terms match v3's
+			 * diacritic-insensitive semantics (the query side folds too). */
+			if (options->textIndexVersion >= 3)
+			{
+				indexStr = ApplyDiacriticFolding(indexStr, &indexStrLen);
+			}
 
 			/* Random estimate of word count (see to_tsvector) */
 			text.lenwords = Max(indexStrLen / 6, 2);

@@ -999,8 +999,9 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "note" : "All specified indexes already exist", "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
--- Creating a brand-new text index in a fresh collection with an unsupported
--- textIndexVersion must error.
+-- Creating a brand-new text index with textIndexVersion 3 and the
+-- enableTextIndexVersion3 GUC off succeeds with version-2 semantics and a
+-- NOTICE (see text_indexes_version3 for the full version-3 behavior).
 SELECT documentdb_api.create_collection('db', 'create_indexes_v_compat_2');
 NOTICE:  creating collection
  create_collection 
@@ -1010,13 +1011,18 @@ NOTICE:  creating collection
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
   '{ "createIndexes": "create_indexes_v_compat_2", "indexes": [ { "key": {"x": "text"}, "name": "x_text", "textIndexVersion": 3 } ] }', true);
-ERROR:  Currently only textIndexVersion 2 is supported, not 3
+NOTICE:  textIndexVersion 3 requested; building with version 2 semantics (diacritic sensitive)
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
 -- A textIndexVersion field on a non-text index spec is ignored (no validation
 -- happens because IsTextIndex() is false).
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
   '{ "createIndexes": "create_indexes_v_compat_2", "indexes": [ { "key": {"y": 1}, "name": "y_1", "textIndexVersion": 3 } ] }', true);
                                                                                                    create_indexes_non_concurrently                                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 

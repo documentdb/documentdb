@@ -460,8 +460,9 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
   '{ "createIndexes": "create_indexes_v_compat", "indexes": [ { "key": {"title": "text"}, "name": "t", "textIndexVersion": 3 } ] }', true);
 
--- Creating a brand-new text index in a fresh collection with an unsupported
--- textIndexVersion must error.
+-- Creating a brand-new text index with textIndexVersion 3 and the
+-- enableTextIndexVersion3 GUC off succeeds with version-2 semantics and a
+-- NOTICE (see text_indexes_version3 for the full version-3 behavior).
 SELECT documentdb_api.create_collection('db', 'create_indexes_v_compat_2');
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
   '{ "createIndexes": "create_indexes_v_compat_2", "indexes": [ { "key": {"x": "text"}, "name": "x_text", "textIndexVersion": 3 } ] }', true);
