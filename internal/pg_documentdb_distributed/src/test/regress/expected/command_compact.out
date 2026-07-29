@@ -66,7 +66,7 @@ SELECT documentdb_api.compact('{"compact": "compact_test", "$db": "commands_comp
  { "ok" : { "$numberDouble" : "1.0" }, "estimatedBytesFreed" : { "$numberLong" : "0" } }
 (1 row)
 
-SELECT documentdb_api.compact('{"compact": "compact_test", "$db": "commands_compact_db", "dryRun": false}');
+SELECT documentdb_api.compact('{"compact": "compact_test", "$db": "commands_compact_db", "dryRun": false, "mode": "full"}');
                                     compact                                     
 ---------------------------------------------------------------------
  { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "0" } }
@@ -132,7 +132,7 @@ SELECT documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "comma
  { "ok" : { "$numberDouble" : "1.0" }, "estimatedBytesFreed" : { "$numberLong" : "0" } }
 (1 row)
 
-SELECT documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": false}');
+SELECT documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": false, "mode": "full"}');
                                     compact                                     
 ---------------------------------------------------------------------
  { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "0" } }
@@ -200,7 +200,7 @@ WHERE oid = 'documentdb_data.documents_24323_2432023'::regclass;
 SELECT (2147483640::bigint * 8 * 1024) as base_estimated_size \gset
 -- These tests can produce different size, so a better way to check would be to assume the estimated size is very high
 SELECT (documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": true}')->>'estimatedBytesFreed')::bigint as big_free_estimated_size \gset
-SELECT (documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": false}')->>'bytesFreed')::bigint as big_free_byte_size \gset
+SELECT (documentdb_api.compact('{"compact": "compact_test_sharded", "$db": "commands_compact_db", "dryRun": false, "mode": "full"}')->>'bytesFreed')::bigint as big_free_byte_size \gset
 SELECT :big_free_estimated_size::bigint > :base_estimated_size::bigint as estimated_is_valid,
        :big_free_byte_size::bigint > :base_estimated_size::bigint as actual_is_valid;
  estimated_is_valid | actual_is_valid 

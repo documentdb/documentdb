@@ -1497,7 +1497,7 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 	DefineCustomBoolVariable(
 		psprintf("%s.enableCompactVacuumFull", newGucPrefix),
 		gettext_noop(
-			"Whether to enable VACUUM FULL execution during compact command. When off, compact is a no-op."),
+			"Whether to enable VACUUM FULL execution during compact command. When off, compact with mode 'full' is a no-op; the non-blocking 'standard' mode is unaffected."),
 		NULL,
 		&EnableCompactVacuumFull,
 		DEFAULT_ENABLE_COMPACT_VACUUM_FULL,

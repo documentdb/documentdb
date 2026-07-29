@@ -33,6 +33,7 @@
 * Fix memory usage in tokio-postgres Framed/BytesMut crate *[Bugfix/Perf]*
 
 ### documentdb v0.114-0 (Unreleased) ###
+* Add a `mode` field to the `compact` command spec to select between `full` (VACUUM FULL, the default and blocking) and `standard` (a non-blocking regular VACUUM). Only `full` is gated by the `documentdb.enableCompactVacuumFull` flag; the non-blocking `standard` mode always runs. *[Feature]*
 * Extend `enableNewNamespaceValidation` to block create/drop/rename/createIndex on reserved collections in `admin` and `local` databases, and complete the `config` reserved-collection list (added sharding-runtime names: `changelog`, `mongos`, `placementHistory`, `tags`, `transactions`, `locks`, `lockpings`, `migrations`, `migrationCoordinators`, `rangeDeletions`, `reshardingOperations`, `cache.collections`, `cache.databases`). *[Feature]*
 * Emit a btree `REUSE_PAGE` WAL marker before a RUM page is reused from the FSM, so streaming standbys resolve recovery conflicts before the page contents are overwritten. Mirrors nbtree's `_bt_allocbuf` behavior. Guarded by `documentdb_rum.enable_emit_reuse_page_on_recycle` feature flag, disabled by default while pending stabilization. *[Perf]*
 * Support configuring the gateway via `DOCUMENTDB_*` environment variables for systemd-managed installs, and add a `documentdb-gateway check` connectivity-probe subcommand. *[Feature]*

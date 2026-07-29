@@ -33,8 +33,26 @@ SELECT documentdb_api.compact('{"compact": "compact_coll", "dryRun": "invalid"}'
 ERROR:  The BSON field 'dryRun' has an incorrect type 'string'; it should be of type 'bool'.
 SELECT documentdb_api.compact('{"compact": "compact_coll", "force": false}');
 ERROR:  command compact option force:false is not supported
--- Default GUC is off: compact should be a no-op returning bytesFreed: 0
+SELECT documentdb_api.compact('{"compact": "compact_coll", "mode": "invalid"}');
+ERROR:  Invalid compact mode 'invalid'. Supported values are 'full' and 'standard'.
+SELECT documentdb_api.compact('{"compact": "compact_coll", "mode": 1}');
+ERROR:  The BSON field 'mode' has an incorrect type 'int'; it should be of type 'string'.
+-- Default mode is "standard", which is NOT gated by the GUC and runs even with GUC off
 SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db"}');
+                                    compact                                     
+--------------------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "0" } }
+(1 row)
+
+-- mode "full" IS gated: with GUC off it should be a no-op returning bytesFreed: 0
+SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", "mode": "full"}');
+                                    compact                                     
+--------------------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "0" } }
+(1 row)
+
+-- mode "standard" is NOT gated and still runs (returns ok)
+SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", "mode": "standard"}');
                                     compact                                     
 --------------------------------------------------------------------------------
  { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "0" } }
@@ -63,6 +81,20 @@ SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db"}'
  { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "0" } }
 (1 row)
 
+-- mode: "full" must be requested explicitly and runs a blocking vacuum full
+SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", "mode": "full"}');
+                                    compact                                     
+--------------------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "0" } }
+(1 row)
+
+-- mode: "standard" should run a regular (non-blocking) vacuum
+SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", "mode": "standard"}');
+                                    compact                                     
+--------------------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "0" } }
+(1 row)
+
 -- dryRun with GUC on should return estimatedBytesFreed
 SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", "dryRun": true}');
                                          compact                                         
@@ -78,7 +110,14 @@ SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", 
 (1 row)
 
 RESET documentdb.enableCompactVacuumFull;
--- After reset, compact should be no-op again
+-- After reset, mode "full" should be no-op again since it is gated by the GUC
+SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", "mode": "full"}');
+                                    compact                                     
+--------------------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "0" } }
+(1 row)
+
+-- ... but the default (standard) mode still runs since it is not gated by the GUC
 SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db"}');
                                     compact                                     
 --------------------------------------------------------------------------------

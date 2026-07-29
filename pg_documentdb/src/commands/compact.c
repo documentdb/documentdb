@@ -26,6 +26,31 @@
 
 extern bool EnableCompactVacuumFull;
 
+/*
+ * Controls which flavor of VACUUM the compact command performs.
+ */
+typedef enum CompactMode
+{
+	/*
+	 * Plain VACUUM: marks dead tuple space as reusable within the table (via
+	 * the free space map) without rewriting it, so later inserts/updates reuse
+	 * that space regardless of where the dead tuples are. It generally does not
+	 * return space to the OS -- the file only shrinks when wholly-empty pages at
+	 * the tail of the heap can be truncated. It takes only a
+	 * ShareUpdateExclusiveLock, so it does not block concurrent reads or writes.
+	 * This is the default so that an omitted mode runs the non-blocking VACUUM
+	 * rather than the blocking, table-rewriting VACUUM FULL.
+	 */
+	COMPACT_MODE_STANDARD = 0,
+
+	/*
+	 * VACUUM FULL: rewrites the table, returning freed space to the OS but
+	 * taking an AccessExclusiveLock for the duration. Must be requested
+	 * explicitly via mode: "full".
+	 */
+	COMPACT_MODE_FULL,
+} CompactMode;
+
 typedef struct CompactArgs
 {
 	/* The name of the database */
@@ -33,6 +58,9 @@ typedef struct CompactArgs
 
 	/* The name of the collection */
 	char *collectionName;
+
+	/* Which VACUUM flavor to run. Defaults to COMPACT_MODE_STANDARD. */
+	CompactMode mode;
 
 	/*
 	 * Estimate the amount of space that would be freed by a compact operation
@@ -55,9 +83,9 @@ typedef struct CompactArgs
 } CompactArgs;
 
 static void ParseCompactCommandSpec(pgbson *compactSpec, CompactArgs *args);
-static void PerformVacuum(MongoCollection *collection);
-static void ValidateCompactAccess(MongoCollection *collection);
-static void ValidateLocksAndCheckAccess(MongoCollection *collection);
+static void PerformVacuum(MongoCollection *collection, CompactMode mode);
+static void ValidateCompactAccess(MongoCollection *collection, CompactMode mode);
+static void ValidateLocksAndCheckAccess(MongoCollection *collection, CompactMode mode);
 
 
 PG_FUNCTION_INFO_V1(command_compact);
@@ -128,7 +156,7 @@ command_compact(PG_FUNCTION_ARGS)
 	}
 
 	/* Always validate the user has permission to run compact on this collection */
-	ValidateCompactAccess(collection);
+	ValidateCompactAccess(collection, args.mode);
 
 	/*
 	 * dryRun is always supported regardless of the GUC since it only
@@ -148,7 +176,11 @@ command_compact(PG_FUNCTION_ARGS)
 		PG_RETURN_POINTER(PgbsonWriterGetPgbson(&response));
 	}
 
-	if (!EnableCompactVacuumFull)
+	/*
+	 * Only VACUUM FULL is gated by the GUC, since it is blocking and rewrites
+	 * the table. The non-blocking standard VACUUM mode is always allowed.
+	 */
+	if (args.mode == COMPACT_MODE_FULL && !EnableCompactVacuumFull)
 	{
 		pgbson_writer response;
 		PgbsonWriterInit(&response);
@@ -158,7 +190,7 @@ command_compact(PG_FUNCTION_ARGS)
 		PG_RETURN_POINTER(PgbsonWriterGetPgbson(&response));
 	}
 
-	ValidateLocksAndCheckAccess(collection);
+	ValidateLocksAndCheckAccess(collection, args.mode);
 
 	/* Start building the response */
 	pgbson_writer response;
@@ -172,20 +204,31 @@ command_compact(PG_FUNCTION_ARGS)
 	/* Get the bloat stats before vacuuming */
 	beforeVacuumStats = GetCollectionBloatEstimate(collection->collectionId);
 
+	uint64 freedSpace = 0;
 	if (!beforeVacuumStats.nullStats && (beforeVacuumStats.estimatedBloatStorage /
 										 BYTES_PER_MB) >= args.freeSpaceTargetMB)
 	{
-		/* Only perform full vacuum if there are stats available and freeSpace target is met */
-		elog(LOG, "Performing compact vacuum full on collection %s.%s",
+		/* Only perform vacuum if there are stats available and freeSpace target is met */
+		elog(LOG, "Performing compact (%s) on collection %s.%s",
+			 args.mode == COMPACT_MODE_FULL ? "vacuum full" : "vacuum",
 			 args.databaseName, args.collectionName);
-		PerformVacuum(collection);
+		PerformVacuum(collection, args.mode);
+
+		/*
+		 * Report the on-disk space returned to the OS. VACUUM FULL rewrites the
+		 * table and hands the bloat space back to the OS, so approximate the
+		 * freed space with the pre-vacuum bloat estimate. A standard VACUUM only
+		 * reclaims dead-tuple space for reuse within the relation and does not
+		 * shrink the file, so nothing is returned to the OS.
+		 *
+		 * Note: this is a rough estimate and does not account for index space.
+		 */
+		if (args.mode == COMPACT_MODE_FULL)
+		{
+			freedSpace = beforeVacuumStats.estimatedBloatStorage;
+		}
 	}
 
-	/* This is very rough, currently it doesn't considers the space freed by vacuuming index
-	 * TODO: Optimize
-	 */
-	uint64 freedSpace = beforeVacuumStats.nullStats ? 0 :
-						beforeVacuumStats.estimatedBloatStorage;
 	PgbsonWriterAppendInt64(&response, "bytesFreed", 10, freedSpace);
 	PG_RETURN_POINTER(PgbsonWriterGetPgbson(&response));
 }
@@ -199,7 +242,7 @@ command_compact(PG_FUNCTION_ARGS)
  * Validates that the current user has privileges to perform compact on the collection.
  */
 static void
-ValidateCompactAccess(MongoCollection *collection)
+ValidateCompactAccess(MongoCollection *collection, CompactMode mode)
 {
 	HeapTuple tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(collection->relationId));
 	if (!HeapTupleIsValid(tuple))
@@ -216,7 +259,11 @@ ValidateCompactAccess(MongoCollection *collection)
 	}
 	Form_pg_class classForm = (Form_pg_class) GETSTRUCT(tuple);
 
-	bits32 options = VACOPT_VACUUM | VACOPT_FULL;
+	bits32 options = VACOPT_VACUUM;
+	if (mode == COMPACT_MODE_FULL)
+	{
+		options |= VACOPT_FULL;
+	}
 	bool userCanVacuum = false;
 #if PG_VERSION_NUM >= 170000
 	userCanVacuum = vacuum_is_permitted_for_relation(collection->relationId,
@@ -243,21 +290,32 @@ ValidateCompactAccess(MongoCollection *collection)
 
 
 /*
- * Checks if the relation to be vacuumed is available for exclusive access locking.
+ * Checks if the relation to be vacuumed is available for the lock level that the
+ * requested compact mode needs. VACUUM FULL takes an AccessExclusiveLock, while a
+ * plain VACUUM only takes a ShareUpdateExclusiveLock; checking the matching lock
+ * level lets us fail early when a conflicting operation is already in progress
+ * without being overly strict for the non-blocking standard mode.
  * Note: ValidateCompactAccess is already called before this function in command_compact,
  * so we only need to check locking here.
  */
 static void
-ValidateLocksAndCheckAccess(MongoCollection *collection)
+ValidateLocksAndCheckAccess(MongoCollection *collection, CompactMode mode)
 {
-	/* Now checking if the collection is available for exclusive locking :
+	LOCKMODE lockMode = mode == COMPACT_MODE_FULL ? AccessExclusiveLock :
+						ShareUpdateExclusiveLock;
+
+	/* Now checking if the collection is available for the required lock level :
 	 * - To validate early if only 1 vacuum is running on the collection.
 	 *
-	 * Immediately unlock the table to avoid deadlock situation with VACUUM FULL.
+	 * We only take the lock conditionally to test availability and then release
+	 * it immediately. The actual VACUUM runs on a separate libpq connection (see
+	 * PerformVacuum), so if this backend kept holding the lock, that connection
+	 * would block on our own session and hang. Releasing here lets the subsequent
+	 * VACUUM acquire the lock itself.
 	 */
-	if (ConditionalLockRelationOid(collection->relationId, AccessExclusiveLock))
+	if (ConditionalLockRelationOid(collection->relationId, lockMode))
 	{
-		UnlockRelationOid(collection->relationId, AccessExclusiveLock);
+		UnlockRelationOid(collection->relationId, lockMode);
 	}
 	else
 	{
@@ -276,22 +334,26 @@ ValidateLocksAndCheckAccess(MongoCollection *collection)
 
 
 /*
- * This sends a VACUUM FULL command to the local server via libpq, as VACUUM FULL can't
- * be executed in a transaction block.
+ * This sends a VACUUM (FULL, for compact mode "full") command to the local server via
+ * libpq, as VACUUM can't be executed in a transaction block.
  */
 static void
-PerformVacuum(MongoCollection *collection)
+PerformVacuum(MongoCollection *collection, CompactMode mode)
 {
 	Assert(collection != NULL && collection->relationId != InvalidOid);
 
-	const char *vacuumFullQuery = FormatSqlQuery("VACUUM FULL %s.documents_%ld",
-												 ApiDataSchemaName,
-												 collection->collectionId);
+	const char *vacuumQuery = mode == COMPACT_MODE_FULL ?
+							  FormatSqlQuery("VACUUM FULL %s.documents_%ld",
+											 ApiDataSchemaName,
+											 collection->collectionId) :
+							  FormatSqlQuery("VACUUM %s.documents_%ld",
+											 ApiDataSchemaName,
+											 collection->collectionId);
 
 	/* VACUUM needs to be performed at the top level */
 	bool useSerialExecution = false;
 	Oid userOid = GetUserId();
-	ExtensionExecuteQueryAsUserOnLocalhostViaLibPQ((char *) vacuumFullQuery, userOid,
+	ExtensionExecuteQueryAsUserOnLocalhostViaLibPQ((char *) vacuumQuery, userOid,
 												   useSerialExecution);
 }
 
@@ -341,6 +403,29 @@ ParseCompactCommandSpec(pgbson *compactSpec, CompactArgs *args)
 		{
 			EnsureTopLevelFieldIsNumberLike("freeSpaceTargetMB", &element.bsonValue);
 			args->freeSpaceTargetMB = BsonValueAsDouble(&element.bsonValue);
+		}
+		else if (strcmp(element.path, "mode") == 0)
+		{
+			EnsureTopLevelFieldType("mode", &specIter, BSON_TYPE_UTF8);
+			const char *modeStr = element.bsonValue.value.v_utf8.str;
+			if (strcmp(modeStr, "full") == 0)
+			{
+				args->mode = COMPACT_MODE_FULL;
+			}
+			else if (strcmp(modeStr, "standard") == 0)
+			{
+				args->mode = COMPACT_MODE_STANDARD;
+			}
+			else
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"Invalid compact mode '%s'. Supported values are 'full' and 'standard'.",
+									modeStr),
+								errdetail_log(
+									"Invalid compact mode '%s'. Supported values are 'full' and 'standard'.",
+									modeStr)));
+			}
 		}
 		else if (!IsCommonSpecIgnoredField(element.path))
 		{
