@@ -42,7 +42,6 @@ extern int ShardingMaxChunks;
 extern char *ApiGucPrefixV2;
 extern bool EnableRbacCompliantSchemas;
 extern bool EnablePrepareUnique;
-extern bool EnablePerCollectionPlannerStatistics;
 
 /* Metadata about shard keys - this is unchanged through
  * iterating though the query for the shard key.
@@ -1499,12 +1498,6 @@ ShardCollectionCore(ShardCollectionArgs *args)
 		existingExtendedIndexesCmds = GetExtendedIndexCreationCmds(collection);
 	}
 
-	bool isCollectionStatisticsEnabled = (EnablePerCollectionPlannerStatistics ||
-										  ShouldEnablePlannerStatisticsNewCollections())
-										 &&
-										 CollectionHasStatisticsEnabled(
-		collection->collectionId);
-
 	int nargs = 3;
 	Oid argTypes[3] = { BsonTypeId(), TEXTOID, TEXTOID };
 	bool isNull = true;
@@ -1537,12 +1530,15 @@ ShardCollectionCore(ShardCollectionArgs *args)
 	char tmpDataTableName[NAMEDATALEN + 20];
 	sprintf(tmpDataTableName, "%s.%s_reshard", ApiDataSchemaName, collection->tableName);
 
-	/* Before sharding, drop stats (they're created after) */
-	if (isCollectionStatisticsEnabled)
-	{
-		bool enableStats = false;
-		UpdateCollectionPlannerStatistics(collection->collectionId, enableStats);
-	}
+	/*
+	 * Planner statistics are intentionally not touched here. The statsEnabled
+	 * collection metadata is left enabled throughout, so this flow performs no
+	 * options update on the collections reference table (which would otherwise
+	 * deadlock against the commutative shard_key update above). The statistics
+	 * objects on the old data table are dropped when that table is dropped, and
+	 * the index recreation below recreates them on the rebuilt table because the
+	 * collection still has statistics enabled.
+	 */
 
 	/* create a new table to reinsert the data into */
 	StringInfo queryInfo = makeStringInfo();
@@ -1853,13 +1849,6 @@ ShardCollectionCore(ShardCollectionArgs *args)
 			RunPrepareUniqueForCollectionIndexes(args->databaseName,
 												 args->collectionName,
 												 prepareUniqueNamesArray);
-		}
-
-		if (isCollectionStatisticsEnabled)
-		{
-			/* Enable statistics on the collection if it was enabled before. */
-			UpdateCollectionPlannerStatistics(collection->collectionId,
-											  isCollectionStatisticsEnabled);
 		}
 	}
 }
