@@ -61,6 +61,7 @@ test: bson_aggregation_cursor_tests_pk_cursors
 test: create_indexes_cosmos_vector bson_aggregation_pipeline_tests_index_pushdown
 test: bson_query_operator_geospatial_tests_index
 test: bson_query_operator_geospatial_tests_explain_index
+test: bson_geospatial_index_pushdown_tests
 test: bson_query_operator_geospatial_tests_explain_runtime
 test: bson_query_operator_near_nearsphere
 

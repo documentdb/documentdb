@@ -60,6 +60,7 @@
 #include "utils/hashset_utils.h"
 #include "utils/list_utils.h"
 #include "collation/collation.h"
+#include "utils/docdb_make_funcs.h"
 #include "jsonschema/bson_json_schema_tree.h"
 
 
@@ -150,7 +151,6 @@ extern bool EnableSupportFunctionIdPushdown;
 /* --------------------------------------------------------- */
 /* Forward declaration */
 /* --------------------------------------------------------- */
-static Const * MakeBsonConst(pgbson *pgbson);
 static Node * ReplaceBsonQueryOperatorsMutator(Node *node,
 											   ReplaceBsonQueryOperatorsContext *context);
 static Expr * ExpandBsonQueryOperator(OpExpr *queryOpExpr, Node *queryNode,
@@ -469,25 +469,6 @@ query_match_support(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_POINTER(NULL);
-}
-
-
-/*
- * MakeBsonConst creates a Const expression for a given bson.
- */
-static Const *
-MakeBsonConst(pgbson *pgbson)
-{
-	Const *bsonConst = makeNode(Const);
-	bsonConst->consttype = BsonTypeId();
-	bsonConst->consttypmod = -1;
-	bsonConst->constlen = -1;
-	bsonConst->constvalue = PointerGetDatum(pgbson);
-	bsonConst->constbyval = false;
-	bsonConst->constisnull = false;
-	bsonConst->location = -1;
-
-	return bsonConst;
 }
 
 
@@ -5110,18 +5091,25 @@ WithIndexSupportExpression(Expr *docExpr, Expr *geoOperatorExpr,
 {
 	FuncExpr *geoOperatorFuncExpr = (FuncExpr *) geoOperatorExpr;
 
-	Const *pathConst = makeConst(TEXTOID, -1, InvalidOid, -1, CStringGetTextDatum(path),
-								 false, false);
+	Const *pathConst = MakeTextConst(path, strlen(path));
 
 	Oid bsonValidateFunctionId = isSpherical ? BsonValidateGeographyFunctionId() :
 								 BsonValidateGeometryFunctionId();
-	Oid typeId = isSpherical ? GeographyTypeId() : GeometryTypeId();
+
+	/*
+	 * bson_validate_geography/bson_validate_geometry both return bson, so the
+	 * FuncExpr result type must be bson. Using the geography/geometry type here
+	 * makes the node differ from the one parsed for the index's partial filter
+	 * expression, so predicate_implied_by() fails to prove index eligibility on
+	 * the local (non-deparsed) execution path and the geospatial index is not used.
+	 */
+	Oid typeId = BsonTypeId();
 	Expr *validateExpr = (Expr *) makeFuncExpr(bsonValidateFunctionId,
 											   typeId,
 											   list_make2(docExpr,
 														  pathConst),
 											   InvalidOid,
-											   InvalidOid,
+											   DEFAULT_COLLATION_OID,
 											   COERCE_EXPLICIT_CALL);
 	List *argsList = list_make2(validateExpr, lsecond(geoOperatorFuncExpr->args));
 	geoOperatorFuncExpr->args = argsList;
