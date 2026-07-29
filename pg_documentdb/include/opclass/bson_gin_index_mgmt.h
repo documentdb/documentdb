@@ -166,7 +166,15 @@ typedef struct
 	int defaultLanguage;
 	int weights;
 	int languageOverride;
+
+	/* Mongo textIndexVersion this index was built with (2 or 3). Version 3
+	 * adds diacritic insensitivity: terms and $text queries are folded via
+	 * the unaccent extension (see EnableTextIndexVersion3). */
+	int textIndexVersion;
 } BsonGinTextPathOptions;
+
+/* GUC gating textIndexVersion 3 support (requires the unaccent extension). */
+extern bool EnableTextIndexVersion3;
 
 
 /*
