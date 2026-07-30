@@ -136,7 +136,9 @@ PGDLLIMPORT char *ApiInternalBgworkerSchemaName = "documentdb_api_internal_bgwor
 /* Role names */
 PGDLLEXPORT char *ApiAdminRole = "documentdb_admin_role";
 PGDLLEXPORT char *ApiAdminRoleV2 = "documentdb_admin_role";
+PGDLLEXPORT char *ApiAdminRoleV3 = "documentdb_admin_role";
 PGDLLEXPORT char *ApiBgWorkerRole = "documentdb_bg_worker_role";
+PGDLLEXPORT char *ApiBgWorkerRoleV3 = "documentdb_bg_worker_role";
 PGDLLEXPORT char *ApiClusterAdminRole = "documentdb_cluster_admin_role";
 PGDLLEXPORT char *ApiReadOnlyRole = "documentdb_readonly_role";
 PGDLLEXPORT char *ApiReadWriteRole = "documentdb_readwrite_role";
