@@ -2,16 +2,19 @@
 
 A ready-to-use `docker compose` setup for the
 [`documentdb-local`](https://github.com/documentdb/documentdb) image, with a
-container health check, persistent storage, and an optional smoke test.
+container health check, persistent storage, and readiness gating for dependent
+services.
 
 ## Quick start
 
 ```bash
 cd documentdb-local/examples/docker-compose
 
-# 1. Set your credentials
-cp .env.example .env
-$EDITOR .env
+# 1. Generate credentials for this run. They live only in your shell
+#    environment -- nothing is written to disk, and you get a fresh secret
+#    every time rather than reusing one committed to a file.
+export DOCUMENTDB_USERNAME=documentdb_user
+export DOCUMENTDB_PASSWORD="$(openssl rand -base64 24)"
 
 # 2. Start DocumentDB
 docker compose up -d
@@ -21,17 +24,20 @@ docker compose ps
 # NAME                        ...   STATUS
 # docker-compose-documentdb-1 ...   Up 45 seconds (healthy)
 
-# 4. Connect (from the host)
+# 4. Connect (from the host), using the credentials generated in step 1
 mongosh "mongodb://localhost:10260/?tls=true&tlsAllowInvalidCertificates=true" \
     --username <your-username> --password <your-password>
 ```
 
-Or run the bundled one-shot connectivity check, which waits for the health
-check before connecting:
+`docker compose` reads both variables from your environment; it refuses to
+start with a clear error if either is unset, so an unconfigured stack cannot
+silently come up on the image's well-known default credentials.
 
-```bash
-docker compose run --rm smoke-test
-```
+Because the password is generated per run, treat the stack as disposable: to
+rotate credentials, tear it down (`docker compose down -v`, which also clears
+the data volume) and repeat step 1. Restarting an existing stack with a new
+password will not change the already-provisioned user — that user is created
+once, on a fresh data volume.
 
 ## The health check
 
@@ -68,9 +74,7 @@ docker inspect --format '{{json .State.Health}}' <container> | jq
 
 ## Waiting for DocumentDB in your own services
 
-Add a `depends_on` condition to any service that needs the database (see the
-`smoke-test` service in [`docker-compose.yml`](docker-compose.yml) for a full
-example):
+Add a `depends_on` condition to any service that needs the database:
 
 ```yaml
 services:
@@ -80,9 +84,21 @@ services:
         condition: service_healthy
 ```
 
+The `wait-for-healthy` service in [`docker-compose.yml`](docker-compose.yml)
+is a runnable example of exactly that — it blocks until the health check
+passes, then exits:
+
+```bash
+docker compose run --rm wait-for-healthy
+```
+
+Swap in your own image and command to turn it into your application service.
+
 Inside the compose network, connect to `documentdb:10260` (the service
 name), with `tls=true&tlsAllowInvalidCertificates=true` — the emulator's
-auto-generated certificate is self-signed.
+auto-generated certificate is self-signed. Pass the credentials to your
+service the same way this file does, via the environment, so they stay out of
+your compose file and out of your image.
 
 ## Data persistence
 

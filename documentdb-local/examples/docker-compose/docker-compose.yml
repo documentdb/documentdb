@@ -1,5 +1,9 @@
-# DocumentDB Local via docker compose. See README.md in this directory for
-# the full walkthrough (credentials, health check, persistence, seeding).
+# DocumentDB Local via docker compose. See README.md in this directory for the
+# full walkthrough (credentials, health check, persistence, seeding).
+#
+# Credentials are read from the environment and are meant to be generated
+# fresh for every run, so no credential is ever stored in this directory.
+# README.md shows the one-liner that generates them.
 
 services:
   documentdb:
@@ -7,10 +11,10 @@ services:
     ports:
       - "10260:10260"
     environment:
-      # Prefixed names (not USERNAME/PASSWORD) so values from .env are not
-      # shadowed by shell variables — Windows always defines USERNAME.
-      USERNAME: ${DOCUMENTDB_USERNAME:?Set DOCUMENTDB_USERNAME in .env or the environment}
-      PASSWORD: ${DOCUMENTDB_PASSWORD:?Set DOCUMENTDB_PASSWORD in .env or the environment}
+      # Prefixed names (not USERNAME/PASSWORD) so values from the environment
+      # are not shadowed by shell variables — Windows always defines USERNAME.
+      USERNAME: ${DOCUMENTDB_USERNAME:?generate credentials first - see README.md}
+      PASSWORD: ${DOCUMENTDB_PASSWORD:?generate credentials first - see README.md}
     volumes:
       - documentdb-data:/data
       # Uncomment to run your own mongosh .js seed scripts once per fresh
@@ -28,26 +32,19 @@ services:
     #   retries: 3
     #   start_period: 60s
 
-  # One-shot connectivity check, and a template for your own application
-  # service: `depends_on: condition: service_healthy` holds it back until
-  # DocumentDB is fully initialized. Reuses the documentdb-local image only
-  # because it already bundles mongosh. Run with:
-  #   docker compose run --rm smoke-test
-  smoke-test:
+  # Demonstrates readiness gating, and is the template for your own service:
+  # `depends_on: condition: service_healthy` holds this back until DocumentDB
+  # reports healthy, so it never races a half-initialized database. Swap in
+  # your own image and command. Run with:
+  #   docker compose run --rm wait-for-healthy
+  wait-for-healthy:
     image: ghcr.io/documentdb/documentdb/documentdb-local:latest
-    profiles: ["smoke-test"]
+    profiles: ["wait-for-healthy"]
     depends_on:
       documentdb:
         condition: service_healthy
-    entrypoint: ["mongosh"]
-    command:
-      - "mongodb://documentdb:10260/?tls=true&tlsAllowInvalidCertificates=true"
-      - "--username"
-      - ${DOCUMENTDB_USERNAME:?Set DOCUMENTDB_USERNAME in .env or the environment}
-      - "--password"
-      - ${DOCUMENTDB_PASSWORD:?Set DOCUMENTDB_PASSWORD in .env or the environment}
-      - "--eval"
-      - "db.runCommand({ ping: 1 })"
+    entrypoint: ["bash", "-c"]
+    command: ["echo 'DocumentDB reports healthy - a dependent service would start here.'"]
 
 volumes:
   documentdb-data:
