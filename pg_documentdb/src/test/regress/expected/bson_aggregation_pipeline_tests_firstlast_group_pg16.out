@@ -258,6 +258,171 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                      Index Cond: (collection.shard_key_value = '25701000'::bigint)
 (11 rows)
 
+-- 8b. The group key keeps the variable spec whenever it references a variable, at any
+-- depth. The case above is the negative one: "$g" reads no variable, so the key drops
+-- the spec and becomes a stable expression that extended statistics can match.
+SET documentdb.enableNewWithExprAccumulators TO on;
+-- a user "let" variable as the whole key
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$$bonus", "c": { "$sum": 1 } } }], "cursor": {}, "let": { "bonus": 100 } }');
+                                                                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$$bonus" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson)), 'c'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$$bonus" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$$bonus" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$$bonus" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$$bonus" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_25701000 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$$bonus" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '25701000'::bigint)
+(11 rows)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$$bonus", "c": { "$sum": 1 } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "let": { "bonus": 100 } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "100" }, "c" : { "$numberInt" : "8" } }
+(1 row)
+
+-- nested one level inside a document
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": { "k": "$$bonus" }, "c": { "$sum": 1 } } }], "cursor": {}, "let": { "bonus": 100 } }');
+                                                                                                                                                                                                                                                                                                                                                                                              QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                              
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : { "k" : "$$bonus" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson)), 'c'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : { "k" : "$$bonus" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "k" : "$$bonus" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : { "k" : "$$bonus" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "k" : "$$bonus" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_25701000 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : { "k" : "$$bonus" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '25701000'::bigint)
+(11 rows)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": { "k": "$$bonus" }, "c": { "$sum": 1 } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "let": { "bonus": 100 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : { "k" : { "$numberInt" : "100" } }, "c" : { "$numberInt" : "8" } }
+(1 row)
+
+-- nested inside an operator argument array
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": { "$add": ["$v", "$$bonus"] }, "c": { "$sum": 1 } } }], "cursor": {}, "let": { "bonus": 100 } }');
+                                                                                                                                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                           
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$add" : [ "$v", "$$bonus" ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson)), 'c'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$add" : [ "$v", "$$bonus" ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "$add" : [ "$v", "$$bonus" ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$add" : [ "$v", "$$bonus" ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "$add" : [ "$v", "$$bonus" ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_25701000 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : { "$add" : [ "$v", "$$bonus" ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '25701000'::bigint)
+(11 rows)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": { "$add": ["$v", "$$bonus"] }, "c": { "$sum": 1 } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "let": { "bonus": 100 } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : null, "c" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "110" }, "c" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "120" }, "c" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "130" }, "c" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "140" }, "c" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "150" }, "c" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "160" }, "c" : { "$numberInt" : "1" } }
+(7 rows)
+
+-- buried under alternating documents and arrays
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": { "a": { "b": [ { "c": "$$bonus" } ] } }, "c": { "$sum": 1 } } }], "cursor": {}, "let": { "bonus": 100 } }');
+                                                                                                                                                                                                                                                                                                                                                                                                                      QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : { "a" : { "b" : [ { "c" : "$$bonus" } ] } } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson)), 'c'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : { "a" : { "b" : [ { "c" : "$$bonus" } ] } } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "a" : { "b" : [ { "c" : "$$bonus" } ] } } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : { "a" : { "b" : [ { "c" : "$$bonus" } ] } } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "a" : { "b" : [ { "c" : "$$bonus" } ] } } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_25701000 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : { "a" : { "b" : [ { "c" : "$$bonus" } ] } } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '25701000'::bigint)
+(11 rows)
+
+-- a sibling field referencing a variable is enough to keep the spec for the whole key
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": { "g": "$g", "b": "$$bonus" }, "c": { "$sum": 1 } } }], "cursor": {}, "let": { "bonus": 100 } }');
+                                                                                                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                          
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : { "g" : "$g", "b" : "$$bonus" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson)), 'c'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : { "g" : "$g", "b" : "$$bonus" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "g" : "$g", "b" : "$$bonus" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : { "g" : "$g", "b" : "$$bonus" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "g" : "$g", "b" : "$$bonus" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_25701000 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : { "g" : "$g", "b" : "$$bonus" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '25701000'::bigint)
+(11 rows)
+
+-- a $literal key never reaches the variable spec decision at all: it folds to a constant,
+-- so the plan carries the value directly and calls no expression function
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": { "$literal": "$$bonus" }, "c": { "$sum": 1 } } }], "cursor": {}, "let": { "bonus": 100 } }');
+                                                                      QUERY PLAN                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, '{ "" : "$$bonus" }'::bson, 'c'::text, documentdb_api_internal.bsoncount(1)), '{ "" : "$$bonus" }'::bson
+   ->  Bitmap Heap Scan on documentdb_data.documents_25701000 collection
+         Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (collection.shard_key_value = '25701000'::bigint)
+(6 rows)
+
+-- $$NOW is rejected in a group key, independently of this change, so the "now" value the
+-- spec carries was never readable by the key expression in the first place
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": { "$dateTrunc": { "date": "$$NOW", "unit": "day" } }, "c": { "$sum": 1 } } }], "cursor": {} }');
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:105: ERROR:  The $$NOW operator cannot be used within this specific context.
+-- system variables other than $$NOW behave the same
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$$ROOT", "c": { "$sum": 1 } } }], "cursor": {} }');
+                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$$ROOT" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'c'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$$ROOT" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$$ROOT" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   ->  Sort
+         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$$ROOT" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
+         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$$ROOT" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         ->  Bitmap Heap Scan on documentdb_data.documents_25701000 collection
+               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$$ROOT" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '25701000'::bigint)
+(11 rows)
+
+-- a key with no variable anywhere drops the spec even when "let" is supplied and used by
+-- an accumulator, which keeps receiving it
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": { "$add": ["$v", 1] }, "s": { "$sum": "$$bonus" } } }], "cursor": {}, "let": { "bonus": 100 } }');
+                                                                                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : { "$add" : [ "$v", { "$numberInt" : "1" } ] } }'::bson, true)), 's'::text, documentdb_api_internal.bsonsumwithexpr(document, '{ "" : "$$bonus" }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : { "$add" : [ "$v", { "$numberInt" : "1" } ] } }'::bson, true))
+   Group Key: (bson_expression_get(collection.document, '{ "" : { "$add" : [ "$v", { "$numberInt" : "1" } ] } }'::bson, true))
+   ->  Sort
+         Output: (bson_expression_get(document, '{ "" : { "$add" : [ "$v", { "$numberInt" : "1" } ] } }'::bson, true)), document
+         Sort Key: (bson_expression_get(collection.document, '{ "" : { "$add" : [ "$v", { "$numberInt" : "1" } ] } }'::bson, true))
+         ->  Bitmap Heap Scan on documentdb_data.documents_25701000 collection
+               Output: bson_expression_get(document, '{ "" : { "$add" : [ "$v", { "$numberInt" : "1" } ] } }'::bson, true), document
+               Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (collection.shard_key_value = '25701000'::bigint)
+(11 rows)
+
 -- 9. $last where the final document in a group has a missing field
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "lastV": { "$last": "$v" }, "lastName": { "$last": "$name" } } }], "cursor": {} }');
@@ -273,7 +438,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_tes
 -- =============================================================================
 -- 10. Setup collation test data
 SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 1, "g": "A", "name": "cherry" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:85: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:123: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -403,7 +568,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collati
 -- 15. Collation with mixed types (string, number, null)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_collation_mixed', '{ "_id": 1, "g": "G", "val": "banana" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:139: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:177: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -452,7 +617,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_collation_mixed');
 -- With numericOrdering: "item10" > "item2" (numeric), without: "item10" < "item2" (lexical)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_numeric_order', '{ "_id": 1, "g": "N", "val": "item10" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:157: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:195: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -504,7 +669,7 @@ SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$name" } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:179: ERROR:  collation is not supported in $group stage yet.
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:217: ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableNewWithExprAccumulators TO on;
 SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 -- =============================================================================
@@ -540,7 +705,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_collation_test');
 --     nested field, even though a later document has the field defined.
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_first_missing', '{ "_id": 1, "category": "electronics" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:208: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:246: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -571,7 +736,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_first_missing');
 --     (Flipped version of test 19.)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_last_missing', '{ "_id": 1, "category": "electronics", "profile": { "email": "bob@test.com" } }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:221: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:259: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -892,7 +1057,7 @@ RESET documentdb.enableSortGroupStage;
 -- =============================================================================
 -- Insert test data: 10 rows across 4 groups
 SELECT documentdb_api.insert_one('db','fl_sortgroup_test','{ "_id": 1, "g": "X", "seq": 30, "val": "third" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:317: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:355: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1592,7 +1757,7 @@ RESET documentdb.enableOrderByIndexTerm;
 --     decomposition bails out (dotted paths) and Sort node remains.
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','fl_nested_sort','{ "_id": 1, "g": "A", "info": { "priority": 3 }, "val": "low-pri" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:490: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:528: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1659,7 +1824,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_nested_sort');
 --     while case-insensitive collation (strength=1) sorts alphabetically ("apple" < "Banana").
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','fl_collation_sortpush','{ "_id": 1, "g": "A", "name": "cherry", "seq": 2 }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:508: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:546: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

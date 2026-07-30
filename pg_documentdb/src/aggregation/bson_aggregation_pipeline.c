@@ -318,6 +318,9 @@ static List * AddShardKeyAndIdFilters(const bson_value_t *existingValue, Query *
 static bool
 BsonValueReferencesVariables(const bson_value_t *value)
 {
+	check_stack_depth();
+	CHECK_FOR_INTERRUPTS();
+
 	switch (value->value_type)
 	{
 		case BSON_TYPE_UTF8:

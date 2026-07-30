@@ -73,6 +73,44 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_tes
 -- EXPLAIN shows non-empty varSpec with "let" variables
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": { "$add": ["$v", "$$bonus"] } } } }], "cursor": {}, "let": { "bonus": 100 } }');
 
+-- 8b. The group key keeps the variable spec whenever it references a variable, at any
+-- depth. The case above is the negative one: "$g" reads no variable, so the key drops
+-- the spec and becomes a stable expression that extended statistics can match.
+SET documentdb.enableNewWithExprAccumulators TO on;
+
+-- a user "let" variable as the whole key
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$$bonus", "c": { "$sum": 1 } } }], "cursor": {}, "let": { "bonus": 100 } }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$$bonus", "c": { "$sum": 1 } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "let": { "bonus": 100 } }');
+
+-- nested one level inside a document
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": { "k": "$$bonus" }, "c": { "$sum": 1 } } }], "cursor": {}, "let": { "bonus": 100 } }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": { "k": "$$bonus" }, "c": { "$sum": 1 } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "let": { "bonus": 100 } }');
+
+-- nested inside an operator argument array
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": { "$add": ["$v", "$$bonus"] }, "c": { "$sum": 1 } } }], "cursor": {}, "let": { "bonus": 100 } }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": { "$add": ["$v", "$$bonus"] }, "c": { "$sum": 1 } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "let": { "bonus": 100 } }');
+
+-- buried under alternating documents and arrays
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": { "a": { "b": [ { "c": "$$bonus" } ] } }, "c": { "$sum": 1 } } }], "cursor": {}, "let": { "bonus": 100 } }');
+
+-- a sibling field referencing a variable is enough to keep the spec for the whole key
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": { "g": "$g", "b": "$$bonus" }, "c": { "$sum": 1 } } }], "cursor": {}, "let": { "bonus": 100 } }');
+
+-- a $literal key never reaches the variable spec decision at all: it folds to a constant,
+-- so the plan carries the value directly and calls no expression function
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": { "$literal": "$$bonus" }, "c": { "$sum": 1 } } }], "cursor": {}, "let": { "bonus": 100 } }');
+
+-- $$NOW is rejected in a group key, independently of this change, so the "now" value the
+-- spec carries was never readable by the key expression in the first place
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": { "$dateTrunc": { "date": "$$NOW", "unit": "day" } }, "c": { "$sum": 1 } } }], "cursor": {} }');
+
+-- system variables other than $$NOW behave the same
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$$ROOT", "c": { "$sum": 1 } } }], "cursor": {} }');
+
+-- a key with no variable anywhere drops the spec even when "let" is supplied and used by
+-- an accumulator, which keeps receiving it
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": { "$add": ["$v", 1] }, "s": { "$sum": "$$bonus" } } }], "cursor": {}, "let": { "bonus": 100 } }');
+
 -- 9. $last where the final document in a group has a missing field
 SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "lastV": { "$last": "$v" }, "lastName": { "$last": "$name" } } }], "cursor": {} }');
