@@ -196,30 +196,33 @@ def load_allowlist_ids(path: str, engine_name: str) -> set[str]:
     return in_scope
 
 
-def shard_allowlist_ids(allowlist_path: str, engine_name: str,
-                        num_shards: int, shard_id: int, prefix: str = "") -> list[str]:
-    """Return the allowlisted test IDs assigned to one shard.
+def split_allowlist_ids(allowlist_path: str, engine_name: str,
+                        num_splits: int, split_id: int, prefix: str = "") -> list[str]:
+    """Return the allowlisted test IDs assigned to one test-split.
+
+    This is TEST SPLITTING (dividing a test suite across parallel CI jobs), not
+    data sharding — nothing here relates to DocumentDB/Mongo sharded collections.
 
     IDs are sorted for determinism, then distributed round-robin (stride
-    slicing ``ids[shard_id::num_shards]``) so every shard gets a roughly equal,
-    interleaved slice across all test areas — this keeps per-shard runtime even
-    rather than clustering a slow directory onto one shard. The union of all
-    shards is exactly the full allowlist with no overlap.
+    slicing ``ids[split_id::num_splits]``) so every split gets a roughly equal,
+    interleaved slice across all test areas — this keeps per-split runtime even
+    rather than clustering a slow directory onto one split. The union of all
+    splits is exactly the full allowlist with no overlap.
 
     ``prefix`` (e.g. ``documentdb_tests/``) is prepended to each rootdir-relative
     node ID so the result can be passed straight to pytest in the container.
     """
-    if num_shards < 1:
-        raise ValueError(f"num_shards must be >= 1, got {num_shards}")
-    if not (0 <= shard_id < num_shards):
-        raise ValueError(f"shard_id must be in [0, {num_shards}), got {shard_id}")
+    if num_splits < 1:
+        raise ValueError(f"num_splits must be >= 1, got {num_splits}")
+    if not (0 <= split_id < num_splits):
+        raise ValueError(f"split_id must be in [0, {num_splits}), got {split_id}")
     ids = sorted(load_allowlist_ids(allowlist_path, engine_name))
-    return [prefix + tid for tid in ids[shard_id::num_shards]]
+    return [prefix + tid for tid in ids[split_id::num_splits]]
 
 
-def cmd_shard_allowlist(args):
-    ids = shard_allowlist_ids(args.allowlist, args.engine_name,
-                              args.num_shards, args.shard_id, args.prefix)
+def cmd_split_allowlist(args):
+    ids = split_allowlist_ids(args.allowlist, args.engine_name,
+                              args.num_splits, args.split_id, args.prefix)
     text = "\n".join(ids)
     if args.output:
         with open(args.output, "w") as f:
@@ -251,34 +254,182 @@ def _read_manifest_ids(manifest_path: str) -> list[str]:
     return ids
 
 
-def shard_collection_ids(manifest_path: str, num_shards: int, shard_id: int,
+def split_collection_ids(manifest_path: str, num_splits: int, split_id: int,
                          prefix: str = "", strip_prefix: str = "") -> list[str]:
-    """Return the collected test node IDs assigned to one shard.
+    """Return the collected test node IDs assigned to one test-split.
 
-    Same deterministic round-robin (stride-slice ``ids[shard_id::num_shards]``
-    over a sorted universe) as :func:`shard_allowlist_ids`, but the universe is
+    This is TEST SPLITTING (dividing a test suite across parallel CI jobs), not
+    data sharding — nothing here relates to DocumentDB/Mongo sharded collections.
+
+    Same deterministic round-robin (stride-slice ``ids[split_id::num_splits]``
+    over a sorted universe) as :func:`split_allowlist_ids`, but the universe is
     a pytest collection manifest (the full non-quarantined suite) rather than
-    the allowlist. This lets each shard run its slice of the whole collected
+    the allowlist. This lets each split run its slice of the whole collected
     suite under the default-pass model.
 
-    ``strip_prefix`` is removed from each manifest node ID *before* sharding and
+    ``strip_prefix`` is removed from each manifest node ID *before* splitting and
     ``prefix`` is prepended *after*, so passing the same value for both makes
     the output prefix idempotent regardless of the collector's node-ID form.
     """
-    if num_shards < 1:
-        raise ValueError(f"num_shards must be >= 1, got {num_shards}")
-    if not (0 <= shard_id < num_shards):
-        raise ValueError(f"shard_id must be in [0, {num_shards}), got {shard_id}")
+    if num_splits < 1:
+        raise ValueError(f"num_splits must be >= 1, got {num_splits}")
+    if not (0 <= split_id < num_splits):
+        raise ValueError(f"split_id must be in [0, {num_splits}), got {split_id}")
     ids = _read_manifest_ids(manifest_path)
     if strip_prefix:
         ids = [tid[len(strip_prefix):] if tid.startswith(strip_prefix) else tid
                for tid in ids]
     ids = sorted(set(ids))
-    return [prefix + tid for tid in ids[shard_id::num_shards]]
+    return [prefix + tid for tid in ids[split_id::num_splits]]
 
 
-def cmd_shard_collection(args):
-    ids = shard_collection_ids(args.manifest, args.num_shards, args.shard_id,
+def parse_universe_record(path: str) -> dict:
+    """Parse one leg's ``universe.txt`` (``<tag> <mode> <hash> <count>``)."""
+    with open(path, encoding="utf-8") as f:
+        line = f.read().strip()
+    parts = line.split()
+    if len(parts) != 4:
+        raise ValueError(
+            f"{path}: expected '<tag> <mode> <hash> <count>', got {line!r}")
+    tag, mode, uhash, count = parts
+    if mode not in ("parallel", "noparallel"):
+        raise ValueError(f"{path}: unknown mode {mode!r}")
+    if not count.isdigit():
+        raise ValueError(f"{path}: count {count!r} is not a number")
+    return {"tag": tag, "mode": mode, "hash": uhash,
+            "count": int(count), "path": path}
+
+
+def verify_split_universes(universe_files: list[str],
+                           expected_splits: int) -> list[str]:
+    """Check that every parallel test-split collected an IDENTICAL universe.
+
+    Returns a list of human-readable problems; empty means the splits agree.
+
+    Why this has to be enforced rather than merely logged: each parallel leg
+    collects the suite independently and then takes the stride slice
+    ``ids[split_id::num_splits]``. That slice is a partition of the suite ONLY
+    if every leg sliced the same sorted universe. If one leg's collection
+    silently omits a node -- a clean rc=0 partial, which ``guard_collection``
+    does not catch because the exit code is 0 -- then every position after the
+    omission shifts by one. That leg starts running the NEXT leg's tests, and
+    its own share is left to nobody: roughly ``1/num_splits`` of the suite after
+    the omission point runs on no leg at all. Every leg still clears
+    MIN_MANIFEST, every leg still reports its own slice as passing, and the gate
+    scores green over a suite it never fully ran.
+
+    The per-leg ``universe-hash`` log line makes that *detectable* after the
+    fact; this makes it *fail*.
+
+    ``noparallel`` legs are excluded on purpose: that leg collects a different
+    marker set (``-m no_parallel``) by design, so its hash legitimately differs.
+    """
+    problems: list[str] = []
+    records = []
+    for path in sorted(universe_files):
+        try:
+            records.append(parse_universe_record(path))
+        except (OSError, ValueError) as exc:
+            problems.append(f"unreadable universe record: {exc}")
+
+    # Collapse byte-identical records BEFORE counting. A stage retry republishes
+    # every leg under a new artifact name (the name carries System.PhaseAttempt),
+    # so this job legitimately sees one record per leg PER ATTEMPT. Those repeats
+    # are one leg reporting the same universe twice, not two legs claiming the
+    # same id, and must not be read as a fault. A tag that survives this dedupe
+    # more than once genuinely disagreed with itself, which IS worth failing on.
+    uniq = {}
+    for r in records:
+        uniq[(r["tag"], r["mode"], r["hash"], r["count"])] = r
+    records = list(uniq.values())
+
+    parallel = [r for r in records if r["mode"] == "parallel"]
+
+    tags = [r["tag"] for r in parallel]
+    dupes = sorted({t for t in tags if tags.count(t) > 1})
+    if dupes:
+        problems.append(
+            f"split tag(s) {dupes} reported CONFLICTING universes -- the same "
+            f"split id claimed more than one collected universe, so its stride "
+            f"cannot be trusted")
+
+    if len(parallel) != expected_splits:
+        problems.append(
+            f"expected {expected_splits} parallel split(s) to report a universe, "
+            f"got {len(parallel)} ({sorted(tags)}) -- a leg that never reported "
+            f"leaves its stride unrun, which no per-leg gate can detect")
+
+    hashes = {r["hash"] for r in parallel}
+    if len(hashes) > 1:
+        detail = ", ".join(f"{r['tag']}={r['hash']}({r['count']} ids)"
+                           for r in parallel)
+        problems.append(
+            f"parallel splits collected DIFFERENT universes: {detail} -- the "
+            f"stride slices are computed against mismatched manifests, so part "
+            f"of the suite was assigned to no split. Refusing to accept these "
+            f"results.")
+
+    return problems
+
+
+def cmd_verify_split_universes(args):
+    files = list(args.universe or [])
+    scanned = []
+    prefix = getattr(args, "artifact_prefix", "") or ""
+    for root in (args.dir or []):
+        for dirpath, _dirnames, filenames in os.walk(root):
+            for name in filenames:
+                if name != "universe.txt":
+                    continue
+                path = os.path.join(dirpath, name)
+                scanned.append(path)
+                # Scope to THIS stage's artifacts. Downloads land under
+                # <workspace>/<artifactName>/, so the containing directory
+                # carries the artifact name. Without this, a second instance of
+                # this stage template in the same run (e.g. a rust-gateway
+                # variant) would contribute its own splits' records here and
+                # trip the count/duplicate checks for no real reason.
+                if prefix and not os.path.basename(
+                        os.path.dirname(path)).startswith(prefix):
+                    continue
+                files.append(path)
+    if not files:
+        # Self-diagnosing on purpose. The likeliest cause is a download pattern
+        # that matched nothing, and "no records" alone does not distinguish that
+        # from a genuinely empty run -- so say what WAS on disk.
+        print("ERROR: no universe.txt found -- cannot verify that the test "
+              "splits agreed on a universe; refusing to pass.", file=sys.stderr)
+        if scanned:
+            print(f"  {len(scanned)} universe.txt file(s) were present but none "
+                  f"sat under a directory starting with {prefix!r}:",
+                  file=sys.stderr)
+            for p in sorted(scanned)[:20]:
+                print(f"    {p}", file=sys.stderr)
+        else:
+            for root in (args.dir or []):
+                try:
+                    entries = sorted(os.listdir(root))
+                except OSError as exc:
+                    print(f"  search root {root} unreadable: {exc}", file=sys.stderr)
+                    continue
+                print(f"  search root {root} holds {len(entries)} entry(ies); "
+                      f"first 20: {entries[:20]}", file=sys.stderr)
+        return 1
+    problems = verify_split_universes(files, args.expected_splits)
+    for r in sorted(files):
+        print(f"  found {r}")
+    if problems:
+        for p in problems:
+            print(f"##vso[task.logissue type=error]split-universe check: {p}")
+            print(f"ERROR: {p}", file=sys.stderr)
+        return 1
+    print(f"split-universe check PASS: {args.expected_splits} parallel split(s) "
+          f"reported an identical collected universe.")
+    return 0
+
+
+def cmd_split_collection(args):
+    ids = split_collection_ids(args.manifest, args.num_splits, args.split_id,
                                args.prefix, args.strip_prefix)
     text = "\n".join(ids)
     if args.output:
@@ -316,6 +467,27 @@ def report_failure_ids(report_path: str, strip_prefix: str = "") -> list[str]:
                 seen.add(nid)
                 out.append(nid)
     return out
+
+
+def report_recorded_ids(report_path: str, strip_prefix: str = "") -> set[str]:
+    """Return every node ID with ANY recorded outcome in a pytest JSON report.
+
+    Used by recover-and-gate to detect assigned-but-unrecorded tests: when an
+    xdist worker dies (OOM kill, interpreter crash), the in-flight test gets a
+    crash error but part of the worker's queue can end the session with no
+    outcome at all — the report is simply shorter, which no outcome-based check
+    can see. Comparing against the assigned set is the only way to notice.
+    """
+    with open(report_path) as f:
+        report = json.load(f)
+    ids: set[str] = set()
+    for test in report.get("tests", []):
+        nid = test.get("nodeid", "")
+        if strip_prefix and nid.startswith(strip_prefix):
+            nid = nid[len(strip_prefix):]
+        if nid:
+            ids.add(nid)
+    return ids
 
 
 def cmd_report_failures(args):
@@ -1290,10 +1462,10 @@ def merge_reports(base_path: str, overlay_paths: list[str],
     * ``sum_collected=False`` (default, **re-run merge**): the base report holds
       the full collected population and each overlay is a subset re-run of it, so
       the base's ``collected`` is preserved.
-    * ``sum_collected=True`` (**shard-combine merge**): the base and overlays are
-      *disjoint* shard reports, so ``collected`` is summed across all inputs so
-      the coverage-boundary math in summarize-gate reflects the whole set rather
-      than just shard 0's slice.
+    * ``sum_collected=True`` (**split-combine merge**): the base and overlays are
+      *disjoint* test-split reports, so ``collected`` is summed across all inputs
+      so the coverage-boundary math in summarize-gate reflects the whole set
+      rather than just split 0's slice.
     """
     with open(base_path) as f:
         base = json.load(f)
@@ -1320,7 +1492,7 @@ def merge_reports(base_path: str, overlay_paths: list[str],
     base["tests"] = tests
 
     # Refresh the outcome tallies in summary so downstream readers see merged
-    # numbers. 'collected' is preserved (re-run) or summed (shard-combine).
+    # numbers. 'collected' is preserved (re-run) or summed (split-combine).
     summary = base.get("summary", {})
     tally: dict[str, int] = {}
     for t in tests:
@@ -1344,6 +1516,211 @@ def cmd_merge_reports(args):
         json.dump(merged, f)
     print(f"Merged {len(args.overlay)} overlay report(s) into {args.out} "
           f"({len(merged.get('tests', []))} tests)")
+    return 0
+
+
+def _rerun_isolated(rerun_cmd: list[str], ids: list[str], prefix: str,
+                    workdir: str) -> list[str]:
+    """Re-run each node ID in its own pytest process; return the reports written.
+
+    Fallback for when the batched re-run dies without producing a report (see the
+    caller). One process per test bounds the blast radius of a fatal hang to the
+    single test that hung: every other test still gets its recovery attempt. A
+    test whose own process dies writes no report and simply stays failed, which is
+    the correct outcome -- a test that reliably hangs is not a transient victim.
+    """
+    import subprocess
+
+    reports = []
+    for i, test_id in enumerate(ids):
+        out = os.path.join(workdir, f"recover_rerun_{i}.json")
+        try:
+            os.remove(out)
+        except OSError:
+            pass
+        subprocess.call(rerun_cmd + ["--json-report",
+                                     f"--json-report-file={out}",
+                                     prefix + test_id])
+        if os.path.exists(out):
+            reports.append(out)
+        else:
+            print(f"  no report for {test_id} (hung or crashed) — left failed.",
+                  flush=True)
+    print(f"isolated re-run produced {len(reports)}/{len(ids)} report(s).",
+          flush=True)
+    return reports
+
+
+def cmd_recover_and_gate(args):
+    """Sequential re-run recovery of transient crash victims + gate on the merged
+    report. The single canonical implementation shared by the single-job lane
+    (functional_tests_run_gate.yml) and the split backend gate
+    (scripts/docdb_tests/run_pytest_split.sh).
+
+    The parallel (-n auto) pass is stochastic: a backend crash (e.g. the
+    $meta:textScore dynamic-cursor UAF) restarts the cluster and cascades a batch
+    of concurrent tests with connection errors. Each pass re-runs ONLY the
+    still-failing set sequentially via the caller-supplied pytest command (given
+    after ``--``; this function appends ``--json-report`` and the ``@argfile`` of
+    node IDs) so, with no contention, transient victims pass and are merged back;
+    a genuine failure survives every pass. Bounded to --max-passes; above
+    --transient-limit failures the run is treated as a real breakage and left for
+    the gate. Fails CLOSED (exit 1) on a missing/unreadable report so a collapse
+    never scores green, and exit 1 on any residual failed/error (real regression
+    or XPASS(strict)) after recovery.
+
+    With ``--expected-ids`` (the caller's assigned-slice/manifest file), each
+    pass ALSO re-runs assigned tests that have no recorded outcome at all. That
+    is the xdist worker-death hole: a killed worker's in-flight test gets a
+    crash error, but tests still in its queue can vanish from the report
+    entirely — observed on build 228667621 leg p1, where 20 worker deaths left
+    1,175 of 12,094 assigned tests unrecorded and the leg scored green (the
+    RAN >= EXPECTED/2 floor is far too lax to see it). Above --missing-limit
+    unrecorded tests the loss is systemic (a leg-wide collapse must red, not
+    grind through a serial re-run of half the slice), and any test still
+    unrecorded after recovery is a gate failure.
+    """
+    import subprocess
+    import time
+
+    rerun_cmd = list(args.rerun_cmd or [])
+    if rerun_cmd and rerun_cmd[0] == "--":
+        rerun_cmd = rerun_cmd[1:]
+    if not rerun_cmd:
+        print("##vso[task.logissue type=error]recover-and-gate: no pytest re-run "
+              "command was given after '--'.", flush=True)
+        return 1
+    if not os.path.exists(args.report):
+        print(f"##vso[task.logissue type=error]recover-and-gate: report {args.report} "
+              f"does not exist — refusing to score green on a missing run.", flush=True)
+        return 1
+
+    expected_ids: list[str] = []
+    if getattr(args, "expected_ids", ""):
+        try:
+            expected_ids = _read_manifest_ids(args.expected_ids)
+        except OSError as exc:
+            print(f"##vso[task.logissue type=error]recover-and-gate: cannot read "
+                  f"--expected-ids {args.expected_ids} ({exc}) — refusing to gate "
+                  f"without the assigned set.", flush=True)
+            return 1
+        if args.strip_prefix:
+            expected_ids = [i[len(args.strip_prefix):] if i.startswith(args.strip_prefix)
+                            else i for i in expected_ids]
+        expected_ids = sorted(set(expected_ids))
+        if not expected_ids:
+            print(f"##vso[task.logissue type=error]recover-and-gate: --expected-ids "
+                  f"{args.expected_ids} holds no node IDs — refusing to gate against "
+                  f"an empty assigned set.", flush=True)
+            return 1
+
+    # getattr defaults keep direct callers (tests build a bare Namespace) and
+    # older invocations working without the new flags.
+    missing_limit = getattr(args, "missing_limit", 1500)
+
+    def _unrecorded():
+        if not expected_ids:
+            return []
+        recorded = report_recorded_ids(args.report, args.strip_prefix)
+        return [i for i in expected_ids if i not in recorded]
+
+    workdir = args.workdir or (os.path.dirname(os.path.abspath(args.report)) or ".")
+    os.makedirs(workdir, exist_ok=True)
+    # The final os.replace onto args.report is atomic only within one filesystem;
+    # across devices it raises OSError(EXDEV, "Invalid cross-device link"). On ADO
+    # --workdir is $(Agent.TempDirectory) (/__w/_temp) while the report lives under
+    # the artifact-staging dir (/__w/1/a) — a different mount — so the merged file
+    # MUST be staged in the report's own directory, not in workdir. Re-run scratch
+    # (which is never renamed across dirs) can stay in workdir.
+    report_dir = os.path.dirname(os.path.abspath(args.report)) or "."
+    rerun_json = os.path.join(workdir, "recover_rerun.json")
+    merged_json = os.path.join(report_dir, ".recover_merged.json")
+    rerun_args = os.path.join(workdir, "recover_rerun_args.txt")
+
+    for p in range(1, args.max_passes + 1):
+        failing = report_failure_ids(args.report, args.strip_prefix)
+        missing = _unrecorded()
+        n = len(failing)
+        print(f"re-run pass {p}: {n} failing, {len(missing)} unrecorded "
+              f"before this pass", flush=True)
+        if n == 0 and not missing:
+            break
+        if n > args.transient_limit:
+            print(f"too many failures ({n} > {args.transient_limit}) to treat as "
+                  f"transient; leaving them for the gate.", flush=True)
+            break
+        if len(missing) > missing_limit:
+            print(f"too many unrecorded tests ({len(missing)} > {missing_limit}) "
+                  f"to treat as a recoverable worker-loss tail; leaving them for "
+                  f"the gate.", flush=True)
+            break
+        ids = sorted(set(failing) | set(missing))
+        n = len(ids)
+        with open(rerun_args, "w", encoding="utf-8") as f:
+            f.write("\n".join(args.prefix + i for i in ids) + "\n")
+        print(f"re-running {n} test(s) sequentially after letting the engine settle...",
+              flush=True)
+        time.sleep(args.settle_seconds)
+        try:
+            os.remove(rerun_json)
+        except OSError:
+            pass
+        subprocess.call(rerun_cmd + ["--json-report",
+                                     f"--json-report-file={rerun_json}",
+                                     "@" + rerun_args])
+        rerun_reports = [rerun_json] if os.path.exists(rerun_json) else []
+        if not rerun_reports:
+            # The batch died without writing a report. The usual cause is a
+            # --timeout kill: pytest-timeout's `thread` method dumps stacks and
+            # takes the interpreter down with os._exit, so json-report never gets
+            # to write. Batched, that costs EVERY test in the set its recovery --
+            # one hang and the whole cascade is scored as residual (observed on
+            # build 228232606: test_near_combined_with_text_errors hung the full
+            # 600s and all 21 crash victims were failed without ever being
+            # re-run). Re-run them one process per test instead, so a hang costs
+            # only the test that hung. Callers also pass --timeout-method=signal
+            # to make the common case recoverable in-process; this is the backstop
+            # for when the timeout is not deliverable as a signal.
+            print("re-run produced no report (batch aborted); "
+                  "falling back to one process per test.", flush=True)
+            rerun_reports = _rerun_isolated(rerun_cmd, ids, args.prefix, workdir)
+        if not rerun_reports:
+            print("re-run produced no report; stopping.", flush=True)
+            break
+        try:
+            merged = merge_reports(args.report, rerun_reports)
+            with open(merged_json, "w") as f:
+                json.dump(merged, f)
+            os.replace(merged_json, args.report)
+            print(f"merged re-run pass {p}.", flush=True)
+        except Exception as e:  # defensive: a bad merge stops recovery, gate on what we have
+            print(f"merge failed ({e}); stopping re-run recovery.", flush=True)
+            break
+
+    # Gate on the merged report; fail CLOSED if it is unreadable. A test still
+    # unrecorded after recovery is a gate failure too: green must mean "every
+    # assigned test has an outcome", not "nothing recorded failed".
+    try:
+        residual = report_failure_ids(args.report, args.strip_prefix)
+        still_missing = _unrecorded()
+    except Exception as e:
+        print(f"##vso[task.logissue type=error]recover-and-gate could not evaluate "
+              f"the merged report ({e}) — failing the gate.", flush=True)
+        return 1
+    residual_all = residual + [i for i in still_missing if i not in set(residual)]
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as f:
+            f.write("\n".join(residual_all) + ("\n" if residual_all else ""))
+    print(f"gate failures after re-run recovery: {len(residual)} failed/error, "
+          f"{len(still_missing)} unrecorded", flush=True)
+    if residual_all:
+        print(f"##vso[task.logissue type=error]{len(residual)} residual "
+              f"failure(s)/XPASS(strict) and {len(still_missing)} assigned "
+              f"test(s) with no recorded outcome. First 50:", flush=True)
+        for r in residual_all[:50]:
+            print(r, flush=True)
+        return 1
+    print("gate PASS: no unexpected failures after re-run recovery.", flush=True)
     return 0
 
 
@@ -1412,36 +1789,55 @@ def main():
     merge_parser.add_argument("--out", required=True, help="Path to write the merged report")
     merge_parser.add_argument("--sum-collected", action="store_true",
                               help="Sum summary.collected across base+overlays (disjoint "
-                                   "shard-combine merge) instead of preserving the base's "
+                                   "split-combine merge) instead of preserving the base's "
                                    "(default: preserve, for re-run merges)")
 
-    # shard-allowlist: print the allowlisted node IDs assigned to one shard
-    shard_parser = subparsers.add_parser(
-        "shard-allowlist",
-        help="Print the allowlisted test node IDs for one shard (round-robin split)")
-    shard_parser.add_argument("--num-shards", type=int, required=True, help="Total number of shards")
-    shard_parser.add_argument("--shard-id", type=int, required=True, help="This shard's index [0, num-shards)")
-    shard_parser.add_argument("--prefix", default="",
+    # split-allowlist: print the allowlisted node IDs assigned to one test-split.
+    split_parser = subparsers.add_parser(
+        "split-allowlist",
+        help="Print the allowlisted test node IDs for one test-split (round-robin split "
+             "of the allowlist across parallel CI jobs; unrelated to data sharding)")
+    split_parser.add_argument("--num-splits", type=int, required=True, help="Total number of test-splits")
+    split_parser.add_argument("--split-id", type=int, required=True, help="This split's index [0, num-splits)")
+    split_parser.add_argument("--prefix", default="",
                               help="String prepended to each node ID (e.g. 'documentdb_tests/')")
-    shard_parser.add_argument("--output", default="",
+    split_parser.add_argument("--output", default="",
                               help="Write node IDs (one per line) to this file instead of stdout")
 
-    # shard-collection: like shard-allowlist, but shards a pytest collection
+    # verify-split-universes: cross-leg guard for split-collection. Each leg
+    # writes a universe.txt beside its results; this asserts they agree.
+    verify_uni_parser = subparsers.add_parser(
+        "verify-split-universes",
+        help="Fail unless every parallel test-split collected an identical "
+             "universe (guards the stride slice against cross-leg manifest skew)")
+    verify_uni_parser.add_argument("--dir", action="append", default=[],
+                                   help="Directory tree to search for universe.txt (repeatable)")
+    verify_uni_parser.add_argument("--universe", action="append", default=[],
+                                   help="Explicit path to a universe.txt (repeatable)")
+    verify_uni_parser.add_argument("--expected-splits", type=int, required=True,
+                                   help="How many parallel splits must have reported")
+    verify_uni_parser.add_argument("--artifact-prefix", default="",
+                                   help="Only accept records whose containing directory (the "
+                                        "downloaded artifact name) starts with this, so a second "
+                                        "instance of the stage cannot contribute its own records")
+
+    # split-collection: like split-allowlist, but splits a pytest collection
     # manifest (the full suite) instead of the allowlist.
-    shard_coll_parser = subparsers.add_parser(
-        "shard-collection",
-        help="Print the collected test node IDs for one shard (round-robin split of a manifest)")
-    shard_coll_parser.add_argument("--manifest", required=True,
+    split_coll_parser = subparsers.add_parser(
+        "split-collection",
+        help="Print the collected test node IDs for one test-split (round-robin split of a "
+             "collection manifest across parallel CI jobs)")
+    split_coll_parser.add_argument("--manifest", required=True,
                                    help="Path to a collection manifest (pytest --collect-only -q output)")
-    shard_coll_parser.add_argument("--num-shards", type=int, required=True, help="Total number of shards")
-    shard_coll_parser.add_argument("--shard-id", type=int, required=True,
-                                   help="This shard's index [0, num-shards)")
-    shard_coll_parser.add_argument("--prefix", default="",
+    split_coll_parser.add_argument("--num-splits", type=int, required=True, help="Total number of test-splits")
+    split_coll_parser.add_argument("--split-id", type=int, required=True,
+                                   help="This split's index [0, num-splits)")
+    split_coll_parser.add_argument("--prefix", default="",
                                    help="String prepended to each node ID (e.g. 'docdb_functional_tests/documentdb_tests/')")
-    shard_coll_parser.add_argument("--strip-prefix", default="",
-                                   help="Prefix stripped from each manifest node ID before sharding "
+    split_coll_parser.add_argument("--strip-prefix", default="",
+                                   help="Prefix stripped from each manifest node ID before splitting "
                                         "(pass the same value as --prefix to make prefixing idempotent)")
-    shard_coll_parser.add_argument("--output", default="",
+    split_coll_parser.add_argument("--output", default="",
                                    help="Write node IDs (one per line) to this file instead of stdout")
 
     # report-failures: node IDs with a failed/error outcome (re-run + gate set)
@@ -1476,6 +1872,44 @@ def main():
                                        "kept_errored/skipped_flaky/changed/clean) here for the "
                                        "auto-reconcile bot")
 
+    # recover-and-gate: sequential re-run recovery of transient crash victims,
+    # then gate on the merged report. Shared by the single-job lane and the
+    # split backend gate. The pytest re-run command follows '--'.
+    recover_parser = subparsers.add_parser(
+        "recover-and-gate",
+        help="Sequentially re-run the still-failing set (transient crash victims) "
+             "and gate on the merged report; exit 1 on any residual. Pass the "
+             "pytest re-run command after '--'.")
+    recover_parser.add_argument("--report", required=True,
+                                help="Path to the base pytest JSON report (merged in place)")
+    recover_parser.add_argument("--strip-prefix", default="",
+                                help="Prefix stripped from node IDs when reading failures")
+    recover_parser.add_argument("--prefix", default="",
+                                help="Prefix re-added to failing node IDs for the re-run args")
+    recover_parser.add_argument("--max-passes", type=int, default=3,
+                                help="Max sequential re-run passes (default 3)")
+    recover_parser.add_argument("--transient-limit", type=int, default=400,
+                                help="Above this many failures, treat as a real breakage and stop (default 400)")
+    recover_parser.add_argument("--expected-ids", default="",
+                                help="File of node IDs assigned to this run (slice file or "
+                                     "collection manifest; noise lines are ignored). When given, "
+                                     "assigned tests with NO recorded outcome (an xdist worker "
+                                     "death loses part of its queue) are also re-run, and any "
+                                     "still-unrecorded test fails the gate.")
+    recover_parser.add_argument("--missing-limit", type=int, default=1500,
+                                help="Above this many unrecorded tests, treat as a systemic "
+                                     "collapse and leave them for the gate instead of grinding "
+                                     "through a serial re-run (default 1500; worst observed "
+                                     "worker-death loss was 1,175 of 12,094 on one leg)")
+    recover_parser.add_argument("--settle-seconds", type=int, default=20,
+                                help="Sleep before each re-run to let the engine settle (default 20)")
+    recover_parser.add_argument("--workdir", default="",
+                                help="Directory for temp re-run/merged reports (default: the report's dir)")
+    recover_parser.add_argument("--output", default="",
+                                help="Write residual node IDs (one per line) to this file")
+    recover_parser.add_argument("rerun_cmd", nargs=argparse.REMAINDER,
+                                help="After '--': the pytest command to re-run the failing set")
+
     args = parser.parse_args()
 
     if args.command == "validate-config":
@@ -1490,14 +1924,23 @@ def main():
         return cmd_gate_failures(args)
     elif args.command == "merge-reports":
         return cmd_merge_reports(args)
-    elif args.command == "shard-allowlist":
-        return cmd_shard_allowlist(args)
-    elif args.command == "shard-collection":
-        return cmd_shard_collection(args)
+    elif args.command == "split-allowlist":
+        return cmd_split_allowlist(args)
+    elif args.command == "verify-split-universes":
+        return cmd_verify_split_universes(args)
+    elif args.command == "split-collection":
+        return cmd_split_collection(args)
     elif args.command == "report-failures":
         return cmd_report_failures(args)
     elif args.command == "reconcile":
         return cmd_reconcile(args)
+    elif args.command == "recover-and-gate":
+        return cmd_recover_and_gate(args)
+    # Fail LOUD on an unrecognized command. Without this the chain falls through,
+    # main() returns None, and sys.exit(None) exits 0 — so a subcommand renamed in
+    # add_parser() but not here would silently no-op and score the caller green.
+    parser.error(f"unhandled command {args.command!r} (dispatch and subparser are "
+                 f"out of sync — this is a bug in functional_gate.py)")
 
 
 if __name__ == "__main__":
