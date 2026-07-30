@@ -350,6 +350,114 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb',
          Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : { "$and" : [ { "$eq" : [ "$f", "$g" ] }, { "$gt" : [ "$d", { "$numberInt" : "5" } ] } ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
 (9 rows)
 
+-- a scalar $expr argument carries no operator conditions to push down. These used to
+-- fail the whole query with "expected a document or array to init iterator" as soon as
+-- an eligible ordered index existed, while working fine without one.
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": "$a" } }');
+                                                                            QUERY PLAN                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: exprdb.exprcoll
+   indexName: _id_
+   ->  Bitmap Heap Scan on documents_201 collection
+         Recheck Cond: (shard_key_value = '201'::bigint)
+         Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         ->  Bitmap Index Scan on _id_
+               Index Cond: (shard_key_value = '201'::bigint)
+(8 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "a": 5, "$expr": "$a" } }');
+                                                                            QUERY PLAN                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   namespaceName: exprdb.exprcoll
+   indexName: a_1
+   indexKey: {"a": 1}
+   isMultiKey: false
+   indexBounds: ["a": [5, 5]]
+   ->  Bitmap Heap Scan on documents_201 collection
+         Recheck Cond: (document @= '{ "a" : { "$numberInt" : "5" } }'::bson)
+         Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : "$a" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+         ->  Bitmap Index Scan on a_1
+               Index Cond: (document @= '{ "a" : { "$numberInt" : "5" } }'::bson)
+(11 rows)
+
+-- field path: truthy for every document, missing path matches nothing
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": "$a" } }, { "$count": "n" } ] }');
+              document               
+-------------------------------------
+ { "n" : { "$numberInt" : "1000" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": "$missingPath" } }, { "$count": "n" } ] }');
+             document             
+----------------------------------
+ { "n" : { "$numberInt" : "0" } }
+(1 row)
+
+-- constants of every scalar type
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": 1 } }, { "$count": "n" } ] }');
+              document               
+-------------------------------------
+ { "n" : { "$numberInt" : "1000" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": 0 } }, { "$count": "n" } ] }');
+             document             
+----------------------------------
+ { "n" : { "$numberInt" : "0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": -1 } }, { "$count": "n" } ] }');
+              document               
+-------------------------------------
+ { "n" : { "$numberInt" : "1000" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": true } }, { "$count": "n" } ] }');
+              document               
+-------------------------------------
+ { "n" : { "$numberInt" : "1000" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": false } }, { "$count": "n" } ] }');
+             document             
+----------------------------------
+ { "n" : { "$numberInt" : "0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": null } }, { "$count": "n" } ] }');
+             document             
+----------------------------------
+ { "n" : { "$numberInt" : "0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": "literal" } }, { "$count": "n" } ] }');
+              document               
+-------------------------------------
+ { "n" : { "$numberInt" : "1000" } }
+(1 row)
+
+-- an array argument is not pushed down either, only evaluated at runtime
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": [] } }, { "$count": "n" } ] }');
+              document               
+-------------------------------------
+ { "n" : { "$numberInt" : "1000" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": [ 1, 2 ] } }, { "$count": "n" } ] }');
+              document               
+-------------------------------------
+ { "n" : { "$numberInt" : "1000" } }
+(1 row)
+
+-- the scalar argument must not disable pushdown of the sibling operators
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "a": 5, "$expr": "$a" } }, { "$count": "n" } ] }');
+             document             
+----------------------------------
+ { "n" : { "$numberInt" : "1" } }
+(1 row)
+
 -- after adding a row with arrays, can no longer push down (multikey expr not supported)
 SELECT documentdb_api.insert_one('exprdb', 'exprcoll', '{ "_id": "array", "a": [ 1, 2, 3 ] }');
                               insert_one                              

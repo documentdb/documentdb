@@ -76,6 +76,33 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb',
     '{ "find": "exprcoll", "filter": { "a": 5, "b": 5, "c": 5, "$expr": { "$and": [ { "$eq": [ "$f", "$g" ] }, { "$gt": [ "$d", 5 ] } ] } } }');
 
 
+-- a scalar $expr argument carries no operator conditions to push down. These used to
+-- fail the whole query with "expected a document or array to init iterator" as soon as
+-- an eligible ordered index existed, while working fine without one.
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": "$a" } }');
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "a": 5, "$expr": "$a" } }');
+
+-- field path: truthy for every document, missing path matches nothing
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": "$a" } }, { "$count": "n" } ] }');
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": "$missingPath" } }, { "$count": "n" } ] }');
+
+-- constants of every scalar type
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": 1 } }, { "$count": "n" } ] }');
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": 0 } }, { "$count": "n" } ] }');
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": -1 } }, { "$count": "n" } ] }');
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": true } }, { "$count": "n" } ] }');
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": false } }, { "$count": "n" } ] }');
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": null } }, { "$count": "n" } ] }');
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": "literal" } }, { "$count": "n" } ] }');
+
+-- an array argument is not pushed down either, only evaluated at runtime
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": [] } }, { "$count": "n" } ] }');
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "$expr": [ 1, 2 ] } }, { "$count": "n" } ] }');
+
+-- the scalar argument must not disable pushdown of the sibling operators
+SELECT document FROM bson_aggregation_pipeline('exprdb', '{ "aggregate": "exprcoll", "pipeline": [ { "$match": { "a": 5, "$expr": "$a" } }, { "$count": "n" } ] }');
+
+
 -- after adding a row with arrays, can no longer push down (multikey expr not supported)
 SELECT documentdb_api.insert_one('exprdb', 'exprcoll', '{ "_id": "array", "a": [ 1, 2, 3 ] }');
 
