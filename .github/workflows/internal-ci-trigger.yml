@@ -48,27 +48,35 @@ jobs:
 
           echo "User ${COMMENTER} has ${PERMISSION} repository permission"
 
-      - name: Create Microsoft membership App token
-        id: membership-app-token
+      - name: Create DocumentDB CI App token
+        id: documentdb-ci-app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: ${{ vars.MS_ORG_MEMBERSHIP_APP_CLIENT_ID }}
-          private-key: ${{ secrets.MS_ORG_MEMBERSHIP_APP_PRIVATE_KEY }}
-          owner: microsoft
+          client-id: ${{ vars.DOCUMENTDB_CI_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DOCUMENTDB_CI_APP_PRIVATE_KEY }}
+          owner: documentdb
           permission-members: read
 
-      - name: Check Microsoft organization membership
+      - name: Check internal CI trigger team membership
         env:
           COMMENTER: ${{ github.event.comment.user.login }}
-          GH_TOKEN: ${{ steps.membership-app-token.outputs.token }}
-          MICROSOFT_GITHUB_ORG: microsoft
+          DOCUMENTDB_GITHUB_ORG: documentdb
+          GH_TOKEN: ${{ steps.documentdb-ci-app-token.outputs.token }}
+          INTERNAL_CI_TEAM: internal-ci-triggerers
         run: |
-          if ! gh api "orgs/${MICROSOFT_GITHUB_ORG}/members/${COMMENTER}" --silent; then
-            echo "::error::User ${COMMENTER} is not a member of ${MICROSOFT_GITHUB_ORG}, or membership could not be verified"
+          if ! MEMBERSHIP_STATE=$(gh api \
+              "orgs/${DOCUMENTDB_GITHUB_ORG}/teams/${INTERNAL_CI_TEAM}/memberships/${COMMENTER}" \
+              --jq '.state'); then
+            echo "::error::User ${COMMENTER} is not an active member of ${DOCUMENTDB_GITHUB_ORG}/${INTERNAL_CI_TEAM}, or membership could not be verified"
             exit 1
           fi
 
-          echo "User ${COMMENTER} is a member of ${MICROSOFT_GITHUB_ORG}"
+          if [[ "$MEMBERSHIP_STATE" != "active" ]]; then
+            echo "::error::User ${COMMENTER} is not an active member of ${DOCUMENTDB_GITHUB_ORG}/${INTERNAL_CI_TEAM} (state: ${MEMBERSHIP_STATE})"
+            exit 1
+          fi
+
+          echo "User ${COMMENTER} is an active member of ${DOCUMENTDB_GITHUB_ORG}/${INTERNAL_CI_TEAM}"
 
       - name: React to comment
         continue-on-error: true

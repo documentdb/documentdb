@@ -68,6 +68,59 @@ class InternalCiTriggerTests(unittest.TestCase):
             outputs = output_path.read_text() if output_path.exists() else ""
             return result, outputs
 
+    def run_team_membership_step(
+        self, membership: str
+    ) -> subprocess.CompletedProcess[str]:
+        script = workflow_step("Check internal CI trigger team membership")["run"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bin_path = Path(temp_dir) / "bin"
+            bin_path.mkdir()
+            write_executable(
+                bin_path / "gh",
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                'EXPECTED_ENDPOINT="orgs/documentdb/teams/internal-ci-triggerers/'
+                'memberships/maintainer-login"\n'
+                "if [[ \"$#\" -ne 4 || \"$1\" != \"api\" "
+                "|| \"$2\" != \"$EXPECTED_ENDPOINT\" "
+                "|| \"$3\" != \"--jq\" || \"$4\" != \".state\" ]]; then\n"
+                "  printf 'unexpected gh arguments:' >&2\n"
+                "  printf ' %q' \"$@\" >&2\n"
+                "  printf '\\n' >&2\n"
+                "  exit 64\n"
+                "fi\n"
+                "case \"$MOCK_TEAM_MEMBERSHIP\" in\n"
+                "  active|pending)\n"
+                "    printf '%s\\n' \"$MOCK_TEAM_MEMBERSHIP\"\n"
+                "    ;;\n"
+                "  missing)\n"
+                "    printf 'team membership not found\\n' >&2\n"
+                "    exit 1\n"
+                "    ;;\n"
+                "  api-error)\n"
+                "    printf 'team membership API failed\\n' >&2\n"
+                "    exit 2\n"
+                "    ;;\n"
+                "  *)\n"
+                "    exit 65\n"
+                "    ;;\n"
+                "esac\n",
+            )
+
+            env = os.environ.copy()
+            env["PATH"] = f"{bin_path}{os.pathsep}{env['PATH']}"
+            env["COMMENTER"] = "maintainer-login"
+            env["DOCUMENTDB_GITHUB_ORG"] = "documentdb"
+            env["INTERNAL_CI_TEAM"] = "internal-ci-triggerers"
+            env["MOCK_TEAM_MEMBERSHIP"] = membership
+            return subprocess.run(
+                ["bash", "-c", f"set -euo pipefail\n{script}"],
+                env=env,
+                text=True,
+                capture_output=True,
+            )
+
     def test_accepts_same_repository_and_fork_prs(self):
         for head_repo in ("documentdb/documentdb", "contributor/documentdb"):
             with self.subTest(head_repo=head_repo):
@@ -132,9 +185,9 @@ class InternalCiTriggerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("head SHA is missing or invalid", result.stdout)
 
-    def test_uses_membership_app_token_without_pat_fallback(self):
-        token_step = workflow_step("Create Microsoft membership App token")
-        membership_step = workflow_step("Check Microsoft organization membership")
+    def test_uses_documentdb_ci_app_token_without_pat_fallback(self):
+        token_step = workflow_step("Create DocumentDB CI App token")
+        membership_step = workflow_step("Check internal CI trigger team membership")
 
         self.assertEqual(
             token_step["uses"],
@@ -142,19 +195,64 @@ class InternalCiTriggerTests(unittest.TestCase):
         )
         self.assertEqual(
             token_step["with"]["client-id"],
-            "${{ vars.MS_ORG_MEMBERSHIP_APP_CLIENT_ID }}",
+            "${{ vars.DOCUMENTDB_CI_APP_CLIENT_ID }}",
         )
         self.assertEqual(
             token_step["with"]["private-key"],
-            "${{ secrets.MS_ORG_MEMBERSHIP_APP_PRIVATE_KEY }}",
+            "${{ secrets.DOCUMENTDB_CI_APP_PRIVATE_KEY }}",
         )
-        self.assertEqual(token_step["with"]["owner"], "microsoft")
+        self.assertEqual(token_step["with"]["owner"], "documentdb")
         self.assertEqual(token_step["with"]["permission-members"], "read")
         self.assertEqual(
             membership_step["env"]["GH_TOKEN"],
-            "${{ steps.membership-app-token.outputs.token }}",
+            "${{ steps.documentdb-ci-app-token.outputs.token }}",
+        )
+        self.assertEqual(
+            membership_step["env"]["DOCUMENTDB_GITHUB_ORG"],
+            "documentdb",
+        )
+        self.assertEqual(
+            membership_step["env"]["INTERNAL_CI_TEAM"],
+            "internal-ci-triggerers",
         )
         self.assertNotIn("MS_ORG_READ_TOKEN", WORKFLOW.read_text())
+        self.assertNotIn("MS_ORG_MEMBERSHIP", WORKFLOW.read_text())
+
+    def test_authorization_checks_target_the_comment_author(self):
+        # Both gates must authorize the commenter, never the attacker-controlled
+        # pull request author.
+        commenter = "${{ github.event.comment.user.login }}"
+
+        self.assertEqual(
+            workflow_step("Check repository permission")["env"]["COMMENTER"],
+            commenter,
+        )
+        self.assertEqual(
+            workflow_step("Check internal CI trigger team membership")["env"][
+                "COMMENTER"
+            ],
+            commenter,
+        )
+
+    def test_accepts_active_internal_ci_trigger_team_member(self):
+        result = self.run_team_membership_step("active")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(
+            "is an active member of documentdb/internal-ci-triggerers",
+            result.stdout,
+        )
+
+    def test_rejects_unauthorized_team_membership(self):
+        for membership in ("pending", "missing", "api-error"):
+            with self.subTest(membership=membership):
+                result = self.run_team_membership_step(membership)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "is not an active member of documentdb/internal-ci-triggerers",
+                    result.stdout,
+                )
 
     def test_docs_only_skip_comment_failure_is_non_blocking(self):
         script = workflow_step("Path filter - skip if only irrelevant files changed")[
