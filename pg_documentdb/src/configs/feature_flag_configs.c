@@ -53,6 +53,11 @@ bool EnableRoleCrud = DEFAULT_ENABLE_ROLE_CRUD;
 #define DEFAULT_ENABLE_USERS_ADMIN_DB_CHECK false
 bool EnableUsersAdminDBCheck = DEFAULT_ENABLE_USERS_ADMIN_DB_CHECK;
 
+/* Added in v116, Pending stabilization, enable in v117 */
+#define DEFAULT_ENABLE_READWRITE_ANY_DATABASE_ROLE_ENFORCEMENT false
+bool EnableReadWriteAnyDatabaseRoleEnforcement =
+	DEFAULT_ENABLE_READWRITE_ANY_DATABASE_ROLE_ENFORCEMENT;
+
 /* Added in v109, enabled in v109, Unknown stabilization time */
 #define DEFAULT_ENABLE_ROLES_ADMIN_DB_CHECK true
 bool EnableRolesAdminDBCheck = DEFAULT_ENABLE_ROLES_ADMIN_DB_CHECK;
@@ -834,6 +839,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to enable distinct custom scan."),
 		NULL, &EnableDistinctCustomScan,
 		DEFAULT_ENABLE_DISTINCT_CUSTOM_SCAN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_readwrite_any_database_role_enforcement", newGucPrefix),
+		gettext_noop(
+			"When enabled, collection data tables are owned by the read-write "
+			"role so that admin and read-write-only users alike can fully "
+			"operate on any collection regardless of which of them created it. "
+			"When off, the legacy admin-owned behavior is used."),
+		NULL, &EnableReadWriteAnyDatabaseRoleEnforcement,
+		DEFAULT_ENABLE_READWRITE_ANY_DATABASE_ROLE_ENFORCEMENT,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

@@ -37,18 +37,27 @@ extern PGDLLIMPORT char *ExtensionObjectPrefixV2;
 extern PGDLLIMPORT char *FullBsonTypeName;
 extern PGDLLIMPORT char *PostgisSchemaName;
 
-/* Roles */
+/*
+ * Roles.
+ *
+ * The V3 entries are never remapped by layers built on top of this extension,
+ * so they always name this extension's own roles.
+ */
 extern PGDLLIMPORT char *ApiAdminRole;
 extern PGDLLIMPORT char *ApiAdminRoleV2;
-extern PGDLLIMPORT char *ApiBgWorkerRole;
+extern PGDLLEXPORT char *ApiAdminRoleV3;
 extern PGDLLEXPORT char *ApiClusterAdminRole;
 extern PGDLLIMPORT char *ApiReadOnlyRole;
 extern PGDLLEXPORT char *ApiReadWriteRole;
-extern PGDLLEXPORT char *ApiReplicationRole;
 extern PGDLLEXPORT char *ApiRootInternalRole;
 extern PGDLLIMPORT char *ApiRootRole;
-extern PGDLLEXPORT char *ApiSettingsManagerRole;
 extern PGDLLEXPORT char *ApiUserAdminRole;
+
+/* System Roles */
+extern PGDLLIMPORT char *ApiBgWorkerRole;
+extern PGDLLEXPORT char *ApiBgWorkerRoleV3;
+extern PGDLLEXPORT char *ApiReplicationRole;
+extern PGDLLEXPORT char *ApiSettingsManagerRole;
 
 /* Privileged Action System Roles */
 extern PGDLLEXPORT char *ApiCollectionFindRole;
