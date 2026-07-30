@@ -64,6 +64,10 @@ if ! is_port "$documentdb_port"; then
     exit 1
 fi
 
+# Mirrors the entrypoint's own `[ "$START_POSTGRESQL" = "true" ]` test, which
+# does not validate the value either: any other value means it did not start
+# PostgreSQL, so rejecting one here would report unhealthy for a container that
+# is running exactly as the entrypoint decided.
 if [ "$start_postgresql" = "true" ]; then
     if ! is_port "$postgresql_port"; then
         echo "unhealthy: invalid PostgreSQL port '$postgresql_port'"
