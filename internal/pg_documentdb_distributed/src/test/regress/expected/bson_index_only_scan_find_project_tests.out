@@ -575,10 +575,10 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                       
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=4 loops=1)
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$country" }'::bson, true)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(document, '{ "" : "$country" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
-         Output: bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$country" }'::bson, true), document
          indexName: country_1
          indexKey: {"country": 1}
          isMultiKey: false
@@ -651,10 +651,10 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($sql$EXPLAIN (AN
                                                                                                                                                                                                                                             run_explain_and_trim                                                                                                                                                                                                                                             
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=4 loops=1)
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'first'::text, bsonfirstonsorted(bson_expression_get(document, '{ "" : "$$ROOT" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$country" }'::bson, true)), 'first'::text, bsonfirstonsorted(bson_expression_get(document, '{ "" : "$$ROOT" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$country" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
-         Output: bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$country" }'::bson, true), document
          indexName: country_1
          indexKey: {"country": 1}
          isMultiKey: false

@@ -576,3 +576,18 @@ FROM bson_aggregation_pipeline(
   }'
 );
 
+
+-- $group keys that read a "let" variable, at the depths the group key analysis has to
+-- walk through: the bare variable, inside a document, inside an operator argument array,
+-- and buried under alternating documents and arrays.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "coll001", "pipeline": [ { "$group": { "_id": "$$bonus", "c": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "let": { "bonus": 100 } }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "coll001", "pipeline": [ { "$group": { "_id": { "k": "$$bonus" }, "c": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "let": { "bonus": 100 } }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "coll001", "pipeline": [ { "$group": { "_id": { "$add": [ "$_id", "$$bonus" ] }, "c": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "let": { "bonus": 100 } }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "coll001", "pipeline": [ { "$group": { "_id": { "a": { "b": [ { "c": "$$bonus" } ] } }, "c": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "let": { "bonus": 100 } }');
+
+-- an expression-local variable in the key resolves the same way
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "coll001", "pipeline": [ { "$group": { "_id": { "$let": { "vars": { "doubled": { "$multiply": [ "$_id", 2 ] } }, "in": "$$doubled" } }, "c": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ] }');
+
+-- a key that reads no variable at all still groups correctly while "let" is in scope for
+-- the accumulator
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "coll001", "pipeline": [ { "$group": { "_id": "$a", "s": { "$sum": "$$bonus" } } }, { "$sort": { "_id": 1 } } ], "let": { "bonus": 100 } }');

@@ -254,10 +254,10 @@ EXPLAIN (ANALYZE OFF, COSTS OFF, VERBOSE ON, BUFFERS OFF, TIMING OFF, SUMMARY OF
                                                                                                                                                                    QUERY PLAN                                                                                                                                                                    
 ---------------------------------------------------------------------
  GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'c'::text, bsoncount(1)), (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true)), 'c'::text, bsoncount(1)), (bson_expression_get(document, '{ "" : "$a" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true)
    ->  Index Only Scan using a_1 on documentdb_data.documents_68502_685004 collection
-         Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true), document
          Index Cond: (collection.document @<= '{ "a" : { "$numberInt" : "4" } }'::bson)
          Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (7 rows)

@@ -47,7 +47,7 @@ EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT * F
                                                                                 QUERY PLAN                                                                                
 ---------------------------------------------------------------------
  HashAggregate (actual rows=2 loops=1)
-   Group Key: documentdb_api_internal.bson_expression_get(document, '{ "" : "$key" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Group Key: bson_expression_get(document, '{ "" : "$key" }'::bson, true)
    Batches: 1  Memory Usage: 24kB
    ->  Bitmap Heap Scan on documents_1431_143002 collection (actual rows=3 loops=1)
          Recheck Cond: (shard_key_value = '1431'::bigint)
@@ -60,7 +60,7 @@ EXPLAIN (COSTS OFF, BUFFERS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF) SELECT * F
                                                                                 QUERY PLAN                                                                                
 ---------------------------------------------------------------------
  HashAggregate (actual rows=2 loops=1)
-   Group Key: documentdb_api_internal.bson_expression_get(document, '{ "" : "$key" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Group Key: bson_expression_get(document, '{ "" : "$key" }'::bson, true)
    Batches: 1  Memory Usage: 40kB
    ->  Bitmap Heap Scan on documents_1431_143002 collection (actual rows=3 loops=1)
          Recheck Cond: (shard_key_value = '1431'::bigint)

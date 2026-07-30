@@ -302,6 +302,58 @@ static List * AddShardKeyAndIdFilters(const bson_value_t *existingValue, Query *
 									  AggregationPipelineBuildContext *context,
 									  TargetEntry *entry, List *existingQuals);
 
+/*
+ * Whether an aggregation expression references any variable ("$$NOW",
+ * "$$CLUSTER_TIME", let variables, $map/$filter locals, ...).
+ *
+ * The top-level variable spec embeds the current timestamp, so it is a
+ * different Const on every query. Passing it to bson_expression_get when
+ * the expression cannot possibly read a variable makes the group key
+ * expression unique per execution: extended statistics created on the
+ * expression never match, the planner falls back to guessing the group
+ * count (rows/3), and a full-collection $group loses partial parallel
+ * aggregation. Conservative on purpose: any "$$"-prefixed string (even
+ * inside $literal) keeps the variable spec.
+ */
+static bool
+BsonValueReferencesVariables(const bson_value_t *value)
+{
+	check_stack_depth();
+	CHECK_FOR_INTERRUPTS();
+
+	switch (value->value_type)
+	{
+		case BSON_TYPE_UTF8:
+		{
+			return value->value.v_utf8.len >= 2 &&
+				   value->value.v_utf8.str[0] == '$' &&
+				   value->value.v_utf8.str[1] == '$';
+		}
+
+		case BSON_TYPE_DOCUMENT:
+		case BSON_TYPE_ARRAY:
+		{
+			bson_iter_t iter;
+			BsonValueInitIterator(value, &iter);
+			while (bson_iter_next(&iter))
+			{
+				if (BsonValueReferencesVariables(bson_iter_value(&iter)))
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		default:
+		{
+			return false;
+		}
+	}
+}
+
+
 /* Stage functions */
 static Query * HandleAddFields(const bson_value_t *existingValue, Query *query,
 							   AggregationPipelineBuildContext *context);
@@ -7621,7 +7673,8 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 				fieldVal, origEntry->expr);
 
 			FuncExpr *fieldGroupFunc;
-			if (context->variableSpec != NULL)
+			if (context->variableSpec != NULL &&
+				BsonValueReferencesVariables(fieldVal))
 			{
 				List *fieldArgs = list_make4(fieldDocExpr,
 											 MakeBsonConst(fieldGroupValue),
@@ -7676,7 +7729,8 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 	{
 		pgbson *groupValue = BsonValueToDocumentPgbson(&idValue);
 		FuncExpr *groupFunc;
-		if (context->variableSpec != NULL)
+		if (context->variableSpec != NULL &&
+			BsonValueReferencesVariables(&idValue))
 		{
 			bsonExpressionGetFunction = BsonExpressionGetWithLetFunctionOid();
 			groupArgs = list_make4(transformedGroupExpr, MakeBsonConst(groupValue),

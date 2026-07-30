@@ -136,13 +136,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                     QUERY PLAN                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_3
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_3.document
+         Output: bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_3.document
          Filter: (agg_stage_3.document #= '{ "items.kind" : "x" }'::bsonquery)
          ->  ProjectSet
                Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
@@ -178,13 +178,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                                                                                                                      QUERY PLAN                                                                                                                                                                                                                                                                                                      
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                                       
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalQty'::text, bsonsum(documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$items.qty" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true)), 'totalQty'::text, bsonsum(documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$items.qty" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_3
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_3.document
+         Output: bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_3.document
          ->  ProjectSet
                Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -219,13 +219,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                                                                
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                     QUERY PLAN                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_3
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_3.document
+         Output: bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_3.document
          ->  ProjectSet
                Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -258,13 +258,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                                                                       
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                        QUERY PLAN                                                                                                                                                                        
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : { "owner" : "$ownerId", "region" : "$regionId" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : { "owner" : "$ownerId", "region" : "$regionId" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : { "owner" : "$ownerId", "region" : "$regionId" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_2.document, '{ "" : { "owner" : "$ownerId", "region" : "$regionId" } }'::bson, true))), (bson_expression_get(agg_stage_2.document, '{ "" : { "owner" : "$ownerId", "region" : "$regionId" } }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_2.document, '{ "" : { "owner" : "$ownerId", "region" : "$regionId" } }'::bson, true)
    ->  Subquery Scan on agg_stage_2
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : { "owner" : "$ownerId", "region" : "$regionId" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+         Output: bson_expression_get(agg_stage_2.document, '{ "" : { "owner" : "$ownerId", "region" : "$regionId" } }'::bson, true), agg_stage_2.document
          ->  ProjectSet
                Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "regionId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -297,13 +297,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                             
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                   QUERY PLAN                                                                                                                                    
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_2.document, '{ "" : "$_id" }'::bson, true))), (bson_expression_get(agg_stage_2.document, '{ "" : "$_id" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_2.document, '{ "" : "$_id" }'::bson, true)
    ->  Subquery Scan on agg_stage_2
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+         Output: bson_expression_get(agg_stage_2.document, '{ "" : "$_id" }'::bson, true), agg_stage_2.document
          ->  ProjectSet
                Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -336,13 +336,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                     QUERY PLAN                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_2
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+         Output: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_2.document
          Filter: (agg_stage_2.document #>= '{ "_id" : { "$numberInt" : "2" } }'::bsonquery)
          ->  ProjectSet
                Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
@@ -374,13 +374,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                                                                                                                                        
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstId'::text, bsonfirstonsorted(documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)), 'firstId'::text, bsonfirstonsorted(documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_2
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+         Output: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_2.document
          ->  ProjectSet
                Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -412,13 +412,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_2
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+         Output: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_2.document
          ->  ProjectSet
                Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "path" : "$items", "preserveNullAndEmptyArrays" : true }'::bson)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -451,13 +451,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                     QUERY PLAN                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_2
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+         Output: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_2.document
          Filter: (agg_stage_2.document #>= '{ "items.qty" : { "$numberInt" : "4" } }'::bsonquery)
          ->  ProjectSet
                Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
@@ -492,13 +492,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                     QUERY PLAN                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_2
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+         Output: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_2.document
          Filter: ((agg_stage_2.document #= '{ "items.kind" : "x" }'::bsonquery) AND bson_dollar_in(agg_stage_2.document, '{ "items.qty" : [ { "$numberInt" : "1" }, { "$numberInt" : "7" } ] }'::bson))
          ->  ProjectSet
                Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
@@ -535,13 +535,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                             
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                     QUERY PLAN                                                                                                                                                                      
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$tag" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$tag" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$tag" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_2.document, '{ "" : "$tag" }'::bson, true))), (bson_expression_get(agg_stage_2.document, '{ "" : "$tag" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_2.document, '{ "" : "$tag" }'::bson, true)
    ->  Subquery Scan on agg_stage_2
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$tag" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+         Output: bson_expression_get(agg_stage_2.document, '{ "" : "$tag" }'::bson, true), agg_stage_2.document
          Filter: ((agg_stage_2.document #= '{ "ownerId" : "A" }'::bsonquery) AND (agg_stage_2.document #= '{ "items.kind" : "x" }'::bsonquery))
          ->  ProjectSet
                Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "tag" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
@@ -577,8 +577,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                                                         
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                              QUERY PLAN                                                                                                                                                               
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    Output: agg_stage_3.document, (bson_orderby(agg_stage_3.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
    ->  Sort
@@ -587,10 +587,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          ->  Subquery Scan on agg_stage_3
                Output: agg_stage_3.document, bson_orderby(agg_stage_3.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
                ->  HashAggregate
-                     Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-                     Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+                     Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))
+                     Group Key: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)
                      ->  Subquery Scan on agg_stage_2
-                           Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+                           Output: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_2.document
                            ->  ProjectSet
                                  Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
                                  ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -607,13 +607,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                       QUERY PLAN                                                                                                                                                        
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_2
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+         Output: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_2.document
          ->  ProjectSet
                Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items.qty'::text)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -647,13 +647,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                     QUERY PLAN                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_3
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_3.document
+         Output: bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_3.document
          ->  ProjectSet
                Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -700,13 +700,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                           
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson), 'total'::text, bsonsum(documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$items.qty" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstTag'::text, bsonfirstonsorted(documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$tag" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'kinds'::text, bson_array_agg(documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$items.kind" }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson), ''::text, true)), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson), 'total'::text, bsonsum(documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$items.qty" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstTag'::text, bsonfirstonsorted(documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$tag" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'kinds'::text, bson_array_agg(documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$items.kind" }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson), ''::text, true)), (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_2
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+         Output: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_2.document
          ->  ProjectSet
                Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "tag" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -777,13 +777,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                     QUERY PLAN                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_2
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+         Output: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_2.document
          Filter: (agg_stage_2.document #= '{ "ownerId" : "A" }'::bsonquery)
          ->  ProjectSet
                Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
@@ -817,13 +817,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                                         QUERY PLAN                                                                                                                                                                                                                          
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                     QUERY PLAN                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, documentdb_api_internal.bsoncount(1)), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)), 'n'::text, documentdb_api_internal.bsoncount(1)), (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_2
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+         Output: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_2.document
          ->  ProjectSet
                Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -848,13 +848,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                     
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                      QUERY PLAN                                                                                      
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Seq Scan on documentdb_data.documents_87001 collection
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$ownerId" }'::bson, true), document
          Filter: (collection.document @= '{ "regionId" : "north" }'::bson)
 (6 rows)
 
@@ -887,13 +887,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                                                                                                                                                                                      QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                      
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                                                                                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(documentdb_api_internal.bson_dollar_add_fields(agg_stage_1.document, '{ "extra" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(documentdb_api_internal.bson_dollar_add_fields(agg_stage_1.document, '{ "extra" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(documentdb_api_internal.bson_dollar_add_fields(agg_stage_1.document, '{ "extra" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(documentdb_api_internal.bson_dollar_add_fields(agg_stage_1.document, '{ "extra" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(documentdb_api_internal.bson_dollar_add_fields(agg_stage_1.document, '{ "extra" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(documentdb_api_internal.bson_dollar_add_fields(agg_stage_1.document, '{ "extra" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_1
-         Output: documentdb_api_internal.bson_expression_get(documentdb_api_internal.bson_dollar_add_fields(agg_stage_1.document, '{ "extra" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+         Output: bson_expression_get(documentdb_api_internal.bson_dollar_add_fields(agg_stage_1.document, '{ "extra" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$ownerId" }'::bson, true), agg_stage_1.document
          ->  ProjectSet
                Output: bson_dollar_unwind(collection.document, '$items'::text)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -911,13 +911,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                                                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                       
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                                                                                                                        
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(documentdb_api_internal.bson_dollar_project(agg_stage_1.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(documentdb_api_internal.bson_dollar_project(agg_stage_1.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(documentdb_api_internal.bson_dollar_project(agg_stage_1.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(documentdb_api_internal.bson_dollar_project(agg_stage_1.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(documentdb_api_internal.bson_dollar_project(agg_stage_1.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(documentdb_api_internal.bson_dollar_project(agg_stage_1.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_1
-         Output: documentdb_api_internal.bson_expression_get(documentdb_api_internal.bson_dollar_project(agg_stage_1.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+         Output: bson_expression_get(documentdb_api_internal.bson_dollar_project(agg_stage_1.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$ownerId" }'::bson, true), agg_stage_1.document
          ->  ProjectSet
                Output: bson_dollar_unwind(collection.document, '$items'::text)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -936,13 +936,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                  QUERY PLAN                                                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_1
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+         Output: bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_1.document
          ->  ProjectSet
                Output: bson_dollar_unwind(collection.document, '$items'::text)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -982,13 +982,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                                                  
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                   QUERY PLAN                                                                                                                                   
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : { "$concat" : [ "$ownerId", "$regionId" ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : { "$concat" : [ "$ownerId", "$regionId" ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : { "$concat" : [ "$ownerId", "$regionId" ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : { "$concat" : [ "$ownerId", "$regionId" ] } }'::bson, true))), (bson_expression_get(agg_stage_1.document, '{ "" : { "$concat" : [ "$ownerId", "$regionId" ] } }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_1.document, '{ "" : { "$concat" : [ "$ownerId", "$regionId" ] } }'::bson, true)
    ->  Subquery Scan on agg_stage_1
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : { "$concat" : [ "$ownerId", "$regionId" ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+         Output: bson_expression_get(agg_stage_1.document, '{ "" : { "$concat" : [ "$ownerId", "$regionId" ] } }'::bson, true), agg_stage_1.document
          ->  ProjectSet
                Output: bson_dollar_unwind(collection.document, '$items'::text)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -1004,13 +1004,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                                                                                                                                         QUERY PLAN                                                                                                                                                                                                                                                                                                                          
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'z'::text, bsonsum(documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : { "$multiply" : [ "$items.qty", { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true)), 'z'::text, bsonsum(documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : { "$multiply" : [ "$items.qty", { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_1
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+         Output: bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_1.document
          ->  ProjectSet
                Output: bson_dollar_unwind(collection.document, '$items'::text)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -1026,13 +1026,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                                                                                                                                       
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                        
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'snap'::text, bsonfirstonsorted(documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$$ROOT" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true)), 'snap'::text, bsonfirstonsorted(documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$$ROOT" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_1
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+         Output: bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_1.document
          ->  ProjectSet
                Output: bson_dollar_unwind(collection.document, '$items'::text)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -1049,13 +1049,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                  QUERY PLAN                                                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_1
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+         Output: bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_1.document
          Filter: documentdb_api_internal.bson_dollar_expr(agg_stage_1.document, '{ "" : { "$eq" : [ "$ownerId", "A" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
          ->  ProjectSet
                Output: bson_dollar_unwind(collection.document, '$items'::text)
@@ -1073,13 +1073,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                  QUERY PLAN                                                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_1
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+         Output: bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_1.document
          Filter: bson_dollar_json_schema(agg_stage_1.document, '{ "" : { "required" : [ "ownerId" ] } }'::bson)
          ->  ProjectSet
                Output: bson_dollar_unwind(collection.document, '$items'::text)
@@ -1113,13 +1113,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                               QUERY PLAN                                                                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_2
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+         Output: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_2.document
          ->  ProjectSet
                Output: bson_dollar_unwind((documentdb_api_internal.bson_dollar_merge_documents(collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'owner_doc'::text), '{ "owner_doc" : [  ] }'::bson)), true)), '$items'::text)
                ->  Nested Loop
@@ -1146,13 +1146,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                  QUERY PLAN                                                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_2
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+         Output: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_2.document
          ->  ProjectSet
                Output: bson_dollar_unwind(collection.document, '$items'::text)
                ->  Append
@@ -1235,13 +1235,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                                  
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                   
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'maxIdx'::text, bsonmax(documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ix" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)), 'maxIdx'::text, bsonmax(documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ix" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_2
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+         Output: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_2.document
          ->  ProjectSet
                Output: bson_dollar_unwind(collection.document, '{ "path" : "$items", "includeArrayIndex" : "ix" }'::bson)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -1260,13 +1260,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                  QUERY PLAN                                                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_1
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+         Output: bson_expression_get(agg_stage_1.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_1.document
          ->  ProjectSet
                Output: bson_dollar_unwind(collection.document, '{ "path" : "$items", "includeArrayIndex" : "items" }'::bson)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -1391,13 +1391,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                     QUERY PLAN                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_3
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_3.document
+         Output: bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_3.document
          ->  ProjectSet
                Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
                ->  Index Scan using "regionId_1" on documentdb_data.documents_87001 collection
@@ -1433,13 +1433,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                  QUERY PLAN                                                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_2
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
+         Output: bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_2.document
          ->  ProjectSet
                Output: bson_dollar_unwind(collection.document, '$items'::text)
                ->  Seq Scan on documentdb_data.documents_87001 collection
@@ -1457,13 +1457,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     ],
     "cursor": {}
 }');
-                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                     QUERY PLAN                                                                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true))), (bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true))
+   Group Key: bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true)
    ->  Subquery Scan on agg_stage_3
-         Output: documentdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_3.document
+         Output: bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true), agg_stage_3.document
          ->  ProjectSet
                Output: bson_dollar_unwind(documentdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
                ->  Seq Scan on documentdb_data.documents_87001 collection

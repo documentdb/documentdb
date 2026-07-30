@@ -57,10 +57,10 @@ $Q$);
                                                                                                                                                   run_explain_and_trim                                                                                                                                                  
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true))), (bson_expression_get(document, '{ "" : "$a" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true)
    ->  Index Only Scan using a_1 on documentdb_data.documents_79000 collection
-         Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
@@ -84,10 +84,10 @@ $Q$);
                                                                                                                                                   run_explain_and_trim                                                                                                                                                  
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true))), (bson_expression_get(document, '{ "" : "$a" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true)
    ->  Custom Scan (DocumentDBApiCursorScan)
-         Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true), document
          cursorScanType: Secondary Index Only Scan
          indexName: a_1
          indexKey: {"a": 1}

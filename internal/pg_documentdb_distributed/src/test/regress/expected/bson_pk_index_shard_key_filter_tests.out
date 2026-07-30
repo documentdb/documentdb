@@ -278,10 +278,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    ->  Subquery Scan on agg_stage_1
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'c'::text, bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true)), 'c'::text, bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true)
                ->  Index Scan using _id_ on documentdb_data.documents_18401_1840002 collection
-                     Output: bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true), collection.document
                      Index Cond: (collection.shard_key_value = '18401'::bigint)
 (11 rows)
 
@@ -295,10 +295,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    ->  Subquery Scan on agg_stage_2
          Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'c'::text, bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true)), 'c'::text, bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true)
                ->  Index Scan using _id_ on documentdb_data.documents_18401_1840002 collection
-                     Output: bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true), collection.document
                      Index Cond: ((collection.shard_key_value = '18401'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "0" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
 (11 rows)
 
@@ -667,7 +667,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM (SELECT documentdb_core.bson_repath_and_build('_id'::text, documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'c'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::documentdb_core.bson, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS document FROM documentdb_data.documents_18405_1840010 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '18405'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) GROUP BY (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))) agg_stage_1 ORDER BY (documentdb_api_catalog.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
+         Query: SELECT document FROM (SELECT documentdb_core.bson_repath_and_build('_id'::text, documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true), 'c'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::documentdb_core.bson, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS document FROM documentdb_data.documents_18405_1840010 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '18405'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) GROUP BY (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true))) agg_stage_1 ORDER BY (documentdb_api_catalog.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
          Node: host=localhost port=58070 dbname=regression
          ->  Sort
                Output: agg_stage_1.document, (documentdb_api_catalog.bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson))
@@ -675,10 +675,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                ->  Subquery Scan on agg_stage_1
                      Output: agg_stage_1.document, documentdb_api_catalog.bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
                      ->  GroupAggregate
-                           Output: documentdb_core.bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'c'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::documentdb_core.bson, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                           Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+                           Output: documentdb_core.bson_repath_and_build('_id'::text, (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true)), 'c'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::documentdb_core.bson, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)), (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true))
+                           Group Key: documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true)
                            ->  Index Scan using _id_ on documentdb_data.documents_18405_1840010 collection
-                                 Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), collection.document
+                                 Output: documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true), collection.document
                                  Index Cond: (collection.shard_key_value = '18405'::bigint)
 (18 rows)
 
@@ -691,7 +691,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM (SELECT documentdb_core.bson_repath_and_build('_id'::text, documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'c'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::documentdb_core.bson, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS document FROM documentdb_data.documents_18405_1840010 collection WHERE ((collection.document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : { "$numberInt" : "0" } }'::documentdb_core.bsonquery) AND ((collection.object_id OPERATOR(documentdb_core.>) '{ "" : { "$numberInt" : "0" } }'::documentdb_core.bson) AND (collection.object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson)) AND (collection.shard_key_value OPERATOR(pg_catalog.=) '18405'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) GROUP BY (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))) agg_stage_2 ORDER BY (documentdb_api_catalog.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
+         Query: SELECT document FROM (SELECT documentdb_core.bson_repath_and_build('_id'::text, documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true), 'c'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::documentdb_core.bson, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS document FROM documentdb_data.documents_18405_1840010 collection WHERE ((collection.document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : { "$numberInt" : "0" } }'::documentdb_core.bsonquery) AND ((collection.object_id OPERATOR(documentdb_core.>) '{ "" : { "$numberInt" : "0" } }'::documentdb_core.bson) AND (collection.object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson)) AND (collection.shard_key_value OPERATOR(pg_catalog.=) '18405'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) GROUP BY (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true))) agg_stage_2 ORDER BY (documentdb_api_catalog.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
          Node: host=localhost port=58070 dbname=regression
          ->  Sort
                Output: agg_stage_2.document, (documentdb_api_catalog.bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson))
@@ -699,10 +699,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                ->  Subquery Scan on agg_stage_2
                      Output: agg_stage_2.document, documentdb_api_catalog.bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
                      ->  GroupAggregate
-                           Output: documentdb_core.bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'c'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::documentdb_core.bson, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                           Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+                           Output: documentdb_core.bson_repath_and_build('_id'::text, (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true)), 'c'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::documentdb_core.bson, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)), (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true))
+                           Group Key: documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true)
                            ->  Index Scan using _id_ on documentdb_data.documents_18405_1840010 collection
-                                 Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), collection.document
+                                 Output: documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$_id" }'::documentdb_core.bson, true), collection.document
                                  Index Cond: ((collection.shard_key_value = '18405'::bigint) AND (collection.object_id OPERATOR(documentdb_core.>) '{ "" : { "$numberInt" : "0" } }'::documentdb_core.bson) AND (collection.object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson))
 (18 rows)
 

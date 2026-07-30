@@ -253,10 +253,10 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)
                ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), collection.document
                      Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                      Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
 (13 rows)
@@ -291,10 +291,10 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), collection.document
                      ->  Index Only Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
                            Output: collection.document
                            Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
@@ -320,10 +320,10 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)
                ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), collection.document
                      Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                      Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
 (13 rows)
@@ -358,10 +358,10 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)
                ->  Index Only Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), collection.document
                      Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                      Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
                      Heap Fetches: xxx
@@ -385,10 +385,10 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), collection.document
                      ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
                            Output: collection.document
                            Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
@@ -441,10 +441,10 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), collection.document
                      ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
                            Output: collection.document
                            Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
@@ -491,10 +491,10 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'g'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'g'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), collection.document
                      ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
                            Output: collection.document
                            Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
@@ -542,10 +542,10 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : { "$concat" : [ "$x", "-" ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : { "$concat" : [ "$x", "-" ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), collection.document
                      ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
                            Output: collection.document
                            Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
@@ -596,10 +596,10 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
          Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), collection.document
                      ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
                            Output: collection.document
                            Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
@@ -655,10 +655,10 @@ $Q$, p_ignore_heap_fetches := true);
                      ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
                            Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
                            ->  GroupAggregate (actual rows=3 loops=1)
-                                 Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-                                 Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+                                 Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
+                                 Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)
                                  ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
-                                       Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                                       Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), collection.document
                                        ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
                                              Output: collection.document
                                              Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
@@ -694,10 +694,10 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), collection.document
                      ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
                            Output: collection.document
                            Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
@@ -752,10 +752,10 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), collection.document
                      ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
                            Output: collection.document
                            Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
@@ -816,10 +816,10 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_1 (actual rows=8 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id.x" : { "$numberInt" : "1" } }'::bson), bson_orderby(agg_stage_1.document, '{ "_id.y" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=8 loops=1)
-               Output: bson_repath_and_build('_id'::text, bson_repath_and_build('x'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'y'::text, (bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, bson_repath_and_build('x'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'y'::text, (bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true))), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), (bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=8 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true), collection.document
                      ->  Index Scan using idx_xy on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
                            Output: collection.document
                            Index Cond: ((collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "y" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
@@ -867,12 +867,12 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
          Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  Nested Loop (actual rows=3 loops=1)
-               Output: bson_dollar_merge_documents((bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)))), (COALESCE(bson_array_agg(collection_0_1.document, 'm'::text), '{ "m" : [  ] }'::bson)), true)
+               Output: bson_dollar_merge_documents((bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)))), (COALESCE(bson_array_agg(collection_0_1.document, 'm'::text), '{ "m" : [  ] }'::bson)), true)
                ->  GroupAggregate (actual rows=3 loops=1)
-                     Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-                     Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+                     Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
+                     Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)
                      ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
-                           Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                           Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), collection.document
                            ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=3 loops=1)
                                  Output: collection.document
                                  Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
@@ -881,8 +881,8 @@ $Q$, p_ignore_heap_fetches := true);
                      Output: COALESCE(bson_array_agg(collection_0_1.document, 'm'::text), '{ "m" : [  ] }'::bson)
                      ->  Index Scan using idx_x on documentdb_data.documents_21000 collection_0_1 (actual rows=3 loops=3)
                            Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
-                           Index Cond: (collection_0_1.document @*= bson_dollar_lookup_extract_filter_expression((bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)))), '{ "x" : "_id" }'::bson))
-                           Filter: bson_dollar_lookup_join_filter(collection_0_1.document, bson_dollar_lookup_extract_filter_expression((bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)))), '{ "x" : "_id" }'::bson), 'x'::text)
+                           Index Cond: (collection_0_1.document @*= bson_dollar_lookup_extract_filter_expression((bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)))), '{ "x" : "_id" }'::bson))
+                           Filter: bson_dollar_lookup_join_filter(collection_0_1.document, bson_dollar_lookup_extract_filter_expression((bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)))), '{ "x" : "_id" }'::bson), 'x'::text)
 (23 rows)
 
 ROLLBACK;
@@ -933,10 +933,10 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_2 (actual rows=5 loops=1)
          Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id.x" : { "$numberInt" : "1" } }'::bson), bson_orderby(agg_stage_2.document, '{ "_id.y" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=5 loops=1)
-               Output: bson_repath_and_build('_id'::text, bson_repath_and_build('x'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'y'::text, (bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, bson_repath_and_build('x'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'y'::text, (bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true))), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), (bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=5 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true), collection.document
                      ->  Index Scan using idx_xy on documentdb_data.documents_21000 collection (actual rows=5 loops=1)
                            Output: collection.document
                            Index Cond: ((collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "y" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
@@ -988,10 +988,10 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
          Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)
                ->  Custom Scan (DocumentDBApiDistinctQueryScan) (actual rows=3 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), collection.document
                      ->  Index Scan using idx_x_partial on documentdb_data.documents_21003 collection (actual rows=3 loops=1)
                            Output: collection.document
                            Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
@@ -1031,10 +1031,10 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 's'::text, bsonsum(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 's'::text, bsonsum(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)
                ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), collection.document
                      Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                      Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
 (13 rows)
@@ -1066,10 +1066,10 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 's'::text, bsonsum(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'm'::text, bsonmax(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 's'::text, bsonsum(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'm'::text, bsonmax(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)
                ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), collection.document
                      Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                      Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
 (13 rows)
@@ -1122,14 +1122,14 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"y\" : { \"$numberInt\" : \"-1\" } }"}'::bson[]), '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"y\" : { \"$numberInt\" : \"-1\" } }"}'::bson[]), '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true))
+               Group Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true))
                ->  Sort (actual rows=8 loops=1)
-                     Output: (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-                     Sort Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Output: (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true)), agg_stage_0.document
+                     Sort Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true))
                      Sort Method: quicksort  Memory: xxxkB
                      ->  Subquery Scan on agg_stage_0 (actual rows=8 loops=1)
-                           Output: bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+                           Output: bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true), agg_stage_0.document
                            ->  Sort (actual rows=8 loops=1)
                                  Output: collection.document, (bson_orderby(collection.document, '{ "y" : { "$numberInt" : "-1" } }'::bson))
                                  Sort Key: (bson_orderby(collection.document, '{ "y" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
@@ -1190,10 +1190,10 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson) ORDER BY (bson_orderby(collection.document, '{ "y" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST)), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson) ORDER BY (bson_orderby(collection.document, '{ "y" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST)), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)
                ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), collection.document
                      Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                      Order By: (collection.document |-<> '{ "x" : { "$numberInt" : "1" } }'::bson)
 (13 rows)
@@ -1254,14 +1254,14 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$tags" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$tags" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: (bson_expression_get(collection.document, '{ "" : "$tags" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$tags" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$tags" }'::bson, true))
+               Group Key: (bson_expression_get(collection.document, '{ "" : "$tags" }'::bson, true))
                ->  Sort (actual rows=3 loops=1)
-                     Output: (bson_expression_get(collection.document, '{ "" : "$tags" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-                     Sort Key: (bson_expression_get(collection.document, '{ "" : "$tags" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Output: (bson_expression_get(collection.document, '{ "" : "$tags" }'::bson, true)), collection.document
+                     Sort Key: (bson_expression_get(collection.document, '{ "" : "$tags" }'::bson, true))
                      Sort Method: quicksort  Memory: xxxkB
                      ->  Index Scan using idx_tags on documentdb_data.documents_21001 collection (actual rows=3 loops=1)
-                           Output: bson_expression_get(collection.document, '{ "" : "$tags" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                           Output: bson_expression_get(collection.document, '{ "" : "$tags" }'::bson, true), collection.document
                            Index Cond: (collection.document @<> '{ "tags" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
 (16 rows)
 
@@ -1307,14 +1307,14 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
          Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(agg_stage_1.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(agg_stage_1.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true))
+               Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true))
                ->  Sort (actual rows=6 loops=1)
-                     Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
-                     Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true)), agg_stage_1.document
+                     Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true))
                      Sort Method: quicksort  Memory: xxxkB
                      ->  Subquery Scan on agg_stage_1 (actual rows=6 loops=1)
-                           Output: bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+                           Output: bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true), agg_stage_1.document
                            ->  Limit (actual rows=6 loops=1)
                                  Output: collection.document
                                  ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
@@ -1361,14 +1361,14 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_2 (actual rows=2 loops=1)
          Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=2 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(agg_stage_1.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(agg_stage_1.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true))
+               Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true))
                ->  Sort (actual rows=4 loops=1)
-                     Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
-                     Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true)), agg_stage_1.document
+                     Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true))
                      Sort Method: quicksort  Memory: xxxkB
                      ->  Subquery Scan on agg_stage_1 (actual rows=4 loops=1)
-                           Output: bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+                           Output: bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true), agg_stage_1.document
                            ->  Limit (actual rows=4 loops=1)
                                  Output: collection.document
                                  ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=4 loops=1)
@@ -1417,14 +1417,14 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_2 (actual rows=2 loops=1)
          Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=2 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(agg_stage_1.document, '{ "" : "$vals" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(agg_stage_1.document, '{ "" : "$vals" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true))
+               Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true))
                ->  Sort (actual rows=4 loops=1)
-                     Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
-                     Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true)), agg_stage_1.document
+                     Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true))
                      Sort Method: quicksort  Memory: xxxkB
                      ->  Subquery Scan on agg_stage_1 (actual rows=4 loops=1)
-                           Output: bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+                           Output: bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true), agg_stage_1.document
                            ->  ProjectSet (actual rows=4 loops=1)
                                  Output: bson_dollar_unwind(collection.document, '$vals'::text)
                                  ->  Index Scan using idx_x on documentdb_data.documents_21002 collection (actual rows=3 loops=1)
@@ -1460,14 +1460,14 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(collection.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
+               Group Key: (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
                ->  Sort (actual rows=8 loops=1)
-                     Output: (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-                     Sort Key: (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Output: (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true)), collection.document
+                     Sort Key: (bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true))
                      Sort Method: quicksort  Memory: xxxkB
                      ->  Index Scan using idx_y on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
-                           Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                           Output: bson_expression_get(collection.document, '{ "" : "$x" }'::bson, true), collection.document
                            Index Cond: (collection.document @<> '{ "y" : { "fullScan" : true } }'::bson)
 (16 rows)
 
@@ -1517,14 +1517,14 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"x\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"x\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true))
+               Group Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true))
                ->  Sort (actual rows=8 loops=1)
-                     Output: (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-                     Sort Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Output: (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true)), agg_stage_0.document
+                     Sort Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true))
                      Sort Method: quicksort  Memory: xxxkB
                      ->  Subquery Scan on agg_stage_0 (actual rows=8 loops=1)
-                           Output: bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+                           Output: bson_expression_get(agg_stage_0.document, '{ "" : "$x" }'::bson, true), agg_stage_0.document
                            ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
                                  Output: collection.document, bson_orderby(collection.document, '{ "x" : { "$numberInt" : "1" } }'::bson)
                                  Index Cond: (collection.document @<> '{ "x" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
@@ -1573,14 +1573,14 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
          Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted((bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)))), (bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true))
+               Group Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true))
                ->  Sort (actual rows=8 loops=1)
-                     Output: (bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-                     Sort Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Output: (bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true)), collection.document
+                     Sort Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true))
                      Sort Method: quicksort  Memory: xxxkB
                      ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
-                           Output: bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                           Output: bson_expression_get(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$x" }'::bson, true), collection.document
                            Index Cond: (collection.document @<> '{ "x" : { "fullScan" : true } }'::bson)
 (16 rows)
 
@@ -1625,14 +1625,14 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
          Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted((bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)))), (bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true))
+               Group Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true))
                ->  Sort (actual rows=8 loops=1)
-                     Output: (bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-                     Sort Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Output: (bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true)), collection.document
+                     Sort Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true))
                      Sort Method: quicksort  Memory: xxxkB
                      ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
-                           Output: bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                           Output: bson_expression_get(bson_dollar_project(collection.document, '{ "newx" : "$x", "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$newx" }'::bson, true), collection.document
                            Index Cond: (collection.document @<> '{ "x" : { "fullScan" : true } }'::bson)
 (16 rows)
 
@@ -1677,14 +1677,14 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
          Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted((bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)))), (bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true))
+               Group Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true))
                ->  Sort (actual rows=8 loops=1)
-                     Output: (bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-                     Sort Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Output: (bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true)), collection.document
+                     Sort Key: (bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true))
                      Sort Method: quicksort  Memory: xxxkB
                      ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)
-                           Output: bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                           Output: bson_expression_get(bson_dollar_project(collection.document, '{ "xc" : { "$concat" : [ "$x", "-suffix" ] }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "" : "$xc" }'::bson, true), collection.document
                            Index Cond: (collection.document @<> '{ "x" : { "fullScan" : true } }'::bson)
 (16 rows)
 
@@ -1730,14 +1730,14 @@ $Q$, p_ignore_heap_fetches := true);
    ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
          Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(agg_stage_1.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true)), 'f'::text, bsonfirstonsorted(bson_expression_get(agg_stage_1.document, '{ "" : "$y" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true))
+               Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true))
                ->  Sort (actual rows=8 loops=1)
-                     Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
-                     Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true)), agg_stage_1.document
+                     Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true))
                      Sort Method: quicksort  Memory: xxxkB
                      ->  Subquery Scan on agg_stage_1 (actual rows=8 loops=1)
-                           Output: bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+                           Output: bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true), agg_stage_1.document
                            ->  Nested Loop (actual rows=8 loops=1)
                                  Output: bson_dollar_merge_documents(collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'm'::text), '{ "m" : [  ] }'::bson)), true)
                                  ->  Index Scan using idx_x on documentdb_data.documents_21000 collection (actual rows=8 loops=1)

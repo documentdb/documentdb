@@ -4,62 +4,62 @@ SET documentdb.next_collection_index_id TO 5200;
 -- $$ROOT as a variable.
 SELECT documentdb_api_catalog.bson_expression_get('{ "a": 1 }', '{ "c": "$$ROOT" }');
             bson_expression_get             
----------------------------------------------------------------------
+--------------------------------------------
  { "c" : { "a" : { "$numberInt" : "1" } } }
 (1 row)
 
 SELECT documentdb_api_catalog.bson_expression_get('{ "a": { "b": [ 1, 2, 3 ] } }', '{ "c": "$$ROOT.a" }');
                                       bson_expression_get                                       
----------------------------------------------------------------------
+------------------------------------------------------------------------------------------------
  { "c" : { "b" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] } }
 (1 row)
 
 SELECT documentdb_api_catalog.bson_expression_get('{ "a": { "b": [ 1, 2, 3 ] } }', '{ "c": "$$ROOT.a.b" }');
                                  bson_expression_get                                  
----------------------------------------------------------------------
+--------------------------------------------------------------------------------------
  { "c" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }
 (1 row)
 
 SELECT documentdb_api_catalog.bson_expression_get('{ "a": { "b": [ 1, 2, 3 ] } }', '{ "c": "$$ROOT.c" }');
  bson_expression_get 
----------------------------------------------------------------------
+---------------------
  { }
 (1 row)
 
 SELECT documentdb_api_catalog.bson_expression_get('{ "a": { "b": [ 1, 2, 3 ] } }', '{ "c": { "$isArray": "$$ROOT.a.b" } }');
  bson_expression_get 
----------------------------------------------------------------------
+---------------------
  { "c" : true }
 (1 row)
 
 SELECT documentdb_api_catalog.bson_expression_get('{ "a": { "b": [ 1, 2, 3 ] } }', '{ "c": { "$isArray": "$$ROOT.a" } }');
  bson_expression_get 
----------------------------------------------------------------------
+---------------------
  { "c" : false }
 (1 row)
 
 SELECT documentdb_api_catalog.bson_expression_get('{ "a": { "b": [ 1, 2, 3 ] } }', '{ "c": { "$size": "$$ROOT.a.b" } }');
        bson_expression_get        
----------------------------------------------------------------------
+----------------------------------
  { "c" : { "$numberInt" : "3" } }
 (1 row)
 
 SELECT documentdb_api_catalog.bson_expression_get('{ "a": { "b": 2 } }', '{ "c": { "$eq": [ "$$ROOT.a.b", 2 ] } }');
  bson_expression_get 
----------------------------------------------------------------------
+---------------------
  { "c" : true }
 (1 row)
 
 SELECT documentdb_api_catalog.bson_expression_get('{ "a": { "b": 2 } }', '{ "c": { "$eq": [ "$$ROOT.a.b", 3 ] } }');
  bson_expression_get 
----------------------------------------------------------------------
+---------------------
  { "c" : false }
 (1 row)
 
 -- override $$CURRENT should change the meaning of path expressions since $a -> $$CURRENT.a
 SELECT * FROM bson_dollar_project('{"a": 1}', '{"b": {"$filter": {"input": [{"a": 10, "b": 8}, {"a": 7, "b": 8}], "as": "CURRENT", "cond": {"$and": [{"$gt": ["$a", 8]}, {"$gt": ["$b", 7]}]}}}}');
                               bson_dollar_project                              
----------------------------------------------------------------------
+-------------------------------------------------------------------------------
  { "b" : [ { "a" : { "$numberInt" : "10" }, "b" : { "$numberInt" : "8" } } ] }
 (1 row)
 
@@ -67,25 +67,25 @@ SELECT * FROM bson_dollar_project('{"a": 1}', '{"b": {"$filter": {"input": [{"a"
 SELECT documentdb_api.insert_one('db', 'remove_variable_tests', '{"_id": 1, "a": ["a", "b", "c"]}');
 NOTICE:  creating collection
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db', 'remove_variable_tests', '{"_id": 2, "a": ["d", "e", "f"]}');
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db', 'remove_variable_tests', '{"_id": 3, "a": ["g", "h", "i"]}');
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 select bson_dollar_project(document, '{"result": { "$reduce": { "input": "$a", "initialValue": "", "in": { "$concat": ["$$value", "$$this"] } } } }') from documentdb_api.collection('db', 'remove_variable_tests');
                  bson_dollar_project                  
----------------------------------------------------------------------
+------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "result" : "abc" }
  { "_id" : { "$numberInt" : "2" }, "result" : "def" }
  { "_id" : { "$numberInt" : "3" }, "result" : "ghi" }
@@ -94,13 +94,13 @@ select bson_dollar_project(document, '{"result": { "$reduce": { "input": "$a", "
 -- $$REMOVE should not be written
 select bson_dollar_project('{}', '{"result": "$$REMOVE" }');
  bson_dollar_project 
----------------------------------------------------------------------
+---------------------
  { }
 (1 row)
 
 select bson_dollar_project(document, '{"result": [ "$a", "$$REMOVE", "final" ]  }') from documentdb_api.collection('db', 'remove_variable_tests');
                                  bson_dollar_project                                 
----------------------------------------------------------------------
+-------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "result" : [ [ "a", "b", "c" ], null, "final" ] }
  { "_id" : { "$numberInt" : "2" }, "result" : [ [ "d", "e", "f" ], null, "final" ] }
  { "_id" : { "$numberInt" : "3" }, "result" : [ [ "g", "h", "i" ], null, "final" ] }
@@ -108,7 +108,7 @@ select bson_dollar_project(document, '{"result": [ "$a", "$$REMOVE", "final" ]  
 
 select bson_dollar_project(document, '{"result": { "$reduce": { "input": "$a", "initialValue": "", "in": { "$concat": ["$$REMOVE", "$$this"] } } } }') from documentdb_api.collection('db', 'remove_variable_tests');
                  bson_dollar_project                 
----------------------------------------------------------------------
+-----------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "result" : null }
  { "_id" : { "$numberInt" : "2" }, "result" : null }
  { "_id" : { "$numberInt" : "3" }, "result" : null }
@@ -118,119 +118,119 @@ select bson_dollar_project(document, '{"result": { "$reduce": { "input": "$a", "
 -- verify that defined variables work
 SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"foo": "this is my foo variable"}, "in": "$$foo"}}}');
            bson_dollar_project            
----------------------------------------------------------------------
+------------------------------------------
  { "result" : "this is my foo variable" }
 (1 row)
 
 SELECT * FROM bson_dollar_project('{ "a": 10}', '{"result": {"$let": {"vars": {"sum": {"$add": ["$a", 10]}}, "in": "$$sum"}}}');
           bson_dollar_project           
----------------------------------------------------------------------
+----------------------------------------
  { "result" : { "$numberInt" : "20" } }
 (1 row)
 
 SELECT * FROM bson_dollar_project('{ "a": 10}', '{"result": {"$let": {"vars": {"sumValue": {"$add": ["$a", 10]}}, "in": "$$sumValue"}}}');
           bson_dollar_project           
----------------------------------------------------------------------
+----------------------------------------
  { "result" : { "$numberInt" : "20" } }
 (1 row)
 
 SELECT * FROM bson_dollar_project('{ "a": 10}', '{"result": {"$let": {"vars": {"value": "$a"}, "in": "$$value"}}}');
           bson_dollar_project           
----------------------------------------------------------------------
+----------------------------------------
  { "result" : { "$numberInt" : "10" } }
 (1 row)
 
 SELECT * FROM bson_dollar_project('{ "a": 10}', '{"result": {"$let": {"vars": {"value": "$$CURRENT"}, "in": "$$value"}}}');
                bson_dollar_project                
----------------------------------------------------------------------
+--------------------------------------------------
  { "result" : { "a" : { "$numberInt" : "10" } } }
 (1 row)
 
 SELECT * FROM bson_dollar_project('{ "a": 10}', '{"result": {"$let": {"vars": {"value": "$$ROOT"}, "in": "$$value"}}}');
                bson_dollar_project                
----------------------------------------------------------------------
+--------------------------------------------------
  { "result" : { "a" : { "$numberInt" : "10" } } }
 (1 row)
 
 SELECT * FROM bson_dollar_project('{ "a": 10}', '{"result": {"$let": {"vars": {"value": "$$REMOVE"}, "in": "$$value"}}}');
  bson_dollar_project 
----------------------------------------------------------------------
+---------------------
  { }
 (1 row)
 
 SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"日本語": 10}, "in": "$$日本語"}}}');
           bson_dollar_project           
----------------------------------------------------------------------
+----------------------------------------
  { "result" : { "$numberInt" : "10" } }
 (1 row)
 
 -- verify nested let work and can also override variables
 SELECT * FROM bson_dollar_project('{ }', '{"result": {"$let": {"vars": {"foo": "this is my foo variable"}, "in": {"$let": {"vars": {"foo2": "$$foo"}, "in": {"a": "$$foo", "b": "$$foo2"}}}}}}');
                                  bson_dollar_project                                 
----------------------------------------------------------------------
+-------------------------------------------------------------------------------------
  { "result" : { "a" : "this is my foo variable", "b" : "this is my foo variable" } }
 (1 row)
 
 SELECT * FROM bson_dollar_project('{ }', '{"result": {"$let": {"vars": {"foo": "this is my foo variable"}, "in": {"$let": {"vars": {"foo": "$$foo"}, "in": {"a": "$$foo"}}}}}}');
                 bson_dollar_project                 
----------------------------------------------------------------------
+----------------------------------------------------
  { "result" : { "a" : "this is my foo variable" } }
 (1 row)
 
 SELECT * FROM bson_dollar_project('{ }', '{"result": {"$let": {"vars": {"foo": "this is my foo variable"}, "in": {"$let": {"vars": {"foo": "this is a foo override"}, "in": {"a": "$$foo"}}}}}}');
                 bson_dollar_project                
----------------------------------------------------------------------
+---------------------------------------------------
  { "result" : { "a" : "this is a foo override" } }
 (1 row)
 
 SELECT * FROM bson_dollar_project('{ }', '{"result": {"$let": {"vars": {"foo": "this is my foo variable"}, "in": {"$let": {"vars": {"foo2": "$$foo"}, "in": {"$let": {"vars": {"foo3": "this is my foo3 variable"}, "in": {"foo": "$$foo", "foo2": "$$foo2", "foo3": "$$foo3"}}}}}}}}');
                                                       bson_dollar_project                                                      
----------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------------------------
  { "result" : { "foo" : "this is my foo variable", "foo2" : "this is my foo variable", "foo3" : "this is my foo3 variable" } }
 (1 row)
 
 -- nested works with expressions that define variables
 SELECT * FROM bson_dollar_project('{ "input": [1, 2, 3, 4, 5]}', '{"result": {"$let": {"vars": {"value": "100"}, "in": {"$filter": {"input": "$input", "as": "value", "cond": {"$gte": ["$$value", 4]}}}}}}');
                         bson_dollar_project                        
----------------------------------------------------------------------
+-------------------------------------------------------------------
  { "result" : [ { "$numberInt" : "4" }, { "$numberInt" : "5" } ] }
 (1 row)
 
 SELECT * FROM bson_dollar_project('{ "input": [1, 2, 3, 4, 5]}', '{"result": {"$let": {"vars": {"value": "100"}, "in": {"$filter": {"input": "$input", "as": "this", "cond": {"$gte": ["$$value", 4]}}}}}}');
                                                             bson_dollar_project                                                            
----------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------------------------------------
  { "result" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" } ] }
 (1 row)
 
 SELECT * FROM bson_dollar_project('{ "input": [1, 2, 3, 4, 5]}', '{"result": {"$filter": {"input": "$input", "as": "value", "cond": {"$let": {"vars": {"value": 100}, "in": {"$gte": ["$$value", 4]}}}}}}');
                                                             bson_dollar_project                                                            
----------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------------------------------------
  { "result" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" } ] }
 (1 row)
 
 -- override current
 SELECT * FROM bson_dollar_project('{ "a": 10}', '{"result": {"$let": {"vars": {"CURRENT": {"a": "this is a in new current"}}, "in": "$a"}}}');
             bson_dollar_project            
----------------------------------------------------------------------
+-------------------------------------------
  { "result" : "this is a in new current" }
 (1 row)
 
 -- use dotted paths on variable expressions
 SELECT * FROM bson_dollar_project('{ "a": 10}', '{"result": {"$let": {"vars": {"value": {"a": "value a field"}}, "in": "$$value.a"}}}');
       bson_dollar_project       
----------------------------------------------------------------------
+--------------------------------
  { "result" : "value a field" }
 (1 row)
 
 SELECT * FROM bson_dollar_project('{ "a": 10}', '{"result": {"$let": {"vars": {"value": [{"a": "nested field in array"}]}, "in": "$$value.a"}}}');
             bson_dollar_project             
----------------------------------------------------------------------
+--------------------------------------------
  { "result" : [ "nested field in array" ] }
 (1 row)
 
 SELECT * FROM bson_dollar_project('{ "a": 10}', '{"result": {"$let": {"vars": {"value": {"a": "value a field"}}, "in": "$$value.nonExistent"}}}');
  bson_dollar_project 
----------------------------------------------------------------------
+---------------------
  { }
 (1 row)
 
@@ -238,68 +238,68 @@ SELECT * FROM bson_dollar_project('{ "a": 10}', '{"result": {"$let": {"vars": {"
 SELECT documentdb_api.insert_one('db', 'dollar_let_test', '{"_id": 1, "name": "santi", "hobby": "running"}');
 NOTICE:  creating collection
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db', 'dollar_let_test', '{"_id": 2, "name": "joe", "hobby": "soccer"}');
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db', 'dollar_let_test', '{"_id": 3, "name": "daniel", "hobby": "painting"}');
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db', 'dollar_let_test', '{"_id": 4, "name": "lucas", "hobby": "music"}');
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db', 'dollar_let_test', '{"_id": 5, "name": "richard", "hobby": "running"}');
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db', 'dollar_let_test', '{"_id": 6, "name": "daniela", "hobby": "reading"}');
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db', 'dollar_let_test', '{"_id": 7, "name": "isabella", "hobby": "video games"}');
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db', 'dollar_let_test', '{"_id": 8, "name": "daniel II", "hobby": "board games"}');
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db', 'dollar_let_test', '{"_id": 9, "name": "jose", "hobby": "music"}');
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db', 'dollar_let_test', '{"_id": 10, "name": "camille", "hobby": "painting"}');
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT bson_dollar_project(document, FORMAT('{"result": {"$let": {"vars": {"intro": "%s", "hobby_text": " , and my hobby is: "}, "in": {"$concat": ["$$intro", "$name", "$$hobby_text", "$hobby"]}}}}', 'Hello my name is: ')::bson)
 FROM documentdb_api.collection('db', 'dollar_let_test');
                                              bson_dollar_project                                             
----------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "result" : "Hello my name is: santi , and my hobby is: running" }
  { "_id" : { "$numberInt" : "2" }, "result" : "Hello my name is: joe , and my hobby is: soccer" }
  { "_id" : { "$numberInt" : "3" }, "result" : "Hello my name is: daniel , and my hobby is: painting" }
@@ -356,31 +356,31 @@ ERROR:  Attempting to use an undefined variable: foo2
 -- $let with constant "in" expression (no variable references)
 SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"variable": "with space"}, "in": "_variable"}}}');
     bson_dollar_project     
----------------------------------------------------------------------
+----------------------------
  { "result" : "_variable" }
 (1 row)
 
 SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"a": 1}, "in": "hello"}}}');
   bson_dollar_project   
----------------------------------------------------------------------
+------------------------
  { "result" : "hello" }
 (1 row)
 
 SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"a": 1, "b": 2}, "in": 42}}}');
           bson_dollar_project           
----------------------------------------------------------------------
+----------------------------------------
  { "result" : { "$numberInt" : "42" } }
 (1 row)
 
 SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"x": "val"}, "in": null}}}');
  bson_dollar_project 
----------------------------------------------------------------------
+---------------------
  { "result" : null }
 (1 row)
 
 SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"x": "val"}, "in": true}}}');
  bson_dollar_project 
----------------------------------------------------------------------
+---------------------
  { "result" : true }
 (1 row)
 
@@ -388,26 +388,26 @@ SELECT * FROM bson_dollar_project('{}', '{"result": {"$let": {"vars": {"x": "val
 SELECT documentdb_api.insert_one('db','now_test_1','{"_id":"1", "a": "umbor" }', NULL);
 NOTICE:  creating collection
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db','now_test_1','{"_id":"2", "a": "gabby" }', NULL);
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db','now_test_1','{"_id":"3", "a": "jo" }', NULL);
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 -- $$NOW with dotted expression should evaluate to EOD
 SELECT document FROM bson_aggregation_find('db', '{ "find": "now_test_1", "projection": { "nowField" : "$$NOW.foo" }, "filter": {} }');
     document     
----------------------------------------------------------------------
+-----------------
  { "_id" : "1" }
  { "_id" : "2" }
  { "_id" : "3" }
@@ -431,7 +431,7 @@ BEGIN
 END; $$ LANGUAGE plpgsql;
 SELECT time_system_variables_test.mask_time_value($Q$ SELECT document FROM bson_aggregation_find('db', '{ "find": "now_test_1", "projection": { "nowField" : "$$NOW" }, "filter": {} }') $Q$);
                 mask_time_value                 
----------------------------------------------------------------------
+------------------------------------------------
  { "_id" : "1", "nowField" : NOW_SYS_VARIABLE }
  { "_id" : "2", "nowField" : NOW_SYS_VARIABLE }
  { "_id" : "3", "nowField" : NOW_SYS_VARIABLE }
@@ -439,7 +439,7 @@ SELECT time_system_variables_test.mask_time_value($Q$ SELECT document FROM bson_
 
 SELECT time_system_variables_test.mask_time_value($Q$ SELECT document FROM bson_aggregation_find('db', '{ "find": "now_test_1", "projection": { "nowField" : "$$varRef" }, "filter": {}, "let": { "varRef": "$$NOW" } }') $Q$);
                 mask_time_value                 
----------------------------------------------------------------------
+------------------------------------------------
  { "_id" : "1", "nowField" : NOW_SYS_VARIABLE }
  { "_id" : "2", "nowField" : NOW_SYS_VARIABLE }
  { "_id" : "3", "nowField" : NOW_SYS_VARIABLE }
@@ -447,7 +447,7 @@ SELECT time_system_variables_test.mask_time_value($Q$ SELECT document FROM bson_
 
 SELECT time_system_variables_test.mask_time_value($Q$ EXPLAIN (COSTS OFF, VERBOSE ON ) SELECT document FROM bson_aggregation_find('db', '{ "find": "now_test_1", "projection": { "nowField" : "$$varRef" }, "filter": {}, "let": { "varRef": "$$NOW" } }') $Q$);
                                                                                         mask_time_value                                                                                         
----------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on documentdb_data.documents_5202 collection
    Output: bson_dollar_project_find(document, '{ "nowField" : "$$varRef" }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "varRef" : { "$literal" : NOW_SYS_VARIABLE } } }'::bson)
    Recheck Cond: (collection.shard_key_value = '5202'::bigint)
@@ -457,7 +457,7 @@ SELECT time_system_variables_test.mask_time_value($Q$ EXPLAIN (COSTS OFF, VERBOS
 
 SELECT time_system_variables_test.mask_time_value($Q$ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "now_test_1", "pipeline": [ { "$addFields": { "nowField" : "$$varRef", "c": { "$lt": [ "$_id", "$$varRef" ] } }} ], "let": { "varRef": "$$NOW" } }') $Q$);
                               mask_time_value                              
----------------------------------------------------------------------
+---------------------------------------------------------------------------
  { "_id" : "1", "a" : "umbor", "nowField" : NOW_SYS_VARIABLE, "c" : true }
  { "_id" : "2", "a" : "gabby", "nowField" : NOW_SYS_VARIABLE, "c" : true }
  { "_id" : "3", "a" : "jo", "nowField" : NOW_SYS_VARIABLE, "c" : true }
@@ -465,7 +465,7 @@ SELECT time_system_variables_test.mask_time_value($Q$ SELECT document FROM bson_
 
 SELECT time_system_variables_test.mask_time_value($Q$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "now_test_1", "pipeline": [ { "$addFields": { "nowField" : "$$varRef", "c": { "$lt": [ "$_id", "$$varRef" ] } }} ], "let": { "varRef": "$$NOW" } }') $Q$);
                                                                                                       mask_time_value                                                                                                      
----------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on documentdb_data.documents_5202 collection
    Output: bson_dollar_add_fields(document, '{ "nowField" : "$$varRef", "c" : { "$lt" : [ "$_id", "$$varRef" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "varRef" : { "$literal" : NOW_SYS_VARIABLE } } }'::bson)
    Recheck Cond: (collection.shard_key_value = '5202'::bigint)
@@ -475,7 +475,7 @@ SELECT time_system_variables_test.mask_time_value($Q$ EXPLAIN (COSTS OFF, VERBOS
 
 SELECT time_system_variables_test.mask_time_value($Q$ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "now_test_1", "pipeline": [ { "$addFields": { "nowField" : "$$NOW" }} ] }') $Q$);
                         mask_time_value                        
----------------------------------------------------------------------
+---------------------------------------------------------------
  { "_id" : "1", "a" : "umbor", "nowField" : NOW_SYS_VARIABLE }
  { "_id" : "2", "a" : "gabby", "nowField" : NOW_SYS_VARIABLE }
  { "_id" : "3", "a" : "jo", "nowField" : NOW_SYS_VARIABLE }
@@ -483,7 +483,7 @@ SELECT time_system_variables_test.mask_time_value($Q$ SELECT document FROM bson_
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "now_test_1", "pipeline": [ { "$addFields": { "nowField" : "$$NOW" }} ] }');
                                                                      QUERY PLAN                                                                      
----------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on documentdb_data.documents_5202 collection
    Output: bson_dollar_add_fields(document, '{ "nowField" : "$$NOW" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    Recheck Cond: (collection.shard_key_value = '5202'::bigint)
@@ -493,7 +493,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('db', '{ "find": "now_test_1", "projection": { "other": "$$varRef" }, "filter": { "$expr": { "$lt": [ "$_id", "$$NOW" ]} }, "let": { "varRef": "3" } }');
                                                                                                                         QUERY PLAN                                                                                                                         
----------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on documentdb_data.documents_5202 collection
    Output: bson_dollar_project_find(document, '{ "other" : "$$varRef" }'::bson, '{ "$expr" : { "$lt" : [ "$_id", "$$NOW" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "varRef" : { "$literal" : "3" } } }'::bson)
    Recheck Cond: (collection.shard_key_value = '5202'::bigint)
@@ -506,51 +506,51 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('db',
 SELECT documentdb_api.insert_one('db','now_test_from','{"_id":1,"a":"alpha","b":["x","y"],"c":10,"d":["m","n"]}',NULL);
 NOTICE:  creating collection
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db','now_test_from','{"_id":2,"a":"beta","b":["p","q"],"c":20,"d":["z"]}',NULL);
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db','now_test_to','{"_id":1,"x":"x","a":"alpha","c":10}',NULL);
 NOTICE:  creating collection
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db','now_test_to','{"_id":2,"x":"p","a":"beta","y":"t","c":20}',NULL);
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db','now_test_to','{"_id":3,"x":"p","a":"beta","y":"z","c":30}',NULL);
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db','now_test_from_2','{"_id":1,"z":"val1","c":10}',NULL);
 NOTICE:  creating collection
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db','now_test_from_2','{"_id":2,"z":"val2","c":20}',NULL);
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT time_system_variables_test.mask_time_value($q$ SELECT document FROM bson_aggregation_pipeline('db','{"aggregate":"now_test_to","pipeline":[{"$lookup":{"from":"now_test_from","pipeline":[{"$match":{"$expr":{"$eq":["$c","$$c"]}}},{"$addFields":{"newC":"$$c","now":"$$NOW"}}],"as":"joined","localField":"a","foreignField":"a","let":{"c":"$c"}}}],"cursor":{}}') $q$);
                                                                                                                                            mask_time_value                                                                                                                                            
----------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "x" : "x", "a" : "alpha", "c" : { "$numberInt" : "10" }, "joined" : [ { "_id" : { "$numberInt" : "1" }, "a" : "alpha", "b" : [ "x", "y" ], "c" : { "$numberInt" : "10" }, "d" : [ "m", "n" ], "newC" : { "$numberInt" : "10" }, "now" : NOW_SYS_VARIABLE } ] }
  { "_id" : { "$numberInt" : "2" }, "x" : "p", "a" : "beta", "y" : "t", "c" : { "$numberInt" : "20" }, "joined" : [ { "_id" : { "$numberInt" : "2" }, "a" : "beta", "b" : [ "p", "q" ], "c" : { "$numberInt" : "20" }, "d" : [ "z" ], "newC" : { "$numberInt" : "20" }, "now" : NOW_SYS_VARIABLE } ] }
  { "_id" : { "$numberInt" : "3" }, "x" : "p", "a" : "beta", "y" : "z", "c" : { "$numberInt" : "30" }, "joined" : [  ] }
@@ -558,7 +558,7 @@ SELECT time_system_variables_test.mask_time_value($q$ SELECT document FROM bson_
 
 SELECT time_system_variables_test.mask_time_value($q$ SELECT document FROM bson_aggregation_pipeline('db','{"aggregate":"now_test_to","pipeline":[{"$lookup":{"from":"now_test_from","pipeline":[{"$sort":{"_id":1}},{"$match":{"$expr":{"$eq":["$c","$$NOW"]}}}],"as":"joined","localField":"a","foreignField":"a","let":{"c":"$c"}}}],"cursor":{}}') $q$);
                                                     mask_time_value                                                     
----------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "x" : "x", "a" : "alpha", "c" : { "$numberInt" : "10" }, "joined" : [  ] }
  { "_id" : { "$numberInt" : "2" }, "x" : "p", "a" : "beta", "y" : "t", "c" : { "$numberInt" : "20" }, "joined" : [  ] }
  { "_id" : { "$numberInt" : "3" }, "x" : "p", "a" : "beta", "y" : "z", "c" : { "$numberInt" : "30" }, "joined" : [  ] }
@@ -566,7 +566,7 @@ SELECT time_system_variables_test.mask_time_value($q$ SELECT document FROM bson_
 
 SELECT time_system_variables_test.mask_time_value($Q$ SELECT document FROM bson_aggregation_pipeline('db','{"aggregate":"now_test_to","pipeline":[{"$lookup":{"from":"now_test_from","pipeline":[{"$addFields":{"extra":"$$NOW"}},{"$lookup":{"from":"now_test_from_2","localField":"z","foreignField":"c","as":"inner","let":{"v":"$c"},"pipeline":[{"$match":{"$expr":{"$eq":["$z","$$v"]}}}]}}],"as":"joined","localField":"a","foreignField":"a"}}],"cursor":{}}') $Q$);
                                                                                                                                    mask_time_value                                                                                                                                    
----------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "x" : "x", "a" : "alpha", "c" : { "$numberInt" : "10" }, "joined" : [ { "_id" : { "$numberInt" : "1" }, "a" : "alpha", "b" : [ "x", "y" ], "c" : { "$numberInt" : "10" }, "d" : [ "m", "n" ], "extra" : NOW_SYS_VARIABLE, "inner" : [  ] } ] }
  { "_id" : { "$numberInt" : "2" }, "x" : "p", "a" : "beta", "y" : "t", "c" : { "$numberInt" : "20" }, "joined" : [ { "_id" : { "$numberInt" : "2" }, "a" : "beta", "b" : [ "p", "q" ], "c" : { "$numberInt" : "20" }, "d" : [ "z" ], "extra" : NOW_SYS_VARIABLE, "inner" : [  ] } ] }
  { "_id" : { "$numberInt" : "3" }, "x" : "p", "a" : "beta", "y" : "z", "c" : { "$numberInt" : "30" }, "joined" : [ { "_id" : { "$numberInt" : "2" }, "a" : "beta", "b" : [ "p", "q" ], "c" : { "$numberInt" : "20" }, "d" : [ "z" ], "extra" : NOW_SYS_VARIABLE, "inner" : [  ] } ] }
@@ -574,7 +574,7 @@ SELECT time_system_variables_test.mask_time_value($Q$ SELECT document FROM bson_
 
 SELECT time_system_variables_test.mask_time_value($Q$ SELECT document FROM bson_aggregation_pipeline('db','{"aggregate":"now_test_to","pipeline":[{"$lookup":{"from":"now_test_from","pipeline":[{"$addFields":{"extra":"$$NOW"}},{"$lookup":{"from":"now_test_from_2","localField":"z","foreignField":"c","as":"inner","let":{"v":"$$NOW"},"pipeline":[{"$match":{"$expr":{"$eq":["$z","$$v"]}}}]}}],"as":"joined","localField":"a","foreignField":"a"}}],"cursor":{}}') $Q$);
                                                                                                                                    mask_time_value                                                                                                                                    
----------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "x" : "x", "a" : "alpha", "c" : { "$numberInt" : "10" }, "joined" : [ { "_id" : { "$numberInt" : "1" }, "a" : "alpha", "b" : [ "x", "y" ], "c" : { "$numberInt" : "10" }, "d" : [ "m", "n" ], "extra" : NOW_SYS_VARIABLE, "inner" : [  ] } ] }
  { "_id" : { "$numberInt" : "2" }, "x" : "p", "a" : "beta", "y" : "t", "c" : { "$numberInt" : "20" }, "joined" : [ { "_id" : { "$numberInt" : "2" }, "a" : "beta", "b" : [ "p", "q" ], "c" : { "$numberInt" : "20" }, "d" : [ "z" ], "extra" : NOW_SYS_VARIABLE, "inner" : [  ] } ] }
  { "_id" : { "$numberInt" : "3" }, "x" : "p", "a" : "beta", "y" : "z", "c" : { "$numberInt" : "30" }, "joined" : [ { "_id" : { "$numberInt" : "2" }, "a" : "beta", "b" : [ "p", "q" ], "c" : { "$numberInt" : "20" }, "d" : [ "z" ], "extra" : NOW_SYS_VARIABLE, "inner" : [  ] } ] }
@@ -584,7 +584,7 @@ SELECT document FROM bson_aggregation_pipeline('db','{ "aggregate":"now_test_to"
 \set result0 :document
 SELECT :'result0'::json->>'nowField1' = :'result0'::json->'joined'->0->>'nowField2';
  ?column? 
----------------------------------------------------------------------
+----------
  t
 (1 row)
 
@@ -592,7 +592,7 @@ SELECT :'result0'::json->>'nowField1' = :'result0'::json->'joined'->0->>'nowFiel
 SELECT documentdb_api.insert_one('db','now_test_2','{"_id": 0}', NULL);
 NOTICE:  creating collection
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -601,7 +601,7 @@ SELECT document FROM bson_aggregation_find('db', '{ "find": "now_test_2", "proje
 \set result1 :document
 SELECT pg_sleep(2);
  pg_sleep 
----------------------------------------------------------------------
+----------
  
 (1 row)
 
@@ -609,7 +609,7 @@ SELECT document FROM bson_aggregation_find('db', '{ "find": "now_test_2", "proje
 \set result2 :document
 SELECT pg_sleep(2);
  pg_sleep 
----------------------------------------------------------------------
+----------
  
 (1 row)
 
@@ -617,7 +617,7 @@ SELECT document FROM bson_aggregation_find('db', '{ "find": "now_test_2", "proje
 \set result3 :document
 SELECT :'result1'::bson->>'nowField' = :'result2'::bson->>'nowField' AND :'result2'::bson->>'nowField' = :'result3'::bson->>'nowField';
  ?column? 
----------------------------------------------------------------------
+----------
  t
 (1 row)
 
@@ -627,7 +627,7 @@ SELECT document FROM bson_aggregation_find('db', '{ "find": "now_test_2", "proje
 \set result4 :document
 SELECT pg_sleep(2);
  pg_sleep 
----------------------------------------------------------------------
+----------
  
 (1 row)
 
@@ -635,7 +635,7 @@ SELECT document FROM bson_aggregation_find('db', '{ "find": "now_test_2", "proje
 \set result5 :document
 SELECT pg_sleep(2);
  pg_sleep 
----------------------------------------------------------------------
+----------
  
 (1 row)
 
@@ -643,14 +643,14 @@ SELECT document FROM bson_aggregation_find('db', '{ "find": "now_test_2", "proje
 \set result6 :document
 SELECT :'result4'::bson->>'nowField' <> :'result5'::bson->>'nowField' AND :'result5'::bson->>'nowField' <> :'result6'::bson->>'nowField';
  ?column? 
----------------------------------------------------------------------
+----------
  t
 (1 row)
 
 -- Earlier queries should have higher $$NOW values
 SELECT :'result4'::bson->>'nowField' < :'result5'::bson->>'nowField' AND :'result5'::bson->>'nowField' < :'result6'::bson->>'nowField';
  ?column? 
----------------------------------------------------------------------
+----------
  t
 (1 row)
 
@@ -794,7 +794,7 @@ END;
 $$ LANGUAGE plpgsql;
 SELECT time_system_variables_test.mask_time_value($Q$ SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "now_cursor_tests", "pipeline": [ { "$addFields": { "nowField" : "$$NOW" }} ], "cursor": { "batchSize": 2 } }', 4294967294); $Q$);
                                                                                                                                     mask_time_value                                                                                                                                    
----------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "4294967294" }, "ns" : "db.now_cursor_tests", "firstBatch" : [ { "_id" : { "$numberInt" : "1" }, "nowField" : NOW_SYS_VARIABLE }, { "_id" : { "$numberInt" : "2" }, "nowField" : NOW_SYS_VARIABLE } ] }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -912,19 +912,19 @@ SELECT * FROM time_system_variables_test.drain_aggregation_query(loopCount => 4,
 SELECT documentdb_api.insert_one('db','coll001','{"_id":1,"a":1}');
 NOTICE:  creating collection
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db','coll001','{"_id":2,"a":1}');
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('db','coll001','{"_id":3,"a":1}');
                               insert_one                              
----------------------------------------------------------------------
+----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
@@ -948,7 +948,7 @@ FROM bson_aggregation_pipeline(
   }'
 );
                       document                       
----------------------------------------------------------------------
+-----------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "result" : "ab" }
  { "_id" : { "$numberInt" : "2" }, "result" : "ab" }
  { "_id" : { "$numberInt" : "3" }, "result" : "ab" }
@@ -974,7 +974,7 @@ FROM bson_aggregation_pipeline(
   }'
 );
                        document                       
----------------------------------------------------------------------
+------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "result" : false }
  { "_id" : { "$numberInt" : "2" }, "result" : false }
  { "_id" : { "$numberInt" : "3" }, "result" : false }
@@ -1000,7 +1000,7 @@ FROM bson_aggregation_pipeline(
   }'
 );
                       document                       
----------------------------------------------------------------------
+-----------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "result" : true }
  { "_id" : { "$numberInt" : "2" }, "result" : true }
  { "_id" : { "$numberInt" : "3" }, "result" : true }
@@ -1032,7 +1032,7 @@ FROM bson_aggregation_pipeline(
   }'
 );
                            document                           
----------------------------------------------------------------------
+--------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "result" : "outer-inner" }
  { "_id" : { "$numberInt" : "2" }, "result" : "outer-inner" }
  { "_id" : { "$numberInt" : "3" }, "result" : "outer-inner" }
@@ -1065,7 +1065,7 @@ FROM bson_aggregation_pipeline(
   }'
 );
                                     document                                     
----------------------------------------------------------------------
+---------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "result" : [ "item-1", "item-2", "item-3" ] }
  { "_id" : { "$numberInt" : "2" }, "result" : [ "item-1", "item-2", "item-3" ] }
  { "_id" : { "$numberInt" : "3" }, "result" : [ "item-1", "item-2", "item-3" ] }
@@ -1098,7 +1098,7 @@ FROM bson_aggregation_pipeline(
   }'
 );  
                                                          document                                                          
----------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "result" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] }
  { "_id" : { "$numberInt" : "2" }, "result" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] }
  { "_id" : { "$numberInt" : "3" }, "result" : [ { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" } ] }
@@ -1191,5 +1191,51 @@ FROM bson_aggregation_pipeline(
                                                                                            document                                                                                            
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "result" : { "prev" : { "prev" : { "prev" : {  }, "next" : { "$numberInt" : "1" } }, "next" : { "$numberInt" : "2" } }, "next" : { "$numberInt" : "3" } } }
+(1 row)
+
+-- $group keys that read a "let" variable, at the depths the group key analysis has to
+-- walk through: the bare variable, inside a document, inside an operator argument array,
+-- and buried under alternating documents and arrays.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "coll001", "pipeline": [ { "$group": { "_id": "$$bonus", "c": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "let": { "bonus": 100 } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "100" }, "c" : { "$numberInt" : "3" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "coll001", "pipeline": [ { "$group": { "_id": { "k": "$$bonus" }, "c": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "let": { "bonus": 100 } }');
+                                   document                                   
+------------------------------------------------------------------------------
+ { "_id" : { "k" : { "$numberInt" : "100" } }, "c" : { "$numberInt" : "3" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "coll001", "pipeline": [ { "$group": { "_id": { "$add": [ "$_id", "$$bonus" ] }, "c": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "let": { "bonus": 100 } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "101" }, "c" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "102" }, "c" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "103" }, "c" : { "$numberInt" : "1" } }
+(3 rows)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "coll001", "pipeline": [ { "$group": { "_id": { "a": { "b": [ { "c": "$$bonus" } ] } }, "c": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ], "let": { "bonus": 100 } }');
+                                               document                                               
+------------------------------------------------------------------------------------------------------
+ { "_id" : { "a" : { "b" : [ { "c" : { "$numberInt" : "100" } } ] } }, "c" : { "$numberInt" : "3" } }
+(1 row)
+
+-- an expression-local variable in the key resolves the same way
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "coll001", "pipeline": [ { "$group": { "_id": { "$let": { "vars": { "doubled": { "$multiply": [ "$_id", 2 ] } }, "in": "$$doubled" } }, "c": { "$sum": 1 } } }, { "$sort": { "_id": 1 } } ] }');
+                             document                             
+------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "c" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "4" }, "c" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "6" }, "c" : { "$numberInt" : "1" } }
+(3 rows)
+
+-- a key that reads no variable at all still groups correctly while "let" is in scope for
+-- the accumulator
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "coll001", "pipeline": [ { "$group": { "_id": "$a", "s": { "$sum": "$$bonus" } } }, { "$sort": { "_id": 1 } } ], "let": { "bonus": 100 } }');
+                              document                              
+--------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "s" : { "$numberInt" : "300" } }
 (1 row)
 
