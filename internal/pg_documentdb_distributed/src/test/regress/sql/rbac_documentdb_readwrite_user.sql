@@ -6,7 +6,17 @@ SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog;
 
 SHOW documentdb.enableRbacCompliantSchemas;
 
+-- A readWriteAnyDatabase-only user is rejected while the feature flag is off.
+SET documentdb.enable_readwrite_any_database_role_enforcement TO OFF;
+
+SELECT documentdb_api.create_user('{"createUser":"user_rw_rejected", "pwd":"Password@9", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}]}');
+
+-- Provisioning a readWriteAnyDatabase-only user requires the feature flag.
+SET documentdb.enable_readwrite_any_database_role_enforcement TO ON;
+
 SELECT documentdb_api.create_user('{"createUser":"user_rw", "pwd":"Password@9", "roles":[{"role":"readWriteAnyDatabase","db":"admin"}]}');
+
+RESET documentdb.enable_readwrite_any_database_role_enforcement;
 
 \c regression user_rw
 
