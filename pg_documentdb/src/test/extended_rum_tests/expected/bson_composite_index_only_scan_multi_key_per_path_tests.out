@@ -438,14 +438,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                     run_explain_and_trim                                                                                                                                                                                                                                                                     
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$region" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 's'::text, documentdb_api_internal.bsonsumwithexpr(document, '{ "" : "$tags" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$region" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$region" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$region" }'::bson, true)), 's'::text, documentdb_api_internal.bsonsumwithexpr(document, '{ "" : "$tags" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$region" }'::bson, true))
+   Group Key: (bson_expression_get(collection.document, '{ "" : "$region" }'::bson, true))
    ->  Sort (actual rows=2 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$region" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$region" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(document, '{ "" : "$region" }'::bson, true)), document
+         Sort Key: (bson_expression_get(collection.document, '{ "" : "$region" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$region" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: bson_expression_get(document, '{ "" : "$region" }'::bson, true), document
                namespaceName: iosmk_db.coll
                indexName: region_tags_1
                indexKey: {"region": 1,"tags": 1}
@@ -662,10 +662,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                                                                                      
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=2 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$grade" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'total'::text, documentdb_api_internal.bsonsumwithexpr(document, '{ "" : "$score" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$grade" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$grade" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$grade" }'::bson, true)), 'total'::text, documentdb_api_internal.bsonsumwithexpr(document, '{ "" : "$score" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$grade" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$grade" }'::bson, true)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$grade" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$grade" }'::bson, true), document
          namespaceName: iosmk_db.scalar_coll
          indexName: grade_score_1
          indexKey: {"grade": 1,"score": 1}
@@ -778,14 +778,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                                                                                            
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=2 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$zone" }'::bson, true)), 'n'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$zone" }'::bson, true))
+   Group Key: (bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true))
    ->  Sort (actual rows=3 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(document, '{ "" : "$zone" }'::bson, true)), document
+         Sort Key: (bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: bson_expression_get(document, '{ "" : "$zone" }'::bson, true), document
                namespaceName: iosmk_db.coverage_coll
                indexName: city_zone_visits_1
                indexKey: {"city": 1,"zone": 1,"visits": 1}
@@ -829,14 +829,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                                                                                                                              
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=2 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$visits" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$visits" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$visits" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$visits" }'::bson, true)), 'n'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$visits" }'::bson, true))
+   Group Key: (bson_expression_get(collection.document, '{ "" : "$visits" }'::bson, true))
    ->  Sort (actual rows=2 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$visits" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$visits" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(document, '{ "" : "$visits" }'::bson, true)), document
+         Sort Key: (bson_expression_get(collection.document, '{ "" : "$visits" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$visits" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: bson_expression_get(document, '{ "" : "$visits" }'::bson, true), document
                namespaceName: iosmk_db.coverage_coll
                indexName: city_zone_visits_1
                indexKey: {"city": 1,"zone": 1,"visits": 1}
@@ -866,14 +866,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                    run_explain_and_trim                                                                                                                                                                                                                                                                   
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=2 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'lo'::text, documentdb_api_internal.bsonminwithexpr(document, '{ "" : "$zone" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$zone" }'::bson, true)), 'lo'::text, documentdb_api_internal.bsonminwithexpr(document, '{ "" : "$zone" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$zone" }'::bson, true))
+   Group Key: (bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true))
    ->  Sort (actual rows=3 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(document, '{ "" : "$zone" }'::bson, true)), document
+         Sort Key: (bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: bson_expression_get(document, '{ "" : "$zone" }'::bson, true), document
                namespaceName: iosmk_db.coverage_coll
                indexName: city_zone_visits_1
                indexKey: {"city": 1,"zone": 1,"visits": 1}
@@ -896,14 +896,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                                                                                                      
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=2 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'total'::text, documentdb_api_internal.bsonsumwithexpr(document, '{ "" : "$visits" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$zone" }'::bson, true)), 'total'::text, documentdb_api_internal.bsonsumwithexpr(document, '{ "" : "$visits" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$zone" }'::bson, true))
+   Group Key: (bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true))
    ->  Sort (actual rows=3 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(document, '{ "" : "$zone" }'::bson, true)), document
+         Sort Key: (bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: bson_expression_get(document, '{ "" : "$zone" }'::bson, true), document
                namespaceName: iosmk_db.coverage_coll
                indexName: city_zone_visits_1
                indexKey: {"city": 1,"zone": 1,"visits": 1}
@@ -924,14 +924,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                                                                                      
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=2 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'av'::text, documentdb_api_internal.bsonaveragewithexpr(document, '{ "" : "$visits" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$zone" }'::bson, true)), 'av'::text, documentdb_api_internal.bsonaveragewithexpr(document, '{ "" : "$visits" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$zone" }'::bson, true))
+   Group Key: (bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true))
    ->  Sort (actual rows=3 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(document, '{ "" : "$zone" }'::bson, true)), document
+         Sort Key: (bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: bson_expression_get(document, '{ "" : "$zone" }'::bson, true), document
                namespaceName: iosmk_db.coverage_coll
                indexName: city_zone_visits_1
                indexKey: {"city": 1,"zone": 1,"visits": 1}
@@ -952,14 +952,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                     run_explain_and_trim                                                                                                                                                                                                                                                                    
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=2 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'hi'::text, documentdb_api_internal.bsonmaxwithexpr(document, '{ "" : "$visits" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$zone" }'::bson, true)), 'hi'::text, documentdb_api_internal.bsonmaxwithexpr(document, '{ "" : "$visits" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$zone" }'::bson, true))
+   Group Key: (bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true))
    ->  Sort (actual rows=3 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(document, '{ "" : "$zone" }'::bson, true)), document
+         Sort Key: (bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: bson_expression_get(document, '{ "" : "$zone" }'::bson, true), document
                namespaceName: iosmk_db.coverage_coll
                indexName: city_zone_visits_1
                indexKey: {"city": 1,"zone": 1,"visits": 1}
@@ -981,14 +981,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                                                                                                                              
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$visits" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$visits" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$visits" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$visits" }'::bson, true)), 'n'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$visits" }'::bson, true))
+   Group Key: (bson_expression_get(collection.document, '{ "" : "$visits" }'::bson, true))
    ->  Sort (actual rows=3 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$visits" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$visits" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(document, '{ "" : "$visits" }'::bson, true)), document
+         Sort Key: (bson_expression_get(collection.document, '{ "" : "$visits" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$visits" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: bson_expression_get(document, '{ "" : "$visits" }'::bson, true), document
                namespaceName: iosmk_db.coverage_coll
                indexName: city_zone_visits_1
                indexKey: {"city": 1,"zone": 1,"visits": 1}
@@ -1009,14 +1009,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                                                                                            
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=2 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$zone" }'::bson, true)), 'n'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$zone" }'::bson, true))
+   Group Key: (bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true))
    ->  Sort (actual rows=3 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(document, '{ "" : "$zone" }'::bson, true)), document
+         Sort Key: (bson_expression_get(collection.document, '{ "" : "$zone" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$zone" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: bson_expression_get(document, '{ "" : "$zone" }'::bson, true), document
                namespaceName: iosmk_db.coverage_coll
                indexName: city_zone_visits_1
                indexKey: {"city": 1,"zone": 1,"visits": 1}

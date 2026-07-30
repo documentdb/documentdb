@@ -768,7 +768,7 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
                                                                    QUERY PLAN                                                                   
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=100 loops=1)
-   Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
          indexName: a_1
          indexKey: {"a": 1,"_id": 1}
@@ -788,7 +788,7 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
                                                                    QUERY PLAN                                                                   
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=100 loops=1)
-   Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
          indexName: a_1
          indexKey: {"a": 1,"_id": 1}
@@ -808,7 +808,7 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
                                                                    QUERY PLAN                                                                   
 ---------------------------------------------------------------------
  HashAggregate (actual rows=101 loops=1)
-   Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true)
    Batches: 1  Memory Usage: 40kB
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=101 loops=1)
          indexName: a_1_id_1
@@ -2007,7 +2007,7 @@ EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bs
                                                                    QUERY PLAN                                                                   
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Group Key: bson_expression_get(document, '{ "" : "$a" }'::bson, true)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=100 loops=1)
          indexName: a_1
          indexKey: {"a": 1}

@@ -157,9 +157,9 @@ $cmd$);
    Sort Method: quicksort  Memory: xxxkB
    ->  Subquery Scan on agg_stage_3 (actual rows=2 loops=1)
          ->  GroupAggregate (actual rows=2 loops=1)
-               Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true)), (bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true))
                ->  Sort (actual rows=17 loops=1)
-                     Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Sort Key: (bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true)), (bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true))
                      Sort Method: quicksort  Memory: xxxkB
                      ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
                            namespaceName: grpq_db.docs
@@ -297,9 +297,9 @@ $cmd$);
    Sort Method: quicksort  Memory: xxxkB
    ->  Subquery Scan on agg_stage_3 (actual rows=12 loops=1)
          ->  GroupAggregate (actual rows=12 loops=1)
-               Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true)), (bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true))
                ->  Sort (actual rows=22 loops=1)
-                     Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Sort Key: (bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true)), (bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true))
                      Sort Method: quicksort  Memory: xxxkB
                      ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
                            namespaceName: grpq_db.docs
@@ -534,9 +534,9 @@ $cmd$);
    Sort Method: quicksort  Memory: xxxkB
    ->  Subquery Scan on agg_stage_3 (actual rows=12 loops=1)
          ->  GroupAggregate (actual rows=12 loops=1)
-               Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true)), (bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true))
                ->  Sort (actual rows=22 loops=1)
-                     Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Sort Key: (bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true)), (bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true))
                      Sort Method: quicksort  Memory: xxxkB
                      ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
                            namespaceName: grpq_db.docs
@@ -622,9 +622,9 @@ $cmd$);
    Sort Method: quicksort  Memory: xxxkB
    ->  Subquery Scan on agg_stage_3 (actual rows=2 loops=1)
          ->  GroupAggregate (actual rows=2 loops=1)
-               Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true)), (bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true))
                ->  Sort (actual rows=17 loops=1)
-                     Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Sort Key: (bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true)), (bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true))
                      Sort Method: quicksort  Memory: xxxkB
                      ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=17 loops=1)
                            namespaceName: grpq_db.docs
@@ -723,9 +723,9 @@ $cmd$);
    Sort Method: quicksort  Memory: xxxkB
    ->  Subquery Scan on agg_stage_3 (actual rows=12 loops=1)
          ->  GroupAggregate (actual rows=12 loops=1)
-               Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true)), (bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true))
                ->  Sort (actual rows=22 loops=1)
-                     Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Sort Key: (bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true)), (bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true))
                      Sort Method: quicksort  Memory: xxxkB
                      ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
                            namespaceName: grpq_db.docs
@@ -902,9 +902,9 @@ $cmd$);
    Sort Method: quicksort  Memory: xxxkB
    ->  Subquery Scan on agg_stage_3 (actual rows=12 loops=1)
          ->  GroupAggregate (actual rows=12 loops=1)
-               Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true)), (bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true))
                ->  Sort (actual rows=22 loops=1)
-                     Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Sort Key: (bson_expression_get(collection.document, '{ "" : "$cat" }'::bson, true)), (bson_expression_get(collection.document, '{ "" : "$sub" }'::bson, true))
                      Sort Method: quicksort  Memory: xxxkB
                      ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=22 loops=1)
                            namespaceName: grpq_db.docs

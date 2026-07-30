@@ -431,10 +431,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                               
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$country" }'::bson, true)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(document, '{ "" : "$country" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true)
    ->  Index Scan using country_1 on documentdb_data.documents_9101 collection (actual rows=9 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$country" }'::bson, true), document
          Index Cond: (collection.document @>= '{ "country" : "Mexico" }'::bson)
          Order By: (collection.document |-<> '{ "country" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
@@ -939,14 +939,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstRent'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"city\" : { \"$numberInt\" : \"1\" } }","{ \"sqft\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true)), 'firstRent'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"city\" : { \"$numberInt\" : \"1\" } }","{ \"sqft\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true))
+   Group Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true))
    ->  Sort (actual rows=20 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true)), agg_stage_0.document
+         Sort Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Subquery Scan on agg_stage_0 (actual rows=20 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+               Output: bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true), agg_stage_0.document
                ->  Incremental Sort (actual rows=20 loops=1)
                      Output: collection.document, (bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson)), (bson_orderby(collection.document, '{ "sqft" : { "$numberInt" : "1" } }'::bson))
                      Sort Key: (bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "sqft" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
@@ -963,14 +963,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstSqft'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"city\" : { \"$numberInt\" : \"1\" } }","{ \"rent\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true)), 'firstSqft'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"city\" : { \"$numberInt\" : \"1\" } }","{ \"rent\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true))
+   Group Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true))
    ->  Sort (actual rows=20 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true)), agg_stage_0.document
+         Sort Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Subquery Scan on agg_stage_0 (actual rows=20 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+               Output: bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true), agg_stage_0.document
                ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
                      Output: collection.document, bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "rent" : { "$numberInt" : "1" } }'::bson)
                      Index Cond: ((collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "rent" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
@@ -982,10 +982,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                                                                          
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -996,10 +996,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                       
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1010,10 +1010,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                                                                          
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1025,10 +1025,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                                                                                           
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgRent'::text, bsonaverage(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'avgRent'::text, bsonaverage(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1039,10 +1039,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                                                                                           
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgRent'::text, bsonaverage(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'avgRent'::text, bsonaverage(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=18 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: ((collection.document @> '{ "rent" : { "$numberInt" : "2000" } }'::bson) AND (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1053,10 +1053,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                                                                                           
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=0 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgRent'::text, bsonaverage(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'avgRent'::text, bsonaverage(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=0 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: ((collection.document @> '{ "rent" : { "$numberInt" : "10000" } }'::bson) AND (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1067,10 +1067,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                                                                                           
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgRent'::text, bsonaverage(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'avgRent'::text, bsonaverage(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=12 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Filter: (collection.document @> '{ "sqft" : { "$numberInt" : "1000" } }'::bson)
@@ -1082,14 +1082,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                                                                                           
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=20 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgRent'::text, bsonaverage(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$sqft" }'::bson, true)), 'avgRent'::text, bsonaverage(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$sqft" }'::bson, true))
+   Group Key: (bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true))
    ->  Sort (actual rows=20 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(document, '{ "" : "$sqft" }'::bson, true)), document
+         Sort Key: (bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Index Scan using _id_ on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: bson_expression_get(document, '{ "" : "$sqft" }'::bson, true), document
                Index Cond: (collection.shard_key_value = '9103'::bigint)
 (10 rows)
 
@@ -1099,10 +1099,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                                                         
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'minRent'::text, bsonmin(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'minRent'::text, bsonmin(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1113,10 +1113,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                                                         
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'minRent'::text, bsonmin(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'minRent'::text, bsonmin(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=18 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: ((collection.document @> '{ "rent" : { "$numberInt" : "2000" } }'::bson) AND (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1127,10 +1127,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                                                         
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=0 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'minRent'::text, bsonmin(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'minRent'::text, bsonmin(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=0 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: ((collection.document @> '{ "rent" : { "$numberInt" : "10000" } }'::bson) AND (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1141,10 +1141,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                                                         
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'minRent'::text, bsonmin(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'minRent'::text, bsonmin(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=12 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Filter: (collection.document @> '{ "sqft" : { "$numberInt" : "1000" } }'::bson)
@@ -1156,14 +1156,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                                                         
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=20 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'minRent'::text, bsonmin(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$sqft" }'::bson, true)), 'minRent'::text, bsonmin(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$sqft" }'::bson, true))
+   Group Key: (bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true))
    ->  Sort (actual rows=20 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(document, '{ "" : "$sqft" }'::bson, true)), document
+         Sort Key: (bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Index Scan using _id_ on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: bson_expression_get(document, '{ "" : "$sqft" }'::bson, true), document
                Index Cond: (collection.shard_key_value = '9103'::bigint)
 (10 rows)
 
@@ -1173,10 +1173,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                                                         
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'maxRent'::text, bsonmax(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'maxRent'::text, bsonmax(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1187,10 +1187,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                                                         
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'maxRent'::text, bsonmax(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'maxRent'::text, bsonmax(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=18 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: ((collection.document @> '{ "rent" : { "$numberInt" : "2000" } }'::bson) AND (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1201,14 +1201,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                                                         
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=20 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'maxRent'::text, bsonmax(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$sqft" }'::bson, true)), 'maxRent'::text, bsonmax(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$sqft" }'::bson, true))
+   Group Key: (bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true))
    ->  Sort (actual rows=20 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(document, '{ "" : "$sqft" }'::bson, true)), document
+         Sort Key: (bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Index Scan using _id_ on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: bson_expression_get(document, '{ "" : "$sqft" }'::bson, true), document
                Index Cond: (collection.shard_key_value = '9103'::bigint)
 (10 rows)
 
@@ -1218,10 +1218,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                                                                          
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1232,10 +1232,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                                                                          
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=18 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: ((collection.document @> '{ "rent" : { "$numberInt" : "2000" } }'::bson) AND (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1246,10 +1246,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                                                                          
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalSqft'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'totalSqft'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
@@ -1260,10 +1260,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                       
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1274,10 +1274,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                       
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=2 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=10 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: ((collection.document @> '{ "rent" : { "$numberInt" : "3000" } }'::bson) AND (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1288,14 +1288,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                       
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=20 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$sqft" }'::bson, true)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (bson_expression_get(document, '{ "" : "$sqft" }'::bson, true))
+   Group Key: (bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true))
    ->  Sort (actual rows=20 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(document, '{ "" : "$sqft" }'::bson, true)), document
+         Sort Key: (bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Index Scan using _id_ on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+               Output: bson_expression_get(document, '{ "" : "$sqft" }'::bson, true), document
                Index Cond: (collection.shard_key_value = '9103'::bigint)
 (10 rows)
 
@@ -1305,10 +1305,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                                                                                               
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstRent'::text, bsonfirstonsorted(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'firstRent'::text, bsonfirstonsorted(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1319,10 +1319,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                                                                                              
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'lastRent'::text, bsonlastonsorted(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'lastRent'::text, bsonlastonsorted(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1333,10 +1333,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                                                                                               
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstSqft'::text, bsonfirstonsorted(documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'firstSqft'::text, bsonfirstonsorted(documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
@@ -1346,10 +1346,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                                                                                              
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'lastSqft'::text, bsonlastonsorted(documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'lastSqft'::text, bsonlastonsorted(documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
@@ -1360,10 +1360,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'cnt'::text, documentdb_api_internal.bsoncount(1), 'minRent'::text, bsonmin(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'maxRent'::text, bsonmax(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'cnt'::text, documentdb_api_internal.bsoncount(1), 'minRent'::text, bsonmin(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'maxRent'::text, bsonmax(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1374,10 +1374,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                        
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgSqft'::text, bsonaverage(documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgSqft'::text, bsonaverage(documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
@@ -1388,10 +1388,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                                                                          
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
@@ -1401,10 +1401,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                                                                          
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1677,10 +1677,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    ->  Subquery Scan on agg_stage_2 (actual rows=2 loops=1)
          Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=2 loops=1)
-               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true)
                ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9105 collection (actual rows=2 loops=1)
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true), collection.document
                      Index Cond: (collection.document @= '{ "city" : "Seattle" }'::bson)
                      Order By: (collection.document |-<> '{ "rent" : { "$numberInt" : "1" } }'::bson)
                      Heap Fetches: xxx
@@ -1777,10 +1777,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true)
                ->  Index Only Scan using addr_city_rent_1 on documentdb_data.documents_9107 collection (actual rows=10 loops=1)
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true), collection.document
                      Index Cond: (collection.document @<> '{ "addr.city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                      Order By: (collection.document |-<> '{ "addr.city" : { "$numberInt" : "1" } }'::bson)
                      Heap Fetches: xxx
@@ -1805,10 +1805,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    ->  Subquery Scan on agg_stage_1 (actual rows=3 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgRent'::text, bsonaverage(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'minRent'::text, bsonmin(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'maxRent'::text, bsonmax(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgRent'::text, bsonaverage(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'minRent'::text, bsonmin(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'maxRent'::text, bsonmax(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true)
                ->  Index Only Scan using addr_city_rent_1 on documentdb_data.documents_9107 collection (actual rows=10 loops=1)
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true), collection.document
                      Index Cond: (collection.document @<> '{ "addr.city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                      Order By: (collection.document |-<> '{ "addr.city" : { "$numberInt" : "1" } }'::bson)
                      Heap Fetches: xxx
@@ -1827,10 +1827,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                                                                                  
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$addr.rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$addr.rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true)
    ->  Index Only Scan using addr_city_rent_1 on documentdb_data.documents_9107 collection (actual rows=4 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true), document
          Index Cond: (collection.document @= '{ "addr.city" : "Seattle" }'::bson)
          Order By: (collection.document |-<> '{ "addr.city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -1853,10 +1853,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    ->  Subquery Scan on agg_stage_2 (actual rows=2 loops=1)
          Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=2 loops=1)
-               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true)
                ->  Index Only Scan using addr_city_rent_1 on documentdb_data.documents_9107 collection (actual rows=6 loops=1)
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true), collection.document
                      Index Cond: ((collection.document @> '{ "addr.rent" : { "$numberInt" : "3000" } }'::bson) AND (collection.document @<> '{ "addr.city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
                      Order By: (collection.document |-<> '{ "addr.city" : { "$numberInt" : "1" } }'::bson)
                      Heap Fetches: xxx
@@ -1877,11 +1877,11 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                       
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate (actual rows=10 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$addr" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$addr" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$addr" }'::bson, true)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (bson_expression_get(document, '{ "" : "$addr" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$addr" }'::bson, true)
    Batches: 1  Memory Usage: xxxkB
    ->  Index Scan using addr_city_rent_1 on documentdb_data.documents_9107 collection (actual rows=10 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$addr" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$addr" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "addr.city" : { "fullScan" : true } }'::bson)
 (7 rows)
 
@@ -1891,10 +1891,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                                                                                                                
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgSqft'::text, bsonaverage(documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true)), 'avgSqft'::text, bsonaverage(documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true)
    ->  Index Scan using addr_city_rent_1 on documentdb_data.documents_9107 collection (actual rows=10 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true), document
          Index Cond: (collection.document @<> '{ "addr.city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
          Order By: (collection.document |-<> '{ "addr.city" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
@@ -1915,11 +1915,11 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    ->  Subquery Scan on agg_stage_1 (actual rows=10 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id.city" : { "$numberInt" : "1" } }'::bson), bson_orderby(agg_stage_1.document, '{ "_id.rent" : { "$numberInt" : "1" } }'::bson)
          ->  HashAggregate (actual rows=10 loops=1)
-               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "city" : "$addr.city", "rent" : "$addr.rent" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "city" : "$addr.city", "rent" : "$addr.rent" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "city" : "$addr.city", "rent" : "$addr.rent" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : { "city" : "$addr.city", "rent" : "$addr.rent" } }'::bson, true)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (bson_expression_get(collection.document, '{ "" : { "city" : "$addr.city", "rent" : "$addr.rent" } }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : { "city" : "$addr.city", "rent" : "$addr.rent" } }'::bson, true)
                Batches: 1  Memory Usage: xxxkB
                ->  Index Scan using addr_city_rent_1 on documentdb_data.documents_9107 collection (actual rows=10 loops=1)
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "city" : "$addr.city", "rent" : "$addr.rent" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : { "city" : "$addr.city", "rent" : "$addr.rent" } }'::bson, true), collection.document
                      Index Cond: (collection.document @<> '{ "addr.city" : { "fullScan" : true } }'::bson)
 (13 rows)
 
@@ -1957,11 +1957,11 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    ->  Subquery Scan on agg_stage_2 (actual rows=2 loops=1)
          Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  HashAggregate (actual rows=2 loops=1)
-               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.geo.zip" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.geo.zip" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.geo.zip" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$addr.geo.zip" }'::bson, true)), 'cnt'::text, documentdb_api_internal.bsoncount(1)), (bson_expression_get(collection.document, '{ "" : "$addr.geo.zip" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$addr.geo.zip" }'::bson, true)
                Batches: 1  Memory Usage: xxxkB
                ->  Index Only Scan using addr_city_geo_zip_1 on documentdb_data.documents_9107 collection (actual rows=4 loops=1)
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.geo.zip" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$addr.geo.zip" }'::bson, true), collection.document
                      Index Cond: (collection.document @= '{ "addr.city" : "Seattle" }'::bson)
                      Heap Fetches: xxx
 (14 rows)
@@ -2005,10 +2005,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                             
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$city" }'::bson, true))), (bson_expression_get(document, '{ "" : "$city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true)
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=7 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$city" }'::bson, true), document
          Index Cond: (collection.document @= '{ "city" : "Seattle" }'::bson)
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -2025,10 +2025,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                   run_explain_and_trim                                                                                                                                                                                  
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true))), (bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$addr.city" }'::bson, true)
    ->  Index Only Scan using addr_city_geo_zip_1 on documentdb_data.documents_9107 collection (actual rows=4 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$addr.city" }'::bson, true), document
          Index Cond: (collection.document @= '{ "addr.city" : "Seattle" }'::bson)
          Order By: (collection.document |-<> '{ "addr.city" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx
@@ -2046,11 +2046,11 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                             
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate (actual rows=7 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$sqft" }'::bson, true))), (bson_expression_get(document, '{ "" : "$sqft" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$sqft" }'::bson, true)
    Batches: 1  Memory Usage: xxxkB
    ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=7 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$sqft" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$sqft" }'::bson, true), document
          Index Cond: (collection.document @= '{ "city" : "Seattle" }'::bson)
 (7 rows)
 
@@ -2083,10 +2083,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
          Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=3 loops=1)
-               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true))), (bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true)
                ->  Index Scan using country_1 on documentdb_data.documents_9101 collection (actual rows=10 loops=1)
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true), collection.document
                      Index Cond: (collection.document @>= '{ "country" : "Mexico" }'::bson)
                      Order By: (collection.document |-<> '{ "country" : { "$numberInt" : "1" } }'::bson)
 (13 rows)
@@ -2111,11 +2111,11 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    ->  Subquery Scan on agg_stage_1 (actual rows=15 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  HashAggregate (actual rows=15 loops=1)
-               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true))), (bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true)
                Batches: 1  Memory Usage: xxxkB
                ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$rent" }'::bson, true), collection.document
                      Index Cond: (collection.document @<> '{ "rent" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                      Heap Fetches: xxx
 (14 rows)
@@ -2154,11 +2154,11 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    ->  Subquery Scan on agg_stage_1 (actual rows=20 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id.city" : { "$numberInt" : "1" } }'::bson), bson_orderby(agg_stage_1.document, '{ "_id.rent" : { "$numberInt" : "1" } }'::bson)
          ->  HashAggregate (actual rows=20 loops=1)
-               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "city" : "$city", "rent" : "$rent" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "city" : "$city", "rent" : "$rent" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "city" : "$city", "rent" : "$rent" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : { "city" : "$city", "rent" : "$rent" } }'::bson, true))), (bson_expression_get(collection.document, '{ "" : { "city" : "$city", "rent" : "$rent" } }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : { "city" : "$city", "rent" : "$rent" } }'::bson, true)
                Batches: 1  Memory Usage: xxxkB
                ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : { "city" : "$city", "rent" : "$rent" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : { "city" : "$city", "rent" : "$rent" } }'::bson, true), collection.document
                      Index Cond: (collection.document @<> '{ "city" : { "fullScan" : true } }'::bson)
 (13 rows)
 
@@ -2222,14 +2222,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstRent'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_1.document, '{"{ \"city\" : { \"$numberInt\" : \"1\" } }","{ \"rent\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true)), 'firstRent'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_1.document, '{"{ \"city\" : { \"$numberInt\" : \"1\" } }","{ \"rent\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true))
+   Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true))
    ->  Sort (actual rows=20 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
-         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true)), agg_stage_1.document
+         Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Subquery Scan on agg_stage_1 (actual rows=20 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+               Output: bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true), agg_stage_1.document
                ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
                      Output: collection.document, bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "rent" : { "$numberInt" : "1" } }'::bson)
                      Index Cond: ((collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "rent" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
@@ -2240,14 +2240,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                                                                                                                                                               
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'lastRent'::text, documentdb_api_internal.bson_expression_get(bsonlast(agg_stage_1.document, '{"{ \"city\" : { \"$numberInt\" : \"1\" } }","{ \"rent\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true)), 'lastRent'::text, documentdb_api_internal.bson_expression_get(bsonlast(agg_stage_1.document, '{"{ \"city\" : { \"$numberInt\" : \"1\" } }","{ \"rent\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true))
+   Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true))
    ->  Sort (actual rows=20 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
-         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true)), agg_stage_1.document
+         Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Subquery Scan on agg_stage_1 (actual rows=20 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+               Output: bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true), agg_stage_1.document
                ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
                      Output: collection.document, bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "rent" : { "$numberInt" : "1" } }'::bson)
                      Index Cond: ((collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "rent" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
@@ -2259,14 +2259,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstRent'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"city\" : { \"$numberInt\" : \"1\" } }","{ \"rent\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true)), 'firstRent'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"city\" : { \"$numberInt\" : \"1\" } }","{ \"rent\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true))
+   Group Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true))
    ->  Sort (actual rows=20 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true)), agg_stage_0.document
+         Sort Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Subquery Scan on agg_stage_0 (actual rows=20 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+               Output: bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true), agg_stage_0.document
                ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
                      Output: collection.document, bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "rent" : { "$numberInt" : "1" } }'::bson)
                      Index Cond: ((collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "rent" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
@@ -2277,14 +2277,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                                                                                                                                                               
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'lastRent'::text, documentdb_api_internal.bson_expression_get(bsonlast(agg_stage_0.document, '{"{ \"city\" : { \"$numberInt\" : \"1\" } }","{ \"rent\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true)), 'lastRent'::text, documentdb_api_internal.bson_expression_get(bsonlast(agg_stage_0.document, '{"{ \"city\" : { \"$numberInt\" : \"1\" } }","{ \"rent\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true))
+   Group Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true))
    ->  Sort (actual rows=20 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+         Output: (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true)), agg_stage_0.document
+         Sort Key: (bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true))
          Sort Method: quicksort  Memory: xxxkB
          ->  Subquery Scan on agg_stage_0 (actual rows=20 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+               Output: bson_expression_get(agg_stage_0.document, '{ "" : "$city" }'::bson, true), agg_stage_0.document
                ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
                      Output: collection.document, bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "rent" : { "$numberInt" : "1" } }'::bson)
                      Index Cond: ((collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "rent" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
@@ -2340,10 +2340,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                                                                                                                                                                                                                                                                             run_explain_and_trim                                                                                                                                                                                                                                                                             
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$tag" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'count'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$tag" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$tag" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$tag" }'::bson, true)), 'count'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$tag" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$tag" }'::bson, true)
    ->  Index Only Scan using region_1_dept_1_level_1_tag_1 on documentdb_data.documents_9108 collection (actual rows=100 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$tag" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$tag" }'::bson, true), document
          Index Cond: ((collection.document @= '{ "region" : { "$numberInt" : "100" } }'::bson) AND (collection.document @= '{ "dept" : { "$numberInt" : "20" } }'::bson) AND (collection.document @= '{ "level" : { "$numberInt" : "5" } }'::bson))
          Order By: (collection.document |-<> '{ "tag" : { "$numberInt" : "1" } }'::bson)
          Heap Fetches: xxx

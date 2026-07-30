@@ -468,9 +468,9 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
    ->  Task
          Node: host=localhost port=58070 dbname=regression
          ->  GroupAggregate
-               Group Key: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$teamId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+               Group Key: (documentdb_api_catalog.bson_expression_get(document, '{ "" : "$teamId" }'::documentdb_core.bson, true))
                ->  Sort
-                     Sort Key: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$teamId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                     Sort Key: (documentdb_api_catalog.bson_expression_get(document, '{ "" : "$teamId" }'::documentdb_core.bson, true))
                      ->  Bitmap Heap Scan on documents_11163_1116049 collection
                            Recheck Cond: (shard_key_value = '11163'::bigint)
                            ->  Bitmap Index Scan on _id_
@@ -486,9 +486,9 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
    ->  Task
          Node: host=localhost port=58070 dbname=regression
          ->  GroupAggregate
-               Group Key: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$teamId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+               Group Key: (documentdb_api_catalog.bson_expression_get(document, '{ "" : "$teamId" }'::documentdb_core.bson, true))
                ->  Sort
-                     Sort Key: (documentdb_api_internal.bson_expression_get(document, '{ "" : "$teamId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                     Sort Key: (documentdb_api_catalog.bson_expression_get(document, '{ "" : "$teamId" }'::documentdb_core.bson, true))
                      ->  Bitmap Heap Scan on documents_11163_1116049 collection
                            Recheck Cond: (shard_key_value = '11163'::bigint)
                            ->  Bitmap Index Scan on _id_
@@ -514,7 +514,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
                      ->  Task
                            Node: host=localhost port=58070 dbname=regression
                            ->  HashAggregate
-                                 Group Key: documentdb_api_internal.bson_expression_get(document, '{ "" : "$teamId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+                                 Group Key: documentdb_api_catalog.bson_expression_get(document, '{ "" : "$teamId" }'::documentdb_core.bson, true)
                                  ->  Seq Scan on documents_11163_1116080 collection
    Task Count: 1
    Tasks Shown: All
@@ -536,7 +536,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
                      ->  Task
                            Node: host=localhost port=58070 dbname=regression
                            ->  HashAggregate
-                                 Group Key: documentdb_api_internal.bson_expression_get(document, '{ "" : "$teamId" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+                                 Group Key: documentdb_api_catalog.bson_expression_get(document, '{ "" : "$teamId" }'::documentdb_core.bson, true)
                                  ->  Seq Scan on documents_11163_1116080 collection
    Task Count: 1
    Tasks Shown: All

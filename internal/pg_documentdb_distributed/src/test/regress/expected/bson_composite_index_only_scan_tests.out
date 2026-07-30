@@ -790,10 +790,10 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                       
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$country" }'::bson, true)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (bson_expression_get(document, '{ "" : "$country" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=8 loops=1)
-         Output: bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$country" }'::bson, true), document
          indexName: country_1
          indexKey: {"country": 1}
          isMultiKey: false
@@ -1319,10 +1319,10 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                                                                                                                                                                                                                                      run_explain_and_trim                                                                                                                                                                                                                                     
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalAge'::text, bsonsum(bson_expression_get(document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$dept" }'::bson, true)), 'totalAge'::text, bsonsum(bson_expression_get(document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$dept" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
-         Output: bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$dept" }'::bson, true), document
          indexName: dept_age_1
          indexKey: {"dept": 1,"age": 1}
          isMultiKey: false
@@ -1348,10 +1348,10 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                                                                                                                                                                                                                                       run_explain_and_trim                                                                                                                                                                                                                                      
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgAge'::text, bsonaverage(bson_expression_get(document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$dept" }'::bson, true)), 'avgAge'::text, bsonaverage(bson_expression_get(document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$dept" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
-         Output: bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$dept" }'::bson, true), document
          indexName: dept_age_1
          indexKey: {"dept": 1,"age": 1}
          isMultiKey: false
@@ -1383,10 +1383,10 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
    ->  Subquery Scan on agg_stage_1 (actual rows=2 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=2 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalAge'::text, bsonsum(bson_expression_get(collection.document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgAge'::text, bsonaverage(bson_expression_get(collection.document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true)), 'totalAge'::text, bsonsum(bson_expression_get(collection.document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgAge'::text, bsonaverage(bson_expression_get(collection.document, '{ "" : "$age" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true)
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true), collection.document
                      indexName: dept_age_1
                      indexKey: {"dept": 1,"age": 1}
                      isMultiKey: false
@@ -1414,10 +1414,10 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                                  
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalAge'::text, bsonsumwithexpr(document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$dept" }'::bson, true)), 'totalAge'::text, bsonsumwithexpr(document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$dept" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
-         Output: bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$dept" }'::bson, true), document
          indexName: dept_age_1
          indexKey: {"dept": 1,"age": 1}
          isMultiKey: false
@@ -1443,10 +1443,10 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                                                                                                                                                                                                                                   run_explain_and_trim                                                                                                                                                                                                                                   
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'avgAge'::text, bsonaveragewithexpr(document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$dept" }'::bson, true)), 'avgAge'::text, bsonaveragewithexpr(document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$dept" }'::bson, true))
+   Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true)
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
-         Output: bson_expression_get(document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+         Output: bson_expression_get(document, '{ "" : "$dept" }'::bson, true), document
          indexName: dept_age_1
          indexKey: {"dept": 1,"age": 1}
          isMultiKey: false
@@ -1478,10 +1478,10 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
    ->  Subquery Scan on agg_stage_1 (actual rows=2 loops=1)
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=2 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalAge'::text, bsonsumwithexpr(collection.document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'avgAge'::text, bsonaveragewithexpr(collection.document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true)), 'totalAge'::text, bsonsumwithexpr(collection.document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'avgAge'::text, bsonaveragewithexpr(collection.document, '{ "" : "$age" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true)
                ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
-                     Output: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$dept" }'::bson, true), collection.document
                      indexName: dept_age_1
                      indexKey: {"dept": 1,"age": 1}
                      isMultiKey: false

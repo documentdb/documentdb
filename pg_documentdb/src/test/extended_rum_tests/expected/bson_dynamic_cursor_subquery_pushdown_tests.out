@@ -730,11 +730,11 @@ $cmd$);
    ->  Subquery Scan on agg_stage_1
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'flightCount'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson), 'totalLegs'::text, bsonsum(bson_expression_get(collection.document, '{ "" : { "$size" : "$legs" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: bson_expression_get(collection.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-               Filter: (bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'flightCount'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson), 'totalLegs'::text, bsonsum(bson_expression_get(collection.document, '{ "" : { "$size" : "$legs" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))) #>= '{ "flightCount" : { "$numberInt" : "4" } }'::bsonquery)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$routeId" }'::bson, true)), 'flightCount'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson), 'totalLegs'::text, bsonsum(bson_expression_get(collection.document, '{ "" : { "$size" : "$legs" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$routeId" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$routeId" }'::bson, true)
+               Filter: (bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$routeId" }'::bson, true)), 'flightCount'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson), 'totalLegs'::text, bsonsum(bson_expression_get(collection.document, '{ "" : { "$size" : "$legs" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))) #>= '{ "flightCount" : { "$numberInt" : "4" } }'::bsonquery)
                ->  Custom Scan (DocumentDBApiCursorScan)
-                     Output: bson_expression_get(collection.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$routeId" }'::bson, true), collection.document
                      cursorScanType: Secondary Index Scan
                      indexName: idx_routeId
                      indexKey: {"routeId": 1}
@@ -1573,13 +1573,13 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('
    ->  Subquery Scan on agg_stage_3
          Output: bson_dollar_project(bson_dollar_replace_root(agg_stage_3.document, '{ "newRoot" : { "route" : "$_id", "totalLegs" : "$totalLegs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "route" : { "$numberInt" : "1" }, "totalLegs" : { "$numberInt" : "1" }, "isHeavy" : { "$gte" : [ "$totalLegs", { "$numberInt" : "4" } ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_orderby(bson_dollar_project(bson_dollar_replace_root(agg_stage_3.document, '{ "newRoot" : { "route" : "$_id", "totalLegs" : "$totalLegs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "route" : { "$numberInt" : "1" }, "totalLegs" : { "$numberInt" : "1" }, "isHeavy" : { "$gte" : [ "$totalLegs", { "$numberInt" : "4" } ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "route" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalLegs'::text, bsonsum(bson_expression_get(agg_stage_1.document, '{ "" : "$legCount" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true)), 'totalLegs'::text, bsonsum(bson_expression_get(agg_stage_1.document, '{ "" : "$legCount" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true))
+               Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true))
                ->  Sort
-                     Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
-                     Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true)), agg_stage_1.document
+                     Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true))
                      ->  Subquery Scan on agg_stage_1
-                           Output: bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+                           Output: bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true), agg_stage_1.document
                            Filter: (agg_stage_1.document #= '{ "phase" : "enroute" }'::bsonquery)
                            ->  Custom Scan (DocumentDBApiCursorScan)
                                  Output: bson_dollar_project(collection.document, '{ "routeId" : { "$numberInt" : "1" }, "phase" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
@@ -1633,13 +1633,13 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('
          ->  Subquery Scan on agg_stage_3
                Output: bson_dollar_project(bson_dollar_replace_root(agg_stage_3.document, '{ "newRoot" : { "route" : "$_id", "totalLegs" : "$totalLegs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "route" : { "$numberInt" : "1" }, "totalLegs" : { "$numberInt" : "1" }, "isHeavy" : { "$gte" : [ "$totalLegs", { "$numberInt" : "4" } ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
                ->  GroupAggregate
-                     Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalLegs'::text, bsonsum(bson_expression_get(agg_stage_1.document, '{ "" : "$legCount" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-                     Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true)), 'totalLegs'::text, bsonsum(bson_expression_get(agg_stage_1.document, '{ "" : "$legCount" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true))
+                     Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true))
                      ->  Sort
-                           Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
-                           Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                           Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true)), agg_stage_1.document
+                           Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true))
                            ->  Subquery Scan on agg_stage_1
-                                 Output: bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+                                 Output: bson_expression_get(agg_stage_1.document, '{ "" : "$routeId" }'::bson, true), agg_stage_1.document
                                  Filter: (agg_stage_1.document #= '{ "phase" : "enroute" }'::bsonquery)
                                  ->  Custom Scan (DocumentDBApiCursorScan)
                                        Output: bson_dollar_project(collection.document, '{ "routeId" : { "$numberInt" : "1" }, "phase" : { "$numberInt" : "1" }, "legCount" : { "$size" : "$legs" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)

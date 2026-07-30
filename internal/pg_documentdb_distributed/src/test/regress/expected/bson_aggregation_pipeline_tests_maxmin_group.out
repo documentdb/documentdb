@@ -1090,9 +1090,9 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
                Sort Key: (documentdb_api_catalog.bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
                ->  Subquery Scan on agg_stage_1
                      ->  GroupAggregate
-                           Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                           Group Key: (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true))
                            ->  Sort
-                                 Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                                 Sort Key: (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true))
                                  ->  Bitmap Heap Scan on documents_11178_1117128 collection
                                        Recheck Cond: (shard_key_value = '11178'::bigint)
                                        ->  Bitmap Index Scan on _id_
@@ -1112,9 +1112,9 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
                Sort Key: (documentdb_api_catalog.bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
                ->  Subquery Scan on agg_stage_1
                      ->  GroupAggregate
-                           Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                           Group Key: (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true))
                            ->  Sort
-                                 Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                                 Sort Key: (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true))
                                  ->  Bitmap Heap Scan on documents_11178_1117128 collection
                                        Recheck Cond: (shard_key_value = '11178'::bigint)
                                        ->  Bitmap Index Scan on _id_
@@ -1161,7 +1161,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
                      ->  Task
                            Node: host=localhost port=58070 dbname=regression
                            ->  HashAggregate
-                                 Group Key: documentdb_api_internal.bson_expression_get(document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+                                 Group Key: documentdb_api_catalog.bson_expression_get(document, '{ "" : "$group" }'::documentdb_core.bson, true)
                                  ->  Seq Scan on documents_11178_1117144 collection
    Task Count: 1
    Tasks Shown: All
@@ -1186,7 +1186,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
                      ->  Task
                            Node: host=localhost port=58070 dbname=regression
                            ->  HashAggregate
-                                 Group Key: documentdb_api_internal.bson_expression_get(document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+                                 Group Key: documentdb_api_catalog.bson_expression_get(document, '{ "" : "$group" }'::documentdb_core.bson, true)
                                  ->  Seq Scan on documents_11178_1117144 collection
    Task Count: 1
    Tasks Shown: All
@@ -1212,10 +1212,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    ->  Subquery Scan on agg_stage_1
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  HashAggregate
-               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'maxA'::text, bsonmax(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$fieldA" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'maxB'::text, bsonmax(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$fieldB" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true)), 'maxA'::text, bsonmax(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$fieldA" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'maxB'::text, bsonmax(documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$fieldB" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true)
                ->  Function Scan on documentdb_api_internal.empty_data_table collection
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true), collection.document
                      Function Call: documentdb_api_internal.empty_data_table()
 (11 rows)
 
@@ -1229,10 +1229,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    ->  Subquery Scan on agg_stage_1
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  HashAggregate
-               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'maxA'::text, documentdb_api_internal.bsonmaxwithexpr(collection.document, '{ "" : "$fieldA" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'maxB'::text, documentdb_api_internal.bsonmaxwithexpr(collection.document, '{ "" : "$fieldB" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true)), 'maxA'::text, documentdb_api_internal.bsonmaxwithexpr(collection.document, '{ "" : "$fieldA" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'maxB'::text, documentdb_api_internal.bsonmaxwithexpr(collection.document, '{ "" : "$fieldB" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true))
+               Group Key: bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true)
                ->  Function Scan on documentdb_api_internal.empty_data_table collection
-                     Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                     Output: bson_expression_get(collection.document, '{ "" : "$category" }'::bson, true), collection.document
                      Function Call: documentdb_api_internal.empty_data_table()
 (11 rows)
 
@@ -1368,7 +1368,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM (SELECT documentdb_core.bson_repath_and_build('_id'::text, documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'maxName'::text, documentdb_api_internal.bsonmaxwithexpr(collection.document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text), 'minName'::text, documentdb_api_internal.bsonminwithexpr(collection.document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)) AS document FROM documentdb_data.documents_11179_1117153 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '11179'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "group" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)) GROUP BY (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))) agg_stage_1 ORDER BY (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, 'en-u-ks-level1'::text)) USING OPERATOR(documentdb_api_internal.<<<) NULLS FIRST
+         Query: SELECT document FROM (SELECT documentdb_core.bson_repath_and_build('_id'::text, documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true), 'maxName'::text, documentdb_api_internal.bsonmaxwithexpr(collection.document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text), 'minName'::text, documentdb_api_internal.bsonminwithexpr(collection.document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)) AS document FROM documentdb_data.documents_11179_1117153 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '11179'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "group" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson)) GROUP BY (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true))) agg_stage_1 ORDER BY (documentdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, 'en-u-ks-level1'::text)) USING OPERATOR(documentdb_api_internal.<<<) NULLS FIRST
          Node: host=localhost port=58070 dbname=regression
          ->  Sort
                Output: agg_stage_1.document, (documentdb_api_internal.bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, 'en-u-ks-level1'::text))
@@ -1376,13 +1376,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                ->  Subquery Scan on agg_stage_1
                      Output: agg_stage_1.document, documentdb_api_internal.bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson, 'en-u-ks-level1'::text)
                      ->  GroupAggregate
-                           Output: documentdb_core.bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'maxName'::text, documentdb_api_internal.bsonmaxwithexpr(collection.document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text), 'minName'::text, documentdb_api_internal.bsonminwithexpr(collection.document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                           Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                           Output: documentdb_core.bson_repath_and_build('_id'::text, (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true)), 'maxName'::text, documentdb_api_internal.bsonmaxwithexpr(collection.document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text), 'minName'::text, documentdb_api_internal.bsonminwithexpr(collection.document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)), (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true))
+                           Group Key: (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true))
                            ->  Sort
-                                 Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), collection.document
-                                 Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                                 Output: (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true)), collection.document
+                                 Sort Key: (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true))
                                  ->  Bitmap Heap Scan on documentdb_data.documents_11179_1117153 collection
-                                       Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), collection.document
+                                       Output: documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true), collection.document
                                        Recheck Cond: (collection.shard_key_value = '11179'::bigint)
                                        ->  Bitmap Index Scan on _id_
                                              Index Cond: (collection.shard_key_value = '11179'::bigint)
@@ -1404,7 +1404,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM (SELECT documentdb_core.bson_repath_and_build('_id'::text, documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'maxName'::text, documentdb_api_internal.bsonmaxwithexpr(collection.document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text), 'minName'::text, documentdb_api_internal.bsonminwithexpr(collection.document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS document FROM documentdb_data.documents_11179_1117153 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '11179'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "group" : { "$numberInt" : "1" } }'::documentdb_core.bson)) GROUP BY (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))) agg_stage_1 ORDER BY (documentdb_api_catalog.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
+         Query: SELECT document FROM (SELECT documentdb_core.bson_repath_and_build('_id'::text, documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true), 'maxName'::text, documentdb_api_internal.bsonmaxwithexpr(collection.document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text), 'minName'::text, documentdb_api_internal.bsonminwithexpr(collection.document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS document FROM documentdb_data.documents_11179_1117153 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '11179'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "group" : { "$numberInt" : "1" } }'::documentdb_core.bson)) GROUP BY (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true))) agg_stage_1 ORDER BY (documentdb_api_catalog.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
          Node: host=localhost port=58070 dbname=regression
          ->  Sort
                Output: agg_stage_1.document, (documentdb_api_catalog.bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson))
@@ -1412,13 +1412,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                ->  Subquery Scan on agg_stage_1
                      Output: agg_stage_1.document, documentdb_api_catalog.bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
                      ->  GroupAggregate
-                           Output: documentdb_core.bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'maxName'::text, documentdb_api_internal.bsonmaxwithexpr(collection.document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text), 'minName'::text, documentdb_api_internal.bsonminwithexpr(collection.document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                           Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                           Output: documentdb_core.bson_repath_and_build('_id'::text, (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true)), 'maxName'::text, documentdb_api_internal.bsonmaxwithexpr(collection.document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text), 'minName'::text, documentdb_api_internal.bsonminwithexpr(collection.document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)), (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true))
+                           Group Key: (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true))
                            ->  Sort
-                                 Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), collection.document
-                                 Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+                                 Output: (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true)), collection.document
+                                 Sort Key: (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true))
                                  ->  Bitmap Heap Scan on documentdb_data.documents_11179_1117153 collection
-                                       Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), collection.document
+                                       Output: documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$group" }'::documentdb_core.bson, true), collection.document
                                        Recheck Cond: (collection.shard_key_value = '11179'::bigint)
                                        ->  Bitmap Index Scan on _id_
                                              Index Cond: (collection.shard_key_value = '11179'::bigint)
