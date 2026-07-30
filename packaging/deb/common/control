@@ -2,7 +2,7 @@ Source: documentdb
 Section: database
 Priority: optional
 Build-Depends: debhelper (>= 11), postgresql-server-dev-POSTGRES_VERSION
-Maintainer: Shuai Tian <shuaitian@microsoft.com>
+Maintainer: DocumentDB Packaging <documentdb-packaging-maintainers@microsoft.com>
 
 Package: postgresql-POSTGRES_VERSION-documentdb
 Architecture: any

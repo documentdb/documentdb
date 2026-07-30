@@ -23,9 +23,18 @@ set -uo pipefail
 PG_MAJOR="${PG_MAJOR:-18}"
 GATEWAY_PORT="${GATEWAY_PORT:-10260}"
 ADMIN_USER="${ADMIN_USER:-admin}"
-# Runtime-generated default so no credential literal lives in source (CredScan).
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(openssl rand -hex 12)Aa1!}"
 PW_FILE="/root/.documentdb-admin-pw"
+# The driver invokes this script once per stage, in separate processes and
+# across a container restart, so a per-invocation random default would give
+# verify/day2 a different password from the one stage_setup registered with
+# the admin user (mongosh then fails SCRAM with "Invalid key"). Precedence:
+# explicit ADMIN_PASSWORD env > password persisted by stage_setup > fresh
+# random (runtime-generated so no credential literal lives in source /
+# CredScan).
+if [ -z "${ADMIN_PASSWORD:-}" ] && [ -s "${PW_FILE}" ]; then
+    ADMIN_PASSWORD="$(cat "${PW_FILE}")"
+fi
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(openssl rand -hex 12)Aa1!}"
 STATE_DIR="/var/lib/documentdb-e2e"
 PASS_COUNT=0
 FAIL_COUNT=0

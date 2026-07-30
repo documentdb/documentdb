@@ -1,0 +1,311 @@
+# Scheduled packaging E2E — the machine-gated version of the install/lifecycle
+# suites under packaging/test_packages/ (packaging-design.md §11.4(u)).
+#
+# Two tiers, deliberately OFF the PR critical path:
+#
+#   NIGHTLY (03:00 UTC daily)
+#     - Paved-road install/start E2E on both formats (ubuntu24.04 + rhel9,
+#       PG 18). Identical to the per-PR/push E2E, but on a schedule: package
+#       installs resolve live PGDG/EPEL/CRB dependencies, so this catches
+#       external repository drift that breaks users *between* our commits.
+#     - systemd-as-PID-1 lifecycle suite (run-systemd-e2e.sh): unit hardening,
+#       enable/start/stop of documentdb-local.target, and the container
+#       restart that stands in for a host reboot — the one surface the
+#       regular (fake-systemctl) E2E image cannot exercise.
+#
+#   WEEKLY (Sunday 04:00 UTC)
+#     - Broad-OS install sweep over representative Tier-2/3 combinations
+#       (deb12, deb13, ubuntu22.04, rhel8). These are build-on-demand combos
+#       with no first-party guarantee; this is drift *signal*, not a gate.
+#     - Scenario suites against the paved test images: package hygiene
+#       (conffile-survives-upgrade, reinstall, purge-residue), extra
+#       scenarios (dry-run/brownfield/port-keep/...), and multi-major
+#       side-by-side on both formats.
+#
+# Failures open (or update) a single issue labeled `packaging-e2e` so a red
+# scheduled run is routed to a human instead of rotting unseen.
+#
+# Not wired yet (needs harness work, see §11.4(u)):
+#   - e2e-pg16-minimum-major.sh (needs a PG16-built test image tagged
+#     documentdb-test-gateway-packages-pg16)
+#   - e2e-container-scenarios.sh (needs the documentdb-local emulator image)
+name: Packaging nightly E2E
+
+concurrency:
+  group: packaging-nightly
+  cancel-in-progress: false
+
+on:
+  # ⚠ These cron strings are LOAD-BEARING: GitHub gives a scheduled run no tier
+  # label, so each job below selects its tier by string-comparing
+  # github.event.schedule against the weekly expression. Editing a cron here
+  # without updating every `github.event.schedule` comparison silently changes
+  # which tier runs — the nightly jobs would run weekly, or the weekly jobs
+  # would never run at all, with nothing failing to signal it. Five job-level
+  # `if:` conditions reference the weekly string; grep for it before changing.
+  # (The `env` context is unavailable in a job-level `if:`, so this cannot be
+  # hoisted into a variable.)
+  schedule:
+    - cron: '0 3 * * *'   # nightly tier — jobs guarded with `!= '0 4 * * 0'`
+    - cron: '0 4 * * 0'   # weekly tier (Sunday) — jobs guarded with `== '0 4 * * 0'`
+  workflow_dispatch:
+    inputs:
+      run_weekly:
+        description: 'Also run the weekly tier (broad OS sweep + scenario suites)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+# Paved-road PostgreSQL major (packaging-design.md §9.1). Must match
+# PAVED_PG_MAJOR in build_deb_packages.yml / build_rpm_packages.yml: the meta
+# package those workflows ship pins this major, and the extras built here for
+# the scenario suites must agree or the suites test a different stack than we
+# release. Matrix entries below cannot read `env`, so they stay literal.
+env:
+  PAVED_PG_MAJOR: '18'
+
+jobs:
+  # ── Nightly tier ────────────────────────────────────────────────────────
+  paved-install-e2e:
+    name: Paved install E2E (${{ matrix.os }}-pg${{ matrix.pg_version }})
+    if: github.event.schedule != '0 4 * * 0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu24.04
+            pg_version: '18'
+          - os: rhel9
+            pg_version: '18'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Resolve DocumentDB version
+        id: version
+        uses: ./.github/actions/resolve-documentdb-version
+
+      - name: Export version to job env
+        run: echo "DOCUMENTDB_VERSION=${{ steps.version.outputs.version }}" >> "$GITHUB_ENV"
+
+      - name: Install rpmbuild (RPM extras are assembled on the runner)
+        if: startsWith(matrix.os, 'rhel')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpm
+
+      - name: Build extension package
+        run: ./packaging/build_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }}
+
+      - name: Gateway build + clean-install E2E (live dependency resolution)
+        run: ./packaging/gateway/build_gateway_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }} --test-clean-install
+
+  systemd-lifecycle:
+    name: systemd lifecycle E2E (ubuntu24.04-pg18)
+    if: github.event.schedule != '0 4 * * 0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Resolve DocumentDB version
+        id: version
+        uses: ./.github/actions/resolve-documentdb-version
+
+      - name: Export version to job env
+        run: echo "DOCUMENTDB_VERSION=${{ steps.version.outputs.version }}" >> "$GITHUB_ENV"
+
+      - name: Build extension + gateway + extras (ubuntu24.04, PG 18)
+        run: |
+          ./packaging/build_packages.sh --os ubuntu24.04 --pg 18 --version ${{ env.DOCUMENTDB_VERSION }}
+          ./packaging/gateway/build_gateway_packages.sh --os ubuntu24.04 --pg 18 --version ${{ env.DOCUMENTDB_VERSION }}
+          ./packaging/build_extra_packages.sh \
+            --type deb \
+            --pg 18 \
+            --version ${{ env.DOCUMENTDB_VERSION }} \
+            --output-dir "$(pwd)/packaging" \
+            --default-pg-major ${{ env.PAVED_PG_MAJOR }} \
+            --os-prefix ubuntu24.04
+
+      - name: Run systemd-as-PID-1 lifecycle suite (includes reboot test)
+        run: ./packaging/test_packages/systemd/run-systemd-e2e.sh --pg 18 --os ubuntu24.04 --packages-dir "$(pwd)/packaging"
+
+  # ── Weekly tier ─────────────────────────────────────────────────────────
+  broad-install-e2e:
+    name: Broad install E2E (${{ matrix.os }}-pg${{ matrix.pg_version }})
+    if: github.event.schedule == '0 4 * * 0' || (github.event_name == 'workflow_dispatch' && inputs.run_weekly)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      # Representative Tier-2/3 combinations, not the full cross product:
+      # one modern + one older PG per family, chosen to cover the distro
+      # mechanics that differ (apt signed-by keyrings on deb12/13, jammy's
+      # older toolchain, EL8 runuser/scriptlet semantics).
+      matrix:
+        include:
+          - os: deb12
+            pg_version: '16'
+          - os: deb13
+            pg_version: '17'
+          - os: ubuntu22.04
+            pg_version: '16'
+          - os: rhel8
+            pg_version: '17'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Resolve DocumentDB version
+        id: version
+        uses: ./.github/actions/resolve-documentdb-version
+
+      - name: Export version to job env
+        run: echo "DOCUMENTDB_VERSION=${{ steps.version.outputs.version }}" >> "$GITHUB_ENV"
+
+      - name: Install rpmbuild (RPM extras are assembled on the runner)
+        if: startsWith(matrix.os, 'rhel')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpm
+
+      - name: Build extension package
+        run: ./packaging/build_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }}
+
+      - name: Gateway build + clean-install E2E
+        run: ./packaging/gateway/build_gateway_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }} --test-clean-install
+
+  scenario-suites-deb:
+    name: Scenario suites (DEB, ubuntu24.04)
+    if: github.event.schedule == '0 4 * * 0' || (github.event_name == 'workflow_dispatch' && inputs.run_weekly)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Resolve DocumentDB version
+        id: version
+        uses: ./.github/actions/resolve-documentdb-version
+
+      - name: Export version to job env
+        run: echo "DOCUMENTDB_VERSION=${{ steps.version.outputs.version }}" >> "$GITHUB_ENV"
+
+      # PG 17 + 18 packages: the multimajor scenario needs both majors staged
+      # in the mounted packaging/ dir. The PG 18 gateway run uses
+      # --test-clean-install, which (a) assembles the PG 18 extras, (b) builds
+      # the documentdb-test-gateway-packages:latest image the scenario suites
+      # run inside, and (c) runs the baseline clean-install entrypoint.
+      - name: Build PG 17 + PG 18 packages and the gateway test image
+        run: |
+          ./packaging/build_packages.sh --os ubuntu24.04 --pg 17 --version ${{ env.DOCUMENTDB_VERSION }}
+          ./packaging/build_extra_packages.sh \
+            --type deb --pg 17 --version ${{ env.DOCUMENTDB_VERSION }} \
+            --output-dir "$(pwd)/packaging" --default-pg-major ${{ env.PAVED_PG_MAJOR }} --os-prefix ubuntu24.04
+          ./packaging/build_packages.sh --os ubuntu24.04 --pg 18 --version ${{ env.DOCUMENTDB_VERSION }}
+          ./packaging/gateway/build_gateway_packages.sh --os ubuntu24.04 --pg 18 --version ${{ env.DOCUMENTDB_VERSION }} --test-clean-install
+
+      - name: Package hygiene suite (conffile / reinstall / upgrade scriptlets / purge residue)
+        run: |
+          docker run --rm --user root --entrypoint bash \
+            -v "$PWD/packaging/test_packages:/e2e:ro" \
+            documentdb-test-gateway-packages:latest /e2e/e2e-package-hygiene.sh
+
+      - name: Extra scenario suite (dry-run / brownfield / conflicts / port-keep)
+        run: |
+          docker run --rm --user root --entrypoint bash \
+            -v "$PWD/packaging/test_packages:/e2e:ro" \
+            documentdb-test-gateway-packages:latest /e2e/e2e-extra-scenarios.sh
+
+      - name: Multi-major side-by-side suite (PG 17 + 18)
+        run: |
+          docker run --rm --user root --entrypoint bash \
+            -v "$PWD/packaging:/pkgs:ro" \
+            -v "$PWD/packaging/test_packages:/e2e:ro" \
+            documentdb-test-gateway-packages:latest /e2e/e2e-multimajor-scenario.sh
+
+  scenario-suites-rpm:
+    name: Scenario suites (RPM, rhel9)
+    if: github.event.schedule == '0 4 * * 0' || (github.event_name == 'workflow_dispatch' && inputs.run_weekly)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Resolve DocumentDB version
+        id: version
+        uses: ./.github/actions/resolve-documentdb-version
+
+      - name: Export version to job env
+        run: echo "DOCUMENTDB_VERSION=${{ steps.version.outputs.version }}" >> "$GITHUB_ENV"
+
+      - name: Install rpmbuild (RPM extras are assembled on the runner)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpm
+
+      - name: Build PG 17 + PG 18 RPMs and the gateway test image
+        run: |
+          ./packaging/build_packages.sh --os rhel9 --pg 17 --version ${{ env.DOCUMENTDB_VERSION }}
+          ./packaging/build_extra_packages.sh \
+            --type rpm --pg 17 --version ${{ env.DOCUMENTDB_VERSION }} \
+            --output-dir "$(pwd)/packaging" --default-pg-major ${{ env.PAVED_PG_MAJOR }}
+          ./packaging/build_packages.sh --os rhel9 --pg 18 --version ${{ env.DOCUMENTDB_VERSION }}
+          ./packaging/gateway/build_gateway_packages.sh --os rhel9 --pg 18 --version ${{ env.DOCUMENTDB_VERSION }} --test-clean-install
+
+      - name: RHEL scenario suite (tune-into-datadir / brownfield / scriptlet hygiene)
+        run: |
+          docker run --rm --user root --entrypoint bash \
+            -v "$PWD/packaging/test_packages:/e2e:ro" \
+            documentdb-test-gateway-rpm-packages:latest /e2e/e2e-rhel-scenarios.sh
+
+      - name: RHEL multi-major side-by-side suite (PG 17 + 18)
+        run: |
+          docker run --rm --user root --entrypoint bash \
+            -v "$PWD/packaging:/pkgs:ro" \
+            -v "$PWD/packaging/test_packages:/e2e:ro" \
+            documentdb-test-gateway-rpm-packages:latest /e2e/e2e-rhel-multimajor.sh
+
+  # ── Failure routing ─────────────────────────────────────────────────────
+  report-failure:
+    name: Open/refresh packaging-e2e issue on failure
+    needs: [paved-install-e2e, systemd-lifecycle, broad-install-e2e, scenario-suites-deb, scenario-suites-rpm]
+    # `failure()` alone is true only when a needed job failed; skipped weekly
+    # jobs on a nightly run do not trigger it.
+    if: ${{ failure() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Open or update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TITLE="Scheduled packaging E2E is failing"
+          BODY="A scheduled packaging E2E run failed: ${RUN_URL}
+
+          Check the failing job's logs. Common causes: a real packaging regression, or upstream repository drift (PGDG / EPEL / CRB dependency changes) breaking installs. If it is drift on a Tier-2/3 combo, fix or document; if it is a Tier-1 failure, treat it as release-blocking."
+          # Idempotently ensure the label exists (first run on a fresh repo).
+          gh label create packaging-e2e -R "${GITHUB_REPOSITORY}" \
+            --description "Scheduled packaging E2E failures" --color D93F0B --force || true
+          existing=$(gh issue list -R "${GITHUB_REPOSITORY}" --label packaging-e2e --state open --json number --jq '.[0].number' || true)
+          # Never fail this job over issue-filing mechanics (e.g. forks have
+          # issues disabled) — the red run itself is the primary signal.
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" -R "${GITHUB_REPOSITORY}" --body "Another failing run: ${RUN_URL}" \
+              || echo "::warning::Could not comment on issue #${existing}"
+          else
+            gh issue create -R "${GITHUB_REPOSITORY}" \
+              --title "$TITLE" \
+              --label packaging-e2e \
+              --body "$BODY" \
+              || echo "::warning::Could not create the packaging-e2e issue (issues disabled on this repo?)"
+          fi

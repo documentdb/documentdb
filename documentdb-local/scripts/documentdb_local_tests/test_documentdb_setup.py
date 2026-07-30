@@ -4068,38 +4068,57 @@ class GreenfieldRestoreSymmetryTests(unittest.TestCase):
 
 
 class GatewayCiPavedRoadTests(unittest.TestCase):
-    """The gateway build/test/upload CI
-    steps were pinned to pg_version=='17'. The paved road per
-    packaging-design.md §9.1 is PG 18, so on main pushes the paved-road
-    combination was never being exercised. Both workflows must gate on '18'."""
+    """CI contract for the paved road (packaging-design.md §9.1).
 
-    def test_deb_workflow_gates_gateway_on_pg18(self):
-        wf = OSS_ROOT / ".github" / "workflows" / "build_deb_packages.yml"
+    History: the gateway CI steps were once pinned to pg_version=='17',
+    which silently skipped the paved-road PG 18 combination; these tests
+    originally pinned the fix ("gate on '18'"). The contract has since
+    strengthened: the gateway now builds in EVERY matrix cell (the old
+    GATEWAY_CELL predicate is gone — its per-major gating left the shipped
+    PG17/arm64 combination without an install proof), and the paved-road
+    major is single-sourced as the PAVED_PG_MAJOR workflow env, which
+    gates only what is genuinely per-major: the `documentdb` meta package
+    build/upload. These tests now pin THAT contract."""
+
+    def _check_workflow(self, filename):
+        wf = OSS_ROOT / ".github" / "workflows" / filename
         text = wf.read_text(encoding="utf-8")
         self.assertNotIn(
             "matrix.pg_version == '17'",
             text,
-            "Gateway build must not gate on pg17 — the paved road is pg18 (§9.1)",
+            "Nothing may gate on pg17 — the paved road is pg18 (§9.1)",
         )
         self.assertIn(
-            "matrix.pg_version == '18'",
+            "PAVED_PG_MAJOR: '18'",
             text,
-            "Gateway build must gate on pg18 per packaging-design.md §9.1",
+            "The paved-road major must be single-sourced as PAVED_PG_MAJOR "
+            "and set to 18 per packaging-design.md §9.1",
+        )
+        self.assertIn(
+            "matrix.pg_version == env.PAVED_PG_MAJOR",
+            text,
+            "The meta-package upload must gate on the single-sourced "
+            "PAVED_PG_MAJOR, not a hard-coded major",
+        )
+        self.assertNotIn(
+            "GATEWAY_CELL",
+            text,
+            "The gateway must build in every matrix cell — a per-major "
+            "gateway gate is exactly what left PG17/arm64 unproven",
+        )
+        self.assertIn(
+            "github.event_name != 'pull_request' || inputs.use_full_matrix "
+            "|| matrix.arch == 'amd64'",
+            text,
+            "The install/start E2E must cover every full-matrix cell "
+            "(PRs keep the fast amd64 paved-cell signal)",
         )
 
-    def test_rpm_workflow_gates_gateway_on_pg18(self):
-        wf = OSS_ROOT / ".github" / "workflows" / "build_rpm_packages.yml"
-        text = wf.read_text(encoding="utf-8")
-        self.assertNotIn(
-            "matrix.pg_version == '17'",
-            text,
-            "Gateway build must not gate on pg17 — the paved road is pg18 (§9.1)",
-        )
-        self.assertIn(
-            "matrix.pg_version == '18'",
-            text,
-            "Gateway build must gate on pg18 per packaging-design.md §9.1",
-        )
+    def test_deb_workflow_paved_road_contract(self):
+        self._check_workflow("build_deb_packages.yml")
+
+    def test_rpm_workflow_paved_road_contract(self):
+        self._check_workflow("build_rpm_packages.yml")
 
 
 class GatewayRpmPosttransRestartsLocalInstancesTests(unittest.TestCase):

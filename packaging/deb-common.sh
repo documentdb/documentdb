@@ -82,6 +82,28 @@ deb_install_mit_copyright() {
     chmod 0644 "${doc_dir}/copyright"
 }
 
+# deb_extension_dep_version <version>: normalize a package version to the
+# EXTENSION packages' dashed form for use in dependency floors.
+#
+# The product deliberately carries two DEB version grammars:
+#   - extension packages (postgresql-N-documentdb) use the control-file
+#     upstream form "X.Y-Z" (e.g. 0.117-0: upstream X.Y, Debian revision Z);
+#   - every other package (gateway/tools/common/documentdb-N/meta) uses the
+#     flat dotted form "X.Y.Z" (e.g. 0.117.0).
+# dpkg's comparator treats these as DIFFERENT versions — and orders them:
+#   dpkg --compare-versions 0.117-0 ge 0.117.0  → FALSE  (0.117 < 0.117.0)
+# so any cross-package floor that references the EXTENSION must use the
+# dashed form or apt rejects a correctly-versioned install. Single-source
+# that conversion here; see packaging/README.md ("Package version formats").
+deb_extension_dep_version() {
+    local version="$1"
+    if [[ "${version}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+        printf '%s.%s-%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+    else
+        printf '%s' "${version}"
+    fi
+}
+
 # deb_install_changelog <pkg_dir> <pkg_name> <version> <summary>: install a
 # native-package Debian changelog at /usr/share/doc/<pkg>/changelog.gz. Keep
 # this format aligned with packaging/update_spec_changelog.sh.

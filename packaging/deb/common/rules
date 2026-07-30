@@ -3,9 +3,9 @@
 %:
 	dh $@
 
+# Skip the regression suite during the package build. Producing the extension
+# .deb does not require running `make check`; that suite (pg_regress, isolation,
+# and the extended-rum recovery TAP tests) is heavy and version-sensitive to run
+# per matrix cell, and is covered by the dedicated regression workflows. An empty
+# override_dh_auto_test recipe is the canonical way to disable the test step.
 override_dh_auto_test:
-	make install
-	adduser --disabled-password --gecos "" documentdb
-	chown -R documentdb:documentdb .
-	# Pass PG bin dir on PATH so TAP tests can locate initdb under `su`.
-	su documentdb -c "PATH=\"$$(pg_config --bindir):\$$PATH\" make check"

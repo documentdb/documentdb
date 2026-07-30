@@ -1,0 +1,500 @@
+# Consolidated "build every package" entry point.
+#
+# The per-format workflows (build_deb_packages.yml / build_rpm_packages.yml)
+# already build the full four-package shape from packaging-design.md §4 —
+# the extension, the gateway runtime package, documentdb-postgresql-tools,
+# documentdb-common, the per-major documentdb-<N> stand-alone, and the
+# documentdb meta — across the OS/arch/PG matrix, and upload each slice as a
+# short-lived (7-day) artifact. That is convenient for per-cell debugging but
+# leaves no single, durable, verified place to pick up "all packages for
+# version X".
+#
+# This workflow fans out to those two reusable workflows over the FULL matrix,
+# then aggregates every produced .deb/.rpm into one durable bundle with a
+# SHA256SUMS file, a human-readable manifest, and an exact per-category COUNT
+# check against the Tier-1 matrix (so a silently skipped matrix cell — or a
+# silently dropped architecture within a category — can never ship a partial
+# set, and a stray uncategorized file can never ride along). Packages emitted
+# by more than one cell under the same filename are collapsed deterministically
+# and only after their contents are verified to match.
+#
+# Container images are intentionally NOT built here: they are not downloadable
+# package artifacts, and build_gateway.yml pushes to GHCR whenever the top-level
+# event is workflow_dispatch — reusing it from a manual run of this workflow
+# would push images as an unintended side effect. Image publishing stays in
+# build_gateway.yml / documentdb_release.yml.
+name: Build all packages
+
+concurrency:
+  group: build-all-packages-${{ github.ref }}
+  # A full-matrix build is expensive and is often the input to a release; do
+  # not cancel an in-flight run just because another dispatch arrives.
+  cancel-in-progress: false
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'DocumentDB version to build (blank = derive from the control file)'
+        required: false
+        type: string
+      use_full_matrix:
+        description: 'Build the full OS/arch/PG matrix (leave on for a complete package set)'
+        required: false
+        type: boolean
+        default: true
+  # Exposed as reusable so a future release workflow can gather the same bundle
+  # without duplicating the fan-out. This workflow does not modify
+  # documentdb_release.yml; wiring is left to a separate change.
+  workflow_call:
+    inputs:
+      version:
+        description: 'DocumentDB version to build (blank = derive from the control file)'
+        required: false
+        type: string
+      use_full_matrix:
+        description: 'Build the full OS/arch/PG matrix'
+        required: false
+        type: boolean
+        default: true
+
+# Match the permissions the reused build workflows declare so the reusable
+# calls are not silently down-scoped (the caller sets the GITHUB_TOKEN scope
+# for reusable workflows). The aggregate job itself needs only contents:read.
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  build-deb:
+    name: DEB packages
+    uses: ./.github/workflows/build_deb_packages.yml
+    with:
+      version: ${{ inputs.version }}
+      use_full_matrix: ${{ inputs.use_full_matrix }}
+    secrets: inherit
+
+  build-rpm:
+    name: RPM packages
+    uses: ./.github/workflows/build_rpm_packages.yml
+    with:
+      version: ${{ inputs.version }}
+      use_full_matrix: ${{ inputs.use_full_matrix }}
+    secrets: inherit
+
+  aggregate:
+    name: Aggregate + checksum all packages
+    needs: [build-deb, build-rpm]
+    runs-on: ubuntu-24.04
+    # The workflow-level grant exists only so the reusable calls above are not
+    # down-scoped; this job just reads the repo and shuffles artifacts, so drop
+    # packages:write / id-token:write here rather than inheriting them.
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Resolve version
+        id: version
+        uses: ./.github/actions/resolve-documentdb-version
+        with:
+          version: ${{ inputs.version }}
+
+      # Pull every artifact produced by the reusable build workflows in this
+      # run. v4 lands each artifact under its own subdirectory, so identically
+      # named noarch files uploaded from multiple matrix cells do not collide
+      # until the flatten step below dedups them by basename.
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+
+      # dpkg-deb ships on the runner; rpm/rpm2cpio/cpio are needed to compare
+      # duplicate RPMs in the cross-cell identity check below.
+      - name: Install package inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpm cpio
+
+      - name: Flatten, dedup, checksum, and verify
+        id: bundle
+        env:
+          DOCUMENTDB_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p packages
+
+          # Collect every .deb/.rpm except Debian debug-symbol packages and
+          # dedup by basename: the noarch extras and the PG-agnostic gateway
+          # package are emitted by several matrix cells under the same name.
+          #
+          # Selection is FIRST-wins over a sorted list, so the bundle no longer
+          # depends on artifact download order (the previous `cp -f` made the
+          # winner arbitrary). Every collapsed duplicate is then checked for
+          # CONTENT equivalence, turning "the copies are identical" from an
+          # assumption into an enforced invariant.
+          #
+          # Why not a sha256 of the file itself: nothing here is
+          # bit-reproducible — dpkg-deb records payload mtimes and rpmbuild
+          # stamps BUILDTIME into the header, so two cells emit byte-different
+          # files for identical inputs and a sha256 gate would fail every run
+          # (measured: two dpkg-deb builds of the same tree seconds apart
+          # already differ). The check is therefore tiered by what each package
+          # can actually guarantee:
+          #
+          #   every duplicate  -> STRUCTURE must match: every payload entry
+          #     with its type/mode/size (symlink targets included) plus all
+          #     packaging metadata (control or NEVRA, dependencies, maintainer
+          #     scripts). Catches the real regression — a cell emitting a
+          #     different file set, permissions, deps, or scriptlets under a
+          #     name another cell also produces.
+          #   noarch (_all.deb / .noarch.rpm) -> ALSO byte-identical payload
+          #     contents. These are assembled by pure-shell builders from
+          #     PG-independent inputs (build_extra_packages.sh passes neither
+          #     --pg nor the arch to the tools/common builders), so identical
+          #     content is guaranteed by construction and is worth enforcing.
+          #     This tier REQUIRES the builders to pin SOURCE_DATE_EPOCH (they
+          #     do, from the commit timestamp): the shipped
+          #     /usr/share/doc/<pkg>/changelog.gz otherwise carries each cell's
+          #     own HH:MM:SS and no two cells would ever agree.
+          #
+          # Compiled, arch-specific duplicates (the PG-agnostic gateway, built
+          # once per PG cell for the same arch) are deliberately NOT compared
+          # byte-for-byte: two independent release compiles of the same source
+          # are interchangeable but not guaranteed reproducible, and failing a
+          # release over compiler jitter would be a false alarm. If the build
+          # is ever made reproducible, promote this to a payload compare too.
+          dup_report="${RUNNER_TEMP}/duplicates.txt"
+          : > "$dup_report"
+          fail_dup=0
+
+          is_noarch() { case "$1" in *_all.deb|*.noarch.rpm) return 0 ;; *) return 1 ;; esac; }
+
+          # unpack <pkg> <destdir>: extract a package's installed payload plus
+          # its packaging metadata (maintainer scripts, deps) — no timestamps.
+          unpack() {
+            local pkg="$1" dest="$2" abs
+            # Resolve to an absolute path first: the rpm branch extracts from
+            # inside ${dest}/data, and a relative package path would resolve
+            # against that new cwd instead of the workspace.
+            abs="$(readlink -f "$pkg")"
+            mkdir -p "${dest}/data" "${dest}/meta"
+            case "$pkg" in
+              *.deb)
+                dpkg-deb -x "$abs" "${dest}/data"
+                dpkg-deb -e "$abs" "${dest}/meta"
+                ;;
+              *.rpm)
+                ( cd "${dest}/data" && rpm2cpio "$abs" | cpio -idm --quiet )
+                rpm -qp --qf '%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}\n' "$abs" \
+                  > "${dest}/meta/nevra"
+                rpm -qp --requires "$abs" > "${dest}/meta/requires"
+                rpm -qp --provides "$abs" > "${dest}/meta/provides"
+                rpm -qp --scripts  "$abs" > "${dest}/meta/scripts"
+                ;;
+            esac
+          }
+
+          # structure <destdir>: the package's shape and packaging metadata,
+          # with mtimes and file bytes deliberately excluded.
+          structure() {
+            local d="$1"
+            ( cd "${d}/data" && find . -mindepth 1 \
+                \( -type f -printf 'f %m %s %P\n' \) -o \
+                \( -type d -printf 'd %m - %P\n' \) -o \
+                \( -type l -printf 'l - - %P -> %l\n' \) | LC_ALL=C sort )
+            echo "--- packaging metadata ---"
+            ( cd "${d}/meta" && for m in $(LC_ALL=C ls); do echo "== ${m}"; cat "${m}"; done )
+          }
+
+          while IFS= read -r -d '' f; do
+            base="$(basename "$f")"
+            dest="packages/${base}"
+            if [ ! -e "$dest" ]; then
+              cp "$f" "$dest"
+              continue
+            fi
+            a="$(mktemp -d)"; b="$(mktemp -d)"
+            unpack "$dest" "$a"
+            unpack "$f" "$b"
+            sdiff_out="${RUNNER_TEMP}/dup-${base}.diff"
+            why=""
+            if ! diff -u <(structure "$a") <(structure "$b") > "$sdiff_out" 2>&1; then
+              why="package structure or packaging metadata"
+            elif is_noarch "$base" \
+                 && ! diff -r --no-dereference "${a}/data" "${b}/data" > "$sdiff_out" 2>&1; then
+              why="payload contents (noarch: every cell must emit identical files)"
+            fi
+            if [ -n "$why" ]; then
+              echo "::error::Duplicate package '${base}' differs between matrix cells (${why}) — the bundle cannot pick one safely."
+              echo "  kept:  $(sha256sum "$dest" | cut -d' ' -f1)  ${dest}"
+              echo "  other: $(sha256sum "$f"    | cut -d' ' -f1)  ${f}"
+              head -n 40 "$sdiff_out" || true
+              fail_dup=1
+            else
+              printf '  %s\n' "$base" >> "$dup_report"
+            fi
+            rm -rf "$a" "$b"
+          done < <(find all-artifacts -type f \( -name '*.deb' -o -name '*.rpm' \) \
+                     ! -name '*dbgsym*' ! -name '*-dbg_*' -print0 | sort -z)
+
+          if [ "$fail_dup" -ne 0 ]; then
+            echo "::error::Cross-cell package identity check failed (see the diffs above)."
+            exit 1
+          fi
+          echo "Duplicates collapsed after verifying cross-cell identity:"
+          cat "$dup_report"
+
+          cd packages
+
+          total=$(find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l | tr -d ' ')
+          if [ "$total" -eq 0 ]; then
+            echo "::error::No .deb or .rpm packages were collected from the build artifacts."
+            exit 1
+          fi
+
+          # Reproducible, sorted checksum manifest over the package files only.
+          find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -printf '%f\0' \
+            | sort -z | xargs -0 sha256sum > SHA256SUMS
+
+          count_glob() { find . -maxdepth 1 -type f -name "$1" | wc -l | tr -d ' '; }
+
+          # Per-category counts. Meta packages are distinguished from the
+          # extension/stand-alone by the bare "documentdb" name at the version.
+          ext_deb=$(count_glob '*postgresql-*-documentdb_*.deb')
+          gw_deb=$(count_glob '*documentdb-gateway_*.deb')
+          tools_deb=$(count_glob '*documentdb-postgresql-tools_*.deb')
+          common_deb=$(count_glob '*documentdb-common_*.deb')
+          sa_deb=$(count_glob '*documentdb-1[5-9]_*.deb')
+          meta_deb=$(find . -maxdepth 1 -type f -name '*documentdb_*_all.deb' ! -name '*postgresql*' | wc -l | tr -d ' ')
+          ext_rpm=$(count_glob '*postgresql*-documentdb-*.rpm')
+          gw_rpm=$(count_glob '*documentdb-gateway-*.rpm')
+          tools_rpm=$(count_glob 'documentdb-postgresql-tools-*.rpm')
+          common_rpm=$(count_glob 'documentdb-common-*.rpm')
+          sa_rpm=$(count_glob 'documentdb-1[5-9]-*.rpm')
+          meta_rpm=$(count_glob "documentdb-${DOCUMENTDB_VERSION}-*.noarch.rpm")
+
+          # Expected counts are DERIVED from the Tier-1 matrix dimensions
+          # rather than hand-written twelve times: keep these two lists in step
+          # with the matrices in build_deb_packages.yml / build_rpm_packages.yml
+          # (one distro per format, so the distro axis is 1) and every expected
+          # value below follows. Editing one number by hand is what silently
+          # shrinks coverage; editing a dimension cannot.
+          TIER1_PG_MAJORS=(17 18)
+          TIER1_ARCHES=(amd64 arm64)
+          n_pg=${#TIER1_PG_MAJORS[@]}
+          n_arch=${#TIER1_ARCHES[@]}
+
+          # Per category, what the matrix must yield after basename dedup:
+          #   extension  -> one per (PG major x arch)
+          #   gateway    -> PG-agnostic, so one per arch
+          #   standalone -> one per PG major (documentdb-<N>, noarch)
+          #   tools / common / meta -> noarch singletons
+          exp_ext=$((n_pg * n_arch))
+          exp_gw=${n_arch}
+          exp_sa=${n_pg}
+          exp_one=1
+
+          # category | count | expected  (drives the exact-count check + the
+          # plain-text manifest). A silently dropped cell OR a silently dropped
+          # architecture fails the run, not just an empty category (4 amd64
+          # extension debs with arm64 missing used to pass the old non-empty
+          # check).
+          declare -a rows=(
+            "extension DEB|${ext_deb}|${exp_ext}"
+            "gateway DEB|${gw_deb}|${exp_gw}"
+            "tools DEB|${tools_deb}|${exp_one}"
+            "common DEB|${common_deb}|${exp_one}"
+            "standalone DEB|${sa_deb}|${exp_sa}"
+            "meta DEB|${meta_deb}|${exp_one}"
+            "extension RPM|${ext_rpm}|${exp_ext}"
+            "gateway RPM|${gw_rpm}|${exp_gw}"
+            "tools RPM|${tools_rpm}|${exp_one}"
+            "common RPM|${common_rpm}|${exp_one}"
+            "standalone RPM|${sa_rpm}|${exp_sa}"
+            "meta RPM|${meta_rpm}|${exp_one}"
+          )
+
+          {
+            echo "DocumentDB packages — version ${DOCUMENTDB_VERSION}"
+            echo "Total package files: ${total}"
+            echo
+            printf '%-18s %-6s %s\n' "CATEGORY" "COUNT" "EXPECTED"
+          } > manifest.txt
+
+          fail=0
+          expected_total=0
+          for row in "${rows[@]}"; do
+            label="${row%%|*}"
+            rest="${row#*|}"
+            count="${rest%%|*}"
+            expected="${rest##*|}"
+            expected_total=$((expected_total + expected))
+            printf '%-18s %-6s %s\n' "$label" "$count" "$expected" >> manifest.txt
+            if [ "$count" -ne "$expected" ]; then
+              echo "::error::Package category '${label}' has ${count} file(s), expected ${expected}."
+              fail=1
+            fi
+          done
+
+          # A stray file that matches no category still inflates the total —
+          # catch that too instead of silently bundling it.
+          if [ "$total" -ne "$expected_total" ]; then
+            echo "::error::Bundle holds ${total} package files but the category table expects ${expected_total} — an uncategorized or extra package is present (see manifest)."
+            fail=1
+          fi
+
+          {
+            echo
+            echo "Files:"
+            find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -printf '  %f\n' | sort
+          } >> manifest.txt
+
+          echo "----- manifest.txt -----"
+          cat manifest.txt
+          echo "----- SHA256SUMS -----"
+          cat SHA256SUMS
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Package counts do not match the Tier-1 matrix expectations (see manifest above)."
+            exit 1
+          fi
+
+          # Total bundle size (packages only) for the human summary.
+          total_bytes=$(find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -printf '%s\n' | awk '{s+=$1} END{print s+0}')
+          size_human=$(numfmt --to=iec --suffix=B "${total_bytes}")
+
+          # Values the post-upload summary step needs. The artifact download URL
+          # is only known after the upload step runs, so the rich job-summary
+          # (with the download link) is written there; here we stage the
+          # version/size and a reusable markdown body the summary appends verbatim.
+          echo "total=${total}" >> "$GITHUB_OUTPUT"
+          echo "size_human=${size_human}" >> "$GITHUB_OUTPUT"
+
+          BODY="${RUNNER_TEMP}/summary_body.md"
+          {
+            echo "### Package categories"
+            echo
+            echo "| Package | DEB | RPM |"
+            echo "|---|---:|---:|"
+            echo "| Extension (\`postgresql-N-documentdb\`) | ${ext_deb} | ${ext_rpm} |"
+            echo "| Gateway (\`documentdb-gateway\`) | ${gw_deb} | ${gw_rpm} |"
+            echo "| Admin tools (\`documentdb-postgresql-tools\`) | ${tools_deb} | ${tools_rpm} |"
+            echo "| Shared payload (\`documentdb-common\`) | ${common_deb} | ${common_rpm} |"
+            echo "| Stand-alone (\`documentdb-N\`) | ${sa_deb} | ${sa_rpm} |"
+            echo "| Meta (\`documentdb\`) | ${meta_deb} | ${meta_rpm} |"
+            echo
+            echo "### Files (${total})"
+            echo
+            echo "| File | Size |"
+            echo "|---|---:|"
+            find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -printf '%s\t%f\n' \
+              | sort -k2 \
+              | while IFS="$(printf '\t')" read -r sz name; do
+                  printf '| `%s` | %s |\n' "${name}" "$(numfmt --to=iec --suffix=B "${sz}")"
+                done
+            echo
+            echo "<details><summary><strong>SHA256SUMS</strong> — verify with <code>sha256sum -c SHA256SUMS</code></summary>"
+            echo
+            echo '```'
+            cat SHA256SUMS
+            echo '```'
+            echo
+            echo "</details>"
+          } > "${BODY}"
+
+      # Debug symbols ship separately: the main bundle stays lean for the
+      # apt/yum publishing path, while crash triage for the C extension still
+      # has symbols to reach for.
+      #
+      # TODO: debug-symbol PRODUCTION is currently disabled in every builder,
+      # so this step collects ZERO packages today and the upload + release
+      # attachment below are always skipped. The collection/attachment
+      # plumbing is deliberately landed first and is tolerant of absence.
+      # To enable, in this order:
+      #   - RPM: drop `%define debug_package %{nil}` from the specs under
+      #     packaging/rpm/spec/ (it is set in all of them).
+      #   - DEB: allow debhelper's automatic -dbgsym packages in
+      #     packaging/deb/common/rules (dh_strip) and make sure the extension
+      #     build's output dir keeps them.
+      # Until then the *debuginfo*/*debugsource* patterns below never match;
+      # they are pre-wired for the RPM side of that change.
+      - name: Collect debug-symbol packages
+        id: dbgsym
+        run: |
+          set -euo pipefail
+          mkdir -p debug-symbols
+          count=0
+          while IFS= read -r -d '' f; do
+            cp -f "$f" "debug-symbols/$(basename "$f")"
+            count=$((count + 1))
+          done < <(find all-artifacts -type f \( -name '*dbgsym*' -o -name '*-dbg_*' -o -name '*debuginfo*' -o -name '*debugsource*' \) -print0)
+          echo "Collected ${count} debug-symbol package(s)."
+          echo "count=${count}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload debug-symbol bundle
+        if: ${{ steps.dbgsym.outputs.count != '0' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentdb-debug-symbols-${{ steps.version.outputs.version }}
+          path: debug-symbols/*
+          retention-days: 90
+          compression-level: 0
+
+      - name: Upload consolidated package bundle
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentdb-packages-${{ steps.version.outputs.version }}
+          path: |
+            packages/*.deb
+            packages/*.rpm
+            packages/SHA256SUMS
+            packages/manifest.txt
+          retention-days: 90
+          if-no-files-found: error
+          compression-level: 0
+
+      # Write the rich job summary here (not in the bundle step) because the
+      # artifact download URL is only available after the upload step runs.
+      # This renders on the run's Summary page with a one-click download link,
+      # a `gh run download` command, the category/file tables, checksums, and a
+      # GitHub Pages publishing hint.
+      - name: Write build summary (download link + manifest)
+        if: ${{ !cancelled() && steps.bundle.outcome == 'success' }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TOTAL: ${{ steps.bundle.outputs.total }}
+          SIZE_HUMAN: ${{ steps.bundle.outputs.size_human }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          ARTIFACT_NAME: documentdb-packages-${{ steps.version.outputs.version }}
+        run: |
+          short_sha="${GITHUB_SHA:0:7}"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          {
+            echo "## 📦 DocumentDB packages — \`${VERSION}\`"
+            echo
+            echo "**${TOTAL} package files** · **${SIZE_HUMAN}** · commit \`${short_sha}\` · [run #${GITHUB_RUN_NUMBER}](${run_url})"
+            echo
+            echo "### ⬇️ Download"
+            echo
+            if [ -n "${ARTIFACT_URL}" ]; then
+              echo "**[Download \`${ARTIFACT_NAME}.zip\`](${ARTIFACT_URL})** — one archive with every \`.deb\` + \`.rpm\`, plus \`SHA256SUMS\` and \`manifest.txt\`."
+            else
+              echo "Download the **\`${ARTIFACT_NAME}\`** artifact from the [run page](${run_url}) (see the Artifacts section)."
+            fi
+            echo
+            echo "From the command line (GitHub CLI):"
+            echo
+            echo '```sh'
+            echo "gh run download ${GITHUB_RUN_ID} -R ${GITHUB_REPOSITORY} -n ${ARTIFACT_NAME}"
+            echo "cd ${ARTIFACT_NAME} && sha256sum -c SHA256SUMS"
+            echo '```'
+            echo
+            echo "> Retained 90 days as a GitHub Actions artifact. **To publish on GitHub Pages:** download and unzip the bundle, run \`sha256sum -c SHA256SUMS\` to verify, then lay the \`.deb\`/\`.rpm\` files into your Pages site — either a plain downloads directory or a signed \`apt/\` + \`yum/\` repository tree."
+            echo
+            cat "${RUNNER_TEMP}/summary_body.md"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -102,11 +102,10 @@ deb_install_changelog "${PKG_DIR}" "${FILE_PKG_NAME}" "${VERSION}" \
 # Fix: convert the dotted form to the dashed form when referencing
 # the extension, leaving the dotted form for the standalone-owned
 # gateway/tools peers (which all use the dotted form themselves).
-# This script accepts either form on --version and normalizes here.
-EXT_DEP_VERSION="${VERSION}"
-if [[ "${VERSION}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-    EXT_DEP_VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
-fi
+# This script accepts either form on --version; the conversion is
+# single-sourced in deb-common.sh (deb_extension_dep_version) so every
+# builder that cross-references the extension normalizes identically.
+EXT_DEP_VERSION="$(deb_extension_dep_version "${VERSION}")"
 
 # Hard Depends:
 #  - postgresql-N + postgresql-N-documentdb: the underlying PG + extension

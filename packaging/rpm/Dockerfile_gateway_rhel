@@ -14,8 +14,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN test -n "$DOCUMENTDB_VERSION" || (echo "DOCUMENTDB_VERSION not set" && false)
 
-RUN dnf -y swap curl-minimal curl && \
-    dnf -y install \
+RUN dnf -y install --allowerasing \
         ca-certificates \
         cmake \
         curl \

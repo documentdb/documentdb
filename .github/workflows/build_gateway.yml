@@ -4,14 +4,18 @@ on:
   workflow_call:
     inputs:
       push_images:
-        description: 'if true, push images to GHCR (default: false) otherwise only build'
+        description: >-
+          Publish the built images to GHCR. Leave unchecked to build and smoke
+          test only — nothing is pushed. (A tag push publishes regardless.)
         default: false
         required: false
         type: boolean
   workflow_dispatch:
     inputs:
       push_images:
-        description: 'if true, push images to GHCR (default: false) otherwise only build'
+        description: >-
+          Publish the built images to GHCR. Leave unchecked to build and smoke
+          test only — nothing is pushed. (A tag push publishes regardless.)
         default: false
         required: false
         type: boolean
@@ -54,17 +58,15 @@ jobs:
           - 18
     runs-on: ${{ matrix.runner }}
     outputs:
-      documentdb_version: ${{ steps.extract_version.outputs.documentdb_version }}
+      # The shared action names its dotted output `version`; the job output
+      # keeps its original name so downstream consumers are unchanged.
+      documentdb_version: ${{ steps.extract_version.outputs.version }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v5
     - name: Extract and Format Default Version
       id: extract_version
-      run: |
-        DOCUMENTDB_VERSION=$(grep -E "^default_version" pg_documentdb_core/documentdb_core.control | sed -E "s/.*'([0-9]+\.[0-9]+-[0-9]+)'.*/\1/")
-        DOCUMENTDB_VERSION=$(echo $DOCUMENTDB_VERSION | sed "s/-/./g")
-        echo "Extracted Version: $DOCUMENTDB_VERSION"
-        echo "documentdb_version=$DOCUMENTDB_VERSION" >> $GITHUB_OUTPUT
+      uses: ./.github/actions/resolve-documentdb-version
     - name: Build Debian Package
       run: |
         ./packaging/build_packages.sh --os deb13 --pg ${{ matrix.pg_version }} --output-dir downloaded-artifacts
@@ -165,8 +167,17 @@ jobs:
         fi
 
         dump_logs=false
+    # Publish only when a release asked for it (tag push, or an explicit
+    # push_images request). `inputs` — unlike `github.event.inputs`, which is
+    # populated for workflow_dispatch ONLY — carries the value for both
+    # workflow_dispatch and workflow_call, so a caller passing
+    # push_images: false is now honoured. The old trailing
+    # `github.event_name == 'workflow_dispatch'` clause overrode the input
+    # entirely: it published on every manual run (even with the box unchecked)
+    # and on any workflow_call whose top-level event was a dispatch, which is
+    # what made a release dry run publish images as a side effect.
     - name: Push ${{ matrix.arch }} Image
-      if: github.event.inputs.push_images == 'true' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+      if: inputs.push_images || startsWith(github.ref, 'refs/tags/')
       run: |
         TAG=${{ env.IMAGE_TAG }}-pg${{ matrix.pg_version }}-${{ matrix.arch }}
         echo "Pushing image ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:$TAG"
@@ -174,7 +185,9 @@ jobs:
     
   create-manifest:
     name: Create, Push, Sign & Verify Manifest
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    # Must match the per-arch push gate above: a manifest can only reference
+    # images that were actually published.
+    if: inputs.push_images || startsWith(github.ref, 'refs/tags/')
     strategy:
       matrix:
         pg_version:
@@ -215,9 +228,11 @@ jobs:
           --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
           ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}@${DIGEST}
 
-  create-manifest-latest:  
+  create-manifest-latest:
     name: Create & push 'latest' manifest
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    # Must match the per-arch push gate above: a manifest can only reference
+    # images that were actually published.
+    if: inputs.push_images || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-22.04
     needs: build-and-push
     steps:

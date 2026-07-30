@@ -124,13 +124,12 @@ trap 'rm -f "$temp_changelog"' EXIT
 } > "$temp_changelog"
 
 # Determine packager (try git config, else default)
-GIT_NAME=$(git config user.name 2>/dev/null || true)
-GIT_EMAIL=$(git config user.email 2>/dev/null || true)
-if [[ -n "$GIT_NAME" && -n "$GIT_EMAIL" ]]; then
-    PACKAGER="$GIT_NAME <$GIT_EMAIL>"
-else
-    PACKAGER="documentdb packager <packaging@documentdb.local>"
-fi
+# Stable release identity: shipped changelog metadata must not depend on
+# which machine or account happened to run the build (git config gave each
+# build a different author; the old fallback was a fake domain). Matches the
+# DEB_MAINTAINER default used by the dpkg-deb-built packages. Override via
+# DOCUMENTDB_PACKAGER when a different identity is genuinely intended.
+PACKAGER="${DOCUMENTDB_PACKAGER:-DocumentDB Packaging <documentdb-packaging-maintainers@microsoft.com>}"
 
 # Convert extracted markdown into RPM %changelog format.
 # We expect sections that start with '###' containing 'v<version>' and
@@ -168,7 +167,9 @@ flush_section() {
     else
         for it in "${items[@]}"; do
             # make sure each item is a single line starting with '- '
-            new_changelog_block+="- ${it}\n"
+            # Escape % for rpm: in %changelog a bare % can start a macro
+            # reference and expand or warn at rpmbuild time; %% is literal.
+            new_changelog_block+="- ${it//%/%%}\n"
         done
     fi
     new_changelog_block+=$'\n'

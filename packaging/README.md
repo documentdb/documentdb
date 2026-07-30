@@ -11,9 +11,70 @@ The OSS packaging contract mirrors the design in
 | `documentdb-common` | PG-agnostic shared payload owned once: `documentdb-setup`, `documentdb-local-reset`, the systemd template units (`documentdb-local@.target`, `documentdb-postgresql@.service`, `documentdb-gateway-local@.service`), the sysusers.d/tmpfiles.d drop-ins, helper scripts, and sample data. |
 | `documentdb-N` (+ `documentdb` meta) | Per-major stand-alone package — pins PostgreSQL major N + its extension, depends on `documentdb-common` (and the gateway/tools it pulls in), and owns the per-major systemd instance lifecycle. |
 
-The paved-road combination built and tested by CI is **Ubuntu 24.04 LTS +
-PostgreSQL 18**. Other OS/PG combinations are exposed by the build scripts
-below for community packagers and validation runs.
+**Ubuntu 24.04 LTS + PostgreSQL 18** is the paved-road default — the
+`documentdb` meta package pins PostgreSQL 18, and the install/start E2E uses it
+as the reference target. First-party CI builds and tests a small **Tier 1**
+matrix around that default (see [What CI builds](#what-ci-builds-package-production-tiers)
+below, which is the authoritative statement of the CI scope); other OS/PG
+combinations are exposed by the build scripts below for community packagers and
+validation runs.
+
+## What CI builds (package-production tiers)
+
+First-party CI does **not** build the full distro × PG-major cartesian product.
+Following the norm for PostgreSQL extensions (Citus, TimescaleDB, and pgvector
+are published through the shared PGDG build infrastructure rather than each
+project running the whole matrix, and typically support only the newest ~3
+majors), the build is tiered:
+
+- **Tier 1 — first-party build + test + host (the guarantee).** The
+  `build_all_packages.yml` full matrix builds the newest, most-used majors on
+  the paved-road distros only: **PostgreSQL {17, 18}** on **Ubuntu 24.04** (DEB)
+  and **RHEL/Rocky 9** (RPM), for **amd64 + arm64**. The install/start E2E
+  (install → `documentdb-setup` → wire protocol) runs on **every cell of that
+  matrix**, not just the paved-road default — a combination we ship is a
+  combination we installed and started at least once.
+- **Tier 2 / 3 — build on demand (not built by CI).** Every other supported
+  combination — **PostgreSQL 15/16**, **Debian 11/12/13**, **Ubuntu 22.04**,
+  **RHEL/Rocky 8** — is produced by running the version-parametric build scripts
+  yourself. The packaging stays fully parametric, so a specific version is one
+  command:
+
+  ```sh
+  ./packaging/build_packages.sh --os deb12 --pg 16          # extension
+  ./packaging/gateway/build_gateway_packages.sh --os deb12 --pg 16 --version <V>
+  ```
+
+  PostgreSQL 15 is **extension-only**: only the `postgresql-15-documentdb`
+  extension package is produced for PG 15. The PG-agnostic `documentdb-gateway`
+  package still builds and installs, but package-managed setup
+  (`documentdb-register-gateway` / `documentdb-setup`) rejects PG 15 because it
+  requires PG 16+ — consistent with the Gateway Packages section below.
+
+The full lists below enumerate everything the scripts *accept*; Tier 1 is the
+subset CI produces automatically.
+
+## Package version formats
+
+One release deliberately carries two version grammars:
+
+- **Extension packages** (`postgresql-N-documentdb`) use the control-file
+  upstream form **`X.Y-Z`** (e.g. `0.117-0`; on DEB that is upstream `X.Y`
+  with Debian revision `Z`, on RPM it is split into `Version: X.Y` /
+  `Release: Z`... rendered as `X.Y.Z-1` in the RPM filename).
+- **All other packages** (`documentdb-gateway`, `documentdb-postgresql-tools`,
+  `documentdb-common`, `documentdb-N`, `documentdb` meta) use the flat dotted
+  form **`X.Y.Z`** (e.g. `0.117.0`).
+
+dpkg's comparator treats these as *different, ordered* versions
+(`dpkg --compare-versions 0.117-0 ge 0.117.0` is FALSE, because upstream
+`0.117` sorts before `0.117.0`), so any cross-package dependency floor that
+references an **extension** package must use the dashed form. That conversion
+is single-sourced as `deb_extension_dep_version` in `packaging/deb-common.sh`
+— use it instead of hand-converting. Workflows convert the control-file
+version to the dotted form (`X.Y-Z` → `X.Y.Z`) once, at extraction time, and
+pass it to every builder via `--version` (either form is accepted and
+normalized where needed).
 
 ## User-facing install paths
 

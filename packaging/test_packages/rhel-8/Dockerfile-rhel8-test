@@ -13,8 +13,17 @@ RUN dnf install -y epel-release && \
     dnf config-manager --set-enabled powertools && \
     dnf clean all
 
+# glibc-langpack-en provides en_US.UTF-8; localedef stays best-effort because
+# it exits nonzero on this base even when the locale is fine (charmap not
+# shipped). The `locale -a` check is the real gate: the old trailing
+# `|| true` bound to the WHOLE && chain, so a transient dnf/mirror failure
+# built a locale-less image that only failed ~30 min later inside initdb
+# ("invalid locale settings") - and the poisoned cached layer then defeated
+# the workflow-level retry. Failing here leaves no layer to cache, so a
+# retry rebuilds cleanly.
 RUN dnf -y install glibc-langpack-en glibc-common && \
-    localedef -i en_US -f UTF-8 en_US.UTF-8 || true
+    (localedef -i en_US -f UTF-8 en_US.UTF-8 || true) && \
+    locale -a | grep -qiE '^en_US\.utf-?8$'
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 
