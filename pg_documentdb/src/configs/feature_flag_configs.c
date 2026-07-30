@@ -538,6 +538,14 @@ bool EnableNewNamespaceValidation =
 bool EnableInsertDuplicateInlineHandling =
 	DEFAULT_ENABLE_INSERT_DUPLICATE_INLINE_HANDLING;
 
+/*
+ * SECTION: Write path feature flags
+ */
+
+/* Added in v116, Pending stabilization, enable in v119 */
+#define DEFAULT_ENABLE_UPDATE_MANY_WORKER_PUSHDOWN false
+bool EnableUpdateManyWorkerPushdown = DEFAULT_ENABLE_UPDATE_MANY_WORKER_PUSHDOWN;
+
 /* Improves updateMany performance but can lead to deadlocks when concurrent writes update the same document */
 /* To enable this default we need to handle deadlock scenarios gracefully */
 
@@ -1501,6 +1509,18 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableCompactVacuumFull,
 		DEFAULT_ENABLE_COMPACT_VACUUM_FULL,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_update_many_worker_pushdown", newGucPrefix),
+		gettext_noop(
+			"Whether to push updateMany to worker nodes via update_worker UDF, "
+			"avoiding CTE intermediate result overhead on the coordinator."),
+		NULL,
+		&EnableUpdateManyWorkerPushdown,
+		DEFAULT_ENABLE_UPDATE_MANY_WORKER_PUSHDOWN,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

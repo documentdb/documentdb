@@ -113,6 +113,7 @@ extern int BatchUpdateLockTimeoutMs;
 /* This guc is temporary and is used to handle whether the parameter “bypassDocumentValidation” could be set in the request command.*/
 extern bool EnableBypassDocumentValidation;
 extern bool EnableSchemaValidation;
+extern bool EnableUpdateManyWorkerPushdown;
 extern bool EnableCommutativeUpdateMany;
 
 /*
@@ -261,6 +262,7 @@ typedef struct
 typedef struct
 {
 	bool isUpdateOne;
+	bool isUpdateMany;
 	pgbson *shardKeyBson;
 	bool isOrdered;
 
@@ -383,6 +385,17 @@ static void CallUpdateWorkerForUpdateOne(MongoCollection *collection,
 										 UpdateOneParams *updateOneParams,
 										 int64 shardKeyHash, text *transactionId,
 										 UpdateOneResult *result);
+static pgbson * SerializeUpdateManyParams(UpdateOneParams *params);
+static void DeserializeUpdateManyWorkerSpec(const bson_value_t *value,
+											WorkerUpdateParam *params);
+static UpdateAllMatchingDocsResult CallUpdateWorkerForUpdateMany(
+	MongoCollection *collection, UpdateOneParams *updateOneParams,
+	bool
+	hasShardKeyEqualityFilter,
+	int64 shardKeyHash,
+	bool isUpsert,
+	bool *
+	hasOnlyObjectIdFilter);
 
 static HeapTuple PerformUpdateCore(Datum *databaseNameDatum, pgbson *updateSpec,
 								   pgbsonsequence *updateDocs, text *transactionId,
@@ -1699,11 +1712,35 @@ ProcessUpdate(MongoCollection *collection, UpdateSpec *updateSpec,
 								NULL ?
 								collection->schemaValidator.validator : NULL;
 
-		UpdateAllMatchingDocsResult updateAllResult = UpdateAllMatchingDocuments(
-			collection, &updateSpec->updateOneParams,
-			hasShardKeyValueFilter,
-			shardKeyHash, validatorInfo,
-			&hasOnlyObjectIdFilter);
+		/*
+		 * When EnableUpdateManyWorkerPushdown is set and the collection is distributed
+		 * (not already on a local shard), push the update to workers via
+		 * update_worker. Each worker runs the UPDATE locally and returns
+		 * matched/modified counts, avoiding CTE intermediate result overhead.
+		 * TODO : Extend worker pushdown for schema validation case as well.
+		 */
+		bool useWorkerPath = EnableUpdateManyWorkerPushdown &&
+							 collection->shardTableName[0] == '\0' &&
+							 collection->shardKey != NULL &&
+							 validatorInfo == NULL;
+
+		UpdateAllMatchingDocsResult updateAllResult;
+		if (useWorkerPath)
+		{
+			updateAllResult = CallUpdateWorkerForUpdateMany(
+				collection, &updateSpec->updateOneParams,
+				hasShardKeyValueFilter, shardKeyHash,
+				isUpsert, &hasOnlyObjectIdFilter);
+		}
+		else
+		{
+			updateAllResult = UpdateAllMatchingDocuments(
+				collection, &updateSpec->updateOneParams,
+				hasShardKeyValueFilter,
+				shardKeyHash, validatorInfo,
+				&hasOnlyObjectIdFilter);
+		}
+
 		result->rowsMatched = updateAllResult.matchedDocs;
 		result->rowsModified = updateAllResult.rowsUpdated;
 
@@ -1868,7 +1905,12 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 	int argCount = 0;
 	int nextSqlArgIndex = 1;
 
-	/* We use a CTE with the UPDATE document and then select the count of number of rows to get the matched docs,
+	/* When EnableUpdateManyWorkerPushdown is active for distributed collections,
+	 * this CTE-based path is bypassed in favor of pushing the update to each
+	 * worker node via update_worker (see CallUpdateWorkerForUpdateMany).
+	 *
+	 * For the legacy/local path below:
+	 * We use a CTE with the UPDATE document and then select the count of number of rows to get the matched docs,
 	 * and the sum of the RETURNING value, which returns 1 if a document was updated and 0
 	 * if not, that way we can get the total updated documents in order to return the correct result.
 	 *
@@ -1895,6 +1937,7 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 	int validationLevelArgIndex = -1;
 
 	uint64 preparedQueryKey = 0;
+	bool useDirectUpdate = false;
 	char *additionalArgs = "";
 	if (IsClusterVersionAtleast(DocDB_V0, 111, 0) &&
 		collection->options.updateDescriptionEnabled)
@@ -2039,8 +2082,20 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 	}
 	else
 	{
+		/*
+		 * When isLocalShardQuery and EnableUpdateManyWorkerPushdown, skip the CTE
+		 * wrapper and issue UPDATE ... RETURNING directly. Otherwise use
+		 * the CTE: WITH u AS (UPDATE ... RETURNING ...) SELECT COUNT(*), SUM(updated) FROM u
+		 */
+		useDirectUpdate = isLocalShardQuery && EnableUpdateManyWorkerPushdown;
+
+		if (!useDirectUpdate)
+		{
+			appendStringInfo(&updateQuery, "WITH u AS (");
+		}
+
 		appendStringInfo(&updateQuery,
-						 "WITH u AS (UPDATE %s.%s"
+						 "UPDATE %s.%s"
 						 " SET document = COALESCE(%s.update_bson_document(document, $1::%s,"
 						 " $2::%s, $3::%s, %s::%s, NULL::TEXT%s), document) ",
 						 ApiDataSchemaName, tableName, ApiInternalSchemaNameV2,
@@ -2108,10 +2163,23 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 			argCount++;
 		}
 
-		appendStringInfo(&updateQuery,
-						 " RETURNING %s.bson_update_returned_value(shard_key_value) as updated)"
-						 " SELECT COUNT(*), SUM(updated) FROM u",
-						 ApiInternalSchemaName);
+		if (useDirectUpdate)
+		{
+			preparedQueryKey += QUERY_UPDATE_MANY_PUSHDOWN_QUERY_OFFSET;
+
+			/*
+			 * No RETURNING clause needed: matchedDocs = SPI_processed,
+			 * modifiedCount = NumBsonDocumentsUpdated (incremented inside
+			 * update_bson_document for each actual modification).
+			 */
+		}
+		else
+		{
+			appendStringInfo(&updateQuery,
+							 " RETURNING %s.bson_update_returned_value(shard_key_value) as updated)"
+							 " SELECT COUNT(*), SUM(updated) FROM u",
+							 ApiInternalSchemaName);
+		}
 	}
 
 	Oid *argTypes = palloc0(argCount * sizeof(Oid));
@@ -2184,6 +2252,12 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 	bool readOnly = false;
 	long maxTupleCount = 0;
 
+	/* Reset before SPI execution so update_bson_document increments from zero */
+	if (useDirectUpdate)
+	{
+		NumBsonDocumentsUpdated = 0;
+	}
+
 	if (preparedQueryKey != 0)
 	{
 		SPIPlanPtr plan = isLocalShardQuery ?
@@ -2217,7 +2291,17 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 							  readOnly, maxTupleCount);
 	}
 
-	if (SPI_processed > 0)
+	if (useDirectUpdate)
+	{
+		/*
+		 * Direct UPDATE path (no RETURNING): SPI_processed gives matched
+		 * count, NumBsonDocumentsUpdated (incremented in update_bson_document
+		 * for each actual modification) gives the modified count.
+		 */
+		result.matchedDocs = SPI_processed;
+		result.rowsUpdated = NumBsonDocumentsUpdated;
+	}
+	else if (SPI_processed > 0)
 	{
 		bool isNull = false;
 
@@ -2243,11 +2327,6 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 	}
 
 	SPI_finish();
-
-	if (isLocalShardQuery && result.rowsUpdated == 0)
-	{
-		result.rowsUpdated = NumBsonDocumentsUpdated;
-	}
 
 	return result;
 }
@@ -2525,7 +2604,11 @@ command_update_worker(PG_FUNCTION_ARGS)
 
 	UpdateMongoCollectionUsingIds(mongoCollection, collectionId, shardOid);
 
-	mongoCollection->shardKey = params.shardKeyBson;
+	if (params.shardKeyBson)
+	{
+		/* TODO : Do we really need it ? Need To validate in all update_worker paths and remove it */
+		mongoCollection->shardKey = params.shardKeyBson;
+	}
 
 	/* Document validation occurs regardless of whether the validation action is set to error or warn.
 	 * If validation fails and the action is error, an error is thrown; if the action is warn, a warning is logged.
@@ -2569,6 +2652,31 @@ command_update_worker(PG_FUNCTION_ARGS)
 		}
 
 		PG_RETURN_POINTER(serializedResult);
+	}
+
+	if (params.isUpdateMany)
+	{
+		/*
+		 * updateMany on worker: run the UPDATE locally on this shard and
+		 * return matched/modified counts as BSON.
+		 * Note: schema validation is not currently supported on this path;
+		 * the coordinator only routes here when validatorInfo is NULL.
+		 */
+		bool hasOnlyObjectIdFilter = false;
+		bool hasShardKeyValueFilter = false;
+
+		UpdateAllMatchingDocsResult updateResult = UpdateAllMatchingDocuments(
+			mongoCollection, &params.param.updateOne,
+			hasShardKeyValueFilter, shardKeyHash, NULL,
+			&hasOnlyObjectIdFilter);
+
+		pgbson_writer writer;
+		PgbsonWriterInit(&writer);
+		PgbsonWriterAppendInt64(&writer, "m", 1, /* matched */
+								(int64_t) updateResult.matchedDocs);
+		PgbsonWriterAppendInt64(&writer, "d", 1, /* modified */
+								(int64_t) updateResult.rowsUpdated);
+		PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
 	}
 
 	/* we have a batch unsharded update. */
@@ -2896,10 +3004,13 @@ DeserializeUpdateUnshardedWorkerSpec(const bson_value_t *value, WorkerUpdatePara
 
 
 /* Deserializes the pgbson representing the update worker spec. It can have the following shapes:
- *  {"updateUnsharded": [{updateSpec1}, {updateSpec2}, { ... }]}
+ *  {"updateUnsharded": {specs: [{updateSpec1}, ...], isOrdered: bool, ...}}
  *
- *  or for sharded updates:
+ *  for sharded updateOne:
  *  {"updateOne": {updateOneParams} }
+ *
+ *  for sharded updateMany (pushed to workers):
+ *  {"updateMany": {query: ..., update: ..., arrayFilters: ..., ...}}
  */
 static void
 DeserializeUpdateWorkerSpec(pgbson *updateInternalSpec,
@@ -2910,6 +3021,7 @@ DeserializeUpdateWorkerSpec(pgbson *updateInternalSpec,
 
 	params->shardKeyBson = NULL;
 	params->isUpdateOne = false;
+	params->isUpdateMany = false;
 	params->bypassDocumentValidation = false;
 
 	/* The top level is a pgbsonelement describing a type of update
@@ -2923,11 +3035,17 @@ DeserializeUpdateWorkerSpec(pgbson *updateInternalSpec,
 		DeserializeUpdateUnshardedWorkerSpec(&singleElement.bsonValue, params);
 		return;
 	}
+	else if (strcmp(singleElement.path, "updateMany") == 0 &&
+			 singleElement.bsonValue.value_type == BSON_TYPE_DOCUMENT)
+	{
+		DeserializeUpdateManyWorkerSpec(&singleElement.bsonValue, params);
+		return;
+	}
 	else if (strcmp(singleElement.path, "updateOne") != 0 ||
 			 singleElement.bsonValue.value_type != BSON_TYPE_DOCUMENT)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR), (errmsg(
-																		"Update worker only supports updateOne or updateUnsharded as a document"))));
+																		"Update worker only supports updateOne, updateMany, or updateUnsharded as a document"))));
 	}
 
 	params->isUpdateOne = true;
@@ -4176,6 +4294,216 @@ ReportUpdateFeatureUsage(int batchSize)
 	{
 		ReportFeatureUsage(FEATURE_COMMAND_UPDATE_EXTENDED);
 	}
+}
+
+
+/*
+ * SerializeUpdateManyParams serializes updateMany parameters into a BSON
+ * document for transport to worker nodes via update_worker.
+ * Format: {"updateMany": {query: ..., update: ..., arrayFilters: ...}}
+ */
+static pgbson *
+SerializeUpdateManyParams(UpdateOneParams *params)
+{
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+
+	pgbson_writer innerWriter;
+	PgbsonWriterStartDocument(&writer, "updateMany", -1, &innerWriter);
+
+	if (params->query != NULL)
+	{
+		PgbsonWriterAppendValue(&innerWriter, "query", 5, params->query);
+	}
+
+	if (params->update != NULL)
+	{
+		PgbsonWriterAppendValue(&innerWriter, "update", 6, params->update);
+	}
+
+	if (params->arrayFilters != NULL)
+	{
+		PgbsonWriterAppendValue(&innerWriter, "arrayFilters", 12,
+								params->arrayFilters);
+	}
+
+	if (params->variableSpec != NULL &&
+		params->variableSpec->value_type == BSON_TYPE_DOCUMENT)
+	{
+		PgbsonWriterAppendValue(&innerWriter, "variableSpec", 12,
+								params->variableSpec);
+	}
+
+	PgbsonWriterEndDocument(&writer, &innerWriter);
+
+	return PgbsonWriterGetPgbson(&writer);
+}
+
+
+/*
+ * DeserializeUpdateManyWorkerSpec deserializes an updateMany spec received
+ * on a worker node. Populates the WorkerUpdateParam with updateMany parameters.
+ */
+static void
+DeserializeUpdateManyWorkerSpec(const bson_value_t *value, WorkerUpdateParam *params)
+{
+	params->isUpdateMany = true;
+	UpdateOneParams *updateManyParams = &params->param.updateOne;
+	memset(updateManyParams, 0, sizeof(UpdateOneParams));
+
+	bson_iter_t iter;
+	BsonValueInitIterator(value, &iter);
+	while (bson_iter_next(&iter))
+	{
+		const char *key = bson_iter_key(&iter);
+		if (strcmp(key, "query") == 0)
+		{
+			updateManyParams->query = CreateBsonValueCopy(bson_iter_value(&iter));
+		}
+		else if (strcmp(key, "update") == 0)
+		{
+			updateManyParams->update = CreateBsonValueCopy(bson_iter_value(&iter));
+		}
+		else if (strcmp(key, "arrayFilters") == 0)
+		{
+			updateManyParams->arrayFilters = CreateBsonValueCopy(
+				bson_iter_value(&iter));
+		}
+		else if (strcmp(key, "variableSpec") == 0)
+		{
+			/*
+			 * updateMany execution consumes variableSpec from UpdateOneParams
+			 * (see UpdateAllMatchingDocuments/currentUpdate->variableSpec).
+			 * Store it there to preserve let variables across worker-path updateMany.
+			 */
+			params->variableSpec = CreateBsonValueCopy(bson_iter_value(&iter));
+			updateManyParams->variableSpec = params->variableSpec;
+		}
+	}
+}
+
+
+/*
+ * CallUpdateWorkerForUpdateMany pushes an updateMany operation to worker nodes
+ * via the existing update_worker function. Each worker runs the UPDATE locally
+ * on its shard and returns matched/modified counts. The coordinator collects
+ * and aggregates results from all shards.
+ *
+ * When hasShardKeyEqualityFilter is true, the query is routed to a single shard.
+ * Otherwise, it fans out to all shards.
+ */
+static UpdateAllMatchingDocsResult
+CallUpdateWorkerForUpdateMany(MongoCollection *collection,
+							  UpdateOneParams *updateOneParams,
+							  bool hasShardKeyEqualityFilter,
+							  int64 shardKeyHash,
+							  bool isUpsert,
+							  bool *hasOnlyObjectIdFilter)
+{
+	UpdateAllMatchingDocsResult result;
+	memset(&result, 0, sizeof(UpdateAllMatchingDocsResult));
+
+
+	int spiResult = SPI_connect();
+	if (spiResult != SPI_OK_CONNECT)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg("Could not connect to SPI for updateMany worker")));
+	}
+
+	pgbson *serializedSpec = SerializeUpdateManyParams(updateOneParams);
+
+	int argCount = 6;
+	Datum argValues[6];
+	char argNulls[6] = { ' ', ' ', ' ', ' ', 'n', 'n' };
+	Oid argTypes[6] = { INT8OID, INT8OID, REGCLASSOID, BYTEAOID, BYTEAOID, TEXTOID };
+
+	argValues[0] = UInt64GetDatum(collection->collectionId);
+	argValues[1] = Int64GetDatum(shardKeyHash);
+	argValues[2] = ObjectIdGetDatum(InvalidOid);
+	argValues[3] = PointerGetDatum(serializedSpec);
+
+	StringInfoData queryBuf;
+	initStringInfo(&queryBuf);
+
+	if (hasShardKeyEqualityFilter)
+	{
+		appendStringInfo(&queryBuf,
+						 "SELECT %s.update_worker($1, $2, $3, $4::%s.bson,"
+						 " $5::%s.bsonsequence, $6) FROM %s.documents_"
+						 UINT64_FORMAT " WHERE shard_key_value = %ld",
+						 DocumentDBApiInternalSchemaName,
+						 CoreSchemaNameV2, CoreSchemaNameV2,
+						 ApiDataSchemaName, collection->collectionId,
+						 shardKeyHash);
+	}
+	else
+	{
+		appendStringInfo(&queryBuf,
+						 "SELECT %s.update_worker($1, $2, $3, $4::%s.bson,"
+						 " $5::%s.bsonsequence, $6) FROM %s.documents_"
+						 UINT64_FORMAT,
+						 DocumentDBApiInternalSchemaName,
+						 CoreSchemaNameV2, CoreSchemaNameV2,
+						 ApiDataSchemaName, collection->collectionId);
+	}
+
+	bool readOnly = false;
+	AllowNestedDistributionInCurrentTransaction();
+
+	spiResult = SPI_execute_with_args(queryBuf.data, argCount, argTypes,
+									  argValues, argNulls, readOnly, 0);
+
+	if (spiResult != SPI_OK_SELECT)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg("updateMany worker query failed with SPI result %d",
+							   spiResult)));
+	}
+
+	/* Aggregate results from all shards */
+	for (uint64 i = 0; i < SPI_processed; i++)
+	{
+		bool valIsNull = false;
+		Datum resultDatum = SPI_getbinval(SPI_tuptable->vals[i],
+										  SPI_tuptable->tupdesc, 1, &valIsNull);
+		if (valIsNull)
+		{
+			continue;
+		}
+
+		pgbson *resultBson = DatumGetPgBson(resultDatum);
+		bson_iter_t resultIter;
+		PgbsonInitIterator(resultBson, &resultIter);
+		while (bson_iter_next(&resultIter))
+		{
+			const char *key = bson_iter_key(&resultIter);
+			if (strcmp(key, "m") == 0) /* matched */
+			{
+				result.matchedDocs += bson_iter_as_int64(&resultIter);
+			}
+			else if (strcmp(key, "d") == 0) /* modified */
+			{
+				result.rowsUpdated += bson_iter_as_int64(&resultIter);
+			}
+		}
+	}
+
+	SPI_finish();
+
+	/* Determine hasOnlyObjectIdFilter for the upsert path */
+	if (isUpsert && result.matchedDocs == 0)
+	{
+		bool queryHasNonIdFilters = false;
+		bool isIdFilterCollationAwareIgnore = false;
+		pgbson *objectIdFilter =
+			GetObjectIdFilterFromQueryDocumentValue(updateOneParams->query,
+													&queryHasNonIdFilters,
+													&isIdFilterCollationAwareIgnore);
+		*hasOnlyObjectIdFilter = objectIdFilter != NULL && !queryHasNonIdFilters;
+	}
+
+	return result;
 }
 
 
