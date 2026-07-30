@@ -172,6 +172,35 @@ def _wait_for_ready(container: str, *, timeout: int = DEFAULT_READY_TIMEOUT,
     )
 
 
+def _wait_for_healthy(container: str, *, timeout: int = 120,
+                      poll_interval: float = 2.0) -> None:
+    """Poll `docker inspect` until the built-in HEALTHCHECK reports healthy.
+    The probe runs on a 30s interval, so allow at least one full interval
+    past readiness. Raises RuntimeError on timeout or premature exit."""
+    deadline = time.monotonic() + timeout
+    status = "<never inspected>"
+    while time.monotonic() < deadline:
+        result = _docker(
+            "inspect", "-f", "{{.State.Health.Status}}", container, check=False,
+        )
+        status = result.stdout.strip()
+        if status == "healthy":
+            return
+        running = _docker(
+            "inspect", "-f", "{{.State.Running}}", container, check=False,
+        )
+        if running.returncode != 0 or running.stdout.strip() != "true":
+            raise RuntimeError(
+                f"container {container!r} exited while waiting for healthy "
+                f"(last health status: {status!r})"
+            )
+        time.sleep(poll_interval)
+    raise RuntimeError(
+        f"container {container!r} did not report healthy within {timeout}s "
+        f"(last health status: {status!r})"
+    )
+
+
 def _start_container(image: str, *, extra_run_args: list[str] | None = None,
                      entrypoint_flags: list[str] | None = None,
                      name: str | None = None) -> str:
@@ -448,6 +477,29 @@ class DefaultContainerTests(_ContainerTestBase):
             whoami.stdout.strip(), "root",
             "in-container `whoami` reports root; expected a non-root user.",
         )
+
+    def test_builtin_healthcheck_probe_succeeds(self):
+        """The shipped probe must pass on a ready default container. Runs it
+        directly (not via the HEALTHCHECK schedule) for a fast, attributable
+        verdict with the probe's own diagnostic output on failure."""
+        result = _docker(
+            "exec", self.container, "/usr/local/bin/documentdb-healthcheck",
+            check=False, timeout=30,
+        )
+        self.assertEqual(
+            result.returncode, 0,
+            f"health probe failed on a ready container.\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+        )
+
+    def test_builtin_healthcheck_reports_healthy(self):
+        """The HEALTHCHECK instruction must be wired up: docker itself (and
+        thus compose `depends_on: condition: service_healthy`) must converge
+        on healthy without any healthcheck configuration by the user."""
+        try:
+            _wait_for_healthy(self.container)
+        except RuntimeError as exc:
+            self.fail(str(exc))
 
     def test_mongosh_binary_is_shipped_in_image(self):
         """The image must ship mongosh - we rely on it for in-container
@@ -806,6 +858,23 @@ class CustomDocumentDBPortTests(_ContainerTestBase):
             _last_nonempty_line(result.stdout), "1",
             f"expected ping ok=1 on custom port {CUSTOM_PORT}\n"
             f"full stdout:\n{result.stdout}",
+        )
+
+    def test_builtin_healthcheck_tracks_custom_port(self):
+        """The probe must follow the CLI-configured port. `docker exec`
+        sessions still see the image default DOCUMENTDB_PORT=10260 in the
+        environment (where nothing is listening here), so this passes only
+        if the probe reads the entrypoint's published runtime state."""
+        result = _docker(
+            "exec", self.container, "/usr/local/bin/documentdb-healthcheck",
+            check=False, timeout=30,
+        )
+        self.assertEqual(
+            result.returncode, 0,
+            f"health probe failed with --documentdb-port {CUSTOM_PORT}; it "
+            f"is likely probing the default port from the exec environment "
+            f"instead of the entrypoint's runtime state.\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
         )
 
     def test_default_port_not_listening(self):

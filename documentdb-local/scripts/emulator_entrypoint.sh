@@ -261,6 +261,14 @@ export SYSTEM_POSTGRES_LOG=${SYSTEM_POSTGRES_LOG:-/var/log/postgresql/postgresql
 export DOCUMENTDB_RUNTIME_USER=${DOCUMENTDB_RUNTIME_USER:-documentdb}
 export DOCUMENTDB_RUNTIME_GROUP=${DOCUMENTDB_RUNTIME_GROUP:-$DOCUMENTDB_RUNTIME_USER}
 
+# Runtime state file consumed by healthcheck.sh. Written only once startup
+# completes (see the ready banner below), so its presence doubles as the
+# readiness marker. Remove any leftover from a previous boot of this
+# container (e.g. `docker restart`) so the healthcheck cannot report healthy
+# while this boot is still starting up.
+export DOCUMENTDB_RUNTIME_STATE_FILE=${DOCUMENTDB_RUNTIME_STATE_FILE:-/tmp/documentdb-local-runtime.env}
+rm -f "$DOCUMENTDB_RUNTIME_STATE_FILE"
+
 # Setup centralized log directory structure
 echo "Setting up centralized log directory at $DOCUMENTDB_LOG_DIR..."
 sudo mkdir -p "$DOCUMENTDB_LOG_DIR/postgres"
@@ -669,6 +677,24 @@ if [ -f "$GATEWAY_LOG" ]; then
 fi
 
 echo "Gateway started with PID: $gateway_pid"
+
+# Publish the resolved runtime settings for healthcheck.sh. This runs after
+# gateway readiness and data initialization so the healthcheck only reports
+# healthy on a fully initialized database, and it records the ports actually
+# in use — which may come from CLI flags that HEALTHCHECK / `docker exec`
+# sessions cannot see in their environment. Written via a temp file + mv so
+# the healthcheck never sources a partially written file. A write failure is
+# not fatal to the database, but the container will keep reporting unhealthy,
+# so warn loudly.
+if printf 'DOCUMENTDB_PORT=%s\nPOSTGRESQL_PORT=%s\nSTART_POSTGRESQL=%s\nTLS_MODE=%s\n' \
+        "$DOCUMENTDB_PORT" "$POSTGRESQL_PORT" "$START_POSTGRESQL" "$TLS_MODE" \
+        > "${DOCUMENTDB_RUNTIME_STATE_FILE}.tmp" \
+        && mv "${DOCUMENTDB_RUNTIME_STATE_FILE}.tmp" "$DOCUMENTDB_RUNTIME_STATE_FILE"; then
+    echo "Runtime state for the health check written to $DOCUMENTDB_RUNTIME_STATE_FILE"
+else
+    echo "Warning: could not write $DOCUMENTDB_RUNTIME_STATE_FILE; the container health check will keep reporting unhealthy." >&2
+fi
+
 echo ""
 echo "=== DocumentDB is ready ==="
 echo "All logs are being streamed to docker logs with prefixes:"
