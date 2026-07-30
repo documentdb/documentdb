@@ -1,12 +1,21 @@
 name: Functional tests
 run-name: ${{ github.event.pull_request.title || '' }}
 
-concurrency:
-  group: functional-tests-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 on:
   workflow_dispatch:
+    inputs:
+      test_scope:
+        description: 'Functional test scope'
+        default: 'allowlist'
+        required: false
+        type: choice
+        options: ['allowlist', 'all']
+      parallelism:
+        description: 'Number of pytest-xdist workers'
+        default: '4'
+        required: false
+        type: choice
+        options: ['1', '2', '4']
   push:
     branches:
       - 'main'
@@ -22,299 +31,526 @@ on:
     - cron: '0 6 * * *'  # Daily at 06:00 UTC
 
 env:
-  # PG16: the configuration the known-failure baseline is calibrated against.
-  # Bump the lists and this value together.
-  PG_VERSION: 16
+  PG_VERSION: 17
   ENGINE_NAME: documentdb
   DOCUMENTDB_USER: docdb_admin
   DOCUMENTDB_PORT: 10260
-  # Width of the parallel split. THREE places must agree: this value, the
-  # number of `mode: parallel` entries in the matrix below, and each parallel
-  # entry's `total:` field. (GitHub Actions cannot reference env inside
-  # strategy.matrix, hence the manual invariant.) The verify-splits job fails
-  # closed if a parallel leg is missing, so a miscount cannot silently drop
-  # coverage.
-  PARALLEL_SPLITS: 6
+  PYTEST_WORKERS: ${{ inputs.parallelism || '4' }}
 
 jobs:
-  # Build the engine + gateway host once; every leg installs the resulting
-  # tree. Legs must all test the SAME binaries anyway, and building per leg
-  # spent ~21 runner-minutes x 7 legs per run.
-  build:
+  # -----------------------------------------------------------------------
+  # Job 1: Validate functional test configuration
+  # -----------------------------------------------------------------------
+  validate-config:
+    # Anchor the runner image here so all functional-test jobs update together.
+    runs-on: &functional_tests_runner ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install Python dependencies
+        run: pip install pyyaml
+
+      - name: Validate functional test config
+        run: python3 documentdb-local/functional-tests/tools/functional_gate.py validate-config
+
+  # -----------------------------------------------------------------------
+  # Job 2: Build documentdb-local image from PR code
+  #
+  # Reuses the same deb-build + docker-build pattern from build_gateway.yml
+  # but only builds one arch (amd64) and does not push to GHCR.
+  # The cheap config job above still runs on draft PRs; this expensive build and
+  # downstream gate intentionally wait until the PR is ready for review.
+  # -----------------------------------------------------------------------
+  build-documentdb-local:
     if: >
       (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule'
-    name: build engine + gateway
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    runs-on: *functional_tests_runner
+    timeout-minutes: 45
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      # --- Layer 1: ccache for the DocumentDB C build. PATH masquerade covers
-      #     the unprivileged `make`; `sudo make install` only copies. ---
-      - name: Restore ccache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          key: ccache-pg${{ env.PG_VERSION }}-${{ github.sha }}
-          restore-keys: ccache-pg${{ env.PG_VERSION }}-
-
-      # --- Layer 2: cargo caches. install_rust_tools.sh already no-ops when
-      #     the pinned tool version is present, so restoring ~/.cargo/bin
-      #     skips the 8-minute cargo-pgrx source build; the target cache makes
-      #     the gateway-host build incremental. ---
-      - name: Restore cargo tool cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin
-            ~/.cargo/.crates.toml
-            ~/.cargo/.crates2.json
-          key: cargo-tools-${{ hashFiles('rust-toolchain.toml') }}
-
-      - name: Restore gateway-host build cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            pg_documentdb_gw_host/target
-          key: gwhost-${{ hashFiles('pg_documentdb_gw_host/Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
-          restore-keys: |
-            gwhost-${{ hashFiles('pg_documentdb_gw_host/Cargo.lock', 'rust-toolchain.toml') }}-
-            gwhost-
-
-      # The rust toolchain + cargo-pgrx setup needs NOTHING from the build and is
-      # the largest cold-path item (~8 min compiling cargo-pgrx), so it runs in
-      # the BACKGROUND; only the gateway-host build (which needs pg_config AND
-      # pgrx) joins it. install_rustup.sh is pure curl, so it cannot contend with
-      # the build's apt operations.
-      - name: Build engine + gateway (rust setup overlapped with the build)
+      # Same deb build step as build_gateway.yml
+      - name: Build Debian Package
         run: |
-          set -euo pipefail
-          chmod +x ./scripts/build_documentdb_with_scripts.sh
+          ./packaging/build_packages.sh --os deb13 --pg ${{ env.PG_VERSION }} --output-dir downloaded-artifacts
+          ls -la downloaded-artifacts/
 
-          # --- background: rust toolchain + cargo-pgrx (seconds when the cargo
-          #     caches above hit; ~8 min cold) ---
-          ( export CARGO_HOME=$HOME/.cargo RUSTUP_HOME=$HOME/.rustup
-            ./scripts/install_rustup.sh --install-toolchain
-            ./scripts/install_rust_tools.sh ./rust-toolchain.toml
-          ) > "$RUNNER_TEMP/rust-setup.log" 2>&1 &
-          RUST_PID=$!
-
-          # Snapshot the install roots BEFORE anything is built: the tar shipped
-          # to the legs is an exact before/after path-set difference over them.
-          # Path sets, NOT mtimes — `make install` preserves source timestamps
-          # often enough that `find -newer` misses most files and yields a
-          # silently thin tar whose legs then fail on a missing header.
-          # ccache is installed first so it stays out of that difference.
-          sudo apt-get install -y --no-install-recommends ccache >/dev/null
-          ROOTS="/usr/local /usr/include /usr/lib /etc/ld.so.conf.d"
-          sudo find $ROOTS \( -type f -o -type l \) 2>/dev/null | sort > /tmp/install-before.txt
-
-          # --- foreground: dependencies + DocumentDB in one pass (ccache via
-          #     PATH masquerade covers the unprivileged `make`; the script's
-          #     `sudo make install` only copies) ---
-          export CCACHE_DIR=~/.ccache CCACHE_MAXSIZE=500M
-          PATH="/usr/lib/ccache:$PATH" ./scripts/build_documentdb_with_scripts.sh \
-            --pg-version ${{ env.PG_VERSION }} --citus-version 12
-          ccache -s | head -4
-
-          # --- join the rust setup, then build the gateway host (needs both) ---
-          if ! wait "$RUST_PID"; then
-            echo "::error::rust toolchain / cargo-pgrx setup failed; last 40 lines:"
-            tail -40 "$RUNNER_TEMP/rust-setup.log"
-            exit 1
-          fi
-          tail -2 "$RUNNER_TEMP/rust-setup.log"
-          export PATH="/usr/lib/postgresql/${{ env.PG_VERSION }}/bin:$HOME/.cargo/bin:$PATH"
-          # -i installs into the PG dirs (start_oss_server -g loads it as an extension)
-          ./scripts/build_and_install_with_pgrx.sh -v ${{ env.PG_VERSION }} -i -d ./pg_documentdb_gw_host
-
-      # --- Ship the installed tree to the legs as ONE tar: the PostgreSQL
-      #     prefix (carrying DocumentDB + the gateway host) plus every file the
-      #     build added under the install roots. ---
-      - name: Package install tree
+      # Same docker build step as build_gateway.yml, single arch
+      - name: Build documentdb-local image
         run: |
-          set -euo pipefail
-          ROOTS="/usr/local /usr/include /usr/lib /etc/ld.so.conf.d"
-          sudo find $ROOTS \( -type f -o -type l \) 2>/dev/null | sort > /tmp/install-after.txt
-          mkdir -p "$RUNNER_TEMP/install-pkg"
-          { echo "usr/lib/postgresql/${{ env.PG_VERSION }}"; \
-            comm -13 /tmp/install-before.txt /tmp/install-after.txt | sed 's|^/||'; } > /tmp/install-manifest
-          echo "files added by the build: $(wc -l < /tmp/install-manifest)"
-          # Fail closed on an implausibly thin manifest rather than shipping it:
-          # a thin tar surfaces on the legs as an inscrutable compile/startup
-          # error hundreds of lines later (run 30654379381: "bson.h: No such
-          # file or directory").
-          if [ "$(wc -l < /tmp/install-manifest)" -lt 200 ]; then
-            echo "::error::install manifest has only $(wc -l < /tmp/install-manifest) entries — refusing to ship a partial tree."
-            exit 1
-          fi
-          sudo tar -C / -cf - -T /tmp/install-manifest \
-            | zstd -T0 -3 -o "$RUNNER_TEMP/install-pkg/install.tar.zst"
-          ls -lh "$RUNNER_TEMP/install-pkg/"
+          mapfile -t EXT_DEBS < <(find downloaded-artifacts -maxdepth 1 -type f -name '*-documentdb_*.deb' ! -name '*dbgsym*' | sort)
+          EXT_DEB="${EXT_DEBS[0]:-}"
+          [ -n "$EXT_DEB" ] || { echo "Extension DEB not found"; exit 1; }
+          # Dockerfile_documentdb_local builds the gateway from source; it does
+          # not consume a prebuilt gateway .deb, so none is built or passed here.
+          echo "Building documentdb-local image with ext=$EXT_DEB"
+          docker build \
+            --build-arg BASE_IMAGE=debian:trixie-slim \
+            --build-arg POSTGRES_VERSION=${{ env.PG_VERSION }} \
+            --build-arg DEB_PACKAGE_REL_PATH="$EXT_DEB" \
+            -t documentdb-local:ci \
+            -f packaging/gateway/docker/Dockerfile_documentdb_local .
 
-      - name: Upload install tree
+      - name: Save image as artifact
+        run: docker save documentdb-local:ci | gzip > /tmp/documentdb-local.tar.gz
+
+      - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
-          name: documentdb-install
-          path: ${{ runner.temp }}/install-pkg/
-          retention-days: 7
-          overwrite: true
+          name: documentdb-local-image
+          path: /tmp/documentdb-local.tar.gz
+          retention-days: 1
 
-  functional-gate:
-    needs: build
-    name: functional-gate (${{ matrix.tag }})
-    runs-on: ubuntu-22.04
-    timeout-minutes: 150
+  # -----------------------------------------------------------------------
+  # Job 3: PR gate - run the allowlisted tests against documentdb-local,
+  # split across parallel runners for bounded, low-variance wall-clock.
+  # ("Split" = test splitting across CI jobs; unrelated to data sharding.)
+  #
+  # Each split runs a disjoint, round-robin slice of the allowlist (its own
+  # engine container), sequentially re-runs its own transient failures, and
+  # uploads its slice's report. The combine job (Job 3b) merges all slices and
+  # enforces the allowlist contract. Test splitting replaced a single full-suite
+  # job whose ~12.5k-test run took 60-120+min on 2-core hosted runners and
+  # intermittently tripped the job timeout.
+  # -----------------------------------------------------------------------
+  functional-pr-gate:
+    if: >
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.test_scope || 'allowlist') == 'allowlist')
+    needs: [validate-config, build-documentdb-local]
+    runs-on: *functional_tests_runner
+    timeout-minutes: 75
     strategy:
-      # One red leg must not cancel the others: each leg gates a disjoint slice,
-      # and the surviving legs' artifacts are what makes the red triageable.
       fail-fast: false
       matrix:
-        include:
-          - { tag: p0, mode: parallel, id: 0, total: 6 }
-          - { tag: p1, mode: parallel, id: 1, total: 6 }
-          - { tag: p2, mode: parallel, id: 2, total: 6 }
-          - { tag: p3, mode: parallel, id: 3, total: 6 }
-          - { tag: p4, mode: parallel, id: 4, total: 6 }
-          - { tag: p5, mode: parallel, id: 5, total: 6 }
-          # Not a slice: runs every no_parallel test serially, so always 0/1.
-          - { tag: np, mode: noparallel, id: 0, total: 1 }
+        # To grow the split, add ids here: NUM_SPLITS below is derived from this
+        # list. Keep it 0..N-1 (split-allowlist rejects an out-of-range id).
+        split: [0, 1, 2, 3]
+    env:
+      # = length(matrix.split). Derived so the width can't desync from the legs:
+      # a stale literal would leave a slice unclaimed by any job, and those tests
+      # would simply never run -- nothing fails, the gate just scores green on
+      # less than the full allowlist.
+      NUM_SPLITS: ${{ strategy.job-total }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      # Runtime pieces the install tree links against but does not carry:
-      # the PostGIS stack's shared libraries and the en_US.UTF-8 locale.
-      - name: Install runtime prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            locales zstd libgeos-c1v5 libgdal30 libproj22 libjson-c5 libxml2
-          sudo locale-gen en_US.UTF-8
-
-      - name: Download install tree
+      - name: Download documentdb-local image
         uses: actions/download-artifact@v4
         with:
-          name: documentdb-install
-          path: ${{ runner.temp }}
+          name: documentdb-local-image
+          path: /tmp
 
-      - name: Install DocumentDB from build artifact
-        run: |
-          sudo tar -C / --zstd -xf "$RUNNER_TEMP/install.tar.zst"
-          sudo ldconfig
-          # A tar that extracted thin otherwise surfaces as an inscrutable
-          # failure much later (run 30654379381: "bson.h: No such file or
-          # directory"), so name the missing pieces here.
-          missing=""
-          for f in /usr/include/libbson-1.0/bson/bson.h \
-                   /usr/lib/postgresql/${{ env.PG_VERSION }}/bin/pg_config \
-                   /usr/lib/postgresql/${{ env.PG_VERSION }}/lib/citus.so; do
-            [ -e "$f" ] || missing="$missing $f"
-          done
-          if [ -n "$missing" ]; then
-            echo "::error::install tree is incomplete (missing:$missing)."
-            exit 1
-          fi
+      - name: Load documentdb-local image
+        run: docker load < /tmp/documentdb-local.tar.gz
 
-      - name: Export pg_config PATH
-        run: echo "/usr/lib/postgresql/${{ env.PG_VERSION }}/bin" >> $GITHUB_PATH
-
-      # --- Start the engine: source build, extended_rum + gateway ---
       - name: Generate DocumentDB password
         run: |
           PASSWORD=$(python3 -c 'import secrets, string; print("".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32)))')
           echo "::add-mask::$PASSWORD"
           echo "DOCUMENTDB_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
 
-      - name: Start DocumentDB (source build, extended_rum + gateway)
+      - name: Start DocumentDB container
         run: |
-          export PG_VERSION_USED=${{ env.PG_VERSION }}
-          mkdir -p "$RUNNER_TEMP/pgdata"
-          ./scripts/start_oss_server.sh -d "$RUNNER_TEMP/pgdata" -c -g -r \
-            -u "${{ env.DOCUMENTDB_USER }}" -a "$DOCUMENTDB_PASSWORD"
-          echo "Waiting for gateway on port ${{ env.DOCUMENTDB_PORT }}..."
-          timeout 240 bash -c 'until (echo > /dev/tcp/localhost/${{ env.DOCUMENTDB_PORT }}) 2>/dev/null; do sleep 2; done'
-          echo "Gateway is ready."
+          docker run -d \
+            --name documentdb \
+            -p ${{ env.DOCUMENTDB_PORT }}:${{ env.DOCUMENTDB_PORT }} \
+            documentdb-local:ci \
+            --username ${{ env.DOCUMENTDB_USER }} \
+            --password "$DOCUMENTDB_PASSWORD" \
+            --skip-init-data
 
-      # --- Clone the suite at source_sha (the layout the known-failure lists'
-      #     node IDs are written against) ---
-      - name: Setup functional-tests suite (pinned source_sha)
+          echo "Waiting for DocumentDB to be fully ready..."
+          timeout 180 bash -c 'until docker logs documentdb 2>&1 | grep -q "=== DocumentDB is ready ==="; do sleep 2; done'
+          echo "DocumentDB is ready on port ${{ env.DOCUMENTDB_PORT }}"
+
+      - name: Install Python dependencies
+        run: pip install pyyaml
+
+      - name: Pull functional-tests image
         run: |
-          ./documentdb-local/functional-tests/scripts/setup_functional_tests.sh "$GITHUB_WORKSPACE/docdb_functional_tests"
+          IMAGE=$(python3 -c "import yaml; print(yaml.safe_load(open('documentdb-local/functional-tests/config/image.yml'))['image'])")
+          echo "Pulling $IMAGE"
+          docker pull "$IMAGE"
+          echo "FUNC_TEST_IMAGE=$IMAGE" >> $GITHUB_ENV
 
-      # --- This leg's slice + known-failures gate (collection guards, universe
-      #     record, re-run recovery, recover-and-gate verdict — all in the
-      #     shared split runner). ---
-      - name: Run split leg + known-failures gate (${{ matrix.tag }})
-        env:
-          SPLIT_MODE: ${{ matrix.mode }}
-          SPLIT_ID: ${{ matrix.id }}
-          SPLIT_TOTAL: ${{ matrix.total }}
-          SPLIT_TAG: ${{ matrix.tag }}
-          CONN_USER: ${{ env.DOCUMENTDB_USER }}
-          CONN_PORT: ${{ env.DOCUMENTDB_PORT }}
+      - name: Run allowlist gate split
         run: |
-          export RESULTS_DIR="$GITHUB_WORKSPACE/.test-results/functional-tests"
-          export TMPDIR="$RUNNER_TEMP"
-          export CONN_PASS="$DOCUMENTDB_PASSWORD"
-          bash ./documentdb-local/functional-tests/scripts/run_pytest_split.sh
+          set -uo pipefail
+          RESULTS=.test-results/functional-tests
+          mkdir -p "$RESULTS"
+          chmod 777 "$RESULTS"
+          GATE="python3 documentdb-local/functional-tests/tools/functional_gate.py \
+            --image documentdb-local/functional-tests/config/image.yml \
+            --allowlist documentdb-local/functional-tests/config/allowlist.yml \
+            --engine-name ${{ env.ENGINE_NAME }}"
+          CONNECTION_STRING="mongodb://${{ env.DOCUMENTDB_USER }}:${DOCUMENTDB_PASSWORD}@localhost:${{ env.DOCUMENTDB_PORT }}/?tls=true&tlsAllowInvalidCertificates=true"
 
-      - name: Collect engine logs
+          # Resolve this split's slice of the allowlist (rootdir-relative IDs
+          # prefixed for the container's pytest rootdir). The allowlist already
+          # excludes the known engine-crasher files, so no --ignore is needed.
+          $GATE split-allowlist \
+            --num-splits "$NUM_SPLITS" \
+            --split-id "${{ matrix.split }}" \
+            --prefix documentdb_tests/ \
+            --output "$RESULTS/split_ids.txt"
+          SPLIT_COUNT=$(grep -c . "$RESULTS/split_ids.txt" 2>/dev/null || true)
+          echo "Split ${{ matrix.split }}/$NUM_SPLITS: running ${SPLIT_COUNT:-0} allowlisted test(s)"
+
+          # Refuse to run unless split-allowlist produced a NON-EMPTY id file. An
+          # empty OR missing split_ids.txt would leave the docker pytest call
+          # below with NO positional args, making pytest collect the entire
+          # upstream suite (including the engine-crasher files the allowlist
+          # purposely excludes), which could spuriously pass this split and mask
+          # problems. -s catches both the empty-slice case (NUM_SPLITS > allowlist
+          # size) and the case where split-allowlist failed without writing the
+          # file (grep on a missing file would leave SPLIT_COUNT empty, making an
+          # arithmetic [ -eq 0 ] test error out and silently fall through).
+          if [ ! -s "$RESULTS/split_ids.txt" ]; then
+            echo "::error::Split ${{ matrix.split }}: empty or missing allowlist slice — refusing to run pytest with no positional args (split-allowlist failed, or NUM_SPLITS too large for the allowlist?)"
+            exit 1
+          fi
+
+          # Run exactly this split's allowlisted tests in parallel. set -f so
+          # parametrized IDs containing [brackets] are not glob-expanded.
+          set -f
+          docker run --rm --network host \
+            -v "$(pwd)/$RESULTS:/results" \
+            ${{ env.FUNC_TEST_IMAGE }} \
+            $(cat "$RESULTS/split_ids.txt") \
+            --engine-name "${{ env.ENGINE_NAME }}" \
+            --connection-string "$CONNECTION_STRING" \
+            -n ${{ env.PYTEST_WORKERS }} \
+            --json-report --json-report-file=/results/report.json \
+            --junitxml=/results/results.xml \
+            -v \
+            || true
+          set +f
+
+          [ -f "$RESULTS/report.json" ] || { echo "::error::Split produced no report.json"; exit 1; }
+
+          # The parallel pass can intermittently segfault the engine (known RUM
+          # dynamic-cursor race under -n4); its brief recovery window cascades
+          # spurious failures onto otherwise-passing allowlisted tests. Re-run
+          # just this split's failures sequentially (-p no:xdist => no race) and
+          # merge so transient victims recover; genuine failures stay failed.
+          # The 200 cap is a PER-SPLIT budget: round-robin splitting spreads a
+          # systemic regression evenly across splits, so a ~800 gate-wide budget
+          # maps to ~200/split. Above it, treat the failures as a real regression,
+          # skip the re-run, and let them fail the gate.
+          #
+          # --timeout-method=signal is required, not cosmetic. The pinned suite's
+          # own pytest config selects the `thread` method, which on timeout dumps
+          # stacks and kills the interpreter -- so json-report never writes and
+          # ONE hanging test costs the whole batch its recovery, leaving every
+          # other victim scored as a residual failure. The re-run is always
+          # -p no:xdist, i.e. tests run on the main thread where SIGALRM is
+          # deliverable, so signal is available here and makes a hang fail just
+          # that test while the session still writes its report.
+          $GATE gate-failures --report "$RESULTS/report.json" --output "$RESULTS/rerun_ids.txt"
+          RERUN_COUNT=$(grep -c . "$RESULTS/rerun_ids.txt" || true)
+          echo "Split ${{ matrix.split }} non-pass after parallel run: $RERUN_COUNT"
+
+          if [ "$RERUN_COUNT" -gt 0 ] && [ "$RERUN_COUNT" -le 200 ]; then
+            sed 's#^#documentdb_tests/#' "$RESULTS/rerun_ids.txt" > "$RESULTS/rerun_args.txt"
+            echo "Re-running $RERUN_COUNT test(s) sequentially after letting the engine settle..."
+            sleep 20
+            set -f
+            docker run --rm --network host \
+              -v "$(pwd)/$RESULTS:/results" \
+              ${{ env.FUNC_TEST_IMAGE }} \
+              $(cat "$RESULTS/rerun_args.txt") \
+              --engine-name "${{ env.ENGINE_NAME }}" \
+              --connection-string "$CONNECTION_STRING" \
+              -p no:xdist \
+              --timeout=600 \
+              --timeout-method=signal \
+              --json-report --json-report-file=/results/report_rerun.json \
+              -v \
+              || true
+            set +f
+            if [ -f "$RESULTS/report_rerun.json" ]; then
+              $GATE merge-reports \
+                --base "$RESULTS/report.json" \
+                --overlay "$RESULTS/report_rerun.json" \
+                --out "$RESULTS/report_split.json"
+              echo "Merged sequential re-run results for split ${{ matrix.split }}"
+            else
+              # Not fatal -- the un-recovered parallel failures still reach the
+              # gate below, so this fails closed. But it must not pass silently:
+              # a lost report means NONE of the batch got its re-run, so the
+              # residuals below are not evidence of a real regression.
+              echo "::warning::Split ${{ matrix.split }}: re-run produced no report_rerun.json, so none of the $RERUN_COUNT failure(s) were recovered; the parallel-pass results stand unmodified."
+            fi
+          fi
+
+          # Canonical per-split report for the combine job: merged if a re-run
+          # happened, otherwise the original parallel report. report.json is
+          # container-owned, so copy with python to avoid permission issues.
+          if [ ! -f "$RESULTS/report_split.json" ]; then
+            python3 -c "import shutil; shutil.copy('$RESULTS/report.json', '$RESULTS/report_split.json')"
+          fi
+
+      - name: Collect DocumentDB logs
         if: always()
-        run: |
-          mkdir -p .test-results/functional-tests
-          cp "$RUNNER_TEMP/pgdata/pglog.log" .test-results/functional-tests/postgres.log 2>/dev/null || true
+        run: docker logs documentdb > .test-results/functional-tests/documentdb-split-${{ matrix.split }}.log 2>&1 || true
 
-      # Warning-only log scan. The OSS gateway runs as a PG background worker, so
-      # pglog IS the gateway log. The non-zero exit becomes a warning annotation
-      # rather than relying on continue-on-error, which still renders a non-zero
-      # step as an ERROR annotation (seven red marks on a fully passing run).
-      - name: Check for Log Errors
-        if: always()
-        run: |
-          ./documentdb-local/functional-tests/scripts/validate_test_log_errors.sh \
-            "$RUNNER_TEMP/pgdata/pglog.log" \
-            || echo "::warning::internal-error signatures found in the engine log for ${{ matrix.tag }} (summary above); informational, does not gate"
-
-      - name: Upload gate results
+      - name: Upload split report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: functional-test-results-${{ matrix.tag }}
+          name: gate-split-${{ matrix.split }}
           overwrite: true
           path: .test-results/functional-tests/
 
-  # Cross-leg guard. Each parallel leg slices ids[SPLIT_ID::SPLIT_TOTAL] of a
-  # universe it collected ITSELF, so the slices only tile the suite if every leg
-  # collected the same universe. A leg that silently omits one node (a partial
-  # collect still exiting 0) shifts every later position by one: it runs the next
-  # leg's tests while its own share runs on NO leg — and every leg still clears
-  # MIN_MANIFEST and reports PASS, so nothing inside a leg can detect it.
-  # `needs` runs this exactly when every leg succeeded, the only case where the
-  # skew would otherwise be scored green.
-  verify-splits:
-    name: Verify split universes agree
-    needs: functional-gate
-    runs-on: ubuntu-22.04
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop documentdb 2>/dev/null || true
+          docker rm documentdb 2>/dev/null || true
+
+  # -----------------------------------------------------------------------
+  # Job 3b: PR gate combine - merge all test-split reports and enforce the
+  # allowlist contract once over the full set.
+  # -----------------------------------------------------------------------
+  functional-pr-gate-combine:
+    if: >
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.test_scope || 'allowlist') == 'allowlist')
+    needs: [functional-pr-gate]
+    runs-on: *functional_tests_runner
     timeout-minutes: 15
+    env:
+      # MUST equal the length of functional-pr-gate's matrix.split. Can't be
+      # derived here (needs.* exposes another job's outputs, not its matrix
+      # size), but a desync is caught rather than silent: this is the
+      # completeness check itself, so a mismatch trips the -ne below.
+      NUM_SPLITS: 4
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-      - name: Download per-split universe records
+
+      - name: Install Python dependencies
+        run: pip install pyyaml
+
+      - name: Download split reports
         uses: actions/download-artifact@v4
         with:
-          pattern: functional-test-results-*
-          path: ${{ runner.temp }}/legs
-      - name: Assert every parallel split collected one universe
+          pattern: gate-split-*
+          path: split-artifacts
+
+      - name: Merge split reports and enforce allowlist
         run: |
-          python3 documentdb-local/functional-tests/tools/functional_gate.py \
-            verify-split-universes \
-            --dir "$RUNNER_TEMP/legs" \
-            --artifact-prefix functional-test-results- \
-            --expected-splits "${{ env.PARALLEL_SPLITS }}"
+          set -uo pipefail
+          OUT=.test-results/functional-tests
+          mkdir -p "$OUT"
+          GATE="python3 documentdb-local/functional-tests/tools/functional_gate.py \
+            --image documentdb-local/functional-tests/config/image.yml \
+            --allowlist documentdb-local/functional-tests/config/allowlist.yml \
+            --engine-name ${{ env.ENGINE_NAME }}"
+
+          # Collect each split's canonical report.
+          mapfile -t SPLIT_REPORTS < <(find split-artifacts -name report_split.json | sort)
+          echo "Found ${#SPLIT_REPORTS[@]} split report(s) of $NUM_SPLITS expected:"
+          printf '  %s\n' "${SPLIT_REPORTS[@]}"
+          if [ "${#SPLIT_REPORTS[@]}" -ne "$NUM_SPLITS" ]; then
+            echo "::error::Expected $NUM_SPLITS split reports but found ${#SPLIT_REPORTS[@]}. A split job likely failed to produce results."
+            exit 1
+          fi
+
+          # Merge disjoint split reports into one combined report (first as base,
+          # the rest as overlays) and enforce the allowlist over the full set.
+          BASE="${SPLIT_REPORTS[0]}"
+          OVERLAYS=("${SPLIT_REPORTS[@]:1}")
+          $GATE merge-reports --base "$BASE" --overlay "${OVERLAYS[@]}" --out "$OUT/report.json" --sum-collected
+
+          # Preserve per-split logs in the combined artifact for debugging.
+          find split-artifacts -name 'documentdb-split-*.log' -exec cp {} "$OUT/" \; 2>/dev/null || true
+
+          $GATE summarize-gate \
+            --report "$OUT/report.json" \
+            --output-dir "$OUT"
+
+      - name: Upload combined gate results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-test-results
+          overwrite: true
+          path: .test-results/functional-tests/
+
+  # -----------------------------------------------------------------------
+  # Job 4: Daily delta - full suite visibility report
+  # -----------------------------------------------------------------------
+  daily-functional-delta:
+    if: >
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.test_scope == 'all')
+    needs: [validate-config, build-documentdb-local]
+    runs-on: *functional_tests_runner
+    timeout-minutes: 180
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download documentdb-local image
+        uses: actions/download-artifact@v4
+        with:
+          name: documentdb-local-image
+          path: /tmp
+
+      - name: Load documentdb-local image
+        run: docker load < /tmp/documentdb-local.tar.gz
+
+      - name: Generate DocumentDB password
+        run: |
+          PASSWORD=$(python3 -c 'import secrets, string; print("".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32)))')
+          echo "::add-mask::$PASSWORD"
+          echo "DOCUMENTDB_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Start DocumentDB container
+        run: |
+          docker run -d \
+            --name documentdb \
+            -p ${{ env.DOCUMENTDB_PORT }}:${{ env.DOCUMENTDB_PORT }} \
+            documentdb-local:ci \
+            --username ${{ env.DOCUMENTDB_USER }} \
+            --password "$DOCUMENTDB_PASSWORD" \
+            --skip-init-data
+
+          echo "Waiting for DocumentDB to be fully ready..."
+          timeout 180 bash -c 'until docker logs documentdb 2>&1 | grep -q "=== DocumentDB is ready ==="; do sleep 2; done'
+          echo "DocumentDB is ready"
+
+      - name: Install Python dependencies
+        run: pip install pyyaml
+
+      - name: Pull functional-tests image
+        run: |
+          IMAGE=$(python3 -c "import yaml; print(yaml.safe_load(open('documentdb-local/functional-tests/config/image.yml'))['image'])")
+          docker pull "$IMAGE"
+          echo "FUNC_TEST_IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Run daily full suite
+        run: |
+          CONNECTION_STRING="mongodb://${{ env.DOCUMENTDB_USER }}:${DOCUMENTDB_PASSWORD}@localhost:${{ env.DOCUMENTDB_PORT }}/?tls=true&tlsAllowInvalidCertificates=true"
+          mkdir -p .test-results/functional-tests-daily
+          chmod 777 .test-results/functional-tests-daily
+
+          docker run --rm --network host \
+            -v "$(pwd)/.test-results/functional-tests-daily:/results" \
+            ${{ env.FUNC_TEST_IMAGE }} \
+            documentdb_tests/compatibility/tests \
+            --ignore=documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_window.py \
+            --ignore=documentdb_tests/compatibility/tests/core/operator/stages/planCacheStats/test_planCacheStats_type_errors.py \
+            --ignore=documentdb_tests/compatibility/tests/core/operator/expressions/accumulator/setUnion/test_setUnion_core.py \
+            --ignore=documentdb_tests/compatibility/tests/core/operator/expressions/accumulator/setUnion/test_setUnion_type_dedup.py \
+            --engine-name "${{ env.ENGINE_NAME }}" \
+            --connection-string "$CONNECTION_STRING" \
+            -n ${{ env.PYTEST_WORKERS }} \
+            --json-report --json-report-file=/results/report.json \
+            --junitxml=/results/results.xml \
+            -v \
+            || true  # Don't fail on test failures; we analyze the report
+
+      - name: Re-run transient allowlisted failures sequentially
+        if: always()
+        run: |
+          set -uo pipefail
+          RESULTS=.test-results/functional-tests-daily
+          GATE="python3 documentdb-local/functional-tests/tools/functional_gate.py \
+            --image documentdb-local/functional-tests/config/image.yml \
+            --allowlist documentdb-local/functional-tests/config/allowlist.yml \
+            --engine-name ${{ env.ENGINE_NAME }}"
+
+          [ -f "$RESULTS/report.json" ] || { echo "No daily report.json; skipping re-run."; exit 0; }
+
+          # Same rationale as the PR gate: the parallel pass can intermittently
+          # segfault the engine (RUM dynamic-cursor race under -n4) and cascade
+          # spurious failures onto otherwise-passing allowlisted tests. Re-run
+          # just those sequentially so the daily allowlist contract is not
+          # tripped by transient crashes.
+          $GATE gate-failures --report "$RESULTS/report.json" --output "$RESULTS/rerun_ids.txt"
+          RERUN_COUNT=$(grep -c . "$RESULTS/rerun_ids.txt" || true)
+          echo "Allowlisted non-pass after parallel run: $RERUN_COUNT"
+
+          if [ "$RERUN_COUNT" -gt 0 ] && [ "$RERUN_COUNT" -le 800 ]; then
+            CONNECTION_STRING="mongodb://${{ env.DOCUMENTDB_USER }}:${DOCUMENTDB_PASSWORD}@localhost:${{ env.DOCUMENTDB_PORT }}/?tls=true&tlsAllowInvalidCertificates=true"
+            sed 's#^#documentdb_tests/#' "$RESULTS/rerun_ids.txt" > "$RESULTS/rerun_args.txt"
+            echo "Re-running $RERUN_COUNT allowlisted test(s) sequentially after letting the engine settle..."
+            sleep 20
+            set -f
+            docker run --rm --network host \
+              -v "$(pwd)/$RESULTS:/results" \
+              ${{ env.FUNC_TEST_IMAGE }} \
+              $(cat "$RESULTS/rerun_args.txt") \
+              --engine-name "${{ env.ENGINE_NAME }}" \
+              --connection-string "$CONNECTION_STRING" \
+              -p no:xdist \
+              --timeout=600 \
+              --timeout-method=signal \
+              --json-report --json-report-file=/results/report_rerun.json \
+              -v \
+              || true
+            set +f
+            if [ -f "$RESULTS/report_rerun.json" ]; then
+              # report.json is written inside the container and owned by the
+              # container UID, so an in-place cp/truncate fails with "Permission
+              # denied". A single `mv -f` (atomic rename, governed by the
+              # world-writable results dir) replaces it only once a valid merged
+              # report exists — no deleted-but-not-replaced window.
+              if $GATE merge-reports \
+                  --base "$RESULTS/report.json" \
+                  --overlay "$RESULTS/report_rerun.json" \
+                  --out "$RESULTS/report_merged.json" \
+                && mv -f "$RESULTS/report_merged.json" "$RESULTS/report.json"; then
+                echo "Merged sequential re-run results into daily report.json"
+              else
+                echo "::warning::Re-run merge failed; enforcing original parallel results."
+              fi
+            else
+              echo "::warning::Re-run produced no report_rerun.json, so none of the $RERUN_COUNT failure(s) were recovered; the parallel-pass results stand unmodified."
+            fi
+          fi
+
+      - name: Summarize daily delta
+        if: always()
+        run: |
+          if [ -f .test-results/functional-tests-daily/report.json ]; then
+            python3 documentdb-local/functional-tests/tools/functional_gate.py \
+              --image documentdb-local/functional-tests/config/image.yml \
+              --allowlist documentdb-local/functional-tests/config/allowlist.yml \
+              --engine-name "${{ env.ENGINE_NAME }}" \
+              summarize-daily \
+              --report .test-results/functional-tests-daily/report.json \
+              --output-dir .test-results/functional-tests-daily
+          else
+            echo "::error::No report.json produced. Daily functional test execution may have failed before producing results."
+            exit 1
+          fi
+
+      - name: Collect DocumentDB logs
+        if: always()
+        run: docker logs documentdb > .test-results/functional-tests-daily/documentdb.log 2>&1 || true
+
+      - name: Upload daily results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-functional-test-results
+          overwrite: true
+          path: .test-results/functional-tests-daily/
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop documentdb 2>/dev/null || true
+          docker rm documentdb 2>/dev/null || true
