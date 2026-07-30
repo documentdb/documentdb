@@ -10,12 +10,15 @@
 #include "postgres.h"
 #include "fmgr.h"
 #include "miscadmin.h"
+#include "access/transam.h"
+#include "catalog/pg_authid.h"
 #include "common/saslprep.h"
 #include "common/scram-common.h"
 #include "commands/commands_common.h"
 #include "commands/parse_error.h"
 #include "libpq/scram.h"
 #include "metadata/metadata_cache.h"
+#include "utils/acl.h"
 #include "utils/documentdb_errors.h"
 #include "utils/documentdb_errors.h"
 #include "utils/feature_counter.h"
@@ -24,12 +27,13 @@
 #include "utils/query_utils.h"
 #include "utils/role_utils.h"
 #include "utils/string_view.h"
+#include "utils/syscache.h"
 #include "api_hooks.h"
 #include "api_hooks_def.h"
 
 #define SCRAM_MAX_SALT_LEN 64
 
-/* GUC that controls the blocked role prefix list*/
+/* GUC that controls the blocked role prefix list, separated by , */
 extern char *BlockedRolePrefixList;
 
 static void WriteSinglePrivilegeDocument(const ConsolidatedPrivilege *privilege,
@@ -325,7 +329,8 @@ WriteMultipleRolePrivileges(HTAB *rolesTable,
 
 
 /*
- * Check if the given name contains any reserved pg role name prefixes.
+ * Check if the given name begins with any of the reserved pg role name
+ * prefixes listed in the blocked role prefix list.
  */
 bool
 ContainsReservedPgRoleNamePrefix(const char *name)
@@ -739,6 +744,57 @@ IsReservedInternalRoleName(const char *name)
 	return IS_SYSTEM_LOGIN_ROLE(name) ||
 		   IS_BUILTIN_ROLE(name) ||
 		   IS_CUSTOM_RBAC_ROLE(name);
+}
+
+
+/*
+ * IsCustomRole determines whether the given name identifies a custom role.
+ */
+bool
+IsCustomRole(const char *roleName)
+{
+	/*
+	 * Apply the same naming restrictions create_role applies when choosing a
+	 * custom role name, so a name that could never have been created as a
+	 * custom role is never treated as one.
+	 */
+	if (roleName == NULL ||
+		ContainsReservedPgRoleNamePrefix(roleName) ||
+		IsReservedInternalRoleName(roleName) ||
+		IS_NATIVE_BUILTIN_ROLE(roleName))
+	{
+		return false;
+	}
+
+	/*
+	 * Roles below FirstNormalObjectId are created during cluster bootstrap:
+	 * the cluster superuser and the PostgreSQL predefined roles such as
+	 * pg_read_all_data. Several of those are NOLOGIN, so the oid bound is what
+	 * separates them from a genuine custom role.
+	 */
+	bool missingOk = true;
+	Oid roleOid = get_role_oid(roleName, missingOk);
+	if (!OidIsValid(roleOid) || roleOid < FirstNormalObjectId)
+	{
+		return false;
+	}
+
+	HeapTuple roleTuple = SearchSysCache1(AUTHOID, ObjectIdGetDatum(roleOid));
+	if (!HeapTupleIsValid(roleTuple))
+	{
+		return false;
+	}
+
+	/*
+	 * create_role creates roles without LOGIN while create_user creates login
+	 * roles, so a role that can log in is a user rather than a custom role.
+	 * Treating a user as a custom role would let one user be granted
+	 * membership in another and silently inherit that user's privileges.
+	 */
+	bool canLogin = ((Form_pg_authid) GETSTRUCT(roleTuple))->rolcanlogin;
+	ReleaseSysCache(roleTuple);
+
+	return !canLogin;
 }
 
 

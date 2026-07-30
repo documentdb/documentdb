@@ -16,13 +16,15 @@
 /* Macro to check if a role is a system role */
 #define IS_SYSTEM_LOGIN_ROLE(roleName) \
 	(strcmp((roleName), ApiBgWorkerRole) == 0 || \
-	 strcmp((roleName), ApiSettingsManagerRole) == 0 || \
-	 strcmp((roleName), ApiReplicationRole) == 0)
+	 strcmp((roleName), ApiBgWorkerRoleV3) == 0 || \
+	 strcmp((roleName), ApiReplicationRole) == 0 || \
+	 strcmp((roleName), ApiSettingsManagerRole) == 0)
 
 /* Macro to check if a role is a customer facing built-in role */
 #define IS_BUILTIN_ROLE(roleName) \
 	(strcmp((roleName), ApiAdminRole) == 0 || \
 	 strcmp((roleName), ApiAdminRoleV2) == 0 || \
+	 strcmp((roleName), ApiAdminRoleV3) == 0 || \
 	 strcmp((roleName), ApiClusterAdminRole) == 0 || \
 	 strcmp((roleName), ApiReadOnlyRole) == 0 || \
 	 strcmp((roleName), ApiReadWriteRole) == 0 || \
@@ -110,6 +112,9 @@ bool ContainsReservedPgRoleNamePrefix(const char *name);
 * (system login role, builtin role, or custom RBAC role).
 * Note: this function does not check against native built-in role names */
 bool IsReservedInternalRoleName(const char *name);
+
+/* Function to check whether a name identifies a custom role */
+bool IsCustomRole(const char *roleName);
 
 /* Function to build a List of parent role names from an array of Datums */
 List * ConvertUserOrRoleNamesDatumToList(Datum *parentRolesDatums, int parentRolesCount);
