@@ -40,36 +40,48 @@ The versioning and release strategy should follow these principles:
 The proposed release pattern is:
 
 * DocumentDB will publish one new major version every calendar year.
-* Breaking changes in DocumentDB require a new major version.
-* When a new major version is released, the previous major version becomes a
-  long term support release line and remains supported for one more year from
-  the new major release date. It will no longer receive minor updates, only
-  patch releases for backported bug fixes and security fixes.
+* Breaking changes in DocumentDB require a new major version. Breaking changes
+  are also allowed in the development branch on minor versions.
+* When a new major version is released, it will be supported with
+  bugfixes and security patches for 2 years before being deprecated.
 
 ## Detailed Design
 
 ### Technical Details
 
-#### Branching strategy
+#### Branching and tagging strategy
 
-The current major version will be developed on the `main` branch. Before the next
-planned annual major release, the current major version will split off into a new
-`release/v#` branch into which LTS patch fixes can be added. If a breaking change
-is in development, we will create a `next/v(x+1)` branch that will be merged after
-the old is released.
+The unreleased next major version will be developed on the `main` branch. Development
+on the current and previous releases will be done on a `release/v#` branch.
+Those releases get LTS patch fixes. A third `release/v#` branch will be created
+for the purposes of generating release candidates before the n-2 version is deprecated.
 
-For example, if we are about to release v3, and it has new breaking changes that
-have already been developed, we would have three branches:
+We will use tags to mark the minor and patch versions in git, with `vMajor.Minor.Patch`
+tags being assigned to appropriate commits on each branch. We will use the `-rc`
+tag suffix for creating release candidates before releasing a new version.
 
-* `release/v1`
-* `main` (at v2)
-* `next/v3`
+For example, if we are about to release v3, we would start with these branches and
+tags:
 
-Then, when we do the release, `next/v3` would be merged, `release/v1` would be
-abandoned, and `release/v2` would be cut, leaving us with:
+* `release/v1` with tag `v1.0-8`
+* `release/v2` with tag `v2.0-4`
+* `main` with tag `v2.8-0`, contains development for `v3`
 
-* `release/v2`
-* `main` (at v3)
+Next we would put up a release candidate for `v3` in a new branch based off of main:
+
+* `release/v1` with tag `v1.0-8`
+* `release/v2` with tag `v2.0-4`
+* `release/v3` with tag `v3.0-rc0`
+* `main` tagged `v2.8-0`, identical to `release/v3`
+
+Then, when we do the full release `release/v1` would be abandoned, and `release/v3`
+would be tagged with a regular version. Version 4 would then be able to be
+developed on the `main` branch. The `release/v2` branch would continue to be supported
+for another year.
+
+* `release/v2` with tag `v2.0-4`
+* `release/v3` with tag `v3.0-0`
+* `main` with tag `v3.1-0`, contains development for `v4`
 
 #### Semantic Versioning
 
@@ -104,17 +116,10 @@ minor release is published. Bug fixes and security fixes during active developme
 generally roll forward into the latest release instead of being backported to
 older minor releases.
 
-After a new major release, the previous major release becomes the LTS release
-line and is supported for exactly one more year from the new major release date.
-During that support window, patch releases may include backported bug fixes and
-security fixes. Users who require a stable production baseline should use the
-current LTS release line and apply LTS patch releases as they become available.
-
 Support for a release means:
 
 * Issues can be tracked and triaged against that release line.
-* Bug fixes are included in a later release or, for LTS releases, may be
-  backported to an LTS patch release.
+* Bug fixes are backported.
 * Security fixes are prioritized. Critical vulnerabilities may trigger an
   expedited patch release.
 * Security advisories are published for critical vulnerabilities when applicable.
@@ -130,8 +135,8 @@ Each version will have a support matrix modeled as below
 
 Packages are currently being built for the following distributions:
 deb11, deb12, ubuntu22.04, ubuntu24.04, rhel8, rhel9. New versions will be added
-as they are released. The one-year deprecation rule will apply to any version
-being removed from support to give ample time to either fork or update.
+as they are released. Removal of a supported version will be possible on minor updates
+on `main`, but won't affect LTS releases.
 
 ### Compatibility and Dependency Policy
 
@@ -161,9 +166,13 @@ N/A
 
 ### Migration Path
 
-For now, we will not support direct in-place upgrades between major versions. We
-will create upgrade scripts to preserve data, but to reduce complexity the scripts
-will mandate that the database shuts down completely.
+We will support direct in-place upgrades between major versions. We will also
+develop install scripts for each major version to be installed without having
+to go through a stacked upgrade.
+
+Upgrade from the rc versions will not be supported, and the extension version for
+Release Candidates will always be X.0-0. This will be the same as the first
+full release version, so an upgrade wouldn't be feasible.
 
 ### Documentation Updates
 
