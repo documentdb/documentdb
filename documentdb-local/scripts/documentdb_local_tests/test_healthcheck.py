@@ -7,6 +7,7 @@ their exit codes map to the health verdict.
 """
 
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -14,6 +15,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HEALTHCHECK = REPO_ROOT / "documentdb-local" / "scripts" / "healthcheck.sh"
+# Absolute, so PATH in the child env is purely the stub search path and a test
+# may narrow it to the stub directory alone.
+BASH = shutil.which("bash") or "bash"
 
 
 class HealthcheckTests(unittest.TestCase):
@@ -59,7 +63,7 @@ class HealthcheckTests(unittest.TestCase):
         if extra_env:
             env.update(extra_env)
         return subprocess.run(
-            ["bash", str(HEALTHCHECK), *args],
+            [BASH, str(HEALTHCHECK), *args],
             env=env,
             text=True,
             capture_output=True,
@@ -167,6 +171,50 @@ class HealthcheckTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1, msg=result.stdout + result.stderr)
         self.assertIn("invalid DocumentDB port", result.stdout)
+        self.assertFalse(self.openssl_args.exists())
+
+    def test_state_file_values_are_not_executed(self):
+        # The entrypoint publishes START_POSTGRESQL unvalidated, so the probe
+        # must read the file literally rather than sourcing it.
+        self.state_file.write_text(
+            "DOCUMENTDB_PORT=12345\n"
+            "POSTGRESQL_PORT=9712\n"
+            "START_POSTGRESQL=false; echo INJECTED\n",
+            encoding="utf-8",
+        )
+
+        result = self._run()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn("INJECTED", result.stdout + result.stderr)
+        # Not exactly "true", so PostgreSQL is not probed -- same verdict the
+        # entrypoint's own `= "true"` test reached when it did not start it.
+        self.assertFalse(self.pg_isready_args.exists())
+
+    def test_state_file_value_with_whitespace_is_read_intact(self):
+        # A truncating parser would read "true" here and probe a PostgreSQL
+        # the entrypoint never started, leaving the container unhealthy forever.
+        self._write_state(
+            DOCUMENTDB_PORT=12345, POSTGRESQL_PORT=9712, START_POSTGRESQL="true "
+        )
+
+        result = self._run()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertFalse(self.pg_isready_args.exists())
+
+    def test_missing_pg_isready_is_unhealthy(self):
+        # Reporting healthy without the probe would mean reporting healthy
+        # with a dead database whenever the gateway's TLS listener answers.
+        (self.bin_dir / "pg_isready").unlink()
+        self._write_state(
+            DOCUMENTDB_PORT=12345, POSTGRESQL_PORT=9712, START_POSTGRESQL="true"
+        )
+
+        result = self._run(extra_env={"PATH": str(self.bin_dir)})
+
+        self.assertEqual(result.returncode, 1, msg=result.stdout + result.stderr)
+        self.assertIn("pg_isready not found", result.stdout)
         self.assertFalse(self.openssl_args.exists())
 
     def test_environment_used_when_state_file_omits_keys(self):

@@ -277,7 +277,9 @@ exit 1
         self.assertIn("DOCUMENTDB_PORT=12345\n", state)
         self.assertIn("POSTGRESQL_PORT=9712\n", state)
         self.assertIn("START_POSTGRESQL=false\n", state)
-        self.assertIn("TLS_MODE=allowTLS\n", state)
+        # Only what the probe reads: an unread key would be dead weight the
+        # probe's parser has to skip and this test would pin in place.
+        self.assertNotIn("TLS_MODE", state)
 
     def test_stale_runtime_state_file_removed_when_startup_fails(self):
         # A leftover file from a previous boot (docker restart) must not let

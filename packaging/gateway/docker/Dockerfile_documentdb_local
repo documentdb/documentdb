@@ -225,9 +225,13 @@ WORKDIR /home/documentdb/gateway/scripts
 # and the gateway answers a TLS handshake (see healthcheck.sh). It tracks the
 # configured DocumentDB port automatically — including one set via the
 # --documentdb-port CLI flag — so `docker run` users and docker-compose
-# `depends_on: condition: service_healthy` need no extra configuration. The
-# start period covers first-boot initdb plus sample-data seeding on slow
-# machines; probes only start counting toward `retries` after it elapses.
-HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+# `depends_on: condition: service_healthy` need no extra configuration.
+# The start period matches DOCUMENTDB_PG_READY_TIMEOUT, the entrypoint's own
+# 600s budget for PostgreSQL to come up, so a slow first boot (initdb plus
+# sample-data seeding on a cold volume) is never reported unhealthy before the
+# entrypoint itself gives up. It costs a fast boot nothing: a probe that
+# succeeds during the start period marks the container healthy right away, and
+# probes only count toward `retries` after the period elapses.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=600s --retries=3 \
     CMD ["/usr/local/bin/documentdb-healthcheck"]
 ENTRYPOINT ["/bin/bash", "-c", "/home/documentdb/gateway/scripts/emulator_entrypoint.sh \"$@\"", "--"]

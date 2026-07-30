@@ -19,8 +19,9 @@
 # The state file — not this process's environment — is the authority for the
 # ports: HEALTHCHECK / `docker exec` sessions only see the image's ENV
 # defaults, never values the entrypoint parsed from CLI flags such as
-# `--documentdb-port`. Environment variables and the optional port argument
-# still work for standalone use (e.g. probing from a sidecar wrapper).
+# `--documentdb-port`. The state file is always required — its absence means
+# startup has not completed — while environment variables supply any key it
+# omits and the optional port argument overrides the DocumentDB port.
 #
 # Usage: healthcheck.sh [gateway-port]
 #   gateway-port  overrides the DocumentDB port from the state file/env.
@@ -39,12 +40,27 @@ if [ ! -f "$STATE_FILE" ]; then
     exit 1
 fi
 
-# The file contains only KEY=VALUE lines written by emulator_entrypoint.sh.
-# shellcheck source=/dev/null
-. "$STATE_FILE"
-documentdb_port="${DOCUMENTDB_PORT:-$documentdb_port}"
-postgresql_port="${POSTGRESQL_PORT:-$postgresql_port}"
-start_postgresql="${START_POSTGRESQL:-$start_postgresql}"
+# Parse, never source, the KEY=VALUE lines emulator_entrypoint.sh writes: the
+# entrypoint does not validate every value it publishes (START_POSTGRESQL takes
+# whatever `--start-pg` was given), so `.` would execute a value such as
+# `false; some-command` on every probe and would silently truncate any value
+# containing whitespace. Reading the values literally also keeps this probe's
+# view byte-identical to the entrypoint's, so the two cannot disagree about
+# whether START_POSTGRESQL was exactly "true". Unlisted keys are ignored, and an
+# empty value falls through to the environment/default resolved above.
+while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+        *=*) ;;
+        *) continue ;;
+    esac
+    value="${line#*=}"
+    [ -n "$value" ] || continue
+    case "${line%%=*}" in
+        DOCUMENTDB_PORT) documentdb_port="$value" ;;
+        POSTGRESQL_PORT) postgresql_port="$value" ;;
+        START_POSTGRESQL) start_postgresql="$value" ;;
+    esac
+done < "$STATE_FILE"
 
 if [ "$#" -ge 1 ] && [ -n "$1" ]; then
     documentdb_port="$1"
@@ -56,7 +72,12 @@ is_port() {
     case "$1" in
         ''|*[!0-9]*) return 1 ;;
     esac
-    [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+    # Drop leading zeros, then bound the width before comparing: a digits-only
+    # value wider than the shell's integer type makes `[ -ge ]` write
+    # "integer expression expected" into the container's health log.
+    _port="${1#"${1%%[!0]*}"}"
+    [ -n "$_port" ] && [ "${#_port}" -le 5 ] || return 1
+    [ "$_port" -ge 1 ] && [ "$_port" -le 65535 ]
 }
 
 if ! is_port "$documentdb_port"; then
@@ -73,11 +94,16 @@ if [ "$start_postgresql" = "true" ]; then
         echo "unhealthy: invalid PostgreSQL port '$postgresql_port'"
         exit 1
     fi
-    if command -v pg_isready >/dev/null 2>&1; then
-        if ! pg_isready -q -h localhost -p "$postgresql_port"; then
-            echo "unhealthy: PostgreSQL is not accepting connections on localhost:$postgresql_port"
-            exit 1
-        fi
+    # A missing pg_isready is a broken image, not a reason to skip the probe:
+    # reporting healthy here would mean reporting healthy with a dead database
+    # whenever the gateway's TLS listener happens to answer.
+    if ! command -v pg_isready >/dev/null 2>&1; then
+        echo "unhealthy: pg_isready not found, cannot probe PostgreSQL on localhost:$postgresql_port"
+        exit 1
+    fi
+    if ! pg_isready -q -h localhost -p "$postgresql_port"; then
+        echo "unhealthy: PostgreSQL is not accepting connections on localhost:$postgresql_port"
+        exit 1
     fi
 fi
 

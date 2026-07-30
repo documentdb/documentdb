@@ -13,7 +13,7 @@ cd documentdb-local/examples/docker-compose
 # 1. Generate credentials for this run. They live only in your shell
 #    environment -- nothing is written to disk, and you get a fresh secret
 #    every time rather than reusing one committed to a file.
-export DOCUMENTDB_USERNAME=documentdb_user
+export DOCUMENTDB_USERNAME=appuser
 export DOCUMENTDB_PASSWORD="$(openssl rand -base64 24)"
 
 # 2. Start DocumentDB
@@ -33,6 +33,11 @@ mongosh "mongodb://localhost:10260/?tls=true&tlsAllowInvalidCertificates=true" \
 start with a clear error if either is unset, so an unconfigured stack cannot
 silently come up on the image's well-known default credentials.
 
+Pick any username that does not start with a reserved role prefix —
+`documentdb`, `citus`, `pg` or `internal_role`. The gateway would refuse such
+a name at authentication time, so the container rejects it at startup rather
+than coming up with a login that can never work.
+
 Because the password is generated per run, treat the stack as disposable: to
 rotate credentials, tear it down (`docker compose down -v`, which also clears
 the data volume) and repeat step 1. Restarting an existing stack with a new
@@ -46,6 +51,12 @@ The image ships a built-in health probe at
 [`documentdb-local/scripts/healthcheck.sh`](../../scripts/healthcheck.sh)),
 so this compose file needs no `healthcheck:` block. The probe reports
 healthy only when all of the following hold:
+
+> **Image requirement:** the probe ships with the image, so `:latest` reports
+> health only from the first release that contains it. On an older image the
+> container has no health state, and anything gated on `service_healthy` —
+> including the `wait-for-healthy` service below — cannot start. Pull a fresh
+> `:latest` (or build the image from this source tree) before relying on it.
 
 1. **Startup completed** — the entrypoint publishes its resolved runtime
    settings to `/tmp/documentdb-local-runtime.env` only after initialization
@@ -62,9 +73,14 @@ tracks a non-default port whether you set it via the `DOCUMENTDB_PORT`
 environment variable or the `--documentdb-port` CLI flag.
 
 Default timings (override with a `healthcheck:` block if needed):
-`interval=30s`, `timeout=10s`, `retries=3`, `start_period=120s`. The start
-period covers first-boot database initialization on slow machines; failing
-probes during it do not count toward `retries`.
+`interval=30s`, `timeout=10s`, `retries=3`, `start_period=600s`. The start
+period matches the entrypoint's own 600s budget for PostgreSQL to come up, so
+a slow first boot on a cold volume is never reported unhealthy before the
+entrypoint itself gives up — which matters because `depends_on:
+condition: service_healthy` aborts the dependent service as soon as the
+dependency turns unhealthy. It does not delay a fast boot: failing probes
+during the start period do not count toward `retries`, and the first
+succeeding probe ends it.
 
 To inspect health status and the probe's last output:
 
