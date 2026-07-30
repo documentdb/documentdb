@@ -211,6 +211,22 @@ SELECT documentdb_api.insert_one('db','dollarmodtests','{"_id": 135, "a": {"$num
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
+-- Double - exactly -2^63, representable as both a double and an int64. Quantizing it to
+-- 15 significand digits overflows the int64 range, which made the runtime path reject a
+-- document the index path matched.
+SELECT documentdb_api.insert_one('db','dollarmodtests','{"_id": 138, "a": {"$numberDouble" : "-9223372036854775808"}}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Double - exactly 2^63, one past INT64_MAX, so it must not match
+SELECT documentdb_api.insert_one('db','dollarmodtests','{"_id": 139, "a": {"$numberDouble" : "9223372036854775808"}}', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
 -- Decimal128
 SELECT documentdb_api.insert_one('db','dollarmodtests','{"_id": 136, "a": {"$numberDecimal" : "9223372036854775807"}}', NULL);
                               insert_one                              
@@ -471,9 +487,10 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
  { "_id" : { "$numberInt" : "131" }, "a" : { "$numberInt" : "-2147483648" } }
  { "_id" : { "$numberInt" : "133" }, "a" : { "$numberLong" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "135" }, "a" : { "$numberDouble" : "-9223372036854769664.0" } }
+ { "_id" : { "$numberInt" : "138" }, "a" : { "$numberDouble" : "-9223372036854775808.0" } }
  { "_id" : { "$numberInt" : "137" }, "a" : { "$numberDecimal" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "142" }, "a" : { "$numberDecimal" : "-9223372036854775808.5" } }
-(6 rows)
+(7 rows)
 
 SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a.b" : {"$mod" : [3,-2]} }';
                                                                    document                                                                   
@@ -531,9 +548,10 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
  { "_id" : { "$numberInt" : "131" }, "a" : { "$numberInt" : "-2147483648" } }
  { "_id" : { "$numberInt" : "133" }, "a" : { "$numberLong" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "135" }, "a" : { "$numberDouble" : "-9223372036854769664.0" } }
+ { "_id" : { "$numberInt" : "138" }, "a" : { "$numberDouble" : "-9223372036854775808.0" } }
  { "_id" : { "$numberInt" : "137" }, "a" : { "$numberDecimal" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "142" }, "a" : { "$numberDecimal" : "-9223372036854775808.5" } }
-(6 rows)
+(7 rows)
 
 SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a.b" : {"$mod" : [-3,-2]} }';
                                                                    document                                                                   
@@ -654,9 +672,10 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
  { "_id" : { "$numberInt" : "131" }, "a" : { "$numberInt" : "-2147483648" } }
  { "_id" : { "$numberInt" : "133" }, "a" : { "$numberLong" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "135" }, "a" : { "$numberDouble" : "-9223372036854769664.0" } }
+ { "_id" : { "$numberInt" : "138" }, "a" : { "$numberDouble" : "-9223372036854775808.0" } }
  { "_id" : { "$numberInt" : "137" }, "a" : { "$numberDecimal" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "142" }, "a" : { "$numberDecimal" : "-9223372036854775808.5" } }
-(6 rows)
+(7 rows)
 
 SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a" : {"$mod" : [{"$numberDouble" : "3.0"}, 2]} }';
                                              document                                             
@@ -672,9 +691,10 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
  { "_id" : { "$numberInt" : "131" }, "a" : { "$numberInt" : "-2147483648" } }
  { "_id" : { "$numberInt" : "133" }, "a" : { "$numberLong" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "135" }, "a" : { "$numberDouble" : "-9223372036854769664.0" } }
+ { "_id" : { "$numberInt" : "138" }, "a" : { "$numberDouble" : "-9223372036854775808.0" } }
  { "_id" : { "$numberInt" : "137" }, "a" : { "$numberDecimal" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "142" }, "a" : { "$numberDecimal" : "-9223372036854775808.5" } }
-(6 rows)
+(7 rows)
 
 -- Tests where remainder is different types of numeric
 SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a" : {"$mod" : [3, {"$numberInt" : "-2"}]} }';
@@ -684,9 +704,10 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
  { "_id" : { "$numberInt" : "131" }, "a" : { "$numberInt" : "-2147483648" } }
  { "_id" : { "$numberInt" : "133" }, "a" : { "$numberLong" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "135" }, "a" : { "$numberDouble" : "-9223372036854769664.0" } }
+ { "_id" : { "$numberInt" : "138" }, "a" : { "$numberDouble" : "-9223372036854775808.0" } }
  { "_id" : { "$numberInt" : "137" }, "a" : { "$numberDecimal" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "142" }, "a" : { "$numberDecimal" : "-9223372036854775808.5" } }
-(6 rows)
+(7 rows)
 
 SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a" : {"$mod" : [3, {"$numberLong" : "2"}]} }';
                                              document                                             
@@ -702,9 +723,10 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
  { "_id" : { "$numberInt" : "131" }, "a" : { "$numberInt" : "-2147483648" } }
  { "_id" : { "$numberInt" : "133" }, "a" : { "$numberLong" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "135" }, "a" : { "$numberDouble" : "-9223372036854769664.0" } }
+ { "_id" : { "$numberInt" : "138" }, "a" : { "$numberDouble" : "-9223372036854775808.0" } }
  { "_id" : { "$numberInt" : "137" }, "a" : { "$numberDecimal" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "142" }, "a" : { "$numberDecimal" : "-9223372036854775808.5" } }
-(6 rows)
+(7 rows)
 
 SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a" : {"$mod" : [3, {"$numberDecimal" : "2.0"}]} }';
                                              document                                             
@@ -749,9 +771,10 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
  { "_id" : { "$numberInt" : "131" }, "a" : { "$numberInt" : "-2147483648" } }
  { "_id" : { "$numberInt" : "133" }, "a" : { "$numberLong" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "135" }, "a" : { "$numberDouble" : "-9223372036854769664.0" } }
+ { "_id" : { "$numberInt" : "138" }, "a" : { "$numberDouble" : "-9223372036854775808.0" } }
  { "_id" : { "$numberInt" : "137" }, "a" : { "$numberDecimal" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "142" }, "a" : { "$numberDecimal" : "-9223372036854775808.5" } }
-(6 rows)
+(7 rows)
 
 -- Tests for overflow check. If Dividend is INT_MAX and divisor is -1, mod operation should not overflow
 SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a" : {"$mod" : [{"$numberInt" : "1"}, 0]} }';
@@ -775,6 +798,7 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
  { "_id" : { "$numberInt" : "133" }, "a" : { "$numberLong" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "134" }, "a" : { "$numberDouble" : "9223372036854769664.0" } }
  { "_id" : { "$numberInt" : "135" }, "a" : { "$numberDouble" : "-9223372036854769664.0" } }
+ { "_id" : { "$numberInt" : "138" }, "a" : { "$numberDouble" : "-9223372036854775808.0" } }
  { "_id" : { "$numberInt" : "136" }, "a" : { "$numberDecimal" : "9223372036854775807" } }
  { "_id" : { "$numberInt" : "137" }, "a" : { "$numberDecimal" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "140" }, "a" : { "$numberDecimal" : "9223372036854775807.5" } }
@@ -783,7 +807,7 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
  { "_id" : { "$numberInt" : "124" }, "a" : [ { "$numberInt" : "10" }, null ] }
  { "_id" : { "$numberInt" : "221" }, "a" : [ { "$numberInt" : "-10" }, { "$numberDouble" : "NaN" } ] }
  { "_id" : { "$numberInt" : "222" }, "a" : [ { "$numberInt" : "0" }, { "$numberDouble" : "-0.0" } ] }
-(26 rows)
+(27 rows)
 
 SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a" : {"$mod" : [{"$numberInt" : "-1"}, 0]} }';
                                                document                                                
@@ -806,6 +830,7 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
  { "_id" : { "$numberInt" : "133" }, "a" : { "$numberLong" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "134" }, "a" : { "$numberDouble" : "9223372036854769664.0" } }
  { "_id" : { "$numberInt" : "135" }, "a" : { "$numberDouble" : "-9223372036854769664.0" } }
+ { "_id" : { "$numberInt" : "138" }, "a" : { "$numberDouble" : "-9223372036854775808.0" } }
  { "_id" : { "$numberInt" : "136" }, "a" : { "$numberDecimal" : "9223372036854775807" } }
  { "_id" : { "$numberInt" : "137" }, "a" : { "$numberDecimal" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "140" }, "a" : { "$numberDecimal" : "9223372036854775807.5" } }
@@ -814,7 +839,7 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
  { "_id" : { "$numberInt" : "124" }, "a" : [ { "$numberInt" : "10" }, null ] }
  { "_id" : { "$numberInt" : "221" }, "a" : [ { "$numberInt" : "-10" }, { "$numberDouble" : "NaN" } ] }
  { "_id" : { "$numberInt" : "222" }, "a" : [ { "$numberInt" : "0" }, { "$numberDouble" : "-0.0" } ] }
-(26 rows)
+(27 rows)
 
 SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a" : {"$mod" : [{"$numberLong" : "-1"}, 0]} }';
                                                document                                                
@@ -837,6 +862,7 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
  { "_id" : { "$numberInt" : "133" }, "a" : { "$numberLong" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "134" }, "a" : { "$numberDouble" : "9223372036854769664.0" } }
  { "_id" : { "$numberInt" : "135" }, "a" : { "$numberDouble" : "-9223372036854769664.0" } }
+ { "_id" : { "$numberInt" : "138" }, "a" : { "$numberDouble" : "-9223372036854775808.0" } }
  { "_id" : { "$numberInt" : "136" }, "a" : { "$numberDecimal" : "9223372036854775807" } }
  { "_id" : { "$numberInt" : "137" }, "a" : { "$numberDecimal" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "140" }, "a" : { "$numberDecimal" : "9223372036854775807.5" } }
@@ -845,7 +871,7 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
  { "_id" : { "$numberInt" : "124" }, "a" : [ { "$numberInt" : "10" }, null ] }
  { "_id" : { "$numberInt" : "221" }, "a" : [ { "$numberInt" : "-10" }, { "$numberDouble" : "NaN" } ] }
  { "_id" : { "$numberInt" : "222" }, "a" : [ { "$numberInt" : "0" }, { "$numberDouble" : "-0.0" } ] }
-(26 rows)
+(27 rows)
 
 SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a" : {"$mod" : [{"$numberDouble" : "-1.0"}, 0]} }';
                                                document                                                
@@ -868,6 +894,7 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
  { "_id" : { "$numberInt" : "133" }, "a" : { "$numberLong" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "134" }, "a" : { "$numberDouble" : "9223372036854769664.0" } }
  { "_id" : { "$numberInt" : "135" }, "a" : { "$numberDouble" : "-9223372036854769664.0" } }
+ { "_id" : { "$numberInt" : "138" }, "a" : { "$numberDouble" : "-9223372036854775808.0" } }
  { "_id" : { "$numberInt" : "136" }, "a" : { "$numberDecimal" : "9223372036854775807" } }
  { "_id" : { "$numberInt" : "137" }, "a" : { "$numberDecimal" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "140" }, "a" : { "$numberDecimal" : "9223372036854775807.5" } }
@@ -876,7 +903,7 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
  { "_id" : { "$numberInt" : "124" }, "a" : [ { "$numberInt" : "10" }, null ] }
  { "_id" : { "$numberInt" : "221" }, "a" : [ { "$numberInt" : "-10" }, { "$numberDouble" : "NaN" } ] }
  { "_id" : { "$numberInt" : "222" }, "a" : [ { "$numberInt" : "0" }, { "$numberDouble" : "-0.0" } ] }
-(26 rows)
+(27 rows)
 
 SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a" : {"$mod" : [{"$numberDecimal" : "-1.0"}, 0]} }';
                                                document                                                
@@ -899,6 +926,7 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
  { "_id" : { "$numberInt" : "133" }, "a" : { "$numberLong" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "134" }, "a" : { "$numberDouble" : "9223372036854769664.0" } }
  { "_id" : { "$numberInt" : "135" }, "a" : { "$numberDouble" : "-9223372036854769664.0" } }
+ { "_id" : { "$numberInt" : "138" }, "a" : { "$numberDouble" : "-9223372036854775808.0" } }
  { "_id" : { "$numberInt" : "136" }, "a" : { "$numberDecimal" : "9223372036854775807" } }
  { "_id" : { "$numberInt" : "137" }, "a" : { "$numberDecimal" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "140" }, "a" : { "$numberDecimal" : "9223372036854775807.5" } }
@@ -907,7 +935,7 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
  { "_id" : { "$numberInt" : "124" }, "a" : [ { "$numberInt" : "10" }, null ] }
  { "_id" : { "$numberInt" : "221" }, "a" : [ { "$numberInt" : "-10" }, { "$numberDouble" : "NaN" } ] }
  { "_id" : { "$numberInt" : "222" }, "a" : [ { "$numberInt" : "0" }, { "$numberDouble" : "-0.0" } ] }
-(26 rows)
+(27 rows)
 
 -- Tests for overflow check. Divison if INT_MIN/MAX value
 SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a" : {"$mod" : [{"$numberInt" : "2147483647"}, 0]} }';
@@ -923,11 +951,12 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "131" }, "a" : { "$numberInt" : "-2147483648" } }
  { "_id" : { "$numberInt" : "133" }, "a" : { "$numberLong" : "-9223372036854775808" } }
+ { "_id" : { "$numberInt" : "138" }, "a" : { "$numberDouble" : "-9223372036854775808.0" } }
  { "_id" : { "$numberInt" : "137" }, "a" : { "$numberDecimal" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "142" }, "a" : { "$numberDecimal" : "-9223372036854775808.5" } }
  { "_id" : { "$numberInt" : "121" }, "a" : { "$numberInt" : "0" } }
  { "_id" : { "$numberInt" : "222" }, "a" : [ { "$numberInt" : "0" }, { "$numberDouble" : "-0.0" } ] }
-(6 rows)
+(7 rows)
 
 SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a" : {"$mod" : [{"$numberLong" : "9223372036854775807"}, 0]} }';
                                                document                                               
@@ -943,12 +972,20 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
                                                document                                               
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "133" }, "a" : { "$numberLong" : "-9223372036854775808" } }
+ { "_id" : { "$numberInt" : "138" }, "a" : { "$numberDouble" : "-9223372036854775808.0" } }
  { "_id" : { "$numberInt" : "137" }, "a" : { "$numberDecimal" : "-9223372036854775808" } }
  { "_id" : { "$numberInt" : "142" }, "a" : { "$numberDecimal" : "-9223372036854775808.5" } }
  { "_id" : { "$numberInt" : "121" }, "a" : { "$numberInt" : "0" } }
  { "_id" : { "$numberInt" : "222" }, "a" : [ { "$numberInt" : "0" }, { "$numberDouble" : "-0.0" } ] }
-(5 rows)
+(6 rows)
 
+-- The -2^63 boundary as a double divisor, and a non-zero remainder against it. The
+-- dividend side is covered by _id 138 above, which every $mod query in this file now
+-- also evaluates: it must match on the runtime path exactly as it does on the index one.
+SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a" : {"$mod" : [{"$numberDouble" : "-9223372036854775808"}, 0]} }';
+psql:sql/bson_dollar_ops_query_mod_tests_core.sql:162: ERROR:  malformed mod, divisor value is invalid :: caused by :: Out of bounds coercing to integral value
+SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a" : {"$mod" : [{"$numberLong" : "-9223372036854775808"}, 1]} }';
+psql:sql/bson_dollar_ops_query_mod_tests_core.sql:163: ERROR:  current transaction is aborted, commands ignored until end of transaction block
 ROLLBACK;
 -- Error case : Divisor Zero
 SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') WHERE document @@ '{ "a" : {"$mod" : [0,2]} }';

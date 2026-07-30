@@ -49,6 +49,12 @@ SELECT documentdb_api.insert_one('db','dollarmodtests','{"_id": 133, "a": {"$num
 -- Double - (double only takes 15 significand digits)
 SELECT documentdb_api.insert_one('db','dollarmodtests','{"_id": 134, "a": {"$numberDouble" : "922337203685477e4"}}', NULL);
 SELECT documentdb_api.insert_one('db','dollarmodtests','{"_id": 135, "a": {"$numberDouble" : "-922337203685477e4"}}', NULL);
+-- Double - exactly -2^63, representable as both a double and an int64. Quantizing it to
+-- 15 significand digits overflows the int64 range, which made the runtime path reject a
+-- document the index path matched.
+SELECT documentdb_api.insert_one('db','dollarmodtests','{"_id": 138, "a": {"$numberDouble" : "-9223372036854775808"}}', NULL);
+-- Double - exactly 2^63, one past INT64_MAX, so it must not match
+SELECT documentdb_api.insert_one('db','dollarmodtests','{"_id": 139, "a": {"$numberDouble" : "9223372036854775808"}}', NULL);
 -- Decimal128
 SELECT documentdb_api.insert_one('db','dollarmodtests','{"_id": 136, "a": {"$numberDecimal" : "9223372036854775807"}}', NULL);
 SELECT documentdb_api.insert_one('db','dollarmodtests','{"_id": 137, "a": {"$numberDecimal" : "-9223372036854775808"}}', NULL);
@@ -149,3 +155,9 @@ SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where doc
 SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a" : {"$mod" : [{"$numberInt" : "-2147483648"}, 0]} }';
 SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a" : {"$mod" : [{"$numberLong" : "9223372036854775807"}, 0]} }';
 SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a" : {"$mod" : [{"$numberLong" : "-9223372036854775808"}, 0]} }';
+
+-- The -2^63 boundary as a double divisor, and a non-zero remainder against it. The
+-- dividend side is covered by _id 138 above, which every $mod query in this file now
+-- also evaluates: it must match on the runtime path exactly as it does on the index one.
+SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a" : {"$mod" : [{"$numberDouble" : "-9223372036854775808"}, 0]} }';
+SELECT document FROM documentdb_api.collection('db', 'dollarmodtests') where document @@ '{ "a" : {"$mod" : [{"$numberLong" : "-9223372036854775808"}, 1]} }';
