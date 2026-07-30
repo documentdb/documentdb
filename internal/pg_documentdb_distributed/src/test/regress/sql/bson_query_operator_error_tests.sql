@@ -22,10 +22,28 @@ SELECT documentdb_api.create_collection('db', 'singlepathindexexists');
 SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$size" : -3 }}' ORDER BY object_id;
 SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$size" : 3.1 }}' ORDER BY object_id;
 SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$size" : -3.4 }}' ORDER BY object_id;
+-- a non-finite double has no integer representation, so it must fail to parse rather than
+-- be narrowed to INT64_MAX
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$size" : { "$numberDouble" : "Infinity" } }}' ORDER BY object_id;
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$size" : { "$numberDouble" : "-Infinity" } }}' ORDER BY object_id;
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$size" : { "$numberDouble" : "NaN" } }}' ORDER BY object_id;
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$size" : Infinity }}' ORDER BY object_id;
 
 -- These can't be tested since the extended json syntax treats $type as an extended json operator and not a call to actual $type function.
 -- SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$type" : 123.56 }}' ORDER BY object_id;
 -- SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$type" : [] }}' ORDER BY object_id;
+
+-- A numeric $type code IS reachable when the number is written with its extended json
+-- wrapper, which the parser accepts where a bare number or an array is rejected.
+-- Valid code, as a control: 2 is "string".
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$type" : { "$numberDouble" : "2.0" } }}' ORDER BY object_id;
+-- Non-finite codes are reported with MongoDB's spelling rather than a saturated INT64_MAX.
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$type" : { "$numberDouble" : "Infinity" } }}' ORDER BY object_id;
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$type" : { "$numberDouble" : "-Infinity" } }}' ORDER BY object_id;
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$type" : { "$numberDouble" : "NaN" } }}' ORDER BY object_id;
+-- A finite non-integer code, and a finite integer that is not a type code, are unchanged.
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$type" : { "$numberDouble" : "2.5" } }}' ORDER BY object_id;
+SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a.b": { "$type" : { "$numberLong" : "9999" } }}' ORDER BY object_id;
 
 -- these queries are negative tests for $all operator
 SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{ "a"  : {"$all" : [ {"$elemMatch" : {"b" : {"$gt" : 1} } }, 1 ] } }' ORDER BY object_id;
@@ -85,3 +103,4 @@ SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator')
 SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{"a": {"$bitsAnyClear": [1, {"$undefined": true}]}}';
 SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{"a": {"$bitsAnySet": {"$undefined": true}}}';
 SELECT object_id, document FROM documentdb_api.collection('db', 'queryoperator') WHERE document @@ '{"a": {"$bitsAnySet": [1, {"$undefined": true}]}}';
+

@@ -96,6 +96,15 @@ SELECT document FROM documentdb_api.collection('db', 'bitwiseOperators') WHERE d
 SELECT document FROM documentdb_api.collection('db', 'bitwiseOperators') WHERE document @@ '{ "a": { "$bitsAnySet" : { "$numberDecimal" : "NaN" }} }';
 SELECT document FROM documentdb_api.collection('db', 'bitwiseOperators') WHERE document @@ '{ "a": { "$bitsAllSet" : { "$numberDecimal" : "Infinity" }} }';
 
+--Negative Test Cases: non-finite doubles. The decimal128 cases above were already
+--rejected; a double Infinity used to pass the fixed-integer check and be narrowed
+--silently instead of failing to parse the way MongoDB does.
+SELECT document FROM documentdb_api.collection('db', 'bitwiseOperators') WHERE document @@ '{ "a": { "$bitsAllClear" : { "$numberDouble" : "Infinity" }} }';
+SELECT document FROM documentdb_api.collection('db', 'bitwiseOperators') WHERE document @@ '{ "a": { "$bitsAnyClear" : { "$numberDouble" : "-Infinity" }} }';
+SELECT document FROM documentdb_api.collection('db', 'bitwiseOperators') WHERE document @@ '{ "a": { "$bitsAllSet" : { "$numberDouble" : "Infinity" }} }';
+SELECT document FROM documentdb_api.collection('db', 'bitwiseOperators') WHERE document @@ '{ "a": { "$bitsAnySet" : { "$numberDouble" : "NaN" }} }';
+SELECT document FROM documentdb_api.collection('db', 'bitwiseOperators') WHERE document @@ '{ "a": { "$bitsAllSet" : Infinity } }';
+
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "bitwiseOperators",
       "indexes": [
         {
