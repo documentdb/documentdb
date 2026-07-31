@@ -227,8 +227,8 @@ bool EnableComparableTerms = DEFAULT_ENABLE_COMPARABLE_TERMS;
 #define DEFAULT_ENABLE_ORDER_BY_INDEX_TERM false
 bool EnableOrderByIndexTerm = DEFAULT_ENABLE_ORDER_BY_INDEX_TERM;
 
-/* Added in v112, Pending stabilization, enable in v116 */
-#define DEFAULT_ENABLE_GROUP_BY_COMPOUND_ID_INDEX_PUSHDOWN false
+/* Added on v112, enabled on v117, remove after v119 */
+#define DEFAULT_ENABLE_GROUP_BY_COMPOUND_ID_INDEX_PUSHDOWN true
 bool EnableGroupByCompoundIdIndexPushdown =
 	DEFAULT_ENABLE_GROUP_BY_COMPOUND_ID_INDEX_PUSHDOWN;
 
