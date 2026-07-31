@@ -18,7 +18,7 @@ use deadpool_postgres::PoolError;
 use documentdb_gateway_core::{
     configuration::{DocumentDBSetupConfiguration, SetupConfiguration},
     context::RequestContext,
-    error::{ErrorCode, ErrorKind},
+    error::{DocumentDBError, ErrorCode, ErrorKind},
     postgres::{
         conn_mgmt::{
             run_request_with_retries, ConnectionPool, ConnectionSource, PgPoolSettings,
@@ -125,6 +125,46 @@ async fn failed_connection_creation_does_not_record_creation_metrics() {
 
     assert_eq!(report.connections_created(), 0);
     assert_eq!(report.connection_create_time_us(), 0);
+}
+
+#[tokio::test]
+async fn pool_backend_error_converts_to_pool_kind_documentdb_error() {
+    let setup_config = failing_setup_configuration();
+    let pool =
+        build_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 1).await;
+
+    let pool_error = pool
+        .acquire_connection()
+        .await
+        .expect_err("connection to unreachable host should fail");
+
+    // An unreachable backend surfaces as a PoolError::Backend wrapping the
+    // underlying tokio_postgres connection error, exercising the pg-error arm
+    // of the `From<PoolError>` conversion.
+    assert!(
+        matches!(pool_error, PoolError::Backend(_)),
+        "expected PoolError::Backend, got {pool_error:?}"
+    );
+
+    let error = DocumentDBError::from(pool_error);
+
+    assert_eq!(error.error_code(), ErrorCode::InternalError);
+    assert_eq!(error.kind(), &ErrorKind::Pool);
+    // The Backend arm stores the inner tokio_postgres error as the source, so it
+    // downcasts to a postgres error rather than back to a PoolError.
+    let pg_error = error
+        .as_postgres_error()
+        .expect("Backend arm should preserve the tokio_postgres error as source");
+    assert!(error.as_pool_error().is_none());
+    // The Backend arm has no DbError for a connection failure, so the internal
+    // message is exactly the underlying postgres error's string. tokio_postgres
+    // surfaces the connect failure as "error connecting to server" (the OS-level
+    // detail is carried on the error's source, not its Display).
+    assert_eq!(pg_error.to_string(), "error connecting to server");
+    assert_eq!(
+        error.error_message_internal(),
+        Some("error connecting to server")
+    );
 }
 
 #[tokio::test]
