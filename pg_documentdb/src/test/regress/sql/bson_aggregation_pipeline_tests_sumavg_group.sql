@@ -742,3 +742,53 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 
 RESET documentdb.enableSortGroupStage;
 SELECT documentdb_api.drop_collection('db', 'sortgroup_safe_test');
+
+-- =============================================================================
+-- Test 34: $group key with nested field path when intermediate field is null
+-- =============================================================================
+
+-- Case 1: g_home is a document with province field
+SELECT documentdb_api.insert_one('db','group_null_path_test','{ "_id": "001", "name": "Alice", "g_home": { "province": "Shanghai" } }');
+-- Case 2: g_home is missing entirely
+SELECT documentdb_api.insert_one('db','group_null_path_test','{ "_id": "002", "name": "Bob" }');
+-- Case 3: g_home is explicitly null
+SELECT documentdb_api.insert_one('db','group_null_path_test','{ "_id": "003", "name": "Charlie", "g_home": null }');
+-- Case 4: g_home is a document with province field
+SELECT documentdb_api.insert_one('db','group_null_path_test','{ "_id": "004", "name": "Diana", "g_home": { "province": "Beijing" } }');
+-- Case 5: g_home is an empty document (province missing)
+SELECT documentdb_api.insert_one('db','group_null_path_test','{ "_id": "005", "name": "Eve", "g_home": {} }');
+-- Case 6: g_home.province is explicitly null
+SELECT documentdb_api.insert_one('db','group_null_path_test','{ "_id": "006", "name": "Frank", "g_home": { "province": null } }');
+
+-- Test 34b: deeply nested path with various intermediate non-document types
+SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e01", "val": { "a": { "b": "deep_ok" } } }');
+SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e02", "val": { "a": null } }');
+SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e03", "val": { "a": 42 } }');
+SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e04", "val": { "a": "string" } }');
+SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e05", "val": { "a": true } }');
+SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e06", "val": { "a": { "b": null } } }');
+SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e07", "val": null }');
+SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e08" }');
+SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e09", "val": { "a": [{ "b": "arr1" }, { "b": "arr2" }] } }');
+
+-- Verify enableWriteDocumentsInRepath off/on produces identical results.
+SET documentdb_core.enableWriteDocumentsInRepath TO on;
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_null_path_test", "pipeline": [ { "$sort": { "_id": 1 } }, { "$group": { "_id": { "province": "$g_home.province" }, "names": { "$push": "$name" }, "count": { "$sum": 1 } } }, { "$sort": { "_id.province": 1 } } ] }');
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_deep_null_test", "pipeline": [ { "$sort": { "_id": 1 } }, { "$group": { "_id": { "deep": "$val.a.b" }, "ids": { "$push": "$_id" }, "count": { "$sum": 1 } } }, { "$sort": { "_id.deep": 1 } } ] }');
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_deep_null_test", "pipeline": [ { "$project": { "result": "$val.a.b" } }, { "$sort": { "_id": 1 } } ] }');
+
+SET documentdb_core.enableWriteDocumentsInRepath TO off;
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_null_path_test", "pipeline": [ { "$sort": { "_id": 1 } }, { "$group": { "_id": { "province": "$g_home.province" }, "names": { "$push": "$name" }, "count": { "$sum": 1 } } }, { "$sort": { "_id.province": 1 } } ] }');
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_deep_null_test", "pipeline": [ { "$sort": { "_id": 1 } }, { "$group": { "_id": { "deep": "$val.a.b" }, "ids": { "$push": "$_id" }, "count": { "$sum": 1 } } }, { "$sort": { "_id.deep": 1 } } ] }');
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_deep_null_test", "pipeline": [ { "$project": { "result": "$val.a.b" } }, { "$sort": { "_id": 1 } } ] }');
+
+RESET documentdb_core.enableWriteDocumentsInRepath;
+
+SELECT documentdb_api.drop_collection('db', 'group_null_path_test');
+SELECT documentdb_api.drop_collection('db', 'group_deep_null_test');

@@ -1940,7 +1940,7 @@ HandleDollarPushWindowOperator(const bson_value_t *opValue,
 	bool handleSingleValue = true;
 	List *aggregateArgs = list_make3(
 		(Expr *) accumFunc,
-		MakeTextConst(context->outputFieldName, strlen(context->outputFieldName)),
+		MakeTextConst("", 0),
 		MakeBoolValueConst(handleSingleValue));
 	windowFunc->args = aggregateArgs;
 	return windowFunc;
