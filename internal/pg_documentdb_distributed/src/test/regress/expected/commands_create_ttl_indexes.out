@@ -92,17 +92,17 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIn
 
 -- 2. List All indexes --
 SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('db','{ "listIndexes": "ttlcoll" }') ORDER BY 1;
-                                                                                                                                                       bson_dollar_unwind                                                                                                                                                        
+                                                                                                                              bson_dollar_unwind                                                                                                                              
 ---------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" } } }, "ok" : { "$numberDouble" : "1.0" } }
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
 (2 rows)
 
 SELECT * FROM documentdb_distributed_test_helpers.get_collection_indexes('db', 'ttlcoll') ORDER BY collection_id, index_id;
- collection_id | index_id |                                                                                          index_spec_as_bson                                                                                          | index_is_valid 
+ collection_id | index_id |                                                                index_spec_as_bson                                                                 | index_is_valid 
 ---------------------------------------------------------------------
-         20000 |    20000 | { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }                                                                                                        | t
-         20000 |    20001 | { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } | t
+         20000 |    20000 | { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }                                                     | t
+         20000 |    20001 | { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" } } | t
 (2 rows)
 
 -- 3. Call ttl purge procedure with a batch size of 10
@@ -379,13 +379,13 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIn
 (1 row)
 
 SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('db','{ "listIndexes": "ttlcoll" }') ORDER BY 1;
-                                                                                                                                                                          bson_dollar_unwind                                                                                                                                                                           
+                                                                                                                                                 bson_dollar_unwind                                                                                                                                                 
 ---------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" } } }, "ok" : { "$numberDouble" : "1.0" } }
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl1" : { "$numberInt" : "1" } }, "name" : "ttl_index1", "sparse" : true, "expireAfterSeconds" : { "$numberInt" : "100" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl2" : { "$numberInt" : "1" } }, "name" : "ttl_index2", "unique" : true, "expireAfterSeconds" : { "$numberInt" : "100" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl3" : { "$numberInt" : "1" } }, "name" : "ttl_index3", "sparse" : true, "unique" : true, "expireAfterSeconds" : { "$numberInt" : "100" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl1" : { "$numberInt" : "1" } }, "name" : "ttl_index1", "sparse" : true, "expireAfterSeconds" : { "$numberInt" : "100" } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl2" : { "$numberInt" : "1" } }, "name" : "ttl_index2", "unique" : true, "expireAfterSeconds" : { "$numberInt" : "100" } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl3" : { "$numberInt" : "1" } }, "name" : "ttl_index3", "sparse" : true, "unique" : true, "expireAfterSeconds" : { "$numberInt" : "100" } } }, "ok" : { "$numberDouble" : "1.0" } }
 (5 rows)
 
 -- 14. TTL index creation restrictions
@@ -440,17 +440,17 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIn
 (1 row)
 
 SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('db','{ "listIndexes": "ttlcoll" }') ORDER BY 1;
-                                                                                                                                                                             bson_dollar_unwind                                                                                                                                                                              
+                                                                                                                                                    bson_dollar_unwind                                                                                                                                                    
 ---------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" } } }, "ok" : { "$numberDouble" : "1.0" } }
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl1" : { "$numberInt" : "1" } }, "name" : "ttl_index1", "sparse" : true, "expireAfterSeconds" : { "$numberInt" : "100" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl2" : { "$numberInt" : "1" } }, "name" : "ttl_index2", "unique" : true, "expireAfterSeconds" : { "$numberInt" : "100" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl3" : { "$numberInt" : "1" } }, "name" : "ttl_index3", "sparse" : true, "unique" : true, "expireAfterSeconds" : { "$numberInt" : "100" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttlnew" : { "$numberInt" : "1" } }, "name" : "ttl_new_index1", "sparse" : true, "expireAfterSeconds" : { "$numberInt" : "10" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttlnew" : { "$numberInt" : "1" } }, "name" : "ttl_new_index2", "sparse" : false, "expireAfterSeconds" : { "$numberInt" : "10" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttlnew" : { "$numberInt" : "1" } }, "name" : "ttl_new_index3", "sparse" : true, "unique" : true, "expireAfterSeconds" : { "$numberInt" : "100" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttlnew2" : { "$numberInt" : "5" } }, "name" : "ttl_new_indexj", "sparse" : true, "expireAfterSeconds" : { "$numberInt" : "10" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl1" : { "$numberInt" : "1" } }, "name" : "ttl_index1", "sparse" : true, "expireAfterSeconds" : { "$numberInt" : "100" } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl2" : { "$numberInt" : "1" } }, "name" : "ttl_index2", "unique" : true, "expireAfterSeconds" : { "$numberInt" : "100" } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl3" : { "$numberInt" : "1" } }, "name" : "ttl_index3", "sparse" : true, "unique" : true, "expireAfterSeconds" : { "$numberInt" : "100" } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttlnew" : { "$numberInt" : "1" } }, "name" : "ttl_new_index1", "sparse" : true, "expireAfterSeconds" : { "$numberInt" : "10" } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttlnew" : { "$numberInt" : "1" } }, "name" : "ttl_new_index2", "sparse" : false, "expireAfterSeconds" : { "$numberInt" : "10" } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttlnew" : { "$numberInt" : "1" } }, "name" : "ttl_new_index3", "sparse" : true, "unique" : true, "expireAfterSeconds" : { "$numberInt" : "100" } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttlnew2" : { "$numberInt" : "5" } }, "name" : "ttl_new_indexj", "sparse" : true, "expireAfterSeconds" : { "$numberInt" : "10" } } }, "ok" : { "$numberDouble" : "1.0" } }
 (9 rows)
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttlnew3": "hashed"}, "name": "ttl_new_indexk", "unique" : true, "expireAfterSeconds" : 10}]}', true);
@@ -485,17 +485,17 @@ NOTICE:  creating collection
 (1 row)
 
 SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('db','{ "listIndexes": "ttlcoll2" }') ORDER BY 1;
-                                                                                                                                                                                                                                           bson_dollar_unwind                                                                                                                                                                                                                                           
+                                                                                                                                                                                                                 bson_dollar_unwind                                                                                                                                                                                                                  
 ---------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll2", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll2", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_pfe_index", "partialFilterExpression" : { "$and" : [ { "b" : { "$numberInt" : "55" } }, { "a" : { "$exists" : true } }, { "c" : { "$exists" : { "$numberInt" : "1" } } } ] }, "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll2", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_pfe_index", "partialFilterExpression" : { "$and" : [ { "b" : { "$numberInt" : "55" } }, { "a" : { "$exists" : true } }, { "c" : { "$exists" : { "$numberInt" : "1" } } } ] }, "expireAfterSeconds" : { "$numberInt" : "5" } } }, "ok" : { "$numberDouble" : "1.0" } }
 (2 rows)
 
 SELECT * FROM documentdb_distributed_test_helpers.get_collection_indexes('db', 'ttlcoll2') ORDER BY collection_id, index_id;
- collection_id | index_id |                                                                                                                                                                             index_spec_as_bson                                                                                                                                                                             | index_is_valid 
+ collection_id | index_id |                                                                                                                                                   index_spec_as_bson                                                                                                                                                    | index_is_valid 
 ---------------------------------------------------------------------
-         20001 |    20011 | { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }                                                                                                                                                                                                                                                                              | t
-         20001 |    20012 | { "v" : { "$numberInt" : "2" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_pfe_index", "partialFilterExpression" : { "$and" : [ { "b" : { "$numberInt" : "55" } }, { "a" : { "$exists" : true } }, { "c" : { "$exists" : { "$numberInt" : "1" } } } ] }, "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } | t
+         20001 |    20011 | { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }                                                                                                                                                                                                                           | t
+         20001 |    20012 | { "v" : { "$numberInt" : "2" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_pfe_index", "partialFilterExpression" : { "$and" : [ { "b" : { "$numberInt" : "55" } }, { "a" : { "$exists" : true } }, { "c" : { "$exists" : { "$numberInt" : "1" } } } ] }, "expireAfterSeconds" : { "$numberInt" : "5" } } | t
 (2 rows)
 
 SELECT documentdb_api.insert_one('db','ttlcoll2', '{ "_id" : 0, "b": 55, "a" : 1, "c": 1, "ttl" : { "$date": { "$numberLong": "-1000" } } }', NULL);
@@ -595,17 +595,17 @@ NOTICE:  creating collection
 (1 row)
 
 SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('db','{ "listIndexes": "ttlcoll3" }') ORDER BY 1;
-                                                                                                                                                                      bson_dollar_unwind                                                                                                                                                                      
+                                                                                                                                            bson_dollar_unwind                                                                                                                                             
 ---------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll3", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll3", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_large_expireAfterSeconds", "expireAfterSeconds" : { "$numberInt" : "2147483647" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll3", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_large_expireAfterSeconds", "expireAfterSeconds" : { "$numberInt" : "2147483647" } } }, "ok" : { "$numberDouble" : "1.0" } }
 (2 rows)
 
 SELECT * FROM documentdb_distributed_test_helpers.get_collection_indexes('db', 'ttlcoll3') ORDER BY collection_id, index_id;
- collection_id | index_id |                                                                                                        index_spec_as_bson                                                                                                        | index_is_valid 
+ collection_id | index_id |                                                                              index_spec_as_bson                                                                               | index_is_valid 
 ---------------------------------------------------------------------
-         20002 |    20013 | { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }                                                                                                                                    | t
-         20002 |    20014 | { "v" : { "$numberInt" : "2" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_large_expireAfterSeconds", "expireAfterSeconds" : { "$numberInt" : "2147483647" }, "storageEngine" : { "enableOrderedIndex" : true } } | t
+         20002 |    20013 | { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }                                                                                 | t
+         20002 |    20014 | { "v" : { "$numberInt" : "2" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_large_expireAfterSeconds", "expireAfterSeconds" : { "$numberInt" : "2147483647" } } | t
 (2 rows)
 
   -- Timestamp: -623051866000 ( 4/4/1950 more than 68 years from 4/4/2024). So, with the ttl index index `ttl_large_expireAfterSeconds`, _id : [1, 6, 7] should be deleted.
@@ -700,11 +700,11 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIn
 (1 row)
 
 SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('db','{ "listIndexes": "ttlcoll1" }') ORDER BY 1;
-                                                                                                                                                                       bson_dollar_unwind                                                                                                                                                                       
+                                                                                                                                             bson_dollar_unwind                                                                                                                                              
 ---------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttlnew" : { "$numberInt" : "1" } }, "name" : "ttl_new_index5", "sparse" : true, "expireAfterSeconds" : { "$numberInt" : "12345" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttlnew" : { "$numberInt" : "1" } }, "name" : "ttl_new_index6", "sparse" : false, "expireAfterSeconds" : { "$numberInt" : "12345" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttlnew" : { "$numberInt" : "1" } }, "name" : "ttl_new_index5", "sparse" : true, "expireAfterSeconds" : { "$numberInt" : "12345" } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttlnew" : { "$numberInt" : "1" } }, "name" : "ttl_new_index6", "sparse" : false, "expireAfterSeconds" : { "$numberInt" : "12345" } } }, "ok" : { "$numberDouble" : "1.0" } }
 (3 rows)
 
 -- 20 Repeated TTL deletes
@@ -1789,9 +1789,9 @@ NOTICE:  creating collection
 END;
 -- Verify A7 index
 SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_a7" }') ORDER BY 1;
-                                                                                                                                                                  bson_dollar_unwind                                                                                                                                                                   
+                                                                                                                                         bson_dollar_unwind                                                                                                                                         
 ---------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_a7", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_a7", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" } } }, "ok" : { "$numberDouble" : "1.0" } }
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_a7", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
 (2 rows)
 
@@ -1956,9 +1956,9 @@ NOTICE:  creating collection
 END;
 -- Verify B7 index
 SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_b7" }') ORDER BY 1;
-                                                                                                                                                                  bson_dollar_unwind                                                                                                                                                                   
+                                                                                                                                         bson_dollar_unwind                                                                                                                                         
 ---------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_b7", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_b7", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" } } }, "ok" : { "$numberDouble" : "1.0" } }
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_b7", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
 (2 rows)
 
@@ -2146,9 +2146,9 @@ SELECT (index_spec).index_name, (index_spec).index_expire_after_seconds, index_s
 (1 row)
 
 SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_e1" }') ORDER BY 1;
-                                                                                                                                                                 bson_dollar_unwind                                                                                                                                                                  
+                                                                                                                                        bson_dollar_unwind                                                                                                                                        
 ---------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_e1", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ts" : { "$numberInt" : "1" } }, "name" : "ts_ttl", "expireAfterSeconds" : { "$numberInt" : "120" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_e1", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ts" : { "$numberInt" : "1" } }, "name" : "ts_ttl", "expireAfterSeconds" : { "$numberInt" : "120" } } }, "ok" : { "$numberDouble" : "1.0" } }
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_e1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
 (2 rows)
 
