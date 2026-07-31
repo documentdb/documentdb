@@ -30,8 +30,8 @@ bool BsonTextUseJsonRepresentation = DEFAULT_BSON_TEXT_USE_JSON_REPRESENTATION;
 bool EnableCollation = DEFAULT_ENABLE_COLLATION;
 
 /* FeatureFlag */
-/* Added in v114, Pending stabilization, enable in v116 */
-#define DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH false
+/* Added on v114, enabled on v117, remove after v119 */
+#define DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH true
 bool EnableWriteDocumentsInRepath = DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH;
 
 /* FeatureFlag */
