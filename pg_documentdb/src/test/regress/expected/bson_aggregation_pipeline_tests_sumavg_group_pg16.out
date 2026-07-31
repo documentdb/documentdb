@@ -2121,3 +2121,185 @@ SELECT documentdb_api.drop_collection('db', 'sortgroup_safe_test');
  t
 (1 row)
 
+-- =============================================================================
+-- Test 34: $group key with nested field path when intermediate field is null
+-- =============================================================================
+-- Case 1: g_home is a document with province field
+SELECT documentdb_api.insert_one('db','group_null_path_test','{ "_id": "001", "name": "Alice", "g_home": { "province": "Shanghai" } }');
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:751: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Case 2: g_home is missing entirely
+SELECT documentdb_api.insert_one('db','group_null_path_test','{ "_id": "002", "name": "Bob" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Case 3: g_home is explicitly null
+SELECT documentdb_api.insert_one('db','group_null_path_test','{ "_id": "003", "name": "Charlie", "g_home": null }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Case 4: g_home is a document with province field
+SELECT documentdb_api.insert_one('db','group_null_path_test','{ "_id": "004", "name": "Diana", "g_home": { "province": "Beijing" } }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Case 5: g_home is an empty document (province missing)
+SELECT documentdb_api.insert_one('db','group_null_path_test','{ "_id": "005", "name": "Eve", "g_home": {} }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Case 6: g_home.province is explicitly null
+SELECT documentdb_api.insert_one('db','group_null_path_test','{ "_id": "006", "name": "Frank", "g_home": { "province": null } }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Test 34b: deeply nested path with various intermediate non-document types
+SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e01", "val": { "a": { "b": "deep_ok" } } }');
+psql:sql/bson_aggregation_pipeline_tests_sumavg_group.sql:764: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e02", "val": { "a": null } }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e03", "val": { "a": 42 } }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e04", "val": { "a": "string" } }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e05", "val": { "a": true } }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e06", "val": { "a": { "b": null } } }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e07", "val": null }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e08" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','group_deep_null_test','{ "_id": "e09", "val": { "a": [{ "b": "arr1" }, { "b": "arr2" }] } }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Verify enableWriteDocumentsInRepath off/on produces identical results.
+SET documentdb_core.enableWriteDocumentsInRepath TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_null_path_test", "pipeline": [ { "$sort": { "_id": 1 } }, { "$group": { "_id": { "province": "$g_home.province" }, "names": { "$push": "$name" }, "count": { "$sum": 1 } } }, { "$sort": { "_id.province": 1 } } ] }');
+                                                 document                                                 
+----------------------------------------------------------------------------------------------------------
+ { "_id" : {  }, "names" : [ "Charlie" ], "count" : { "$numberInt" : "1" } }
+ { "_id" : { "province" : null }, "names" : [ "Bob", "Eve", "Frank" ], "count" : { "$numberInt" : "3" } }
+ { "_id" : { "province" : "Beijing" }, "names" : [ "Diana" ], "count" : { "$numberInt" : "1" } }
+ { "_id" : { "province" : "Shanghai" }, "names" : [ "Alice" ], "count" : { "$numberInt" : "1" } }
+(4 rows)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_deep_null_test", "pipeline": [ { "$sort": { "_id": 1 } }, { "$group": { "_id": { "deep": "$val.a.b" }, "ids": { "$push": "$_id" }, "count": { "$sum": 1 } } }, { "$sort": { "_id.deep": 1 } } ] }');
+                                             document                                              
+---------------------------------------------------------------------------------------------------
+ { "_id" : {  }, "ids" : [ "e04", "e02", "e03", "e05", "e07" ], "count" : { "$numberInt" : "5" } }
+ { "_id" : { "deep" : null }, "ids" : [ "e08", "e06" ], "count" : { "$numberInt" : "2" } }
+ { "_id" : { "deep" : [ "arr1", "arr2" ] }, "ids" : [ "e09" ], "count" : { "$numberInt" : "1" } }
+ { "_id" : { "deep" : "deep_ok" }, "ids" : [ "e01" ], "count" : { "$numberInt" : "1" } }
+(4 rows)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_deep_null_test", "pipeline": [ { "$project": { "result": "$val.a.b" } }, { "$sort": { "_id": 1 } } ] }');
+                     document                     
+--------------------------------------------------
+ { "_id" : "e01", "result" : "deep_ok" }
+ { "_id" : "e02" }
+ { "_id" : "e03" }
+ { "_id" : "e04" }
+ { "_id" : "e05" }
+ { "_id" : "e06", "result" : null }
+ { "_id" : "e07" }
+ { "_id" : "e08" }
+ { "_id" : "e09", "result" : [ "arr1", "arr2" ] }
+(9 rows)
+
+SET documentdb_core.enableWriteDocumentsInRepath TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_null_path_test", "pipeline": [ { "$sort": { "_id": 1 } }, { "$group": { "_id": { "province": "$g_home.province" }, "names": { "$push": "$name" }, "count": { "$sum": 1 } } }, { "$sort": { "_id.province": 1 } } ] }');
+                                                 document                                                 
+----------------------------------------------------------------------------------------------------------
+ { "_id" : {  }, "names" : [ "Charlie" ], "count" : { "$numberInt" : "1" } }
+ { "_id" : { "province" : null }, "names" : [ "Bob", "Eve", "Frank" ], "count" : { "$numberInt" : "3" } }
+ { "_id" : { "province" : "Beijing" }, "names" : [ "Diana" ], "count" : { "$numberInt" : "1" } }
+ { "_id" : { "province" : "Shanghai" }, "names" : [ "Alice" ], "count" : { "$numberInt" : "1" } }
+(4 rows)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_deep_null_test", "pipeline": [ { "$sort": { "_id": 1 } }, { "$group": { "_id": { "deep": "$val.a.b" }, "ids": { "$push": "$_id" }, "count": { "$sum": 1 } } }, { "$sort": { "_id.deep": 1 } } ] }');
+                                             document                                              
+---------------------------------------------------------------------------------------------------
+ { "_id" : {  }, "ids" : [ "e04", "e02", "e03", "e05", "e07" ], "count" : { "$numberInt" : "5" } }
+ { "_id" : { "deep" : null }, "ids" : [ "e08", "e06" ], "count" : { "$numberInt" : "2" } }
+ { "_id" : { "deep" : [ "arr1", "arr2" ] }, "ids" : [ "e09" ], "count" : { "$numberInt" : "1" } }
+ { "_id" : { "deep" : "deep_ok" }, "ids" : [ "e01" ], "count" : { "$numberInt" : "1" } }
+(4 rows)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_deep_null_test", "pipeline": [ { "$project": { "result": "$val.a.b" } }, { "$sort": { "_id": 1 } } ] }');
+                     document                     
+--------------------------------------------------
+ { "_id" : "e01", "result" : "deep_ok" }
+ { "_id" : "e02" }
+ { "_id" : "e03" }
+ { "_id" : "e04" }
+ { "_id" : "e05" }
+ { "_id" : "e06", "result" : null }
+ { "_id" : "e07" }
+ { "_id" : "e08" }
+ { "_id" : "e09", "result" : [ "arr1", "arr2" ] }
+(9 rows)
+
+RESET documentdb_core.enableWriteDocumentsInRepath;
+SELECT documentdb_api.drop_collection('db', 'group_null_path_test');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('db', 'group_deep_null_test');
+ drop_collection 
+-----------------
+ t
+(1 row)
+

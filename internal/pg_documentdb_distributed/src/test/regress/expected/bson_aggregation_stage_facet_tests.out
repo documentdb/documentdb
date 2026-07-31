@@ -83,14 +83,14 @@ WITH "stage0" as (
   WITH FacetStage AS (
     WITH "FacetStage00" as (
       SELECT 
-        bson_expression_get(document, '{ "_id" : "$unitPrice" }'::bson, true) AS "accid", 
+        bson_expression_get(document, '{ "" : "$unitPrice" }'::bson, true) AS "accid",
         BSONFIRSTONSORTED(
-          bson_expression_get(document, '{ "$first" : "$stock" }'::bson, true)
+          bson_expression_get(document, '{ "" : "$stock" }'::bson, true)
         ) AS "acc0" 
       FROM 
         documentdb_api.collection('db', 'facetTest')
       GROUP BY 
-        bson_expression_get(document, '{ "_id" : "$unitPrice" }'::bson, true)
+        bson_expression_get(document, '{ "" : "$unitPrice" }'::bson, true)
     ), 
     "FacetStage01" as (
       SELECT 
@@ -102,14 +102,14 @@ WITH "stage0" as (
     ), 
     "FacetStage10" as (
       SELECT 
-        bson_expression_get(document, '{ "_id" : "$unitPrice" }'::bson, true) AS "accid", 
+        bson_expression_get(document, '{ "" : "$unitPrice" }'::bson, true) AS "accid",
         BSONLASTONSORTED(
-          bson_expression_get(document, '{ "$last" : "$stock" }'::bson, true)
+          bson_expression_get(document, '{ "" : "$stock" }'::bson, true)
         ) AS "acc0" 
       FROM 
         documentdb_api.collection('db', 'facetTest') 
       GROUP BY 
-        bson_expression_get(document, '{ "_id" : "$unitPrice" }'::bson, true)
+        bson_expression_get(document, '{ "" : "$unitPrice" }'::bson, true)
     ), 
     "FacetStage11" as (
       SELECT 
@@ -161,14 +161,14 @@ WITH "stage0" as (
   WITH FacetStage AS (
     WITH "FacetStage00" as (
       SELECT 
-        bson_expression_get(document, '{ "_id" : "$unitPrice" }'::bson, true) AS "accid", 
+        bson_expression_get(document, '{ "" : "$unitPrice" }'::bson, true) AS "accid",
         BSONFIRSTONSORTED(
-          bson_expression_get(document, '{ "$first" : "$stock" }'::bson, true)
+          bson_expression_get(document, '{ "" : "$stock" }'::bson, true)
         ) AS "acc0" 
       FROM 
         documentdb_api.collection('db', 'facetTest')
       GROUP BY 
-        bson_expression_get(document, '{ "_id" : "$unitPrice" }'::bson, true)
+        bson_expression_get(document, '{ "" : "$unitPrice" }'::bson, true)
     ), 
     "FacetStage01" as (
       SELECT 
@@ -180,14 +180,14 @@ WITH "stage0" as (
     ), 
     "FacetStage10" as (
       SELECT 
-        bson_expression_get(document, '{ "_id" : "$unitPrice" }'::bson, true) AS "accid", 
+        bson_expression_get(document, '{ "" : "$unitPrice" }'::bson, true) AS "accid",
         BSONLASTONSORTED(
-          bson_expression_get(document, '{ "$last" : "$stock" }'::bson, true)
+          bson_expression_get(document, '{ "" : "$stock" }'::bson, true)
         ) AS "acc0" 
       FROM 
         documentdb_api.collection('db', 'facetTest') 
       GROUP BY 
-        bson_expression_get(document, '{ "_id" : "$unitPrice" }'::bson, true)
+        bson_expression_get(document, '{ "" : "$unitPrice" }'::bson, true)
     ), 
     "FacetStage11" as (
       SELECT 
@@ -213,7 +213,7 @@ WITH "stage0" as (
     FacetStage
 ) SELECT * from "stage1"
 ROLBACK;
-                                                                                    QUERY PLAN                                                                                     
+                                                                                   QUERY PLAN                                                                                   
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 1
@@ -226,18 +226,18 @@ ROLBACK;
                      ->  Parallel Append
                            ->  Aggregate
                                  ->  GroupAggregate
-                                       Group Key: (documentdb_api_catalog.bson_expression_get(collection.document, '{ "_id" : "$unitPrice" }'::documentdb_core.bson, true))
+                                       Group Key: (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$unitPrice" }'::documentdb_core.bson, true))
                                        ->  Sort
-                                             Sort Key: (documentdb_api_catalog.bson_expression_get(collection.document, '{ "_id" : "$unitPrice" }'::documentdb_core.bson, true))
+                                             Sort Key: (documentdb_api_catalog.bson_expression_get(collection.document, '{ "" : "$unitPrice" }'::documentdb_core.bson, true))
                                              ->  Bitmap Heap Scan on documents_961000_9610003 collection
                                                    Recheck Cond: (shard_key_value = '961000'::bigint)
                                                    ->  Bitmap Index Scan on _id_
                                                          Index Cond: (shard_key_value = '961000'::bigint)
                            ->  Aggregate
                                  ->  GroupAggregate
-                                       Group Key: (documentdb_api_catalog.bson_expression_get(collection_1.document, '{ "_id" : "$unitPrice" }'::documentdb_core.bson, true))
+                                       Group Key: (documentdb_api_catalog.bson_expression_get(collection_1.document, '{ "" : "$unitPrice" }'::documentdb_core.bson, true))
                                        ->  Sort
-                                             Sort Key: (documentdb_api_catalog.bson_expression_get(collection_1.document, '{ "_id" : "$unitPrice" }'::documentdb_core.bson, true))
+                                             Sort Key: (documentdb_api_catalog.bson_expression_get(collection_1.document, '{ "" : "$unitPrice" }'::documentdb_core.bson, true))
                                              ->  Bitmap Heap Scan on documents_961000_9610003 collection_1
                                                    Recheck Cond: (shard_key_value = '961000'::bigint)
                                                    ->  Bitmap Index Scan on _id_
