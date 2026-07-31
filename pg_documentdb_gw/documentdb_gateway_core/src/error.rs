@@ -432,14 +432,62 @@ impl From<bson::raw::Error> for DocumentDBError {
 
 impl From<PoolError> for DocumentDBError {
     fn from(error: PoolError) -> Self {
-        Self::new_documentdb_error(
-            ErrorCode::InternalError,
-            generic_internal_error_message().to_owned(),
-            Some(error.to_string()),
-            Some(Box::new(error)),
-            ErrorKind::Pool,
-        )
+        // Backend errors carrying a recognized SqlState (e.g. connection
+        // exhaustion) are remapped to a more specific ErrorCode; all other
+        // pool errors keep the generic InternalError code.
+        match error {
+            PoolError::Backend(pg_error)
+            | PoolError::PostCreateHook(deadpool_postgres::HookError::Backend(pg_error)) => {
+                if let Some(db_error) = pg_error.as_db_error() {
+                    let state = db_error.code().clone();
+                    let error_message = db_error.to_string();
+                    map_pool_db_error_code(&state, error_message, Box::new(pg_error))
+                } else {
+                    let error_message = pg_error.to_string();
+                    Self::new_documentdb_error(
+                        ErrorCode::InternalError,
+                        generic_internal_error_message().to_owned(),
+                        Some(error_message),
+                        Some(Box::new(pg_error)),
+                        ErrorKind::Pool,
+                    )
+                }
+            }
+            other => Self::new_documentdb_error(
+                ErrorCode::InternalError,
+                generic_internal_error_message().to_owned(),
+                Some(format!("Connection pool error: {other}")),
+                Some(Box::new(other)),
+                ErrorKind::Pool,
+            ),
+        }
     }
+}
+
+/// Maps a backend `SqlState` from a `PoolError` to the client-facing
+/// `ErrorCode` and builds the corresponding error. Recognized states (e.g.
+/// connection exhaustion) use a fixed override message; every other state
+/// keeps the generic `InternalError` code and the provided `error_message`.
+fn map_pool_db_error_code(
+    state: &SqlState,
+    error_message: String,
+    source: Box<dyn std::error::Error + Send + Sync>,
+) -> DocumentDBError {
+    let (error_code, internal_message) = match *state {
+        SqlState::TOO_MANY_CONNECTIONS => (
+            ErrorCode::TooManyLogicalSessions,
+            "Too many clients.".to_owned(),
+        ),
+        _ => (ErrorCode::InternalError, error_message),
+    };
+
+    DocumentDBError::new_documentdb_error(
+        error_code,
+        generic_internal_error_message().to_owned(),
+        Some(internal_message),
+        Some(source),
+        ErrorKind::Pool,
+    )
 }
 
 impl From<CreatePoolError> for DocumentDBError {
@@ -533,3 +581,83 @@ fn fmt_error_kind_pii_safe(
 }
 
 impl std::error::Error for DocumentDBError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use deadpool::managed::TimeoutType;
+
+    /// Every `PoolError` variant that does not carry a backend `tokio_postgres`
+    /// error takes the "other" branch, which must produce a PII-safe generic
+    /// user message, a diagnostic internal message, and preserve the original
+    /// `PoolError` as the source so retry logic can downcast via `as_pool_error`.
+    fn assert_other_branch(pool_error: PoolError) {
+        let expected_internal = format!("Connection pool error: {pool_error}");
+        let error = DocumentDBError::from(pool_error);
+
+        assert_eq!(error.error_code(), ErrorCode::InternalError);
+        assert_eq!(*error.kind(), ErrorKind::Pool);
+        assert_eq!(error.error_message_user(), generic_internal_error_message());
+        assert_eq!(
+            error.error_message_internal(),
+            Some(expected_internal.as_str())
+        );
+        assert!(
+            error.as_pool_error().is_some(),
+            "source should downcast back to PoolError"
+        );
+    }
+
+    #[test]
+    fn from_pool_error_closed_uses_other_branch() {
+        assert_other_branch(PoolError::Closed);
+    }
+
+    #[test]
+    fn from_pool_error_no_runtime_uses_other_branch() {
+        assert_other_branch(PoolError::NoRuntimeSpecified);
+    }
+
+    #[test]
+    fn from_pool_error_wait_timeout_uses_other_branch() {
+        assert_other_branch(PoolError::Timeout(TimeoutType::Wait));
+    }
+
+    #[test]
+    fn from_pool_error_create_timeout_uses_other_branch() {
+        assert_other_branch(PoolError::Timeout(TimeoutType::Create));
+    }
+
+    /// A recognized connection-exhaustion `SqlState` is remapped to
+    /// `TooManyLogicalSessions` with a fixed override message, while the
+    /// provided source is preserved and the user message stays PII-safe.
+    #[test]
+    fn map_pool_db_error_code_maps_too_many_connections() {
+        let source = Box::new(std::io::Error::other("backend detail"));
+        let error = map_pool_db_error_code(
+            &SqlState::TOO_MANY_CONNECTIONS,
+            "backend detail".to_owned(),
+            source,
+        );
+
+        assert_eq!(error.error_code(), ErrorCode::TooManyLogicalSessions);
+        assert_eq!(*error.kind(), ErrorKind::Pool);
+        assert_eq!(error.error_message_user(), generic_internal_error_message());
+        assert_eq!(error.error_message_internal(), Some("Too many clients."));
+    }
+
+    /// Any other `SqlState` keeps the generic `InternalError` code and passes
+    /// the supplied diagnostic message through unchanged.
+    #[test]
+    fn map_pool_db_error_code_maps_other_states_to_internal_error() {
+        let source = Box::new(std::io::Error::other("backend detail"));
+        let error =
+            map_pool_db_error_code(&SqlState::SYNTAX_ERROR, "backend detail".to_owned(), source);
+
+        assert_eq!(error.error_code(), ErrorCode::InternalError);
+        assert_eq!(*error.kind(), ErrorKind::Pool);
+        assert_eq!(error.error_message_user(), generic_internal_error_message());
+        assert_eq!(error.error_message_internal(), Some("backend detail"));
+    }
+}
