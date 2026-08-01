@@ -1,0 +1,300 @@
+-- Characterizes how distinct index pushdown (documentdb.enableDistinctIndexPushdown)
+-- interacts with parallel composite index scans on the extended RUM access method.
+--
+-- Documented state (see per-part comments and the expected output):
+--   * Part 1 - Serial: distinct on an indexed field pushes down to an Index Only
+--     Scan whose order-by is driven by the index (no Sort, no heap access).
+--   * Part 2 - Parallel + pushdown: distinct still pushes down under parallelism.
+--     A Gather Merge over a Parallel Index Only Scan on the field index keeps the
+--     order-by pushdown and feeds Unique - so no Sort and no heap access, just
+--     parallelized. This requires enableAddShardKeyOnlyOnPrimaryKeyFilters so the
+--     scan is not pinned by a shard_key_value predicate (which otherwise makes the
+--     parallel plan invalid). Both a forced (2a) and a cost-chosen (2b) parallel
+--     plan work; parts 2c/2d repeat those cases with the distinct custom scan
+--     (enableDistinctCustomScan) also enabled.
+--   * Part 3 - Parallel without pushdown: with the distinct index pushdown off the
+--     order-by is NOT pushed to the field index; the plan falls back to a parallel
+--     Seq Scan feeding a Sort + Unique.
+--
+-- Plans use EXPLAIN without ANALYZE so the shape is stable across PostgreSQL
+-- versions (per-worker actual row counts differ by version).
+SET search_path TO documentdb_api_catalog, documentdb_core, public;
+SET documentdb.next_collection_id TO 24800;
+SET documentdb.next_collection_index_id TO 24800;
+-- Composite op class so the single-path index supports index-only and parallel
+-- composite scans.
+SET documentdb.defaultUseCompositeOpClass TO on;
+SELECT documentdb_api.drop_collection('dist_par', 'dp');
+ drop_collection 
+-----------------
+ f
+(1 row)
+
+SELECT documentdb_api.create_collection('dist_par', 'dp');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT collection_id AS p_col FROM documentdb_api_catalog.collections
+    WHERE database_name = 'dist_par' AND collection_name = 'dp' \gset
+-- Disable autovacuum and request 2 parallel workers for predictable plans.
+SELECT FORMAT('ALTER TABLE documentdb_data.documents_%s set (autovacuum_enabled = off, parallel_workers = 2)', :p_col) \gexec
+ALTER TABLE documentdb_data.documents_24801 set (autovacuum_enabled = off, parallel_workers = 2)
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'dist_par',
+    '{ "createIndexes": "dp", "indexes": [ { "key": { "a": 1 }, "name": "idx_a", "enableCompositeTerm": true } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- 3000 rows over 10 distinct "a" values so distinct collapses heavily and the
+-- table is large enough for the planner to consider a parallel scan.
+SELECT COUNT(documentdb_api.insert_one('dist_par', 'dp',
+    FORMAT('{ "_id": %s, "a": %s, "pad": "%s" }', i, (i % 10) + 1, repeat('x', 200))::bson))
+    FROM generate_series(1, 3000) AS i;
+ count 
+-------
+  3000
+(1 row)
+
+-- Deterministic planner statistics.
+SELECT FORMAT('VACUUM FREEZE ANALYZE documentdb_data.documents_%s', :p_col) \gexec
+VACUUM FREEZE ANALYZE documentdb_data.documents_24801
+SET documentdb.enableExtendedExplainPlans TO on;
+SET documentdb.enableDistinctIndexPushdown TO on;
+-- Only add the shard_key_value predicate for primary-key (_id) filters, so the
+-- distinct scan on "a" is not forced to carry a shard_key_value qualifier.
+SET documentdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO on;
+-- ==========================================================================
+-- Part 1: serial distinct pushdown -> Index Only Scan with Order By pushdown.
+-- ==========================================================================
+BEGIN;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL max_parallel_workers_per_gather TO 0;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_par',
+  '{ "distinct": "dp", "key": "a" }')
+$cmd$);
+                                                     run_explain_and_trim                                                     
+------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'a'::text))
+         ->  ProjectSet
+               Output: bson_distinct_unwind(collection.document, 'a'::text)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     Output: collection.document
+                     namespaceName: dist_par.dp
+                     indexName: idx_a
+                     indexKey: {"a": 1}
+                     isMultiKey: false
+                     indexBounds: ["a": (MinKey, MaxKey)]
+                     ->  Index Only Scan using idx_a on documentdb_data.documents_24801 collection
+                           Output: collection.document
+                           Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(17 rows)
+
+ROLLBACK;
+-- ==========================================================================
+-- Part 2: parallel + distinct index pushdown. distinct pushes down under a
+-- parallel plan: a Gather Merge over a Parallel Index Only Scan on idx_a keeps
+-- the Order By pushdown and feeds Unique. Both a forced and a cost-chosen
+-- parallel plan produce this shape.
+-- ==========================================================================
+-- Part 2a: forced parallel.
+BEGIN;
+SET LOCAL parallel_tuple_cost TO 0;
+SET LOCAL parallel_setup_cost TO 0;
+SET LOCAL min_parallel_index_scan_size TO 0;
+SET LOCAL min_parallel_table_scan_size TO 0;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL max_parallel_workers_per_gather TO 2;
+SET LOCAL documentdb.enableCompositeParallelIndexScan TO on;
+SET LOCAL documentdb.forceParallelScanIfAvailable TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_par',
+  '{ "distinct": "dp", "key": "a" }');
+                                                          QUERY PLAN                                                          
+------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'a'::text))
+         ->  Gather Merge
+               Output: (bson_distinct_unwind(collection.document, 'a'::text))
+               Workers Planned: 2
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'a'::text)
+                     ->  Parallel Index Only Scan using idx_a on documentdb_data.documents_24801 collection
+                           Output: collection.document
+                           Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
+
+ROLLBACK;
+-- Part 2b: planner-choice parallel (no force) - same pushed-down parallel plan.
+BEGIN;
+SET LOCAL parallel_tuple_cost TO 0;
+SET LOCAL parallel_setup_cost TO 0;
+SET LOCAL min_parallel_index_scan_size TO 0;
+SET LOCAL min_parallel_table_scan_size TO 0;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL max_parallel_workers_per_gather TO 2;
+SET LOCAL documentdb.enableCompositeParallelIndexScan TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_par',
+  '{ "distinct": "dp", "key": "a" }');
+                                                          QUERY PLAN                                                          
+------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'a'::text))
+         ->  Gather Merge
+               Output: (bson_distinct_unwind(collection.document, 'a'::text))
+               Workers Planned: 2
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'a'::text)
+                     ->  Parallel Index Only Scan using idx_a on documentdb_data.documents_24801 collection
+                           Output: collection.document
+                           Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                           Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(13 rows)
+
+ROLLBACK;
+-- Part 2c: forced parallel with the distinct custom scan also enabled.
+BEGIN;
+SET LOCAL parallel_tuple_cost TO 0;
+SET LOCAL parallel_setup_cost TO 0;
+SET LOCAL min_parallel_index_scan_size TO 0;
+SET LOCAL min_parallel_table_scan_size TO 0;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL max_parallel_workers_per_gather TO 2;
+SET LOCAL documentdb.enableCompositeParallelIndexScan TO on;
+SET LOCAL documentdb.forceParallelScanIfAvailable TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_par',
+  '{ "distinct": "dp", "key": "a" }');
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'a'::text))
+         ->  Gather Merge
+               Output: (bson_distinct_unwind(collection.document, 'a'::text))
+               Workers Planned: 2
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'a'::text)
+                     ->  Parallel Custom Scan (DocumentDBApiDistinctQueryScan)
+                           Output: collection.document
+                           ->  Parallel Index Only Scan using idx_a on documentdb_data.documents_24801 collection
+                                 Output: collection.document
+                                 Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                                 Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(15 rows)
+
+ROLLBACK;
+-- Part 2d: planner-choice parallel with the distinct custom scan also enabled.
+BEGIN;
+SET LOCAL parallel_tuple_cost TO 0;
+SET LOCAL parallel_setup_cost TO 0;
+SET LOCAL min_parallel_index_scan_size TO 0;
+SET LOCAL min_parallel_table_scan_size TO 0;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL max_parallel_workers_per_gather TO 2;
+SET LOCAL documentdb.enableCompositeParallelIndexScan TO on;
+SET LOCAL documentdb.enableDistinctCustomScan TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO off;
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_par',
+  '{ "distinct": "dp", "key": "a" }');
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'a'::text))
+         ->  Gather Merge
+               Output: (bson_distinct_unwind(collection.document, 'a'::text))
+               Workers Planned: 2
+               ->  ProjectSet
+                     Output: bson_distinct_unwind(collection.document, 'a'::text)
+                     ->  Parallel Custom Scan (DocumentDBApiDistinctQueryScan)
+                           Output: collection.document
+                           ->  Parallel Index Only Scan using idx_a on documentdb_data.documents_24801 collection
+                                 Output: collection.document
+                                 Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                                 Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(15 rows)
+
+ROLLBACK;
+-- ==========================================================================
+-- Part 3: with distinct pushdown OFF the order-by is not pushed to idx_a - the
+-- parallel plan falls back to a Seq Scan feeding a Sort + Unique.
+-- ==========================================================================
+BEGIN;
+SET LOCAL parallel_tuple_cost TO 0;
+SET LOCAL parallel_setup_cost TO 0;
+SET LOCAL min_parallel_index_scan_size TO 0;
+SET LOCAL min_parallel_table_scan_size TO 0;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL enable_hashagg TO off;
+SET LOCAL max_parallel_workers_per_gather TO 2;
+SET LOCAL documentdb.enableCompositeParallelIndexScan TO on;
+SET LOCAL documentdb.forceParallelScanIfAvailable TO on;
+SET LOCAL documentdb.enableDistinctIndexPushdown TO off;
+SET LOCAL documentdb.enableExtendedExplainPlans TO off;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('dist_par',
+  '{ "distinct": "dp", "key": "a" }')
+$cmd$);
+                                             run_explain_and_trim                                              
+---------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'a'::text)))
+   ->  Unique
+         Output: (bson_distinct_unwind(collection.document, 'a'::text))
+         ->  Sort
+               Output: (bson_distinct_unwind(collection.document, 'a'::text))
+               Sort Key: (bson_distinct_unwind(collection.document, 'a'::text))
+               ->  Gather
+                     Output: (bson_distinct_unwind(collection.document, 'a'::text))
+                     Workers Planned: 2
+                     ->  ProjectSet
+                           Output: bson_distinct_unwind(collection.document, 'a'::text)
+                           ->  Parallel Seq Scan on documentdb_data.documents_24801 collection
+                                 Output: collection.shard_key_value, collection.object_id, collection.document
+(14 rows)
+
+ROLLBACK;
+-- Correctness: distinct "a" values are exactly {1..10} regardless of the plan.
+SELECT document FROM bson_aggregation_distinct('dist_par',
+  '{ "distinct": "dp", "key": "a" }');
+                                                                                                                                                document                                                                                                                                                
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "values" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" }, { "$numberInt" : "4" }, { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" }, { "$numberInt" : "8" }, { "$numberInt" : "9" }, { "$numberInt" : "10" } ], "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.drop_collection('dist_par', 'dp');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
