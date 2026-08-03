@@ -51,6 +51,43 @@ SELECT 'calendar_1600_leap_year' AS case_id, * FROM bson_dollar_project('{}', '{
  calendar_1600_leap_year | { "result" : { "$date" : { "$numberLong" : "-11676096000000" } } }
 (1 row)
 
+-- ISO year 0000 is 1 BCE, and ISO year -000001 is 2 BCE.
+SELECT 'calendar_year_zero_month' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-62152831503211"}},"unit":"month","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+         case_id          |                        bson_dollar_project                         
+--------------------------+--------------------------------------------------------------------
+ calendar_year_zero_month | { "result" : { "$date" : { "$numberLong" : "-62154086400000" } } }
+(1 row)
+
+SELECT 'calendar_year_zero_quarter' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-62152831503211"}},"unit":"quarter","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+          case_id           |                        bson_dollar_project                         
+----------------------------+--------------------------------------------------------------------
+ calendar_year_zero_quarter | { "result" : { "$date" : { "$numberLong" : "-62159356800000" } } }
+(1 row)
+
+SELECT 'calendar_year_zero_year' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-62152831503211"}},"unit":"year","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+         case_id         |                        bson_dollar_project                         
+-------------------------+--------------------------------------------------------------------
+ calendar_year_zero_year | { "result" : { "$date" : { "$numberLong" : "-62167219200000" } } }
+(1 row)
+
+SELECT 'calendar_year_minus_one_month' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-62184453903211"}},"unit":"month","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+            case_id            |                        bson_dollar_project                         
+-------------------------------+--------------------------------------------------------------------
+ calendar_year_minus_one_month | { "result" : { "$date" : { "$numberLong" : "-62185708800000" } } }
+(1 row)
+
+SELECT 'calendar_year_minus_one_quarter' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-62184453903211"}},"unit":"quarter","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+             case_id             |                        bson_dollar_project                         
+---------------------------------+--------------------------------------------------------------------
+ calendar_year_minus_one_quarter | { "result" : { "$date" : { "$numberLong" : "-62190979200000" } } }
+(1 row)
+
+SELECT 'calendar_year_minus_one_year' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-62184453903211"}},"unit":"year","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+           case_id            |                        bson_dollar_project                         
+------------------------------+--------------------------------------------------------------------
+ calendar_year_minus_one_year | { "result" : { "$date" : { "$numberLong" : "-62198755200000" } } }
+(1 row)
+
 -- Expression evaluation with default optional arguments: literal and field-path parity.
 SELECT 'constant_day_default' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1716049038987"}},"unit":"day"}}}');
        case_id        |                       bson_dollar_project                        
@@ -148,7 +185,7 @@ SELECT 'expression_year_default' AS case_id, * FROM bson_dollar_project('{"input
  expression_year_default | { "result" : { "$date" : { "$numberLong" : "1704067200000" } } }
 (1 row)
 
--- Day truncation, including leap years, multi-day bins, offsets, and DST.
+-- Day truncation, including leap years, multi-day and large 64-bit bins, offsets, and DST.
 SELECT 'day_1999_december' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946643696789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
       case_id      |                       bson_dollar_project                       
 -------------------+-----------------------------------------------------------------
@@ -333,6 +370,18 @@ SELECT 'day_ref_exact' AS case_id, * FROM bson_dollar_project('{}', '{"result":{
     case_id    |                       bson_dollar_project                       
 ---------------+-----------------------------------------------------------------
  day_ref_exact | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'day_large_bin_after_ref' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1784118896789"}},"unit":"day","binSize":{"$numberLong":"2147483648"},"timezone":"UTC"}}}');
+         case_id         |                       bson_dollar_project                       
+-------------------------+-----------------------------------------------------------------
+ day_large_bin_after_ref | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'day_large_bin_ref_exact' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684800000"}},"unit":"day","binSize":{"$numberLong":"2147483648"},"timezone":"UTC"}}}');
+         case_id         |                       bson_dollar_project                       
+-------------------------+-----------------------------------------------------------------
+ day_large_bin_ref_exact | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
 (1 row)
 
 SELECT 'day_ref_next' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946857600000"}},"unit":"day","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
@@ -653,7 +702,7 @@ SELECT 'second_ref_next' AS case_id, * FROM bson_dollar_project('{}', '{"result"
  second_ref_next | { "result" : { "$date" : { "$numberLong" : "946684810000" } } }
 (1 row)
 
--- Week truncation, including defaults, anchors, abbreviations, and timezones.
+-- Week truncation, including defaults, anchors, large 64-bit bins, abbreviations, and timezones.
 SELECT 'week_default_sunday' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1707309296000"}},"unit":"week"}}}');
        case_id       |                       bson_dollar_project                        
 ---------------------+------------------------------------------------------------------
@@ -676,6 +725,18 @@ SELECT 'week_ref_exact' AS case_id, * FROM bson_dollar_project('{}', '{"result":
     case_id     |                       bson_dollar_project                       
 ----------------+-----------------------------------------------------------------
  week_ref_exact | { "result" : { "$date" : { "$numberLong" : "946857600000" } } }
+(1 row)
+
+SELECT 'week_large_bin_after_ref' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1784118896789"}},"unit":"week","binSize":{"$numberLong":"2147483648"},"timezone":"UTC","startOfWeek":"saturday"}}}');
+         case_id          |                       bson_dollar_project                       
+--------------------------+-----------------------------------------------------------------
+ week_large_bin_after_ref | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'week_large_bin_ref_exact' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684800000"}},"unit":"week","binSize":{"$numberLong":"2147483648"},"timezone":"UTC","startOfWeek":"saturday"}}}');
+         case_id          |                       bson_dollar_project                       
+--------------------------+-----------------------------------------------------------------
+ week_large_bin_ref_exact | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
 (1 row)
 
 SELECT 'week_ref_next' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"948067200000"}},"unit":"week","binSize":{"$numberLong":"2"},"timezone":"UTC","startOfWeek":"monday"}}}');

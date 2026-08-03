@@ -545,6 +545,7 @@ static bool GetTimezoneToApply(const bson_value_t *timezoneValue, const
 							   char *operatorName, ExtensionTimezone *timezoneToApply);
 static bool GetIsIsoRequested(bson_value_t *isoValue, bool *isIsoRequested);
 static uint32_t GetDatePartFromPgTimestamp(Datum pgTimestamp, DatePart datePart);
+static int64 GetAstronomicalYearFromPgTimestamp(Datum pgTimestamp);
 static StringView GetDateStringWithFormat(int64_t dateInMs, ExtensionTimezone timezone,
 										  StringView format);
 static DateUnit GetDateUnitFromString(char *unit);
@@ -552,6 +553,8 @@ static inline const char * GetDateUnitStringFromEnum(DateUnit unitEnum);
 static inline int GetDayOfWeek(int year, int month, int day);
 static inline int GetDifferenceInDaysForStartOfWeek(int dow, WeekDay weekdayEnum);
 static inline int64 FloorDivideInt64(int64 dividend, int64 divisor);
+static inline bool TryGetDateTruncBinStart(int64 unitIndex, int64 binSize,
+										   int64 *binStartUnitIndex);
 static float8 GetEpochDiffForDateDiff(DateUnit dateUnitEnum, ExtensionTimezone
 									  timezoneToApply, int64 startDateEpoch, int64
 									  endDateEpoch);
@@ -597,6 +600,11 @@ static void SetResultValueForDateTruncFromDateBin(Datum pgTimestamp, Datum
 static void SetResultValueForDayUnitDateTrunc(int64 dateValueInMs, ExtensionTimezone
 											  timezoneToApply, int64 binSize,
 											  bson_value_t *result);
+static void SetResultValueForDayBasedUnitDateTrunc(int64 dateValueInMs,
+												   ExtensionTimezone timezoneToApply,
+												   int64 binSize, int64 daysPerUnit,
+												   int64 daysAfterReference,
+												   bson_value_t *result);
 static void SetResultValueForDollarDateTrunc(DateTruncUnit dateTruncUnit, WeekDay weekDay,
 											 ExtensionTimezone timezoneToApply,
 											 ExtensionTimezone resultTimezone,
@@ -3005,6 +3013,23 @@ GetDatePartFromPgTimestamp(Datum pgTimestamp, DatePart datePart)
 
 
 /*
+ * Returns the timestamp year using astronomical year numbering, where year 0
+ * is 1 BCE and year -1 is 2 BCE. PostgreSQL's date_part follows SQL numbering
+ * and reports those years as -1 and -2 because SQL calendars have no year 0.
+ */
+static int64
+GetAstronomicalYearFromPgTimestamp(Datum pgTimestamp)
+{
+	Datum yearDatum = OidFunctionCall2(PostgresDatePartFunctionId(),
+									   CStringGetTextDatum("year"), pgTimestamp);
+	int64 sqlYear = (int64) DatumGetFloat8(yearDatum);
+
+	Assert(sqlYear != 0);
+	return sqlYear < 0 ? sqlYear + 1 : sqlYear;
+}
+
+
+/*
  * New Method Implementation for aggrgegation operators
  */
 
@@ -3953,6 +3978,22 @@ FloorDivideInt64(int64 dividend, int64 divisor)
 }
 
 
+/*
+ * Finds the lower boundary of the bin containing unitIndex. This is shared by
+ * all calendar-aligned dateTrunc units so negative indexes consistently floor
+ * toward the preceding bin and large bin sizes receive the same overflow
+ * handling.
+ */
+static inline bool
+TryGetDateTruncBinStart(int64 unitIndex, int64 binSize, int64 *binStartUnitIndex)
+{
+	Assert(binSize > 0);
+
+	return !pg_mul_s64_overflow(FloorDivideInt64(unitIndex, binSize), binSize,
+								binStartUnitIndex);
+}
+
+
 /* This function takes in unit and bin and gets the interval datum. */
 static Datum
 GetIntervalFromBinSize(int64_t binSize, DateTruncUnit dateTruncUnit)
@@ -4377,28 +4418,81 @@ SetResultValueForDateTruncFromDateBin(Datum pgTimestamp, Datum referenceTimestam
 }
 
 
-/* This function calculates the date bin for unit type day in local wall-clock time,
- * then converts the local bin boundary back to UTC.
+/*
+ * Calculates day or week bins on a signed local-wall-clock unit axis. Dividing
+ * in stages avoids ever constructing binSize days as a PostgreSQL Interval,
+ * whose day field is limited to int32.
  */
+static void
+SetResultValueForDayBasedUnitDateTrunc(int64 dateValueInMs,
+									   ExtensionTimezone timezoneToApply,
+									   int64 binSize, int64 daysPerUnit,
+									   int64 daysAfterReference,
+									   bson_value_t *result)
+{
+	Assert(daysPerUnit > 0);
+	Assert(daysAfterReference >= 0 && daysAfterReference < daysPerUnit);
+
+	Timestamp localTimestamp = DatumGetTimestamp(GetPgTimestampFromEpochWithTimezone(
+													 dateValueInMs, timezoneToApply));
+	Timestamp localReferenceTimestamp = DatumGetTimestamp(GetPgTimestampFromUnixEpoch(
+															  DATE_TRUNC_TIMESTAMP_MS));
+	int64 originAdjustment;
+	Timestamp localOriginTimestamp;
+	int64 elapsedMicroseconds;
+
+	if (pg_mul_s64_overflow(daysAfterReference, USECS_PER_DAY, &originAdjustment) ||
+		pg_add_s64_overflow(localReferenceTimestamp, originAdjustment,
+							&localOriginTimestamp) ||
+		pg_sub_s64_overflow(localTimestamp, localOriginTimestamp,
+							&elapsedMicroseconds))
+	{
+		result->value.v_datetime = INT64_MAX;
+		return;
+	}
+
+	/*
+	 * The origin is local midnight, so flooring elapsed microseconds to whole
+	 * days first is equivalent to dividing by the complete bin stride. Keeping
+	 * each factor separate prevents binSize * daysPerUnit * USECS_PER_DAY from
+	 * overflowing before the quotient is known.
+	 */
+	int64 dayIndex = FloorDivideInt64(elapsedMicroseconds, USECS_PER_DAY);
+	int64 unitIndex = FloorDivideInt64(dayIndex, daysPerUnit);
+	int64 binStartUnitIndex;
+	int64 binStartDayIndex;
+	int64 binStartMicroseconds;
+	Timestamp localResultTimestamp;
+
+	if (!TryGetDateTruncBinStart(unitIndex, binSize, &binStartUnitIndex) ||
+		pg_mul_s64_overflow(binStartUnitIndex, daysPerUnit,
+							&binStartDayIndex) ||
+		pg_mul_s64_overflow(binStartDayIndex, USECS_PER_DAY,
+							&binStartMicroseconds) ||
+		pg_add_s64_overflow(localOriginTimestamp, binStartMicroseconds,
+							&localResultTimestamp) ||
+		!IS_VALID_TIMESTAMP(localResultTimestamp))
+	{
+		result->value.v_datetime = INT64_MAX;
+		return;
+	}
+
+	Datum resultTimestampWithZoneAdjusted = GetPgTimestampAdjustedToTimezone(
+		TimestampGetDatum(localResultTimestamp), timezoneToApply);
+
+	result->value.v_datetime = GetUnixEpochFromPgTimestamp(
+		resultTimestampWithZoneAdjusted);
+}
+
+
+/* Calculates day bins in local wall-clock time. */
 static void
 SetResultValueForDayUnitDateTrunc(int64 dateValueInMs,
 								  ExtensionTimezone timezoneToApply, int64 binSize,
 								  bson_value_t *result)
 {
-	Datum localTimestamp = GetPgTimestampFromEpochWithTimezone(
-		dateValueInMs, timezoneToApply);
-	/* Interpret the reference as a local timestamp so day bins start at midnight. */
-	Datum localReferenceTimestamp = GetPgTimestampFromUnixEpoch(
-		DATE_TRUNC_TIMESTAMP_MS);
-	Datum dayInterval = GetIntervalFromBinSize(binSize, DateTruncUnit_Day);
-	Datum localResultTimestamp = OidFunctionCall3(
-		PostgresTimestampDateBinFunctionId(), dayInterval, localTimestamp,
-		localReferenceTimestamp);
-	Datum resultTimestampWithZoneAdjusted = GetPgTimestampAdjustedToTimezone(
-		localResultTimestamp, timezoneToApply);
-
-	result->value.v_datetime = GetUnixEpochFromPgTimestamp(
-		resultTimestampWithZoneAdjusted);
+	SetResultValueForDayBasedUnitDateTrunc(dateValueInMs, timezoneToApply, binSize,
+										   1, 0, result);
 }
 
 
@@ -4486,10 +4580,13 @@ SetResultValueForCalendarUnitDateTrunc(int64 dateValueInMs,
 {
 	Datum localTimestamp = GetPgTimestampFromEpochWithTimezone(
 		dateValueInMs, timezoneToApply);
-	int64 localYear = GetDatePartFromPgTimestamp(localTimestamp, DatePart_Year);
+	int64 localYear = GetAstronomicalYearFromPgTimestamp(localTimestamp);
 	int64 localMonth = GetDatePartFromPgTimestamp(localTimestamp, DatePart_Month);
 
-	/* A zero-based, signed month coordinate relative to January 2000. */
+	/*
+	 * A zero-based, signed month coordinate relative to January 2000. The
+	 * astronomical year makes this coordinate continuous through year 0.
+	 */
 	int64 monthIndex = (localYear - 2000) * MONTHS_PER_YEAR + localMonth - 1;
 
 	/*
@@ -4540,8 +4637,7 @@ SetResultValueForCalendarUnitDateTrunc(int64 dateValueInMs,
 	 */
 	int64 bucketUnitIndex;
 	int64 monthOffset;
-	if (pg_mul_s64_overflow(FloorDivideInt64(unitIndex, binSize), binSize,
-								&bucketUnitIndex) ||
+	if (!TryGetDateTruncBinStart(unitIndex, binSize, &bucketUnitIndex) ||
 		pg_mul_s64_overflow(bucketUnitIndex, monthsPerUnit, &monthOffset) ||
 		monthOffset < PG_INT32_MIN || monthOffset > PG_INT32_MAX)
 	{
@@ -4551,6 +4647,7 @@ SetResultValueForCalendarUnitDateTrunc(int64 dateValueInMs,
 
 	Datum localReferenceTimestamp = GetPgTimestampFromUnixEpoch(
 		DATE_TRUNC_TIMESTAMP_MS);
+
 	/* Adding whole months constructs the exact local calendar boundary. */
 	Datum intervalSinceReference = GetIntervalFromDatePart(
 		0, monthOffset, 0, 0, 0, 0, 0, 0);
@@ -4581,26 +4678,11 @@ SetResultValueForWeekUnitDateTrunc(int64 dateValueInMs, ExtensionTimezone
 								   WeekDay startOfWeek,
 								   bson_value_t *result)
 {
-	Datum localTimestamp = GetPgTimestampFromEpochWithTimezone(
-		dateValueInMs, timezoneToApply);
-	Datum localReferenceTimestamp = GetPgTimestampFromUnixEpoch(
-		DATE_TRUNC_TIMESTAMP_MS);
 	int64 daysAfterReference = (((int) startOfWeek - (int) WeekDay_Saturday) +
-								  DAYS_IN_WEEK) % DAYS_IN_WEEK;
-	Datum originAdjustment = GetIntervalFromDatePart(
-		0, 0, 0, daysAfterReference, 0, 0, 0, 0);
-	Datum localOriginTimestamp = OidFunctionCall2(
-		PostgresAddIntervalToTimestampFunctionId(), localReferenceTimestamp,
-		originAdjustment);
-	Datum weekInterval = GetIntervalFromBinSize(binSize, DateTruncUnit_Week);
-	Datum localResultTimestamp = OidFunctionCall3(
-		PostgresTimestampDateBinFunctionId(), weekInterval, localTimestamp,
-		localOriginTimestamp);
-	Datum resultTimestampWithZoneAdjusted = GetPgTimestampAdjustedToTimezone(
-		localResultTimestamp, timezoneToApply);
+								DAYS_IN_WEEK) % DAYS_IN_WEEK;
 
-	result->value.v_datetime = GetUnixEpochFromPgTimestamp(
-		resultTimestampWithZoneAdjusted);
+	SetResultValueForDayBasedUnitDateTrunc(dateValueInMs, timezoneToApply, binSize,
+										   DAYS_IN_WEEK, daysAfterReference, result);
 }
 
 

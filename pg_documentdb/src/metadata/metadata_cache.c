@@ -734,9 +734,6 @@ typedef struct DocumentDBApiOidCacheData
 	/* Oid of the timestamptz_bin postgres method which gives timestamp for the bin input into specified interval aligned with specified origin. */
 	Oid PostgresDateBinFunctionId;
 
-	/* Oid of the timestamp_bin postgres method which gives timestamp for the bin input into specified interval aligned with specified origin. */
-	Oid PostgresTimestampDateBinFunctionId;
-
 	/* OID of Rum Index access methods */
 	Oid RumIndexAmId;
 
@@ -3115,17 +3112,6 @@ PostgresDateBinFunctionId(void)
 {
 	return GetPostgresInternalFunctionId(&Cache.PostgresDateBinFunctionId,
 										 "timestamptz_bin");
-}
-
-
-/*
- * Returns the OID of the "timestamp_bin" internal postgres method
- */
-Oid
-PostgresTimestampDateBinFunctionId(void)
-{
-	return GetPostgresInternalFunctionId(&Cache.PostgresTimestampDateBinFunctionId,
-										 "timestamp_bin");
 }
 
 
