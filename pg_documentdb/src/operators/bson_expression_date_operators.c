@@ -11,6 +11,7 @@
 #include <pgtime.h>
 #include <fmgr.h>
 #include <math.h>
+#include <common/int.h>
 #include <utils/numeric.h>
 #include <utils/datetime.h>
 #include <utils/timestamp.h>
@@ -550,6 +551,7 @@ static DateUnit GetDateUnitFromString(char *unit);
 static inline const char * GetDateUnitStringFromEnum(DateUnit unitEnum);
 static inline int GetDayOfWeek(int year, int month, int day);
 static inline int GetDifferenceInDaysForStartOfWeek(int dow, WeekDay weekdayEnum);
+static inline int64 FloorDivideInt64(int64 dividend, int64 divisor);
 static float8 GetEpochDiffForDateDiff(DateUnit dateUnitEnum, ExtensionTimezone
 									  timezoneToApply, int64 startDateEpoch, int64
 									  endDateEpoch);
@@ -592,27 +594,22 @@ static void SetResultValueForDateTruncFromDateBin(Datum pgTimestamp, Datum
 												  timezoneToApply, int64 binSize,
 												  DateTruncUnit dateTruncUnit,
 												  bson_value_t *result);
-static void SetResultValueForDayUnitDateTrunc(Datum pgTimestamp, ExtensionTimezone
+static void SetResultValueForDayUnitDateTrunc(int64 dateValueInMs, ExtensionTimezone
 											  timezoneToApply, int64 binSize,
-											  DateTruncUnit dateTruncUnit,
 											  bson_value_t *result);
 static void SetResultValueForDollarDateTrunc(DateTruncUnit dateTruncUnit, WeekDay weekDay,
 											 ExtensionTimezone timezoneToApply,
 											 ExtensionTimezone resultTimezone,
 											 bson_value_t *binSize, bson_value_t *date,
 											 bson_value_t *result);
-static void SetResultValueForMonthUnitDateTrunc(Datum pgTimestamp, ExtensionTimezone
-												timezoneToApply, int64 binSize,
-												DateTruncUnit dateTruncUnit,
-												bson_value_t *result);
-static void SetResultValueForWeekUnitDateTrunc(Datum pgTimestamp, ExtensionTimezone
+static void SetResultValueForCalendarUnitDateTrunc(int64 dateValueInMs,
+												   ExtensionTimezone timezoneToApply,
+												   int64 binSize,
+												   DateTruncUnit dateTruncUnit,
+												   bson_value_t *result);
+static void SetResultValueForWeekUnitDateTrunc(int64 dateValueInMs, ExtensionTimezone
 											   timezoneToApply, int64 binSize,
-											   DateTruncUnit dateTruncUnit,
 											   WeekDay startOfWeek,
-											   bson_value_t *result);
-static void SetResultValueForYearUnitDateTrunc(Datum pgTimestamp, ExtensionTimezone
-											   timezoneToApply, int64 binSize,
-											   DateTruncUnit dateTruncUnit,
 											   bson_value_t *result);
 static bool TryParseTwoDigitNumber(StringView str, uint32_t *result);
 static Datum TruncateTimestampToPrecision(Datum timestamp, const char *precisionUnit);
@@ -3935,6 +3932,27 @@ AddIntervalToTimestampWithPgTry(Datum timestamp, Datum interval, bool *isResultO
 }
 
 
+/*
+ * Divides by a positive divisor and rounds toward negative infinity. C integer
+ * division truncates toward zero, which would put negative calendar indexes in
+ * the bin after the one that contains them. For example, a unit index of -1
+ * with a bin size of 2 belongs to the bin beginning at index -2, not index 0.
+ */
+static inline int64
+FloorDivideInt64(int64 dividend, int64 divisor)
+{
+	Assert(divisor > 0);
+
+	int64 quotient = dividend / divisor;
+	if (dividend % divisor < 0)
+	{
+		quotient--;
+	}
+
+	return quotient;
+}
+
+
 /* This function takes in unit and bin and gets the interval datum. */
 static Datum
 GetIntervalFromBinSize(int64_t binSize, DateTruncUnit dateTruncUnit)
@@ -4359,56 +4377,25 @@ SetResultValueForDateTruncFromDateBin(Datum pgTimestamp, Datum referenceTimestam
 }
 
 
-/* This function calculates the date bin for unit type day.
- * Firstly, this calculates interval difference between start and end timestamp.
- * Converts, that difference interval to number of days.
- * Adds the interval to source timestamp and then apply the timezone specified
+/* This function calculates the date bin for unit type day in local wall-clock time,
+ * then converts the local bin boundary back to UTC.
  */
 static void
-SetResultValueForDayUnitDateTrunc(Datum pgTimestamp,
+SetResultValueForDayUnitDateTrunc(int64 dateValueInMs,
 								  ExtensionTimezone timezoneToApply, int64 binSize,
-								  DateTruncUnit dateTruncUnit,
 								  bson_value_t *result)
 {
-	/* Get timestamp for reference since epoch ms in UTC */
-	Datum defaultReferenceTimestamp = GetPgTimestampFromUnixEpoch(
+	Datum localTimestamp = GetPgTimestampFromEpochWithTimezone(
+		dateValueInMs, timezoneToApply);
+	/* Interpret the reference as a local timestamp so day bins start at midnight. */
+	Datum localReferenceTimestamp = GetPgTimestampFromUnixEpoch(
 		DATE_TRUNC_TIMESTAMP_MS);
-
-	/* Calls Age function to determine the interval between 2 timestamps. */
-	Datum intervalDifference = OidFunctionCall2(PostgresAgeBetweenTimestamp(),
-												pgTimestamp, defaultReferenceTimestamp);
-
-	/* calculates the total number of seconds between the target date and the reference date */
-	Datum datePartFromInverval = OidFunctionCall2(PostgresDatePartFromInterval(),
-												  CStringGetTextDatum("epoch"),
-												  intervalDifference);
-
-	float8 epochMsFromDatePart = DatumGetFloat8(datePartFromInverval);
-
-	/* elog(NOTICE, "epoch sm from date partt %f", epochMsFromDatePart); */
-	int64 dayInterval = floor(epochMsFromDatePart / (SECONDS_IN_DAY * binSize));
-
-	/* elog(NOTICE, "days interval %ld", dayInterval); */
-
-	/* Make intervals from int64 */
-	Datum intervalDaySinceRef = GetIntervalFromBinSize(dayInterval * binSize,
-													   dateTruncUnit);
-
-	/* Add interval to timestamp */
-	bool isResultOverflow = false;
-	Datum resultTimestamp = AddIntervalToTimestampWithPgTry(defaultReferenceTimestamp,
-															intervalDaySinceRef,
-															&isResultOverflow);
-
-	if (isResultOverflow)
-	{
-		result->value.v_datetime = INT64_MAX;
-		return;
-	}
-
-	/* Adjusting to timezone specified . This is required to handle DST, etc. */
+	Datum dayInterval = GetIntervalFromBinSize(binSize, DateTruncUnit_Day);
+	Datum localResultTimestamp = OidFunctionCall3(
+		PostgresTimestampDateBinFunctionId(), dayInterval, localTimestamp,
+		localReferenceTimestamp);
 	Datum resultTimestampWithZoneAdjusted = GetPgTimestampAdjustedToTimezone(
-		resultTimestamp, timezoneToApply);
+		localResultTimestamp, timezoneToApply);
 
 	result->value.v_datetime = GetUnixEpochFromPgTimestamp(
 		resultTimestampWithZoneAdjusted);
@@ -4439,95 +4426,137 @@ SetResultValueForDollarDateTrunc(DateTruncUnit dateTruncUnit, WeekDay weekDay,
 	}
 	else if (dateTruncUnit == DateTruncUnit_Day)
 	{
-		SetResultValueForDayUnitDateTrunc(datePgTimestamp,
+		SetResultValueForDayUnitDateTrunc(dateValueInMs,
 										  timezoneToApply,
 										  binSize->value.v_int64,
-										  dateTruncUnit, result);
+										  result);
 	}
 	else if (dateTruncUnit == DateTruncUnit_Month ||
-			 dateTruncUnit == DateTruncUnit_Quarter)
+			 dateTruncUnit == DateTruncUnit_Quarter ||
+			 dateTruncUnit == DateTruncUnit_Year)
 	{
-		SetResultValueForMonthUnitDateTrunc(datePgTimestamp,
-											timezoneToApply,
-											binSize->value.v_int64,
-											dateTruncUnit, result);
-	}
-	else if (dateTruncUnit == DateTruncUnit_Year)
-	{
-		SetResultValueForYearUnitDateTrunc(datePgTimestamp,
-										   timezoneToApply,
-										   binSize->value.v_int64,
-										   dateTruncUnit, result);
+		SetResultValueForCalendarUnitDateTrunc(dateValueInMs,
+											   timezoneToApply,
+											   binSize->value.v_int64,
+											   dateTruncUnit, result);
 	}
 	else if (dateTruncUnit == DateTruncUnit_Week)
 	{
-		SetResultValueForWeekUnitDateTrunc(datePgTimestamp,
+		SetResultValueForWeekUnitDateTrunc(dateValueInMs,
 										   timezoneToApply,
 										   binSize->value.v_int64,
-										   dateTruncUnit,
 										   weekDay,
 										   result);
 	}
 }
 
 
-/* This function calculates the date bin for unit type month.
- * Firstly, this calculates interval difference between start and end timestamp.
- * Converts, that difference interval to number of months.
- * The interval can be of format x years and y months .
- * To exactly compute the difference in months we extract number of years and then multiply by 12 to get months.
- * Also, we extract the number of months and add with number of months extracted from years.
- * Adds the interval to source timestamp and then apply the timezone specified
+/*
+ * Calculates month, quarter, and year bins using signed calendar indexes. All
+ * indexes are relative to the local calendar boundary 2000-01-01 00:00:00.
+ *
+ * Implementation details:
+ *
+ *  - monthIndex identifies the input's calendar month, with January 2000 at
+ *    index 0, February 2000 at 1, and December 1999 at -1.
+ *  - unitIndex expresses the same position in the requested unit. For months it
+ *    equals monthIndex; for quarters it counts three-month groups; and for years
+ *    it counts calendar years.
+ *  - bucketUnitIndex is the first unit in the bin containing unitIndex. It is a
+ *    multiple of binSize and can be negative for bins before the reference.
+ *  - monthOffset converts that bucket start back into months so it can be added
+ *    to the local reference timestamp.
+ *
+ * For example, August 2001 has monthIndex 19. With unit "month" and binSize 6,
+ * the bucket starts at unit index 18, producing a month offset of 18 and the
+ * local boundary 2001-07-01. For December 1999 with a two-quarter bin,
+ * monthIndex is -1, unitIndex is -1, bucketUnitIndex is -2, and monthOffset is
+ * -6, producing the local boundary 1999-07-01. Floor division is essential in
+ * that second example so dates before the reference select the preceding bin.
+ *
+ * The calculation deliberately uses local wall-clock fields. After constructing
+ * the local calendar boundary, it converts that boundary back to UTC using the
+ * applicable offset at the boundary.
  */
 static void
-SetResultValueForMonthUnitDateTrunc(Datum pgTimestamp, ExtensionTimezone
-									timezoneToApply, int64 binSize,
-									DateTruncUnit dateTruncUnit,
-									bson_value_t *result)
+SetResultValueForCalendarUnitDateTrunc(int64 dateValueInMs,
+									   ExtensionTimezone timezoneToApply,
+									   int64 binSize, DateTruncUnit dateTruncUnit,
+									   bson_value_t *result)
 {
-	/* Get timestamp for reference since epoch ms in UTC */
-	Datum defaultReferenceTimestamp = GetPgTimestampFromUnixEpoch(
+	Datum localTimestamp = GetPgTimestampFromEpochWithTimezone(
+		dateValueInMs, timezoneToApply);
+	int64 localYear = GetDatePartFromPgTimestamp(localTimestamp, DatePart_Year);
+	int64 localMonth = GetDatePartFromPgTimestamp(localTimestamp, DatePart_Month);
+
+	/* A zero-based, signed month coordinate relative to January 2000. */
+	int64 monthIndex = (localYear - 2000) * MONTHS_PER_YEAR + localMonth - 1;
+
+	/*
+	 * unitIndex is the input's position on the requested unit's coordinate axis;
+	 * for months it equals monthIndex; for quarters it counts three-month groups;
+	 * and for years it counts calendar years.
+	 */
+	int64 unitIndex;
+	int64 monthsPerUnit;
+
+	switch (dateTruncUnit)
+	{
+		case DateTruncUnit_Month:
+		{
+			unitIndex = monthIndex;
+			monthsPerUnit = 1;
+			break;
+		}
+
+		case DateTruncUnit_Quarter:
+		{
+			unitIndex = FloorDivideInt64(monthIndex, MonthsPerQuarter);
+			monthsPerUnit = MonthsPerQuarter;
+			break;
+		}
+
+		case DateTruncUnit_Year:
+		{
+			unitIndex = localYear - 2000;
+			monthsPerUnit = MONTHS_PER_YEAR;
+			break;
+		}
+
+		default:
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION5439014), errmsg(
+								"Invalid unit specified for calendar date truncation")));
+	}
+
+	/*
+	 * Find the bucket's lower boundary on the unit axis, then translate that
+	 * coordinate to the month axis:
+	 *
+	 *   bucketUnitIndex = floor(unitIndex / binSize) * binSize
+	 *   monthOffset = bucketUnitIndex * monthsPerUnit
+	 *
+	 * Check both multiplications because binSize is user-provided, and PostgreSQL
+	 * intervals store their month component as an int32.
+	 */
+	int64 bucketUnitIndex;
+	int64 monthOffset;
+	if (pg_mul_s64_overflow(FloorDivideInt64(unitIndex, binSize), binSize,
+								&bucketUnitIndex) ||
+		pg_mul_s64_overflow(bucketUnitIndex, monthsPerUnit, &monthOffset) ||
+		monthOffset < PG_INT32_MIN || monthOffset > PG_INT32_MAX)
+	{
+		result->value.v_datetime = INT64_MAX;
+		return;
+	}
+
+	Datum localReferenceTimestamp = GetPgTimestampFromUnixEpoch(
 		DATE_TRUNC_TIMESTAMP_MS);
-
-	/* Calls Age function to determine the interval between 2 timestamps. */
-	Datum intervalDifference = OidFunctionCall2(PostgresAgeBetweenTimestamp(),
-												pgTimestamp, defaultReferenceTimestamp);
-
-	/* calculates the total number of years between the target date and the reference date */
-	Datum datePartYearFromInverval = OidFunctionCall2(PostgresDatePartFromInterval(),
-													  CStringGetTextDatum("year"),
-													  intervalDifference);
-
-	/* elog(NOTICE, "year interval from date part is %f", DatumGetFloat8(datePartYearFromInverval)); */
-
-	/* calculates the total number of months between the target date and the reference date */
-	Datum datePartMonthFromInverval = OidFunctionCall2(PostgresDatePartFromInterval(),
-													   CStringGetTextDatum("month"),
-													   intervalDifference);
-
-	/* elog(NOTICE, "month interval from date part is %f", DatumGetFloat8(datePartMonthFromInverval)); */
-
-
-	float8 intervalDiffAdjustedToMonths = DatumGetFloat8(datePartYearFromInverval) *
-										  MONTHS_PER_YEAR +
-										  DatumGetFloat8(datePartMonthFromInverval);
-
-	/* elog(NOTICE, "interval diff adjusted to months %f", intervalDiffAdjustedToMonths); */
-
-	/* Making sure that for quarters the binsize for months is * 3 by default. */
-	int64 monthInterval = floor(intervalDiffAdjustedToMonths / (binSize *
-																(dateTruncUnit ==
-																 DateTruncUnit_Quarter
-																 ? 3 : 1)));
-
-	/* Make intervals from int64 . Not multiplying *3 here as this function takes care of differencing between months and quarters. */
-	Datum intervalMonthSinceRef = GetIntervalFromBinSize(monthInterval * binSize,
-														 dateTruncUnit);
-
+	/* Adding whole months constructs the exact local calendar boundary. */
+	Datum intervalSinceReference = GetIntervalFromDatePart(
+		0, monthOffset, 0, 0, 0, 0, 0, 0);
 	bool isResultOverflow = false;
-	Datum resultTimestamp = AddIntervalToTimestampWithPgTry(defaultReferenceTimestamp,
-															intervalMonthSinceRef,
-															&isResultOverflow);
+	Datum localResultTimestamp = AddIntervalToTimestampWithPgTry(
+		localReferenceTimestamp, intervalSinceReference, &isResultOverflow);
 
 	if (isResultOverflow)
 	{
@@ -4535,142 +4564,40 @@ SetResultValueForMonthUnitDateTrunc(Datum pgTimestamp, ExtensionTimezone
 		return;
 	}
 
-	/* Adjusting to timezone specified . This is required to handle DST, etc. */
 	Datum resultTimestampWithZoneAdjusted = GetPgTimestampAdjustedToTimezone(
-		resultTimestamp,
-		timezoneToApply);
+		localResultTimestamp, timezoneToApply);
 
 	result->value.v_datetime = GetUnixEpochFromPgTimestamp(
 		resultTimestampWithZoneAdjusted);
 }
 
 
-/* This function calculates the date bin for unit type week.
- * First adjust the given timestamp to fit the startOfWeek.
- * Then calculates interval difference between start and end timestamp.
- * Converts, that difference interval to number of seconds.
- * Adds interval in days to adjust for startOfWeek.
- * As per the reference date 2000 1st Jan which is Saturday. Default value is Sunday if not specified.
- * So for every calculation we add interval in days to adjust for startOfWeek
- * Adds the interval to source timestamp and then apply the timezone specified
+/* Calculates week bins in local wall-clock time using the first requested weekday
+ * on or after the 2000-01-01 reference date as the origin.
  */
 static void
-SetResultValueForWeekUnitDateTrunc(Datum pgTimestamp, ExtensionTimezone
+SetResultValueForWeekUnitDateTrunc(int64 dateValueInMs, ExtensionTimezone
 								   timezoneToApply, int64 binSize,
-								   DateTruncUnit dateTruncUnit,
 								   WeekDay startOfWeek,
 								   bson_value_t *result)
 {
-	/* Get timestamp for reference since epoch ms in UTC */
-	Datum defaultReferenceTimestamp = GetPgTimestampFromUnixEpoch(
+	Datum localTimestamp = GetPgTimestampFromEpochWithTimezone(
+		dateValueInMs, timezoneToApply);
+	Datum localReferenceTimestamp = GetPgTimestampFromUnixEpoch(
 		DATE_TRUNC_TIMESTAMP_MS);
-
-	/* default dow in postgres resolves to sunday and goes like sunday , monday, tuesday, .. */
-	int dayOfWeek = GetDatePartFromPgTimestamp(pgTimestamp, DatePart_DayOfWeek);
-	int diffBwStartOfWeekAndCurrent = GetDifferenceInDaysForStartOfWeek(dayOfWeek,
-																		startOfWeek);
-	Datum daysIntervalToAdjust = GetIntervalFromDatePart(0, 0, 0,
-														 diffBwStartOfWeekAndCurrent, 0,
-														 0, 0, 0);
-	Datum timestampAdjustedToStartOfWeek = DirectFunctionCall2(timestamp_mi_interval,
-															   pgTimestamp,
-															   daysIntervalToAdjust);
-
-	/* Calls Age function to determine the interval between 2 timestamps. */
-	Datum intervalDifference = OidFunctionCall2(PostgresAgeBetweenTimestamp(),
-												timestampAdjustedToStartOfWeek,
-												defaultReferenceTimestamp);
-
-	/* calculates the total number of seconds between the target date and the reference date */
-	Datum datePartFromInverval = OidFunctionCall2(PostgresDatePartFromInterval(),
-												  CStringGetTextDatum("epoch"),
-												  intervalDifference);
-
-	float8 epochMsFromDatePart = DatumGetFloat8(datePartFromInverval);
-
-	int64 elapsedBinSeconds = (int64) SECONDS_IN_DAY * (int64) 7 * binSize;
-
-	int64 secondsInterval = floor(epochMsFromDatePart / (elapsedBinSeconds));
-
-	/* takes care of negative number while modulo. Positive mod: (a % b + b) % b; */
-	int64 daysIntervalForWeekStart = ((((int) startOfWeek - 6) % 7) + 7) % 7;
-	Datum intervalWeeksSinceRef = GetIntervalFromDatePart(0, 0, 0,
-														  daysIntervalForWeekStart, 0, 0,
-														  secondsInterval *
-														  elapsedBinSeconds,
-														  0);
-
-	/*
-	 *	This handling is done as for cases when seconds elapsed is itself out of range of timestamp.
-	 * So , we need to return invalid date.
-	 * Adding only time as while making interval max component is in seconds.
-	 * Day interval can max be 7 to adjust for startOfWeek
-	 */
-	int64 interval = ((Interval *) DatumGetIntervalP(intervalWeeksSinceRef))->time;
-	if (!IS_VALID_TIMESTAMP(interval))
-	{
-		result->value.v_datetime = INT64_MAX;
-		return;
-	}
-
-	/* Add interval to timestamp */
-	Datum resultTimestamp = OidFunctionCall2(PostgresAddIntervalToTimestampFunctionId(),
-											 defaultReferenceTimestamp,
-											 intervalWeeksSinceRef);
-
-	/* Adjusting to timezone specified . This is required to handle DST, etc. */
+	int64 daysAfterReference = (((int) startOfWeek - (int) WeekDay_Saturday) +
+								  DAYS_IN_WEEK) % DAYS_IN_WEEK;
+	Datum originAdjustment = GetIntervalFromDatePart(
+		0, 0, 0, daysAfterReference, 0, 0, 0, 0);
+	Datum localOriginTimestamp = OidFunctionCall2(
+		PostgresAddIntervalToTimestampFunctionId(), localReferenceTimestamp,
+		originAdjustment);
+	Datum weekInterval = GetIntervalFromBinSize(binSize, DateTruncUnit_Week);
+	Datum localResultTimestamp = OidFunctionCall3(
+		PostgresTimestampDateBinFunctionId(), weekInterval, localTimestamp,
+		localOriginTimestamp);
 	Datum resultTimestampWithZoneAdjusted = GetPgTimestampAdjustedToTimezone(
-		resultTimestamp, timezoneToApply);
-
-	result->value.v_datetime = GetUnixEpochFromPgTimestamp(
-		resultTimestampWithZoneAdjusted);
-}
-
-
-/* This function calculates the date bin for unit type year.
- * Firstly, this calculates interval difference between start and end timestamp.
- * Converts, that difference interval to number of years.
- * Adds the interval to source timestamp and then apply the timezone specified
- */
-static void
-SetResultValueForYearUnitDateTrunc(Datum pgTimestamp, ExtensionTimezone
-								   timezoneToApply, int64 binSize,
-								   DateTruncUnit dateTruncUnit,
-								   bson_value_t *result)
-{
-	Datum defaultReferenceTimestamp = GetPgTimestampFromUnixEpoch(
-		DATE_TRUNC_TIMESTAMP_MS);
-
-	/* Calls Age function to determine the interval between 2 timestamps. */
-	Datum intervalDifference = OidFunctionCall2(PostgresAgeBetweenTimestamp(),
-												pgTimestamp, defaultReferenceTimestamp);
-
-	/* calculates the total number of years between the target date and the reference date */
-	Datum datePartYearFromInverval = OidFunctionCall2(PostgresDatePartFromInterval(),
-													  CStringGetTextDatum("year"),
-													  intervalDifference);
-
-	int64 yearInterval = floor(DatumGetFloat8(datePartYearFromInverval) / binSize);
-
-	/* Make intervals from int64 .*/
-	Datum intervalYearsSinceRef = GetIntervalFromBinSize(yearInterval * binSize,
-														 dateTruncUnit);
-
-	bool isResultOverflow = false;
-	Datum resultTimestamp = AddIntervalToTimestampWithPgTry(defaultReferenceTimestamp,
-															intervalYearsSinceRef,
-															&isResultOverflow);
-
-	if (isResultOverflow)
-	{
-		result->value.v_datetime = INT64_MAX;
-		return;
-	}
-
-	/* Adjusting to timezone specified . This is required to handle DST, etc. */
-	Datum resultTimestampWithZoneAdjusted = GetPgTimestampAdjustedToTimezone(
-		resultTimestamp,
-		timezoneToApply);
+		localResultTimestamp, timezoneToApply);
 
 	result->value.v_datetime = GetUnixEpochFromPgTimestamp(
 		resultTimestampWithZoneAdjusted);

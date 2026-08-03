@@ -261,8 +261,7 @@ Oid Float4ToFloat8FunctionOid(void);
 Oid PostgresArrayAppendFunctionOid(void);
 Oid PostgresMakeIntervalFunctionId(void);
 Oid PostgresDateBinFunctionId(void);
-Oid PostgresAgeBetweenTimestamp(void);
-Oid PostgresDatePartFromInterval(void);
+Oid PostgresTimestampDateBinFunctionId(void);
 
 /* Index AM */
 Oid RumIndexAmId(void);
