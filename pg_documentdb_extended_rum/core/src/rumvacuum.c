@@ -70,6 +70,7 @@ typedef struct RumVacuumStatistics
 	uint32_t numFullScanPostingTreePrunes;
 	uint32_t numTargetedPostingTreePrunes;
 	uint32_t numSinglePassPostingTreePrunes;
+	uint32_t numStaleEmptyLeafRetries;
 	uint32_t numEntryBacktracks;
 	uint32_t numEntryPages;
 	uint32_t numDataPages;
@@ -362,21 +363,19 @@ rumCleanPostingTreeLeafTids(RumVacuumState *gvs,
 	}
 
 	/*
-	 * TODO(vacuum): hasVoidPage only reports leaves emptied *this* cycle
-	 * (guarded by oldMaxOff != newMaxOff above). A leaf that was emptied in a
-	 * prior cycle but never deleted -- e.g. its single-pass inline delete
-	 * bailed on contention -- reaches here with oldMaxOff == newMaxOff == 0 and
-	 * returns false, so the single-pass caller never revisits it, and an empty
-	 * leaf can never shed more tids to re-trigger. Validated that vacuumcleanup
-	 * cannot reclaim it either: rumvacuumcleanup only prunes posting-tree pages
-	 * via TraverseAndPrunePostingTrees, which is gated on
-	 * gvs.inlineVacuumBulkDelDataPages -- the mutually exclusive non-single-pass
-	 * path (single-pass runs only from rumBulkDeleteOneEntryPage's
-	 * !inlineVacuumBulkDelDataPages branch). Its recyclable scan only frees
-	 * pages already marked deleted/half-dead; a still-linked empty leaf is a
-	 * live data page and is skipped. Future work: run posting-tree page pruning
-	 * (by page state, not by this-cycle emptiness) in vacuumcleanup so stale
-	 * empty leaves are reclaimed in a later vacuum cycle.
+	 * The return value only reports leaves emptied *this* cycle (guarded by
+	 * oldMaxOff != newMaxOff above). A leaf emptied in a prior cycle but never
+	 * deleted -- e.g. its inline delete bailed on contention -- reaches here
+	 * with oldMaxOff == newMaxOff == 0 and returns false, and an empty leaf can
+	 * never shed more tids to re-trigger. Callers that need "is empty" rather
+	 * than "just became empty" must also test *maxOffsetAfterPrune, which is
+	 * always assigned below; rumCleanPostingTreeLeavesTidsByRightlink does that
+	 * so a stranded leaf is retried on a later bulk-delete pass.
+	 *
+	 * Remaining gap: that walk only runs from ambulkdelete, so a workload that
+	 * stops producing dead tuples never revisits the tree at all. Reclaiming
+	 * those leaves needs posting-tree page pruning to also run in
+	 * rumvacuumcleanup, which executes even when ambulkdelete was skipped.
 	 */
 
 	*maxOffsetAfterPrune = newMaxOff;
@@ -756,33 +755,59 @@ rumCleanPostingTreeLeavesTidsByRightlink(RumVacuumState *gvs, OffsetNumber attnu
 	{
 		OffsetNumber maxOffAfterPrune;
 		blkno = RumPageGetOpaque(page)->rightlink;
-		if (rumCleanPostingTreeLeafTids(gvs, attnum, page, buffer, isPageRoot,
-										&maxOffAfterPrune))
+		bool pageEmptiedThisCycle = rumCleanPostingTreeLeafTids(gvs, attnum, page, buffer,
+																isPageRoot,
+																&maxOffAfterPrune);
+		bool isPageEmpty = maxOffAfterPrune < FirstOffsetNumber;
+
+		/*
+		 * A leaf with no left or right sibling is the posting tree's
+		 * leftmost/rightmost bound, which rumDeletePage always refuses to
+		 * remove. Skip the inline prune for those so we do not take the
+		 * posting-tree root cleanup lock for a delete that cannot succeed.
+		 */
+		bool isBoundLeaf =
+			RumPageGetOpaque(page)->leftlink == InvalidBlockNumber ||
+			RumPageGetOpaque(page)->rightlink == InvalidBlockNumber;
+
+		bool isPrunableEmptyLeaf = isPageEmpty && !isPageRoot && !isBoundLeaf;
+
+		/*
+		 * This leaf may have had all its tids removed in an earlier cycle
+		 * without being deleted, because structural pruning could not proceed
+		 * or was disabled. Such a leaf is empty on arrival and can never shed
+		 * more tids to re-trigger pruning, so treat it as pruning work again.
+		 *
+		 * Bound leaves are excluded even though they are empty: they can never
+		 * be deleted, so counting them on every cycle would inflate the empty
+		 * page total without ever adding a matching deletion.
+		 */
+		bool isPreviouslySkippedPrunableLeaf = isPrunableEmptyLeaf &&
+											   !pageEmptiedThisCycle;
+
+		if (pageEmptiedThisCycle || isPreviouslySkippedPrunableLeaf)
 		{
 			numVoidPages++;
 
 			/*
-			 * A leaf with no left or right sibling is the posting tree's
-			 * leftmost/rightmost bound, which rumDeletePage always refuses to
-			 * remove. Skip the inline prune for those so we do not take the
-			 * posting-tree root cleanup lock for a delete that cannot succeed.
+			 * All structural-pruning strategies retry stale, prunable leaves:
+			 * single-pass deletes them inline, while targeted and full-scan
+			 * use numVoidPages to arm their second pruning pass. Do not count
+			 * a retry when the structural-pruning kill switch suppresses it.
 			 */
-			bool isBoundLeaf =
-				RumPageGetOpaque(page)->leftlink == InvalidBlockNumber ||
-				RumPageGetOpaque(page)->rightlink == InvalidBlockNumber;
+			if (isPreviouslySkippedPrunableLeaf &&
+				!RumVacuumSkipPrunePostingTreePages)
+			{
+				vacStats->numStaleEmptyLeafRetries++;
+			}
 
 			if (RumEnableSinglePassPostingTreeVacuum &&
 				!RumVacuumSkipPrunePostingTreePages &&
-				!isBoundLeaf)
+				isPrunableEmptyLeaf)
 			{
-				/* Single-pass vacuum: prune the now-empty leaf inline instead
-				 * of deferring it to the second pass in rumVacuumPostingTree.
-				 *
-				 * TODO(vacuum): if this inline delete bails (contention), the
-				 * leaf stays empty-but-linked and is never retried -- see the
-				 * TODO in rumCleanPostingTreeLeafTids. Reclaiming stale empty
-				 * leaves needs posting-tree page pruning to run in
-				 * vacuumcleanup so a future cycle can handle them.
+				/*
+				 * Single-pass vacuum: prune the empty leaf inline instead of
+				 * deferring it to the second pass in rumVacuumPostingTree.
 				 */
 				RumItem *maxEntry = RumDataPageGetRightBound(page);
 				RumPostingTreeDeleteEntry deleteEntry = { 0 };
@@ -800,7 +825,7 @@ rumCleanPostingTreeLeavesTidsByRightlink(RumVacuumState *gvs, OffsetNumber attnu
 		}
 		else
 		{
-			if (maxOffAfterPrune > 0)
+			if (!isPageEmpty)
 			{
 				numNonVoidPages++;
 			}
@@ -2019,7 +2044,8 @@ LogFinalVacuumState(Relation index, RumVacuumStatistics *stats, bool isNewBulkDe
 		"Vacuum[index=%u,vacuumCleanup=%d] emptyEntryPages=%u, emptyEntries=%u, emptyPostingTrees=%u, prunedEntries=%u, prunedPages=%u,"
 		"prunedPostingTrees=%u, postingPagesDeleted=%u, emptyPostingPages=%u, numBacktracks=%u, isNewBulkDelete=%d, "
 		"numEntryPages=%u, numDataPages=%u, numVoidPages=%u, "
-		"fullScanPostingTreePrunes=%u, targetedPostingTreePrunes=%u, singlePassPostingTreePrunes=%u",
+		"fullScanPostingTreePrunes=%u, targetedPostingTreePrunes=%u, singlePassPostingTreePrunes=%u, "
+		"staleEmptyLeafRetries=%u",
 		index->rd_id, isVacuumCleanup, stats->numEmptyPages, stats->numEmptyEntries,
 		stats->numEmptyPostingTrees,
 		stats->numPrunedEntries, stats->numPrunedPages, stats->prunedEmptyPostingRoots,
@@ -2028,7 +2054,8 @@ LogFinalVacuumState(Relation index, RumVacuumStatistics *stats, bool isNewBulkDe
 		stats->numDataPages,
 		stats->numVoidPages,
 		stats->numFullScanPostingTreePrunes, stats->numTargetedPostingTreePrunes,
-		stats->numSinglePassPostingTreePrunes);
+		stats->numSinglePassPostingTreePrunes,
+		stats->numStaleEmptyLeafRetries);
 
 	/* Log test only stats */
 	if (stats->numPagesSkippedForBackTrack > 0)
