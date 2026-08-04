@@ -147,6 +147,15 @@ bool EnableFailureOnParallelIndexArraysForMetadataTracking =
 #define DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT false
 bool EnableIndexOnlyScanForFindProject = DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT;
 
+/*
+ * Temporary kill switch for candidate detection; when off, projection walking
+ * stays fully guarded by EnableIndexOnlyScanForFindProject (the old behavior).
+ * Added on v116, enabled on v116, remove after v120.
+ */
+#define DEFAULT_TRACK_INDEX_ONLY_SCAN_FIND_CANDIDATE true
+bool TrackIndexOnlyScanFindCandidate =
+	DEFAULT_TRACK_INDEX_ONLY_SCAN_FIND_CANDIDATE;
+
 /* Added in v114, enabled on v113, remove after v116 */
 #define DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE true
 bool EmitEnableOrderedIndexFalseInResponse =
@@ -1160,6 +1169,15 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to enable index only scan for find with project operations."),
 		NULL, &EnableIndexOnlyScanForFindProject,
 		DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.track_index_only_scan_find_candidate", newGucPrefix),
+		gettext_noop(
+			"Whether to walk find projections to detect index-only scan candidates "
+			"while index only scan for find with project is disabled."),
+		NULL, &TrackIndexOnlyScanFindCandidate,
+		DEFAULT_TRACK_INDEX_ONLY_SCAN_FIND_CANDIDATE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

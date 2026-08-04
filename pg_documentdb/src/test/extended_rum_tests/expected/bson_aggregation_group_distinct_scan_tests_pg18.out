@@ -1740,14 +1740,15 @@ SELECT document FROM bson_aggregation_pipeline('db',
     { "$group": { "_id": null } }
   ] }')
 $Q$, p_ignore_heap_fetches := true);
-                                        run_explain_and_trim                                        
-----------------------------------------------------------------------------------------------------
+                                          run_explain_and_trim                                           
+---------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
    Output: '{ "_id" : null }'::bson, '{ "" : null }'::bson
-   ->  Index Scan using idx_x on documentdb_data.documents_20002 collection (actual rows=8 loops=1)
-         Output: shard_key_value, object_id, document
+   ->  Index Only Scan using idx_x on documentdb_data.documents_20002 collection (actual rows=8 loops=1)
+         Output: document
          Index Cond: (collection.document @<> '{ "x" : { "fullScan" : true } }'::bson)
-(5 rows)
+         Heap Fetches: xxx
+(6 rows)
 
 ROLLBACK;
 -- ------------------------------------------------------------
