@@ -1921,34 +1921,70 @@ DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan, bytea **dedupState)
 }
 
 
+static bool
+SkipTidsForCurrentEntryInternal(IndexScanDesc scan,
+								PGFunction skipTidsFunc,
+								ItemPointer userContinuationState,
+								bool skipEntryScan)
+{
+	if (!IsCompositeOpClass(scan->indexRelation))
+	{
+		ereport(ERROR, (errmsg(
+							"SkipTidsForCurrentEntry not supported for non ordered indexes")));
+	}
+
+	if (skipTidsFunc == NULL)
+	{
+		return false;
+	}
+
+	Datum result;
+	if (IsPathKeySummarizationScan(scan->indexRelation->rd_rel->relam))
+	{
+		result = DirectFunctionCall3(skipTidsFunc, PointerGetDatum(scan),
+									 UInt32GetDatum(BlockIdGetBlockNumber(
+														&userContinuationState->ip_blkid)),
+									 BoolGetDatum(skipEntryScan));
+	}
+	else
+	{
+		DocumentDBRumIndexState *state = scan->opaque;
+		result = DirectFunctionCall3(skipTidsFunc, PointerGetDatum(state->innerScan),
+									 UInt32GetDatum(BlockIdGetBlockNumber(
+														&userContinuationState->ip_blkid)),
+									 BoolGetDatum(skipEntryScan));
+	}
+
+	return DatumGetBool(result);
+}
+
+
 void
 DocumentDBRumSkipTidsForCurrentEntry(IndexScanDesc scan,
 									 PGFunction skipTidsFunc,
 									 ItemPointer userContinuationState)
 {
-	if (!IsCompositeOpClass(scan->indexRelation))
-	{
-		ereport(ERROR, (errmsg(
-							"GetCurrentIndexKeyFunc not supported for non ordered indexes")));
-	}
+	bool skipEntryScan = false;
+	SkipTidsForCurrentEntryInternal(scan, skipTidsFunc, userContinuationState,
+									skipEntryScan);
+}
 
-	if (skipTidsFunc == NULL)
-	{
-		return;
-	}
 
-	if (IsPathKeySummarizationScan(scan->indexRelation->rd_rel->relam))
-	{
-		DirectFunctionCall2(skipTidsFunc, PointerGetDatum(scan), UInt32GetDatum(
-								BlockIdGetBlockNumber(
-									&
-									userContinuationState->ip_blkid)));
-	}
-	else
-	{
-		DocumentDBRumIndexState *state = scan->opaque;
-		DirectFunctionCall2(skipTidsFunc, PointerGetDatum(state->innerScan),
-							UInt32GetDatum(BlockIdGetBlockNumber(
-											   &userContinuationState->ip_blkid)));
-	}
+/*
+ * Skip-scan aware variant of DocumentDBRumSkipTidsForCurrentEntry. Invokes the
+ * skip function with skipScan = true so the underlying ordered scan attempts to
+ * jump directly to the next distinct leading-key value instead of walking every
+ * trailing TID. Returns true when the skip scan was actually performed (i.e. the
+ * index has trailing key(s) beyond the order-by prefix to skip over), and false
+ * when no skip scan was possible so the caller can stop re-attempting this path
+ * (for example on single-column indexes) and fall back to the per-TID skip.
+ */
+bool
+DocumentDBRumSkipTidsForCurrentEntryWithSkipScan(IndexScanDesc scan,
+												 PGFunction skipTidsFunc,
+												 ItemPointer userContinuationState)
+{
+	bool skipEntryScan = true;
+	return SkipTidsForCurrentEntryInternal(scan, skipTidsFunc,
+										   userContinuationState, skipEntryScan);
 }

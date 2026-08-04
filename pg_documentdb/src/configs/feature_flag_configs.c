@@ -280,6 +280,10 @@ bool EnableDistinctIndexPushdown = DEFAULT_ENABLE_DISTINCT_INDEX_PUSHDOWN;
 bool EnableDistinctExistsFilterPushdown =
 	DEFAULT_ENABLE_DISTINCT_EXISTS_FILTER_PUSHDOWN;
 
+/* Added in v117, enabled in v117, remove after v121 */
+#define DEFAULT_ENABLE_DISTINCT_SKIP_SCAN_ON_KEY true
+bool EnableDistinctSkipScanOnKey = DEFAULT_ENABLE_DISTINCT_SKIP_SCAN_ON_KEY;
+
 /*
  * SECTION: Planner feature flags
  */
@@ -1020,6 +1024,16 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"that converts to a path >= MinKey index condition on ordered indexes."),
 		NULL, &EnableDistinctExistsFilterPushdown,
 		DEFAULT_ENABLE_DISTINCT_EXISTS_FILTER_PUSHDOWN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_distinct_skip_scan_on_key", newGucPrefix),
+		gettext_noop(
+			"Whether the distinct custom scan may skip past the trailing-key range "
+			"of the current distinct-key value and re-seek directly to the next "
+			"distinct-key value, instead of walking every matching index entry."),
+		NULL, &EnableDistinctSkipScanOnKey,
+		DEFAULT_ENABLE_DISTINCT_SKIP_SCAN_ON_KEY,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
