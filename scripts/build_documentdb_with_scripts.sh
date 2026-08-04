@@ -3,16 +3,32 @@ set -e
 
 # Script to build and install DocumentDB with all dependencies (no gateway)
 # Usage: ./build_documentdb_with_scripts.sh --pg-version <version> [--citus-version <version>]
+#                                           [--deps-only | --skip-deps]
+#
+# --deps-only / --skip-deps split the run at the dependency boundary so CI can
+# cache the dependency tree (PostgreSQL, libbson, RUM, Citus, contrib, pg_cron,
+# the Intel decimal library, PCRE2, pgvector, PostGIS — none of which depend on
+# this repository's sources) separately from the DocumentDB build itself:
+#   --deps-only: install the base packages and build/install all dependencies,
+#                then exit WITHOUT building DocumentDB.
+#   --skip-deps: install the base packages, then build/install DocumentDB
+#                against an already-present dependency tree (e.g. restored from
+#                a CI cache of a previous --deps-only run).
+# Running with neither flag behaves exactly as before (deps + DocumentDB).
 
 usage() {
-    echo "Usage: $0 --pg-version <version> [--citus-version <version>]"
+    echo "Usage: $0 --pg-version <version> [--citus-version <version>] [--deps-only | --skip-deps]"
     echo "  --pg-version: PostgreSQL version (required, e.g., 15, 16, 17, 18)"
     echo "  --citus-version: Citus version (optional, defaults to 12)"
+    echo "  --deps-only: build/install only the dependency tree, skip DocumentDB itself"
+    echo "  --skip-deps: build/install only DocumentDB, assume the dependency tree is present"
     exit 1
 }
 
 PG_VERSION=""
 CITUS_VERSION=12
+DEPS_ONLY=0
+SKIP_DEPS=0
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -24,6 +40,14 @@ while [[ $# -gt 0 ]]; do
             CITUS_VERSION="$2"
             shift 2
             ;;
+        --deps-only)
+            DEPS_ONLY=1
+            shift
+            ;;
+        --skip-deps)
+            SKIP_DEPS=1
+            shift
+            ;;
         -h|--help)
             usage
             ;;
@@ -33,6 +57,11 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [ "$DEPS_ONLY" = "1" ] && [ "$SKIP_DEPS" = "1" ]; then
+    echo "Error: --deps-only and --skip-deps are mutually exclusive"
+    usage
+fi
 
 if [ -z "$PG_VERSION" ]; then
     echo "Error: --pg-version is required"
@@ -83,6 +112,10 @@ sudo apt-get install -y --no-install-recommends \
 echo "Generating locale..."
 sudo locale-gen en_US.UTF-8
 
+if [ "$SKIP_DEPS" = "1" ]; then
+    echo "--skip-deps: skipping dependency builds (assuming a present dependency tree)"
+else
+
 export CLEAN_SETUP=1
 export INSTALL_DEPENDENCIES_ROOT=/tmp/install_setup
 mkdir -p /tmp/install_setup
@@ -90,6 +123,7 @@ mkdir -p /tmp/install_setup
 # Copy setup scripts
 echo "Setting up installation scripts..."
 cp ./scripts/setup_versions.sh /tmp/install_setup
+cp ./scripts/utils.sh /tmp/install_setup
 
 # Install libbson
 echo "Installing libbson..."
@@ -102,8 +136,13 @@ cp ./scripts/utils.sh /tmp/install_setup
 cp ./scripts/install_setup_postgres.sh /tmp/install_setup/
 sudo INSTALL_DEPENDENCIES_ROOT=$INSTALL_DEPENDENCIES_ROOT /tmp/install_setup/install_setup_postgres.sh -d /usr/lib/postgresql/${PG_VERSION} -v ${PG_VERSION}
 
-# Install RUM (skip for PG 18+)
-if [ "$PG_VERSION" -lt 18 ]; then
+# Install RUM (skip for PG 18+). SKIP_RUM=1 also skips it: stacks started
+# with start_oss_server.sh -r load the in-repo documentdb_extended_rum and
+# never reference the public rum module, so CI for that path can drop the
+# build. Default keeps it (regress and non -r stacks may use it).
+if [ "${SKIP_RUM:-0}" = "1" ]; then
+    echo "SKIP_RUM=1: skipping public RUM install (stack uses documentdb_extended_rum)"
+elif [ "$PG_VERSION" -lt 18 ]; then
     echo "Installing RUM for PostgreSQL $PG_VERSION..."
     cp ./scripts/install_setup_rum_oss.sh /tmp/install_setup/
     sudo INSTALL_DEPENDENCIES_ROOT=$INSTALL_DEPENDENCIES_ROOT PGVERSION=$PG_VERSION /tmp/install_setup/install_setup_rum_oss.sh
@@ -116,10 +155,15 @@ echo "Installing Citus..."
 cp ./scripts/install_setup_citus_core_oss.sh /tmp/install_setup/
 sudo INSTALL_DEPENDENCIES_ROOT=$INSTALL_DEPENDENCIES_ROOT PGVERSION=$PG_VERSION /tmp/install_setup/install_setup_citus_core_oss.sh ${CITUS_VERSION}
 
-# Install citus_indent
-echo "Installing citus_indent..."
-cp ./scripts/install_citus_indent.sh /tmp/install_setup/
-sudo INSTALL_DEPENDENCIES_ROOT=$INSTALL_DEPENDENCIES_ROOT /tmp/install_setup/install_citus_indent.sh
+# Install citus_indent (lint tooling — needed by the regress lint step, not at
+# runtime; CI that only runs the engine can skip it with SKIP_CITUS_INDENT=1)
+if [ "${SKIP_CITUS_INDENT:-0}" = "1" ]; then
+    echo "SKIP_CITUS_INDENT=1: skipping citus_indent (lint-only tooling)"
+else
+    echo "Installing citus_indent..."
+    cp ./scripts/install_citus_indent.sh /tmp/install_setup/
+    sudo INSTALL_DEPENDENCIES_ROOT=$INSTALL_DEPENDENCIES_ROOT /tmp/install_setup/install_citus_indent.sh
+fi
 
 # Install contrib extensions
 echo "Installing contrib extensions..."
@@ -162,6 +206,13 @@ echo "Installing PostGIS..."
 cp ./scripts/install_setup_postgis.sh /tmp/install_setup/
 sudo INSTALL_DEPENDENCIES_ROOT=$INSTALL_DEPENDENCIES_ROOT PGVERSION=$PG_VERSION /tmp/install_setup/install_setup_postgis.sh
 
+fi  # SKIP_DEPS
+
+if [ "$DEPS_ONLY" = "1" ]; then
+    echo "--deps-only: dependency tree installed; skipping the DocumentDB build."
+    exit 0
+fi
+
 # Export pg_config PATH
 echo "Setting up PostgreSQL paths..."
 export PATH="/usr/lib/postgresql/${PG_VERSION}/bin:$PATH"
@@ -169,7 +220,9 @@ export PATH="/usr/lib/postgresql/${PG_VERSION}/bin:$PATH"
 # Build and install DocumentDB
 echo "Building DocumentDB..."
 which pg_config
-make
+# Every install_setup_* script already builds with -j$(nproc); this build was
+# the one left serial. `make install` stays serial because it only copies.
+make -j"$(nproc)"
 sudo PATH=$PATH make install
 
 echo "DocumentDB build completed successfully!"
