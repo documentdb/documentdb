@@ -385,7 +385,7 @@ $cmd$);
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 75_1
+   ->  Distributed Subplan 85_1
          ->  Unique
                Output: remote_scan.document
                ->  Sort
@@ -402,20 +402,20 @@ $cmd$);
                                        Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text))
                                        ->  ProjectSet
                                              Output: documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text)
-                                             ->  Index Scan using idx_a on documentdb_data.documents_1984603_198460008 collection
-                                                   Output: shard_key_value, object_id, document
+                                             ->  Index Only Scan using idx_a on documentdb_data.documents_1984603_198460008 collection
+                                                   Output: document
                                                    Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@<>) '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
                                                    Order By: (collection.document OPERATOR(documentdb_api_catalog.|-<>) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('75_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('85_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                Output: documentdb_api_catalog.bson_distinct_agg(intermediate_result.document)
                ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                      Output: intermediate_result.document
-                     Function Call: read_intermediate_result('75_1'::text, 'binary'::citus_copy_format)
+                     Function Call: read_intermediate_result('85_1'::text, 'binary'::citus_copy_format)
 (33 rows)
 
 ROLLBACK;
@@ -437,7 +437,7 @@ $cmd$);
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 77_1
+   ->  Distributed Subplan 87_1
          ->  Unique
                Output: remote_scan.document
                ->  Sort
@@ -462,13 +462,13 @@ $cmd$);
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('77_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('87_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                Output: documentdb_api_catalog.bson_distinct_agg(intermediate_result.document)
                ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                      Output: intermediate_result.document
-                     Function Call: read_intermediate_result('77_1'::text, 'binary'::citus_copy_format)
+                     Function Call: read_intermediate_result('87_1'::text, 'binary'::citus_copy_format)
 (34 rows)
 
 ROLLBACK;
@@ -531,7 +531,7 @@ $cmd$);
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 88_1
+   ->  Distributed Subplan 98_1
          ->  Unique
                Output: remote_scan.document
                ->  Sort
@@ -548,20 +548,20 @@ $cmd$);
                                        Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text))
                                        ->  ProjectSet
                                              Output: documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text)
-                                             ->  Index Scan using idx_a on documentdb_data.documents_1984603_198460008 collection
-                                                   Output: shard_key_value, object_id, document
+                                             ->  Index Only Scan using idx_a on documentdb_data.documents_1984603_198460008 collection
+                                                   Output: document
                                                    Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@<>) '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
                                                    Order By: (collection.document OPERATOR(documentdb_api_catalog.|-<>) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('88_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT intermediate_result.document FROM read_intermediate_result('98_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson)) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                Output: documentdb_api_catalog.bson_distinct_agg(intermediate_result.document)
                ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                      Output: intermediate_result.document
-                     Function Call: read_intermediate_result('88_1'::text, 'binary'::citus_copy_format)
+                     Function Call: read_intermediate_result('98_1'::text, 'binary'::citus_copy_format)
 (33 rows)
 
 ROLLBACK;
