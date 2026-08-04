@@ -1,8 +1,8 @@
 """
 Tests for the clone-on-host default-pass helpers in functional_gate.py:
-collection-manifest sharding (shard-collection) and failed/error extraction
+collection-manifest test splitting (split-collection) and failed/error extraction
 (report-failures). Known-failure classification itself is handled in-process by
-the conftest_known_failures xfail plugin, so these helpers only shard the suite
+the conftest_known_failures xfail plugin, so these helpers only split the suite
 and read back genuine failures for the re-run + combine gate.
 """
 import json
@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "tools"))
 from functional_gate import (  # noqa: E402
-    shard_collection_ids,
+    split_collection_ids,
     report_failure_ids,
 )
 
@@ -35,7 +35,7 @@ def _t(nodeid, outcome):
     return {"nodeid": nodeid, "outcome": outcome}
 
 
-class TestShardCollection:
+class TestSplitCollection:
     def _manifest(self, tmp_path, n, prefix=""):
         lines = [f"{prefix}compatibility/tests/test_{i}.py::test_it" for i in range(n)]
         lines += ["", "12 tests collected in 0.5s", "warning: something"]  # noise
@@ -43,38 +43,38 @@ class TestShardCollection:
 
     def test_disjoint_and_complete(self, tmp_path):
         m = self._manifest(tmp_path, 12)
-        shards = [shard_collection_ids(m, 4, k) for k in range(4)]
-        flat = [x for s in shards for x in s]
+        splits = [split_collection_ids(m, 4, k) for k in range(4)]
+        flat = [x for s in splits for x in s]
         assert len(flat) == 12 and len(set(flat)) == 12
         assert set(flat) == {f"compatibility/tests/test_{i}.py::test_it" for i in range(12)}
 
     def test_even_distribution(self, tmp_path):
         m = self._manifest(tmp_path, 12)
-        assert [len(shard_collection_ids(m, 4, k)) for k in range(4)] == [3, 3, 3, 3]
+        assert [len(split_collection_ids(m, 4, k)) for k in range(4)] == [3, 3, 3, 3]
 
     def test_noise_and_dedup(self, tmp_path):
         m = write_lines(tmp_path, ["a.py::t", "a.py::t", "b.py::t", "12 collected", ""])
-        assert sorted(shard_collection_ids(m, 1, 0)) == ["a.py::t", "b.py::t"]
+        assert sorted(split_collection_ids(m, 1, 0)) == ["a.py::t", "b.py::t"]
 
     def test_prefix_idempotent_when_manifest_already_prefixed(self, tmp_path):
         pref = "docdb_functional_tests/documentdb_tests/"
         m = self._manifest(tmp_path, 4, prefix=pref)
-        ids = shard_collection_ids(m, 1, 0, prefix=pref, strip_prefix=pref)
+        ids = split_collection_ids(m, 1, 0, prefix=pref, strip_prefix=pref)
         assert all(i.startswith(pref) and i.count(pref) == 1 for i in ids)
         assert len(ids) == 4
 
     def test_prefix_added_when_manifest_relative(self, tmp_path):
         pref = "docdb_functional_tests/documentdb_tests/"
         m = self._manifest(tmp_path, 4)  # relative (no prefix)
-        ids = shard_collection_ids(m, 1, 0, prefix=pref, strip_prefix=pref)
+        ids = split_collection_ids(m, 1, 0, prefix=pref, strip_prefix=pref)
         assert all(i.startswith(pref) and i.count(pref) == 1 for i in ids)
 
     def test_bad_bounds(self, tmp_path):
         m = self._manifest(tmp_path, 4)
         with pytest.raises(ValueError):
-            shard_collection_ids(m, 4, 4)
+            split_collection_ids(m, 4, 4)
         with pytest.raises(ValueError):
-            shard_collection_ids(m, 0, 0)
+            split_collection_ids(m, 0, 0)
 
 
 class TestReportFailures:

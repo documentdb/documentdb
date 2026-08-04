@@ -108,13 +108,14 @@ jobs:
 
   # -----------------------------------------------------------------------
   # Job 3: PR gate - run the allowlisted tests against documentdb-local,
-  # sharded across parallel runners for bounded, low-variance wall-clock.
+  # split across parallel runners for bounded, low-variance wall-clock.
+  # ("Split" = test splitting across CI jobs; unrelated to data sharding.)
   #
-  # Each shard runs a disjoint, round-robin slice of the allowlist (its own
+  # Each split runs a disjoint, round-robin slice of the allowlist (its own
   # engine container), sequentially re-runs its own transient failures, and
   # uploads its slice's report. The combine job (Job 3b) merges all slices and
-  # enforces the allowlist contract. Sharding replaced a single full-suite job
-  # whose ~12.5k-test run took 60-120+min on 2-core hosted runners and
+  # enforces the allowlist contract. Test splitting replaced a single full-suite
+  # job whose ~12.5k-test run took 60-120+min on 2-core hosted runners and
   # intermittently tripped the job timeout.
   # -----------------------------------------------------------------------
   functional-pr-gate:
@@ -128,9 +129,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        # To grow the split, add ids here: NUM_SPLITS below is derived from this
+        # list. Keep it 0..N-1 (split-allowlist rejects an out-of-range id).
+        split: [0, 1, 2, 3]
     env:
-      NUM_SHARDS: 4
+      # = length(matrix.split). Derived so the width can't desync from the legs:
+      # a stale literal would leave a slice unclaimed by any job, and those tests
+      # would simply never run -- nothing fails, the gate just scores green on
+      # less than the full allowlist.
+      NUM_SPLITS: ${{ strategy.job-total }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -174,7 +181,7 @@ jobs:
           docker pull "$IMAGE"
           echo "FUNC_TEST_IMAGE=$IMAGE" >> $GITHUB_ENV
 
-      - name: Run allowlist gate shard
+      - name: Run allowlist gate split
         run: |
           set -uo pipefail
           RESULTS=.test-results/functional-tests
@@ -186,38 +193,38 @@ jobs:
             --engine-name ${{ env.ENGINE_NAME }}"
           CONNECTION_STRING="mongodb://${{ env.DOCUMENTDB_USER }}:${DOCUMENTDB_PASSWORD}@localhost:${{ env.DOCUMENTDB_PORT }}/?tls=true&tlsAllowInvalidCertificates=true"
 
-          # Resolve this shard's slice of the allowlist (rootdir-relative IDs
+          # Resolve this split's slice of the allowlist (rootdir-relative IDs
           # prefixed for the container's pytest rootdir). The allowlist already
           # excludes the known engine-crasher files, so no --ignore is needed.
-          $GATE shard-allowlist \
-            --num-shards "$NUM_SHARDS" \
-            --shard-id "${{ matrix.shard }}" \
+          $GATE split-allowlist \
+            --num-splits "$NUM_SPLITS" \
+            --split-id "${{ matrix.split }}" \
             --prefix documentdb_tests/ \
-            --output "$RESULTS/shard_ids.txt"
-          SHARD_COUNT=$(grep -c . "$RESULTS/shard_ids.txt" 2>/dev/null || true)
-          echo "Shard ${{ matrix.shard }}/$NUM_SHARDS: running ${SHARD_COUNT:-0} allowlisted test(s)"
+            --output "$RESULTS/split_ids.txt"
+          SPLIT_COUNT=$(grep -c . "$RESULTS/split_ids.txt" 2>/dev/null || true)
+          echo "Split ${{ matrix.split }}/$NUM_SPLITS: running ${SPLIT_COUNT:-0} allowlisted test(s)"
 
-          # Refuse to run unless shard-allowlist produced a NON-EMPTY id file. An
-          # empty OR missing shard_ids.txt would leave the docker pytest call
+          # Refuse to run unless split-allowlist produced a NON-EMPTY id file. An
+          # empty OR missing split_ids.txt would leave the docker pytest call
           # below with NO positional args, making pytest collect the entire
           # upstream suite (including the engine-crasher files the allowlist
-          # purposely excludes), which could spuriously pass this shard and mask
-          # problems. -s catches both the empty-slice case (NUM_SHARDS > allowlist
-          # size) and the case where shard-allowlist failed without writing the
-          # file (grep on a missing file would leave SHARD_COUNT empty, making an
+          # purposely excludes), which could spuriously pass this split and mask
+          # problems. -s catches both the empty-slice case (NUM_SPLITS > allowlist
+          # size) and the case where split-allowlist failed without writing the
+          # file (grep on a missing file would leave SPLIT_COUNT empty, making an
           # arithmetic [ -eq 0 ] test error out and silently fall through).
-          if [ ! -s "$RESULTS/shard_ids.txt" ]; then
-            echo "::error::Shard ${{ matrix.shard }}: empty or missing allowlist slice — refusing to run pytest with no positional args (shard-allowlist failed, or NUM_SHARDS too large for the allowlist?)"
+          if [ ! -s "$RESULTS/split_ids.txt" ]; then
+            echo "::error::Split ${{ matrix.split }}: empty or missing allowlist slice — refusing to run pytest with no positional args (split-allowlist failed, or NUM_SPLITS too large for the allowlist?)"
             exit 1
           fi
 
-          # Run exactly this shard's allowlisted tests in parallel. set -f so
+          # Run exactly this split's allowlisted tests in parallel. set -f so
           # parametrized IDs containing [brackets] are not glob-expanded.
           set -f
           docker run --rm --network host \
             -v "$(pwd)/$RESULTS:/results" \
             ${{ env.FUNC_TEST_IMAGE }} \
-            $(cat "$RESULTS/shard_ids.txt") \
+            $(cat "$RESULTS/split_ids.txt") \
             --engine-name "${{ env.ENGINE_NAME }}" \
             --connection-string "$CONNECTION_STRING" \
             -n ${{ env.PYTEST_WORKERS }} \
@@ -227,20 +234,29 @@ jobs:
             || true
           set +f
 
-          [ -f "$RESULTS/report.json" ] || { echo "::error::Shard produced no report.json"; exit 1; }
+          [ -f "$RESULTS/report.json" ] || { echo "::error::Split produced no report.json"; exit 1; }
 
           # The parallel pass can intermittently segfault the engine (known RUM
           # dynamic-cursor race under -n4); its brief recovery window cascades
           # spurious failures onto otherwise-passing allowlisted tests. Re-run
-          # just this shard's failures sequentially (-p no:xdist => no race) and
+          # just this split's failures sequentially (-p no:xdist => no race) and
           # merge so transient victims recover; genuine failures stay failed.
-          # The 200 cap is a PER-SHARD budget: round-robin sharding spreads a
-          # systemic regression evenly across shards, so a ~800 gate-wide budget
-          # maps to ~200/shard. Above it, treat the failures as a real regression,
+          # The 200 cap is a PER-SPLIT budget: round-robin splitting spreads a
+          # systemic regression evenly across splits, so a ~800 gate-wide budget
+          # maps to ~200/split. Above it, treat the failures as a real regression,
           # skip the re-run, and let them fail the gate.
+          #
+          # --timeout-method=signal is required, not cosmetic. The pinned suite's
+          # own pytest config selects the `thread` method, which on timeout dumps
+          # stacks and kills the interpreter -- so json-report never writes and
+          # ONE hanging test costs the whole batch its recovery, leaving every
+          # other victim scored as a residual failure. The re-run is always
+          # -p no:xdist, i.e. tests run on the main thread where SIGALRM is
+          # deliverable, so signal is available here and makes a hang fail just
+          # that test while the session still writes its report.
           $GATE gate-failures --report "$RESULTS/report.json" --output "$RESULTS/rerun_ids.txt"
           RERUN_COUNT=$(grep -c . "$RESULTS/rerun_ids.txt" || true)
-          echo "Shard ${{ matrix.shard }} non-pass after parallel run: $RERUN_COUNT"
+          echo "Split ${{ matrix.split }} non-pass after parallel run: $RERUN_COUNT"
 
           if [ "$RERUN_COUNT" -gt 0 ] && [ "$RERUN_COUNT" -le 200 ]; then
             sed 's#^#documentdb_tests/#' "$RESULTS/rerun_ids.txt" > "$RESULTS/rerun_args.txt"
@@ -255,6 +271,7 @@ jobs:
               --connection-string "$CONNECTION_STRING" \
               -p no:xdist \
               --timeout=600 \
+              --timeout-method=signal \
               --json-report --json-report-file=/results/report_rerun.json \
               -v \
               || true
@@ -263,27 +280,33 @@ jobs:
               $GATE merge-reports \
                 --base "$RESULTS/report.json" \
                 --overlay "$RESULTS/report_rerun.json" \
-                --out "$RESULTS/report_shard.json"
-              echo "Merged sequential re-run results for shard ${{ matrix.shard }}"
+                --out "$RESULTS/report_split.json"
+              echo "Merged sequential re-run results for split ${{ matrix.split }}"
+            else
+              # Not fatal -- the un-recovered parallel failures still reach the
+              # gate below, so this fails closed. But it must not pass silently:
+              # a lost report means NONE of the batch got its re-run, so the
+              # residuals below are not evidence of a real regression.
+              echo "::warning::Split ${{ matrix.split }}: re-run produced no report_rerun.json, so none of the $RERUN_COUNT failure(s) were recovered; the parallel-pass results stand unmodified."
             fi
           fi
 
-          # Canonical per-shard report for the combine job: merged if a re-run
+          # Canonical per-split report for the combine job: merged if a re-run
           # happened, otherwise the original parallel report. report.json is
           # container-owned, so copy with python to avoid permission issues.
-          if [ ! -f "$RESULTS/report_shard.json" ]; then
-            python3 -c "import shutil; shutil.copy('$RESULTS/report.json', '$RESULTS/report_shard.json')"
+          if [ ! -f "$RESULTS/report_split.json" ]; then
+            python3 -c "import shutil; shutil.copy('$RESULTS/report.json', '$RESULTS/report_split.json')"
           fi
 
       - name: Collect DocumentDB logs
         if: always()
-        run: docker logs documentdb > .test-results/functional-tests/documentdb-shard-${{ matrix.shard }}.log 2>&1 || true
+        run: docker logs documentdb > .test-results/functional-tests/documentdb-split-${{ matrix.split }}.log 2>&1 || true
 
-      - name: Upload shard report
+      - name: Upload split report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gate-shard-${{ matrix.shard }}
+          name: gate-split-${{ matrix.split }}
           overwrite: true
           path: .test-results/functional-tests/
 
@@ -294,7 +317,7 @@ jobs:
           docker rm documentdb 2>/dev/null || true
 
   # -----------------------------------------------------------------------
-  # Job 3b: PR gate combine - merge all shard reports and enforce the
+  # Job 3b: PR gate combine - merge all test-split reports and enforce the
   # allowlist contract once over the full set.
   # -----------------------------------------------------------------------
   functional-pr-gate-combine:
@@ -306,7 +329,11 @@ jobs:
     runs-on: *functional_tests_runner
     timeout-minutes: 15
     env:
-      NUM_SHARDS: 4
+      # MUST equal the length of functional-pr-gate's matrix.split. Can't be
+      # derived here (needs.* exposes another job's outputs, not its matrix
+      # size), but a desync is caught rather than silent: this is the
+      # completeness check itself, so a mismatch trips the -ne below.
+      NUM_SPLITS: 4
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -314,13 +341,13 @@ jobs:
       - name: Install Python dependencies
         run: pip install pyyaml
 
-      - name: Download shard reports
+      - name: Download split reports
         uses: actions/download-artifact@v4
         with:
-          pattern: gate-shard-*
-          path: shard-artifacts
+          pattern: gate-split-*
+          path: split-artifacts
 
-      - name: Merge shard reports and enforce allowlist
+      - name: Merge split reports and enforce allowlist
         run: |
           set -uo pipefail
           OUT=.test-results/functional-tests
@@ -330,23 +357,23 @@ jobs:
             --allowlist documentdb-local/functional-tests/config/allowlist.yml \
             --engine-name ${{ env.ENGINE_NAME }}"
 
-          # Collect each shard's canonical report.
-          mapfile -t SHARD_REPORTS < <(find shard-artifacts -name report_shard.json | sort)
-          echo "Found ${#SHARD_REPORTS[@]} shard report(s) of $NUM_SHARDS expected:"
-          printf '  %s\n' "${SHARD_REPORTS[@]}"
-          if [ "${#SHARD_REPORTS[@]}" -ne "$NUM_SHARDS" ]; then
-            echo "::error::Expected $NUM_SHARDS shard reports but found ${#SHARD_REPORTS[@]}. A shard job likely failed to produce results."
+          # Collect each split's canonical report.
+          mapfile -t SPLIT_REPORTS < <(find split-artifacts -name report_split.json | sort)
+          echo "Found ${#SPLIT_REPORTS[@]} split report(s) of $NUM_SPLITS expected:"
+          printf '  %s\n' "${SPLIT_REPORTS[@]}"
+          if [ "${#SPLIT_REPORTS[@]}" -ne "$NUM_SPLITS" ]; then
+            echo "::error::Expected $NUM_SPLITS split reports but found ${#SPLIT_REPORTS[@]}. A split job likely failed to produce results."
             exit 1
           fi
 
-          # Merge disjoint shard reports into one combined report (first as base,
+          # Merge disjoint split reports into one combined report (first as base,
           # the rest as overlays) and enforce the allowlist over the full set.
-          BASE="${SHARD_REPORTS[0]}"
-          OVERLAYS=("${SHARD_REPORTS[@]:1}")
+          BASE="${SPLIT_REPORTS[0]}"
+          OVERLAYS=("${SPLIT_REPORTS[@]:1}")
           $GATE merge-reports --base "$BASE" --overlay "${OVERLAYS[@]}" --out "$OUT/report.json" --sum-collected
 
-          # Preserve shard logs in the combined artifact for debugging.
-          find shard-artifacts -name 'documentdb-shard-*.log' -exec cp {} "$OUT/" \; 2>/dev/null || true
+          # Preserve per-split logs in the combined artifact for debugging.
+          find split-artifacts -name 'documentdb-split-*.log' -exec cp {} "$OUT/" \; 2>/dev/null || true
 
           $GATE summarize-gate \
             --report "$OUT/report.json" \
@@ -469,6 +496,7 @@ jobs:
               --connection-string "$CONNECTION_STRING" \
               -p no:xdist \
               --timeout=600 \
+              --timeout-method=signal \
               --json-report --json-report-file=/results/report_rerun.json \
               -v \
               || true
@@ -488,6 +516,8 @@ jobs:
               else
                 echo "::warning::Re-run merge failed; enforcing original parallel results."
               fi
+            else
+              echo "::warning::Re-run produced no report_rerun.json, so none of the $RERUN_COUNT failure(s) were recovered; the parallel-pass results stand unmodified."
             fi
           fi
 
