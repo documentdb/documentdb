@@ -47,11 +47,12 @@
 /* --------------------------------------------------------- */
 
 
-typedef struct DistinctInputQueryState
+typedef enum IndexSkipScanOnEntryStatus
 {
-	/* Must be the first field */
-	ExtensibleNode extensible;
-} DistinctInputQueryState;
+	IndexSkipScanOnEntryStatus_Unknown = 0,
+	IndexSkipScanOnEntryStatus_NoSkipScan = 1,
+	IndexSkipScanOnEntryStatus_SkipScan = 2
+} IndexSkipScanOnEntryStatus;
 
 
 /*
@@ -74,12 +75,8 @@ typedef struct DistinctQueryScanState
 	/* IndexScanDesc for the current scan */
 	IndexScanDesc scanDesc;
 
-	/* The input state */
-	DistinctInputQueryState *inputQueryState;
+	IndexSkipScanOnEntryStatus skipScanOnEntryStatus;
 } DistinctQueryScanState;
-
-/* Name needed for Postgres to register a custom scan */
-#define InputContinuationNodeName "DocumentsDistinctQueryScanInput"
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -99,12 +96,6 @@ static void DistinctQueryScanReScanCustomScan(CustomScanState *node);
 static void DistinctQueryScanExplainCustomScan(CustomScanState *node, List *ancestors,
 											   ExplainState *es);
 
-static void CopyNodeInputQueryState(ExtensibleNode *target_node, const
-									ExtensibleNode *source_node);
-static void OutInputQueryScanNode(StringInfo str, const struct ExtensibleNode *raw_node);
-static void ReadDistinctExtensionQueryScanNode(struct ExtensibleNode *node);
-static bool EqualUnsupportedExtensionQueryScanNode(const struct ExtensibleNode *a,
-												   const struct ExtensibleNode *b);
 static TupleTableSlot * DistinctQueryScanNext(CustomScanState *node);
 static bool DistinctQueryScanNextRecheck(ScanState *state, TupleTableSlot *slot);
 static List * AddDistinctCustomPathCore(PlannerInfo *root, List *pathList);
@@ -115,6 +106,7 @@ static bool HasOnlySafeGroupFirstAggrefs(PlannerInfo *root);
 extern bool EnableDistinctCustomScan;
 extern bool EnableDistinctScanForGroupFirst;
 extern bool EnableGroupByDistinctScan;
+extern bool EnableDistinctSkipScanOnKey;
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -141,17 +133,6 @@ static const struct CustomExecMethods DistinctQueryScanExecuteMethods = {
 };
 
 
-static const ExtensibleNodeMethods InputQueryStateMethods =
-{
-	InputContinuationNodeName,
-	sizeof(DistinctInputQueryState),
-	CopyNodeInputQueryState,
-	EqualUnsupportedExtensionQueryScanNode,
-	OutInputQueryScanNode,
-	ReadDistinctExtensionQueryScanNode
-};
-
-
 /*
  * Registers any custom nodes that the extension Scan produces.
  * This is for any items present in the custom_private field.
@@ -159,7 +140,6 @@ static const ExtensibleNodeMethods InputQueryStateMethods =
 void
 RegisterDistinctScanNodes(void)
 {
-	RegisterExtensibleNodeMethods(&InputQueryStateMethods);
 	RegisterCustomScanMethods(&DistinctQueryScanMethods);
 }
 
@@ -254,8 +234,6 @@ AddDistinctCustomPathCore(PlannerInfo *root, List *pathList)
 		CustomPath *customPath = makeNode(CustomPath);
 		customPath->methods = &DistinctQueryScanPathMethods;
 
-		DistinctInputQueryState *queryState = palloc0(sizeof(DistinctInputQueryState));
-
 		Path *path = &customPath->path;
 		path->pathtype = T_CustomScan;
 
@@ -285,16 +263,6 @@ AddDistinctCustomPathCore(PlannerInfo *root, List *pathList)
 
 		/* necessary to avoid extra Result node in PG15 */
 		customPath->flags = CUSTOMPATH_SUPPORT_PROJECTION;
-
-		/* Save the continuation data into storage */
-		queryState->extensible.type = T_ExtensibleNode;
-		queryState->extensible.extnodename = InputContinuationNodeName;
-
-		/* Store the input state to be used later.
-		 * NOTE: Anything added here must be of type ExtensibleNode and must be registered
-		 * with the RegisterNodes method below.
-		 */
-		customPath->custom_private = list_make1(queryState);
 
 		customPlanPaths = lappend(customPlanPaths, customPath);
 	}
@@ -509,8 +477,6 @@ DistinctQueryScanCreateCustomScanState(CustomScan *cscan)
 	Plan *innerPlan = (Plan *) linitial(cscan->custom_plans);
 	queryScanState->innerPlan = innerPlan;
 
-	queryScanState->inputQueryState = (DistinctInputQueryState *) linitial(
-		cscan->custom_private);
 	return (Node *) cscanstate;
 }
 
@@ -546,6 +512,70 @@ DistinctQueryScanExecCustomScan(CustomScanState *pstate)
 										  DistinctQueryScanNextRecheck);
 
 	return returnSlot;
+}
+
+
+static void
+TrySkipDistinctScanKey(DistinctQueryScanState *extensionScanState)
+{
+	/* Try once with skip scan if unknown */
+
+	ItemPointerData tid;
+	BlockIdSet(&tid.ip_blkid, InvalidBlockNumber);
+	tid.ip_posid = 0;
+	switch (extensionScanState->skipScanOnEntryStatus)
+	{
+		case IndexSkipScanOnEntryStatus_Unknown:
+		{
+			if (!EnableDistinctSkipScanOnKey)
+			{
+				/*
+				 * Skip-scan-on-key disabled: advance with the per-TID skip and
+				 * lock the status so we never re-attempt the skip scan.
+				 */
+				DocumentDBRumSkipTidsForCurrentEntry(
+					extensionScanState->scanDesc,
+					extensionScanState->skipTidsFunc, &tid);
+				extensionScanState->skipScanOnEntryStatus =
+					IndexSkipScanOnEntryStatus_NoSkipScan;
+				break;
+			}
+
+			bool skipScan = DocumentDBRumSkipTidsForCurrentEntryWithSkipScan(
+				extensionScanState->scanDesc, extensionScanState->skipTidsFunc,
+				&tid);
+
+			if (skipScan)
+			{
+				extensionScanState->skipScanOnEntryStatus =
+					IndexSkipScanOnEntryStatus_SkipScan;
+			}
+			else
+			{
+				extensionScanState->skipScanOnEntryStatus =
+					IndexSkipScanOnEntryStatus_NoSkipScan;
+			}
+
+			break;
+		}
+
+		case IndexSkipScanOnEntryStatus_SkipScan:
+		{
+			DocumentDBRumSkipTidsForCurrentEntryWithSkipScan(
+				extensionScanState->scanDesc, extensionScanState->skipTidsFunc,
+				&tid);
+			break;
+		}
+
+		case IndexSkipScanOnEntryStatus_NoSkipScan:
+		default:
+		{
+			DocumentDBRumSkipTidsForCurrentEntry(extensionScanState->scanDesc,
+												 extensionScanState->skipTidsFunc,
+												 &tid);
+			break;
+		}
+	}
 }
 
 
@@ -585,12 +615,7 @@ DistinctQueryScanNext(CustomScanState *node)
 			indexRel->rd_rel->relam, indexRel->rd_opfamily[0]);
 	}
 
-	ItemPointerData tid;
-	BlockIdSet(&tid.ip_blkid, InvalidBlockNumber);
-	tid.ip_posid = 0;
-	DocumentDBRumSkipTidsForCurrentEntry(extensionScanState->scanDesc,
-										 extensionScanState->skipTidsFunc,
-										 &tid);
+	TrySkipDistinctScanKey(extensionScanState);
 
 	/* Copy the slot onto our own query state for projection */
 	TupleTableSlot *ourSlot = node->ss.ss_ScanTupleSlot;
@@ -628,48 +653,3 @@ static void
 DistinctQueryScanExplainCustomScan(CustomScanState *node, List *ancestors,
 								   ExplainState *es)
 { }
-
-
-/*
- * Support for comparing two Scan extensible nodes
- * Currently insupported.
- */
-static bool
-EqualUnsupportedExtensionQueryScanNode(const struct ExtensibleNode *a,
-									   const struct ExtensibleNode *b)
-{
-	ereport(ERROR, (errmsg("Equal for node type CustomQueryScan not implemented")));
-}
-
-
-/*
- * Support for Copying the InputQueryState node
- */
-static void
-CopyNodeInputQueryState(struct ExtensibleNode *target_node, const struct
-						ExtensibleNode *source_node)
-{
-	DistinctInputQueryState *newNode = (DistinctInputQueryState *) target_node;
-	newNode->extensible.type = T_ExtensibleNode;
-	newNode->extensible.extnodename = InputContinuationNodeName;
-}
-
-
-/*
- * Support for Outputing the InputContinuation node
- */
-static void
-OutInputQueryScanNode(StringInfo str, const struct ExtensibleNode *raw_node)
-{ }
-
-
-/*
- * Function for reading DocumentDBApiQueryScan node
- */
-static void
-ReadDistinctExtensionQueryScanNode(struct ExtensibleNode *node)
-{
-	DistinctInputQueryState *local_node = (DistinctInputQueryState *) node;
-	local_node->extensible.type = T_ExtensibleNode;
-	local_node->extensible.extnodename = InputContinuationNodeName;
-}

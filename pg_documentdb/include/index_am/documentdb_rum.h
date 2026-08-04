@@ -62,4 +62,9 @@ Datum DocumentDBRumGetCurrentIndexKey(IndexScanDesc scan, bytea **dedupState);
 void DocumentDBRumSkipTidsForCurrentEntry(IndexScanDesc scan, PGFunction
 										  skipTidsFunc, ItemPointer
 										  userContinuationState);
+
+
+bool DocumentDBRumSkipTidsForCurrentEntryWithSkipScan(IndexScanDesc scan, PGFunction
+													  skipTidsFunc, ItemPointer
+													  userContinuationState);
 #endif

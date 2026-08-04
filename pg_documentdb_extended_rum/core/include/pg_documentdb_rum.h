@@ -906,6 +906,7 @@ typedef enum RumIndexTransformOperation
 	RumIndexTransform_OrderedScanRequiresDedup = 3,
 	RumIndexTransform_HighKeyScalarCheck = 4,
 	RumIndexTransform_HighKeyPageIsolated = 5,
+	RumIndexTransform_IndexGenerateDistinctSkipBound = 6,
 } RumIndexTransformOperation;
 
 /* Struct that holds information for projecting an index tuple. */

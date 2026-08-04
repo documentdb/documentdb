@@ -61,6 +61,7 @@ typedef enum RumIndexTransformOperation
 	RumIndexTransform_OrderedScanRequiresDedup = 3,
 	RumIndexTransform_HighKeyScalarCheck = 4,
 	RumIndexTransform_HighKeyPageIsolated = 5,
+	RumIndexTransform_IndexGenerateDistinctSkipBound = 6,
 } RumIndexTransformOperation;
 
 
@@ -230,6 +231,9 @@ static int32_t GetIndexPathsFromOptionsWithLength(BsonGinCompositePathOptions *o
 												  const char **indexPaths,
 												  uint32_t *indexPathLengths,
 												  int8_t *sortOrders);
+static inline int GetOrderByIndexPath(pgbson *queryValue, const char **indexPaths,
+									  uint32_t *indexPathLengths,
+									  int numPaths, pgbsonelement *querySortElement);
 static void ParseBoundsForCompositeOperator(pgbsonelement *singleElement, const
 											char **indexPaths,
 											uint32_t *indexPathsLengths,
@@ -2499,6 +2503,165 @@ gin_bson_get_composite_path_generated_terms(PG_FUNCTION_ARGS)
 }
 
 
+/*
+ * Generates the skip bound used by the distinct custom scan to jump ahead to
+ * the next distinct order-by value instead of walking every TID that shares the
+ * current order-by prefix.
+ *
+ * The distinct/group scan orders by one or more index paths. The order-by
+ * column is not necessarily the leading index path: equality-constrained paths
+ * may precede it (for example, an index { b, a, c } serving a distinct on "a"
+ * with an equality filter b = 1 and a range filter on c). The order-by column
+ * for that scan is "a" at index-path position 1, and only "c" (the trailing
+ * suffix after the order-by column) may be skipped over.
+ *
+ * The caller passes the order-by query key (arg 5) so we can resolve the
+ * order-by column to its index-path position, plus the number of order-by paths
+ * (arg 4). We keep every path up to and including the order-by paths pinned to
+ * their current values (the equality prefix stays fixed by its filter, and the
+ * order-by values define the current distinct group) and push every trailing
+ * suffix path to its largest possible value. Seeking to that synthetic term
+ * lands the ordered scan on the first entry whose order-by value is strictly
+ * greater than the current one.
+ *
+ * When there is no suffix to skip over (the order-by column is the last index
+ * path, or the caller did not supply the information needed to locate it) we
+ * return an empty datum so the caller falls back to the per-TID skip.
+ */
+static Datum
+CompositeIndexTermGenerateDistinctSkipBound(PG_FUNCTION_ARGS)
+{
+	bytea *compareKeyValue = PG_GETARG_BYTEA_PP(0);
+	Pointer extraData = PG_GETARG_POINTER(3);
+	int32_t orderByPathCount = PG_NARGS() > 4 ? PG_GETARG_INT32(4) : 0;
+	Datum orderByQuery = PG_NARGS() > 5 ? PG_GETARG_DATUM(5) : (Datum) 0;
+
+	CompositeQueryRunData *runData = (CompositeQueryRunData *) extraData;
+	int32_t numIndexPaths = runData->metaInfo->numIndexPaths;
+
+	/* The distinct skip-scan re-seeks the ordered scan to a synthetic term that
+	 * pins the order-by prefix and pushes the trailing suffix past the end of
+	 * the current group. That re-seek only makes forward progress for forward
+	 * ordered scans; for a backward (reverse) ordered scan it cannot advance
+	 * past the current group and would loop indefinitely. Fall back to the
+	 * per-TID skip, which handles backward scans correctly. */
+	if (runData->metaInfo->isBackwardScan)
+	{
+		PG_FREE_IF_COPY(compareKeyValue, 0);
+		return (Datum) 0;
+	}
+
+	/* Without the order-by query key we cannot tell which index path drives the
+	 * scan, so we cannot know which trailing paths are safe to skip. Fall back
+	 * to the per-TID skip. */
+	if (orderByPathCount <= 0 || orderByQuery == (Datum) 0)
+	{
+		PG_FREE_IF_COPY(compareKeyValue, 0);
+		return (Datum) 0;
+	}
+
+	/* A single-path index can never have a trailing suffix after the order-by
+	 * column, so the skip-scan can never do better than the per-TID skip. Bail
+	 * out here using only the cheap numIndexPaths from metaInfo, before parsing
+	 * the opclass options, extracting every index path, and parsing the
+	 * order-by term below - work that would be thrown away on every hot-path
+	 * call for the common single-column case. (The general "last order-by
+	 * column is already the last index path" case still needs the resolved
+	 * position and is handled after GetOrderByIndexPath.) */
+	if (numIndexPaths <= 1)
+	{
+		PG_FREE_IF_COPY(compareKeyValue, 0);
+		return (Datum) 0;
+	}
+
+	BsonGinCompositePathOptions *options =
+		(BsonGinCompositePathOptions *) PG_GET_OPCLASS_OPTIONS();
+	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
+	uint32_t indexPathLengths[INDEX_MAX_KEYS] = { 0 };
+	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
+	int numPaths = GetIndexPathsFromOptionsWithLength(options, indexPaths,
+													  indexPathLengths, sortOrders);
+
+	/* Resolve the LAST order-by column to its index-path position. The caller
+	 * hands us the last order-by query key precisely because the order-by
+	 * columns may not be contiguous: equality-constrained columns can sit
+	 * between them (e.g. index {a,b,c,d}, equalities a=? and c=?, group by
+	 * (b,d) - the order-by columns are b at path 1 and d at path 3 with the
+	 * equality-pinned c at path 2 between them). Everything up to and including
+	 * the last order-by path must stay pinned (the equality prefix, every
+	 * order-by column, and any equality-pinned columns interleaved among them);
+	 * only the paths strictly after the last order-by column are the trailing
+	 * suffix that is safe to skip. Computing this from the first order-by path
+	 * plus the order-by count would wrongly treat an interleaved order-by
+	 * column as skippable and prune distinct values. */
+	pgbsonelement querySortElement;
+	int orderByIndexPath = GetOrderByIndexPath(DatumGetPgBson(orderByQuery),
+											   indexPaths, indexPathLengths,
+											   numPaths, &querySortElement);
+	int32_t keepPathCount = orderByIndexPath + 1;
+
+	/* Nothing to skip over if the last order-by column already reaches the last
+	 * index path. Fall back to the per-TID skip. */
+	if (keepPathCount <= 0 || keepPathCount >= numIndexPaths)
+	{
+		PG_FREE_IF_COPY(compareKeyValue, 0);
+		return (Datum) 0;
+	}
+
+	SerializedCompositeTermPair serializedTerms[INDEX_MAX_KEYS] = { 0 };
+	int32_t numTerms = LazyInitializeSerializedCompositeIndexTerm(compareKeyValue,
+																  serializedTerms);
+	if (numTerms != numIndexPaths)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg("Number of terms in the index term (%d) does not match "
+							   "the number of index paths (%d)",
+							   numTerms, numIndexPaths)));
+	}
+
+	IndexTermCreateMetadata singlePathMetadata = GetSinglePathTermCreateMetadata(
+		options, numIndexPaths);
+
+	bytea *indexTermDatums[INDEX_MAX_KEYS] = { 0 };
+	for (int i = 0; i < numIndexPaths; i++)
+	{
+		if (i < keepPathCount)
+		{
+			/* Keep the equality prefix and order-by paths pinned to the current
+			 * value. Reuse the original serialized term so its metadata (e.g.
+			 * truncation, the $undefined distinction) is preserved. The
+			 * PointerGetDatum / DatumGetByteaP round-trip promotes a 1-byte
+			 * varlena header to the 4-byte form; this is safe since the term
+			 * lives for the duration of the call. */
+			indexTermDatums[i] = DatumGetByteaP(PointerGetDatum(
+													serializedTerms[i].serializedTerm));
+		}
+		else
+		{
+			/* Push every trailing suffix path past the end of the current
+			 * order-by group (this runs only for forward scans; backward scans
+			 * bailed out above). For an ascending path the end of the group is
+			 * its largest value (MaxKey); for a descending path the storage
+			 * order is inverted so the end is MinKey. This mirrors the "skip all
+			 * remaining values for this path" handling in
+			 * CompositeIndexTermGenerateSkipBound. */
+			InitializeBsonIndexTermIfNeeded(&serializedTerms[i]);
+			singlePathMetadata.isDescending = IsIndexTermValueDescending(
+				&serializedTerms[i].term);
+			serializedTerms[i].term.element.bsonValue.value_type =
+				singlePathMetadata.isDescending ? BSON_TYPE_MINKEY : BSON_TYPE_MAXKEY;
+			indexTermDatums[i] = SerializeBsonIndexTerm(
+				&serializedTerms[i].term.element, &singlePathMetadata).indexTermVal;
+		}
+	}
+
+	BsonIndexTermSerialized serialized = SerializeCompositeBsonIndexTerm(
+		indexTermDatums, numIndexPaths);
+	PG_FREE_IF_COPY(compareKeyValue, 0);
+	return PointerGetDatum(serialized.indexTermVal);
+}
+
+
 static Datum
 CompositeIndexTermGenerateSkipBound(PG_FUNCTION_ARGS)
 {
@@ -3019,6 +3182,18 @@ gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
 		{
 			bool pageIsolated = true;
 			PG_RETURN_DATUM(HighKeyScalarCheck(fcinfo, pageIsolated));
+		}
+
+		case RumIndexTransform_IndexGenerateDistinctSkipBound:
+		{
+			/*
+			 * Skip bound used by the distinct custom scan to jump ahead to the
+			 * next distinct order-by value instead of walking every TID for the
+			 * current entry. Returns an empty datum when no skip bound could be
+			 * determined, in which case the caller falls back to the per-TID
+			 * skip.
+			 */
+			return CompositeIndexTermGenerateDistinctSkipBound(fcinfo);
 		}
 
 		default:
