@@ -446,6 +446,17 @@ SELECT documentdb_api.insert('db', '{"insert":"updateMany", "documents":[
 SELECT documentdb_api.update('db', '{"update": "updateMany", "updates":[{"q": {"_id": {"$lte": 10}},"u":{"$set":{"b": "noChange" }},"multi":true}]}');
 SELECT documentdb_api.update('db', '{"update": "updateMany", "updates":[{"q": {"_id": {"$lte": 11}},"u":{"$set":{"b": "noChange" }},"multi":true}]}');
 SELECT documentdb_api.update('db', '{"update": "updateMany", "updates":[{"q": {"_id": {"$lte": 11}},"u":{"$set":{"b": "change" }},"multi":true}]}');
+
+-- index_only_scan_for_find_project_candidate: with enableIndexOnlyScanForFindProject
+-- disabled (default) a find with a covered projection over an ordered index is
+-- recorded as a candidate so accounts that would benefit can be identified.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "updateMany", "indexes": [ { "key": { "c": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "iosfp_c_1" } ] }', true);
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_find('db', '{ "find": "updateMany", "filter": { "c": { "$gte": 1 } }, "projection": { "c": 1, "_id": 0 } }');
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
 SELECT documentdb_api.drop_collection('db', 'updateMany');

@@ -606,6 +606,43 @@ SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", 
 
 
 -- ===========================================================================
+-- SECTION T: candidate telemetry when the feature is disabled
+-- ===========================================================================
+-- With enableIndexOnlyScanForFindProject OFF we must not perform the index-only
+-- scan, but a find with a covered projection is still recorded as a candidate so
+-- accounts that would benefit can be identified before enabling the feature.
+
+SET documentdb.enableIndexOnlyScanForFindProject TO off;
+
+-- Plan stays a regular Index Scan (not Index Only Scan) while the feature is off.
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "filter": { "country": { "$gte": "Brazil" } }, "projection": { "country": 1, "_id": 0 } }')$$, p_ignore_heap_fetches => true);
+
+-- The candidate counter bumps for the covered find + projection while off.
+SELECT count(*) * 0 AS reset FROM documentdb_api_internal.command_feature_counter_stats(true);
+SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "filter": { "country": { "$gte": "Brazil" } }, "projection": { "country": 1, "_id": 0 } }');
+SELECT feature_name, usage_count FROM documentdb_api_internal.command_feature_counter_stats(false) WHERE feature_name = 'index_only_scan_for_find_project_candidate';
+
+-- With both the feature and the candidate tracking switch off we neither perform
+-- the index-only scan nor record the candidate (the prior fully-guarded behavior).
+SET documentdb.track_index_only_scan_find_candidate TO off;
+SELECT count(*) * 0 AS reset FROM documentdb_api_internal.command_feature_counter_stats(true);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "filter": { "country": { "$gte": "Brazil" } }, "projection": { "country": 1, "_id": 0 } }')$$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "filter": { "country": { "$gte": "Brazil" } }, "projection": { "country": 1, "_id": 0 } }');
+SELECT feature_name, usage_count FROM documentdb_api_internal.command_feature_counter_stats(false) WHERE feature_name = 'index_only_scan_for_find_project_candidate';
+RESET documentdb.track_index_only_scan_find_candidate;
+
+-- With the feature enabled we perform the Index Only Scan and do not record the
+-- candidate (it is only meant to flag accounts while the feature is disabled).
+SET documentdb.enableIndexOnlyScanForFindProject TO on;
+SELECT count(*) * 0 AS reset FROM documentdb_api_internal.command_feature_counter_stats(true);
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "filter": { "country": { "$gte": "Brazil" } }, "projection": { "country": 1, "_id": 0 } }')$$, p_ignore_heap_fetches => true);
+SELECT feature_name, usage_count FROM documentdb_api_internal.command_feature_counter_stats(false) WHERE feature_name = 'index_only_scan_for_find_project_candidate';
+
+-- Reset the feature counters so this suite does not affect other tests.
+SELECT count(*) * 0 AS reset FROM documentdb_api_internal.command_feature_counter_stats(true);
+RESET documentdb.enableIndexOnlyScanForFindProject;
+
+-- ===========================================================================
 -- Cleanup
 -- ===========================================================================
 
