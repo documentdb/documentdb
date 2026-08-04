@@ -1239,10 +1239,43 @@ SELECT documentdb_api.update('db', '{"update": "updateMany", "updates":[{"q": {"
  ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""11"" }, ""n"" : { ""$numberInt"" : ""11"" } }",t)
 (1 row)
 
-SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
-                                                                                                                            get_feature_counter_pretty                                                                                                                             
+-- index_only_scan_for_find_project_candidate: with enableIndexOnlyScanForFindProject
+-- disabled (default) a find with a covered projection over an ordered index is
+-- recorded as a candidate so accounts that would benefit can be identified.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "updateMany", "indexes": [ { "key": { "c": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "iosfp_c_1" } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
 ---------------------------------------------------------------------
- {"Feature_usage":[{"command_insert" : 1}, {"command_insert_100" : 1}, {"command_update" : 3}, {"command_updatemany_100_noop" : 1}, {"command_updatemany_10_noop" : 1}, {"command_update_one" : 3}, {"query_operator_lte" : 3}, {"update_many" : 3}, {"update_operator_set" : 3}]}
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_find('db', '{ "find": "updateMany", "filter": { "c": { "$gte": 1 } }, "projection": { "c": 1, "_id": 0 } }');
+             document              
+---------------------------------------------------------------------
+ { "c" : { "$numberInt" : "1" } }
+ { "c" : { "$numberInt" : "2" } }
+ { "c" : { "$numberInt" : "3" } }
+ { "c" : { "$numberInt" : "4" } }
+ { "c" : { "$numberInt" : "5" } }
+ { "c" : { "$numberInt" : "6" } }
+ { "c" : { "$numberInt" : "7" } }
+ { "c" : { "$numberInt" : "8" } }
+ { "c" : { "$numberInt" : "9" } }
+ { "c" : { "$numberInt" : "10" } }
+ { "c" : { "$numberInt" : "11" } }
+ { "c" : { "$numberInt" : "12" } }
+ { "c" : { "$numberInt" : "13" } }
+ { "c" : { "$numberInt" : "14" } }
+ { "c" : { "$numberInt" : "15" } }
+(15 rows)
+
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                                                                                                                                                                              get_feature_counter_pretty                                                                                                                                                                                                                              
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_insert" : 1}, {"command_insert_100" : 1}, {"command_update" : 3}, {"command_updatemany_100_noop" : 1}, {"command_updatemany_10_noop" : 1}, {"command_update_one" : 3}, {"create_index_alternate_am" : 1}, {"create_index_composite_based_term" : 1}, {"index_only_scan_for_find_project_candidate" : 1}, {"query_operator_gte" : 1}, {"query_operator_lte" : 3}, {"match" : 1}, {"project_find" : 1}, {"update_many" : 3}, {"update_operator_set" : 3}]}
 (1 row)
 
 SELECT documentdb_api.drop_collection('db', 'updateMany');

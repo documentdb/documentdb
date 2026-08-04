@@ -50,6 +50,7 @@
 #include "opclass/bson_text_gin.h"
 #include "metadata/metadata_cache.h"
 #include "utils/documentdb_errors.h"
+#include "utils/feature_counter.h"
 #include "vector/vector_utilities.h"
 #include "vector/vector_spec.h"
 #include "utils/version_utils.h"
@@ -336,6 +337,7 @@ extern bool EnableOrderByIndexTerm;
 extern bool EnableIndexOnlyScanForCoveredAggregateTargets;
 extern bool EnableIndexOnlyScanForRangeMatch;
 extern bool EnableIndexOnlyScanForFindProject;
+extern bool TrackIndexOnlyScanFindCandidate;
 extern bool EnableObjectIdFuncExprConversion;
 extern bool EnableExtendedIndexes;
 extern bool EnableDynamicCursors;
@@ -2956,12 +2958,23 @@ CheckFieldCoverage(Node *node, void *context)
 				{
 					fieldPath = TryExtractFieldPathFromConst(secondArg);
 				}
-				else if (EnableIndexOnlyScanForFindProject &&
+				else if ((EnableIndexOnlyScanForFindProject ||
+						  TrackIndexOnlyScanFindCandidate) &&
 						 IsProjectFunctionOid(funcExpr->funcid))
 				{
-					/* all our bson_dollar_project variants take the projection as the second argument. */
 					bool isProjectionCoveredByIndex = IsProjectionCoveredByIndex(
 						secondArg, state->indexPath, state->multiKeyState);
+
+					if (isProjectionCoveredByIndex && !EnableIndexOnlyScanForFindProject)
+					{
+						/* Covered but feature off: count the candidate, but leave
+						 * the target uncovered so we don't do the index-only scan. */
+						ReportFeatureUsage(
+							FEATURE_INDEX_ONLY_SCAN_FOR_FIND_PROJECT_CANDIDATE);
+						state->hasUncoveredField = true;
+						return true;
+					}
+
 					state->hasUncoveredField = !isProjectionCoveredByIndex;
 					return state->hasUncoveredField;
 				}
@@ -3054,8 +3067,16 @@ IsQueryEligibleForIndexOnlyScan(PlannerInfo *root, Index scanRti, bool *hasDocum
 {
 	bool planHasAggregates = PlanHasAggregates(root);
 	bool planHasGroupby = PlanHasGroupBy(root);
+
+	/*
+	 * Always consider the non-distinct bucket: find projections are still gated
+	 * in CheckFieldCoverage, other covered queries convert on coverage alone, and
+	 * distinct uses its own GUC instead of the find-project feature.
+	 */
+	bool isDistinctQuery = root->parse->distinctClause != NIL;
+	bool considerBucket = !isDistinctQuery || EnableDistinctIndexPushdown;
 	if (root->hasJoinRTEs ||
-		(!planHasAggregates && !planHasGroupby && !EnableIndexOnlyScanForFindProject))
+		(!planHasAggregates && !planHasGroupby && !considerBucket))
 	{
 		return false;
 	}
