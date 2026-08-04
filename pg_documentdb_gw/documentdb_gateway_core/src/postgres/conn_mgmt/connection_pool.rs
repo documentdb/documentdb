@@ -25,6 +25,7 @@ use deadpool::{
 use deadpool_postgres::{
     ClientWrapper, Manager as PostgresManager, ManagerConfig, RecyclingMethod, Status,
 };
+use openssl::sha::Sha256;
 use tokio::{
     task::JoinHandle,
     time::{Duration, Instant},
@@ -98,6 +99,46 @@ fn set_connection_buffer_size(config: &mut tokio_postgres::Config, buffer_size: 
 #[cfg(not(pg_buffer_size))]
 const fn set_connection_buffer_size(_config: &mut tokio_postgres::Config, _buffer_size: usize) {}
 
+/// Nanoseconds since [`EpochClock::epoch`], the domain
+/// [`ConnectionPool::last_used`] decodes from. `almost_now_timestamp` is unix
+/// seconds and does not round-trip through [`time::u64_to_instant`];
+/// `almost_now` freezes once the runtime that initialised it goes away.
+fn now_epoch_nanos() -> u64 {
+    time::instant_to_u64(EpochClock::now())
+}
+
+/// Slack between the pool-wide `statement_timeout` and the client-side deadline
+/// backing it up, so the server's own graceful timeout error wins the race.
+const COMMAND_DEADLINE_SLACK: Duration = Duration::from_secs(1);
+
+/// Client-side deadline for a request that carries no timeout of its own;
+/// `Connection::set_command_deadline` replaces it per request.
+///
+/// Catches a connection that has stopped responding, which no server-side GUC
+/// covers.
+#[must_use]
+pub fn command_deadline_for(setup_configuration: &dyn SetupConfiguration) -> Duration {
+    Duration::from_secs(setup_configuration.postgres_command_timeout_secs())
+        .saturating_add(COMMAND_DEADLINE_SLACK)
+}
+
+/// Only ever compared, never logged. Collision-resistant so a rotated
+/// credential is never mistaken for the current one; the tag byte keeps an
+/// absent credential distinct from an empty one.
+fn credential_fingerprint(password: Option<&str>) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+
+    match password {
+        Some(password) => {
+            hasher.update(b"p");
+            hasher.update(password.as_bytes());
+        }
+        None => hasher.update(b"n"),
+    }
+
+    hasher.finish()
+}
+
 /// Internal deadpool manager wrapper that records connection creation metrics.
 #[doc(hidden)]
 #[derive(Debug)]
@@ -144,20 +185,27 @@ pub struct ConnectionPool {
     pool: DeadpoolPool<InstrumentedManager>,
     /// Secondary pool for connections that may have session-level state
     /// (e.g. `SET statement_timeout`) modified per-request. Uses
-    /// `RecyclingMethod::Clean` to reset all session state when a
-    /// connection is returned
+    /// `RecyclingMethod::Clean`, which runs its reset when a connection is
+    /// handed back *out* of the pool, not when it is returned. That reset
+    /// covers GUCs, temp objects, cursors and advisory locks; it does not roll
+    /// back an open transaction, which is why `Connection` rolls back on drop.
     timeout_pool: DeadpoolPool<InstrumentedManager>,
     /// Nanosecond offset from `EPOCH` of the last `acquire_connection` call.
+    /// Always written through [`now_epoch_nanos`].
     /// Uses `AtomicU64` instead of `RwLock<Instant>` to avoid async lock
     /// overhead on the hot acquire path.
     last_used_nanos: AtomicU64,
     metrics: Arc<ConnectionPoolMetrics>,
     identifier: String,
+    credential_fingerprint: [u8; 32],
     prune_task: JoinHandle<()>,
     /// Whether sampled queries from this pool should carry a `SQLCommenter`
     /// `traceparent` comment for Postgres log correlation. Resolved once from
     /// telemetry configuration at pool creation.
     sql_commenter_enabled: bool,
+    /// Client-side deadline for statements executed on connections from this
+    /// pool; see [`command_deadline_for`].
+    command_deadline: Duration,
 }
 
 impl ConnectionPool {
@@ -199,11 +247,12 @@ impl ConnectionPool {
                 .build()
         };
 
-        // Primary pool — RecyclingMethod::Fast (no state reset on return)
+        // Primary pool — RecyclingMethod::Fast (liveness check only, no reset)
         let pool = build_pool(config.clone(), RecyclingMethod::Fast, Arc::clone(&metrics))?;
 
-        // Timeout pool — RecyclingMethod::Clean (resets session state on return)
-        // Used for requests that SET statement_timeout at session level.
+        // Timeout pool — RecyclingMethod::Clean (resets session state on
+        // checkout). Used for requests that SET statement_timeout at session
+        // level.
         let timeout_pool = build_pool(config, RecyclingMethod::Clean, Arc::clone(&metrics))?;
 
         // `Pool` is internally `Arc`-wrapped, so cloning shares state with the pruner.
@@ -249,16 +298,18 @@ impl ConnectionPool {
         )
         .sql_commenter_enabled();
 
+        let command_deadline = command_deadline_for(setup_configuration);
+
         Ok(Self {
             pool,
             timeout_pool,
-            // Use the exact `Instant::now()` at pool creation time to avoid reporting
-            // an earlier cached timestamp for a freshly constructed pool.
-            last_used_nanos: AtomicU64::new(time::instant_to_u64(Instant::now())),
+            last_used_nanos: AtomicU64::new(now_epoch_nanos()),
             metrics,
             identifier: pool_identifier,
+            credential_fingerprint: credential_fingerprint(password),
             prune_task,
             sql_commenter_enabled,
+            command_deadline,
         })
     }
 
@@ -278,8 +329,7 @@ impl ConnectionPool {
     pub async fn acquire_connection(
         &self,
     ) -> std::result::Result<PoolConnection, deadpool_postgres::PoolError> {
-        self.last_used_nanos
-            .store(EpochClock::almost_now_timestamp(), Ordering::Relaxed);
+        self.touch();
 
         self.pool.get().await.inspect_err(|error| {
             self.metrics.record_timeout_if_pool_timeout(error);
@@ -289,8 +339,10 @@ impl ConnectionPool {
     /// Acquires a connection from the timeout pool.
     ///
     /// Connections from this pool have their session state reset (via
-    /// `RecyclingMethod::Clean`) when returned, preventing session-level
-    /// `SET statement_timeout` from leaking to subsequent requests.
+    /// `RecyclingMethod::Clean`) when they are checked back out, preventing
+    /// session-level `SET statement_timeout` from leaking to subsequent
+    /// requests. That reset covers GUCs, temp objects, cursors and advisory
+    /// locks; it does not roll back an open transaction.
     ///
     /// On a deadpool acquisition timeout, the pool's `connection_timeouts`
     /// metric is incremented before the error is returned.
@@ -306,8 +358,7 @@ impl ConnectionPool {
     pub async fn acquire_timeout_connection(
         &self,
     ) -> std::result::Result<PoolConnection, deadpool_postgres::PoolError> {
-        self.last_used_nanos
-            .store(EpochClock::almost_now_timestamp(), Ordering::Relaxed);
+        self.touch();
 
         self.timeout_pool.get().await.inspect_err(|error| {
             self.metrics.record_timeout_if_pool_timeout(error);
@@ -337,11 +388,44 @@ impl ConnectionPool {
         time::u64_to_instant(self.last_used_nanos.load(Ordering::Relaxed))
     }
 
+    /// Records use of this pool, refreshing the window `clean_unused_pools`
+    /// measures. Handing the pool to a caller counts as use, not just acquiring
+    /// a connection from it, so a pool handed out is never disposed on a stale
+    /// timestamp before its first acquire.
+    pub(crate) fn touch(&self) {
+        self.last_used_nanos
+            .store(now_epoch_nanos(), Ordering::Relaxed);
+    }
+
+    /// Whether the pool still has connections checked out. deadpool reports
+    /// these counters with eventual consistency, so this only ever keeps a pool
+    /// alive — a stale reading costs one extra sweep, never a live eviction.
+    pub(crate) fn has_checked_out_connections(&self) -> bool {
+        let status = self.combined_status();
+        status.size.saturating_sub(status.available) > 0
+    }
+
+    /// Whether this pool was built with `password`, and can therefore still
+    /// serve a connection authenticating with that credential.
+    pub(crate) fn matches_credential(&self, password: Option<&str>) -> bool {
+        openssl::memcmp::eq(
+            &self.credential_fingerprint,
+            &credential_fingerprint(password),
+        )
+    }
+
     /// Whether sampled queries from this pool should carry a `SQLCommenter`
     /// `traceparent` comment for Postgres log correlation.
     #[must_use]
     pub const fn sql_commenter_enabled(&self) -> bool {
         self.sql_commenter_enabled
+    }
+
+    /// Client-side deadline applied to statements executed without a result set
+    /// on connections handed out by this pool.
+    #[must_use]
+    pub const fn command_deadline(&self) -> Duration {
+        self.command_deadline
     }
 
     /// Returns a non-mutating status snapshot for this logical pool.
@@ -522,7 +606,50 @@ mod tests {
                 .await;
 
         assert!(pool.last_used() >= before);
-        assert!(pool.last_used().elapsed() < Duration::from_secs(5));
+        assert!(
+            pool.last_used() - before < Duration::from_millis(250),
+            "a fresh pool must record `last_used` as nanoseconds since the clock epoch"
+        );
+    }
+
+    /// `last_used` feeds `PoolManager::clean_unused_pools`, so both acquire
+    /// paths must record activity in the domain `last_used` decodes from.
+    #[tokio::test]
+    async fn test_acquire_connection_advances_last_used_with_elapsed_time() {
+        let setup_config = test_setup_configuration();
+        let pool =
+            test_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 2)
+                .await;
+
+        // `last_used` is recorded before the acquisition attempt, so this holds
+        // whether or not a live PostgreSQL backend answers.
+        let before_acquire = Instant::now();
+        let _ = pool.acquire_connection().await;
+        let first_use = pool.last_used();
+
+        let skew = first_use.max(before_acquire) - first_use.min(before_acquire);
+        assert!(
+            skew < Duration::from_millis(250),
+            "last_used must be recorded as nanoseconds since the clock epoch, off by {skew:?}"
+        );
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let _ = pool.acquire_timeout_connection().await;
+
+        let advance = pool.last_used().saturating_duration_since(first_use);
+        assert!(
+            advance >= Duration::from_millis(150),
+            "last_used must advance with elapsed time, advanced by {advance:?}"
+        );
+    }
+
+    #[test]
+    fn test_credential_fingerprint_separates_absent_from_empty_credential() {
+        assert_ne!(
+            credential_fingerprint(None),
+            credential_fingerprint(Some("")),
+            "an absent credential must not fingerprint as an empty one"
+        );
     }
 
     #[test]

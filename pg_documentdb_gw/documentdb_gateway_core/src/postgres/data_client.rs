@@ -20,8 +20,9 @@ use crate::{
     explain::Verbosity,
     postgres::{
         conn_mgmt::{
-            run_request_with_retries, Connection, ConnectionPool, ConnectionSource, PoolConnection,
-            PullConnection, QueryOptions, RequestOptions,
+            command_deadline_for, run_request_with_retries, Connection, ConnectionPool,
+            ConnectionSource, PoolConnection, PullConnection, QueryOptions, RequestOptions,
+            StatementError,
         },
         PgDocument,
     },
@@ -58,10 +59,19 @@ pub trait PgDataClient: Send + Sync {
             .connection_pool()
             .is_ok_and(ConnectionPool::sql_commenter_enabled);
 
+        // Mirror the pool's deadline when one is available; otherwise derive it
+        // from the same configuration the pool would have used, so a connection
+        // built without a pool is never left without a client-side bound.
+        let command_deadline = self.connection_pool().map_or_else(
+            |_| command_deadline_for(self.service_context().setup_configuration()),
+            ConnectionPool::command_deadline,
+        );
+
         Ok(Connection::new(
             pool_connection,
             in_transaction,
             sql_commenter_enabled,
+            command_deadline,
         ))
     }
 
@@ -452,7 +462,7 @@ pub trait PgDataClient: Send + Sync {
     where
         T: Send,
         F: Fn(Arc<Connection>) -> Fut + Send + Sync,
-        Fut: Future<Output = std::result::Result<T, tokio_postgres::Error>> + Send,
+        Fut: Future<Output = std::result::Result<T, StatementError>> + Send,
     {
         let source = if let Some((lsid, _)) = connection_context.transaction.as_ref() {
             let caller = connection_context.auth_state.principal()?;
@@ -508,7 +518,7 @@ pub trait PgDataClient: Send + Sync {
     ) -> Result<Response>
     where
         F: Fn(Arc<Connection>) -> Fut + Send + Sync,
-        Fut: Future<Output = std::result::Result<(Vec<Row>, Arc<Connection>), tokio_postgres::Error>>
+        Fut: Future<Output = std::result::Result<(Vec<Row>, Arc<Connection>), StatementError>>
             + Send,
     {
         let (rows, connection) = self

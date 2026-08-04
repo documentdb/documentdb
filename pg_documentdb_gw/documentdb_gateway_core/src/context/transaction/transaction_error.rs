@@ -10,6 +10,7 @@
 use std::fmt;
 
 use crate::error::{DocumentDBError, ErrorCode};
+use crate::postgres::conn_mgmt::StatementError;
 use crate::responses::map_pg_error;
 
 /// Error type for transaction operations that defers PG error mapping
@@ -52,6 +53,18 @@ impl From<tokio_postgres::Error> for TransactionError {
     }
 }
 
+impl From<StatementError> for TransactionError {
+    fn from(error: StatementError) -> Self {
+        match error {
+            StatementError::Postgres(e) => Self::PostgresError(e),
+            StatementError::Timeout(d) => Self::SimpleError(
+                ErrorCode::ExceededTimeLimit,
+                format!("Transaction statement timed out after {d:?}"),
+            ),
+        }
+    }
+}
+
 /// Maps a [`TransactionError`] into a [`DocumentDBError`], applying PG error
 /// mapping with the given replica/activity context. The `in_transaction` flag
 /// is always `true` since these errors originate from transaction operations.
@@ -65,6 +78,31 @@ pub fn map_transaction_error(
         TransactionError::SimpleError(code, msg) => DocumentDBError::documentdb_error(code, msg),
         TransactionError::PostgresError(pg_err) => {
             map_pg_error(pg_err, true, is_replica_cluster, activity_id)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    /// A statement deadline expiry carries no `PostgreSQL` error, so it must be
+    /// surfaced as an application-level `ExceededTimeLimit` rather than a
+    /// `PostgresError`, and the message must report how long was waited.
+    #[test]
+    fn timed_out_statement_maps_to_exceeded_time_limit_transaction_error() {
+        let deadline = Duration::from_secs(7);
+
+        match TransactionError::from(StatementError::Timeout(deadline)) {
+            TransactionError::SimpleError(ErrorCode::ExceededTimeLimit, message) => {
+                assert!(
+                    message.contains(&format!("{deadline:?}")),
+                    "message should report the deadline, got {message:?}"
+                );
+            }
+            other => panic!("timeout must map to SimpleError(ExceededTimeLimit, _), got {other:?}"),
         }
     }
 }

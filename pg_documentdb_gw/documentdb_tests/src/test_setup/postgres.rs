@@ -10,11 +10,11 @@ use std::sync::{Arc, OnceLock};
 
 use documentdb_gateway_core::{
     configuration::SetupConfiguration,
-    error::{DocumentDBError, Result},
+    error::Result,
     postgres::{
         conn_mgmt::{
-            ConnectionPool, PgPoolSettings, PoolManager, AUTHENTICATION_MAX_CONNECTIONS,
-            SYSTEM_REQUESTS_MAX_CONNECTIONS,
+            ConnectionPool, PgPoolSettings, PoolManager, StatementError,
+            AUTHENTICATION_MAX_CONNECTIONS, SYSTEM_REQUESTS_MAX_CONNECTIONS,
         },
         create_query_catalog,
     },
@@ -86,18 +86,18 @@ pub async fn create_user(user: &str, pass: &str) -> Result<()> {
     let pool_manager = get_pool_manager();
 
     let statement = pool_manager.query_catalog().create_db_user(user, pass);
-    if let Err(tokio_error) = pool_manager
+    if let Err(error) = pool_manager
         .authentication_connection()
         .await?
         .batch_execute(&statement)
         .await
     {
-        if let Some(sql_state) = tokio_error.code() {
-            if sql_state == &SqlState::DUPLICATE_OBJECT {
+        if let StatementError::Postgres(ref pg_error) = error {
+            if pg_error.code() == Some(&SqlState::DUPLICATE_OBJECT) {
                 return Ok(());
             }
         }
-        return Err(DocumentDBError::from(tokio_error));
+        return Err(error.into());
     }
 
     pool_manager

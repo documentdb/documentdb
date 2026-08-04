@@ -13,7 +13,6 @@ use tokio::time::{interval, Duration};
 
 use crate::{
     configuration::{DynamicConfiguration, SetupConfiguration},
-    context::ServiceContext,
     error::{DocumentDBError, Result},
     postgres::{
         conn_mgmt::{Connection, ConnectionPool, ConnectionPoolStatus, PgPoolSettings},
@@ -38,6 +37,7 @@ async fn acquire_pooled_connection(pool: &ConnectionPool) -> Result<Connection> 
         pool_connection,
         false,
         pool.sql_commenter_enabled(),
+        pool.command_deadline(),
     ))
 }
 
@@ -88,6 +88,10 @@ impl PoolManager {
         &self.system_auth_pool
     }
 
+    /// Allocates the data pool for `username`, reusing the existing one when it
+    /// was built with the same credential. Every authenticated connection calls
+    /// this, so rebuilding unconditionally would discard warm backends.
+    ///
     /// # Errors
     /// Returns error if the operation fails.
     pub fn allocate_data_pool(
@@ -99,18 +103,38 @@ impl PoolManager {
         let settings = PgPoolSettings::from_configuration(dynamic_configuration);
         let key = (username.to_owned(), settings);
 
-        let user_data_pool = Arc::new(ConnectionPool::new_with_user(
+        // Holding the entry serialises concurrent authentications for the same user.
+        match self.user_data_pools.entry(key) {
+            Entry::Occupied(mut pool_entry) => {
+                // A rotated credential must still replace the pool.
+                if pool_entry.get().matches_credential(Some(password)) {
+                    pool_entry.get().touch();
+                } else {
+                    pool_entry.insert(self.new_data_pool(username, password, settings)?);
+                }
+            }
+            Entry::Vacant(pool_entry) => {
+                pool_entry.insert(self.new_data_pool(username, password, settings)?);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn new_data_pool(
+        &self,
+        username: &str,
+        password: &str,
+        settings: PgPoolSettings,
+    ) -> Result<Arc<ConnectionPool>> {
+        Ok(Arc::new(ConnectionPool::new_with_user(
             self.setup_configuration.as_ref(),
             &self.query_catalog,
             username,
             Some(password),
             &format!("{}-Data", self.setup_configuration.application_name()),
             settings,
-        )?);
-
-        self.user_data_pools.insert(key, user_data_pool);
-
-        Ok(())
+        )?))
     }
 
     /// # Errors
@@ -126,7 +150,11 @@ impl PoolManager {
             None => Err(DocumentDBError::internal_error(
                 "Connection pool missing for user.".to_owned(),
             )),
-            Some(pool_ref) => Ok(Arc::clone(pool_ref.value())),
+            Some(pool_ref) => {
+                let pool = Arc::clone(pool_ref.value());
+                pool.touch();
+                Ok(pool)
+            }
         }
     }
 
@@ -139,7 +167,11 @@ impl PoolManager {
         let settings = PgPoolSettings::from_configuration(dynamic_configuration);
 
         match self.shared_data_pools.entry(settings) {
-            Entry::Occupied(pool_ref) => Ok(Arc::clone(pool_ref.get())),
+            Entry::Occupied(pool_ref) => {
+                let pool = Arc::clone(pool_ref.get());
+                pool.touch();
+                Ok(pool)
+            }
             Entry::Vacant(entry) => {
                 let system_shared_pool = Arc::new(ConnectionPool::new_with_user(
                     self.setup_configuration.as_ref(),
@@ -161,15 +193,16 @@ impl PoolManager {
         where
             K: Clone + Eq + Hash,
         {
-            let entries: Vec<(K, Arc<ConnectionPool>)> = map
-                .iter()
-                .map(|entry| (entry.key().clone(), Arc::clone(entry.value())))
-                .collect();
+            // Snapshot the keys first: `remove_if` takes the shard lock, so
+            // holding an iterator across the call would deadlock.
+            let keys: Vec<K> = map.iter().map(|entry| entry.key().clone()).collect();
 
-            for (key, pool) in entries {
-                if pool.last_used().elapsed() > max_age {
-                    map.remove(&key);
-                }
+            for key in keys {
+                // Re-check under the shard lock so a pool touched since the
+                // snapshot survives.
+                map.remove_if(&key, |_, pool| {
+                    pool.last_used().elapsed() > max_age && !pool.has_checked_out_connections()
+                });
             }
         }
 
@@ -204,11 +237,10 @@ impl PoolManager {
     }
 }
 
-pub fn clean_unused_pools(service_context: ServiceContext) {
+pub fn clean_unused_pools(pool_manager: Arc<PoolManager>) {
     tokio::spawn(async move {
         let mut cleanup_interval =
             interval(Duration::from_secs(POSTGRES_POOL_CLEANUP_INTERVAL_SEC));
-
         let max_age = Duration::from_secs(POSTGRES_POOL_DISPOSE_INTERVAL_SEC);
 
         loop {
@@ -219,9 +251,7 @@ pub fn clean_unused_pools(service_context: ServiceContext) {
                 "Performing the cleanup of unused pools"
             );
 
-            service_context
-                .connection_pool_manager()
-                .clean_unused_pools(max_age);
+            pool_manager.clean_unused_pools(max_age);
         }
     });
 }
@@ -651,6 +681,37 @@ mod tests {
         assert_eq!(
             dynamic_configuration.max_conn() * 2,
             user_pool.status().status().max_size
+        );
+    }
+
+    #[tokio::test]
+    async fn test_allocate_data_pool_reuses_pool_until_credential_changes() {
+        yield_now().await;
+
+        let dynamic_configuration = MaxConnectionConfig {
+            max_conn: 100.into(),
+        };
+        let pool_manager = test_pool_manager();
+        let pool_for = |password: &str| {
+            pool_manager
+                .allocate_data_pool("user", password, &dynamic_configuration)
+                .unwrap();
+            pool_manager
+                .get_data_pool("user", &dynamic_configuration)
+                .unwrap()
+        };
+
+        let first = pool_for("first-token");
+        let reused = pool_for("first-token");
+        let rotated = pool_for("second-token");
+
+        assert!(
+            Arc::ptr_eq(&first, &reused),
+            "re-authentication with the same credential must reuse the warm pool"
+        );
+        assert!(
+            !Arc::ptr_eq(&reused, &rotated),
+            "a changed credential must replace the pool"
         );
     }
 
