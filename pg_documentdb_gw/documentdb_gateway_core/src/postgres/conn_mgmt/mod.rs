@@ -14,8 +14,10 @@ mod pool_settings;
 mod query_dispatch;
 mod retry_policies;
 
-pub use connection::{Connection, QueryOptions, QueryOptionsBuilder, RequestOptions};
-pub use connection_pool::{ConnectionPool, PoolConnection};
+pub use connection::{
+    Connection, QueryOptions, QueryOptionsBuilder, RequestOptions, StatementError,
+};
+pub use connection_pool::{command_deadline_for, ConnectionPool, PoolConnection};
 pub use pool_manager::{
     clean_unused_pools, create_connection_pool_manager, PoolManager,
     AUTHENTICATION_MAX_CONNECTIONS, SYSTEM_REQUESTS_MAX_CONNECTIONS,

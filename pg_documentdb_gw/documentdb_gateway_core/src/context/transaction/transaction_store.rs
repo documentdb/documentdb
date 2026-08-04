@@ -87,7 +87,9 @@ impl TransactionStore {
         }
     }
 
-    pub async fn evict_expired(&self) -> Vec<Arc<GatewayTransaction>> {
+    /// Removes every transaction whose lease has elapsed and hands ownership
+    /// of them to the caller, which is responsible for rolling them back.
+    pub async fn evict_expired(&self) -> Vec<GatewayTransaction> {
         let mut evicted = Vec::new();
 
         let expired_keys: Vec<SessionKey> = self
@@ -99,8 +101,14 @@ impl TransactionStore {
             .collect();
 
         for key in expired_keys {
-            if let Some((_, (_, transaction))) = self.transactions.remove(&key) {
-                evicted.push(Arc::new(transaction));
+            // Re-check under the shard lock: the key is the session, so a
+            // client that started a fresh transaction must not be evicted live.
+            let removed = self.transactions.remove_if(&key, |_, (expires_at, _)| {
+                EpochClock::almost_now_timestamp() >= *expires_at
+            });
+
+            if let Some((_, (_, transaction))) = removed {
+                evicted.push(transaction);
             }
         }
 

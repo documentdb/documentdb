@@ -27,16 +27,14 @@ pub fn get_service_context(
 ) -> ServiceContext {
     tracing::info!("Initial dynamic configuration: {dynamic_configuration:?}");
 
-    let service_context = ServiceContext::new(
+    conn_mgmt::clean_unused_pools(Arc::clone(&connection_pool_manager));
+
+    ServiceContext::new(
         setup_configuration,
         dynamic_configuration,
         connection_pool_manager,
         tls_provider,
-    );
-
-    conn_mgmt::clean_unused_pools(service_context.clone());
-
-    service_context
+    )
 }
 
 /// # Panics
