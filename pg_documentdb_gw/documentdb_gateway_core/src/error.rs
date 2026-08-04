@@ -14,6 +14,7 @@ use documentdb_macros::{documentdb_error_code_enum, documentdb_extensive_log_pos
 use openssl::error::ErrorStack;
 use tokio_postgres::error::SqlState;
 
+use crate::postgres::conn_mgmt::StatementError;
 use crate::responses::constant::{
     generic_internal_error_message, pg_returned_invalid_response_message,
 };
@@ -415,6 +416,18 @@ impl From<tokio_postgres::Error> for DocumentDBError {
             Some(Box::new(error)),
             ErrorKind::Postgres,
         )
+    }
+}
+
+impl From<StatementError> for DocumentDBError {
+    fn from(error: StatementError) -> Self {
+        match error {
+            StatementError::Postgres(e) => Self::from(e),
+            StatementError::Timeout(duration) => Self::documentdb_error(
+                ErrorCode::ExceededTimeLimit,
+                format!("Statement timed out after {duration:?}"),
+            ),
+        }
     }
 }
 

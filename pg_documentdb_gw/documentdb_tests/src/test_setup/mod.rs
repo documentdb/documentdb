@@ -11,4 +11,5 @@ pub mod config;
 pub mod configuration_utils;
 pub mod gateway;
 pub mod initialize;
+pub mod pools;
 pub mod postgres;

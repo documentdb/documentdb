@@ -19,7 +19,7 @@ use crate::{
     postgres::conn_mgmt::{
         connection::{Connection, QueryOptions, RequestOptions},
         retry_policies::{LongRetryPolicy, RetryPolicyBuilder, ShortRetryPolicy},
-        ConnectionPool,
+        ConnectionPool, StatementError,
     },
     requests::{request_tracker::RequestTracker, RequestIntervalKind},
     responses::map_pg_error,
@@ -241,6 +241,27 @@ fn check_for_command_timeout_error(
     }
 }
 
+/// Maps a [`StatementError`] into a [`DocumentDBError`], applying the same
+/// context-aware Postgres error mapping used elsewhere in this module for the
+/// raw Postgres variant and surfacing a deadline expiry as an exceeded time
+/// limit.
+fn map_statement_error(
+    error: StatementError,
+    in_transaction: bool,
+    is_replica_cluster: bool,
+    activity_id: &str,
+) -> DocumentDBError {
+    match error {
+        StatementError::Postgres(e) => {
+            map_pg_error(e, in_transaction, is_replica_cluster, activity_id)
+        }
+        StatementError::Timeout(duration) => DocumentDBError::documentdb_error(
+            ErrorCode::ExceededTimeLimit,
+            format!("Statement timed out after {duration:?}"),
+        ),
+    }
+}
+
 /// Sets the `PostgreSQL` statement timeout
 ///
 /// Returns `true` if a gateway transaction was started (caller must COMMIT/ROLLBACK).
@@ -250,7 +271,7 @@ async fn set_statement_timeout(
     query_options: &QueryOptions,
     in_user_transaction: bool,
     request_tracker: &RequestTracker,
-) -> std::result::Result<bool, tokio_postgres::Error> {
+) -> std::result::Result<bool, StatementError> {
     let max_time_ms = match max_time {
         Some(d) if !in_user_transaction && !query_options.supports_backend_timeout() => {
             d.as_millis()
@@ -266,10 +287,13 @@ async fn set_statement_timeout(
     // Start a gateway transaction if needed
     if use_transaction {
         let start = Instant::now();
+        // Marked before the statement is issued. If the request is cancelled
+        // while `BEGIN` is in flight the server may still have started the
+        // transaction, and only a set flag triggers the rollback that keeps the
+        // connection from being released to the pool dirty.
+        connection.set_in_transaction(true);
         connection.batch_execute("BEGIN").await?;
         request_tracker.record_duration(RequestIntervalKind::PostgresBeginTransaction, start);
-
-        connection.set_in_transaction(true);
     }
 
     // SET [LOCAL] statement_timeout
@@ -281,8 +305,11 @@ async fn set_statement_timeout(
 
     let set_start = Instant::now();
     if let Err(e) = connection.batch_execute(&set_cmd).await {
-        if use_transaction {
-            let _ = connection.batch_execute("ROLLBACK").await;
+        // Only clear the flag once the ROLLBACK is acknowledged. Clearing it
+        // after a failed ROLLBACK would suppress the backstop rollback in
+        // `Connection::drop` and return a connection with an open transaction
+        // to the pool.
+        if use_transaction && connection.batch_execute("ROLLBACK").await.is_ok() {
             connection.set_in_transaction(false);
         }
         return Err(e);
@@ -327,7 +354,7 @@ pub async fn run_request_with_retries<T, F, Fut>(
 ) -> Result<T>
 where
     F: Fn(Arc<Connection>) -> Fut,
-    Fut: Future<Output = std::result::Result<T, tokio_postgres::Error>>,
+    Fut: Future<Output = std::result::Result<T, StatementError>>,
 {
     let overall_command_timeout = request_options.command_timeout().unwrap_or(max_time);
 
@@ -374,6 +401,7 @@ where
                             pool_conn,
                             false,
                             pool.sql_commenter_enabled(),
+                            pool.command_deadline(),
                         )),
                         Err(e) => {
                             if needs_timeout_pool {
@@ -391,6 +419,11 @@ where
                 }
             };
 
+            // Applied per attempt because a cursor or transaction connection
+            // outlives the request that opened it and must not keep serving
+            // later requests under a bound they never asked for.
+            connection.set_command_deadline(request_options.command_timeout());
+
             // Set statement timeout (only when needed)
             let in_gateway_txn = if needs_gateway_timeout {
                 match set_statement_timeout(
@@ -404,7 +437,7 @@ where
                 {
                     Ok(v) => v,
                     Err(e) => {
-                        break 'attempt Err(map_pg_error(
+                        break 'attempt Err(map_statement_error(
                             e,
                             in_transaction,
                             request_options.in_replica_cluster_mode(),
@@ -431,6 +464,7 @@ where
                         let commit_start = Instant::now();
                         match connection.batch_execute("COMMIT").await {
                             Ok(()) => {
+                                connection.set_in_transaction(false);
                                 request_context.tracker.record_duration(
                                     RequestIntervalKind::PostgresCommitTransaction,
                                     commit_start,
@@ -438,10 +472,11 @@ where
                                 Ok(value)
                             }
                             Err(e) => {
-                                // PostgreSQL auto-rolls-back a failed COMMIT, so the
-                                // connection is no longer in a transaction.
+                                // The gateway owns this transaction and nothing
+                                // else will touch the connection, so clear
+                                // unconditionally.
                                 connection.set_in_transaction(false);
-                                let mapped_error = map_pg_error(
+                                let mapped_error = map_statement_error(
                                     e,
                                     in_transaction,
                                     request_options.in_replica_cluster_mode(),
@@ -452,9 +487,12 @@ where
                         }
                     }
                     Err(e) => {
-                        let _ = connection.batch_execute("ROLLBACK").await;
-                        connection.set_in_transaction(false);
-                        let mapped_error = map_pg_error(
+                        // Only clear the flag once the ROLLBACK is acknowledged,
+                        // so a failed ROLLBACK still leaves the backstop armed.
+                        if connection.batch_execute("ROLLBACK").await.is_ok() {
+                            connection.set_in_transaction(false);
+                        }
+                        let mapped_error = map_statement_error(
                             e,
                             in_transaction,
                             request_options.in_replica_cluster_mode(),
@@ -471,7 +509,7 @@ where
                     .tracker
                     .record_duration(RequestIntervalKind::ProcessRequest, request_start);
                 query_result.map_err(|e| {
-                    map_pg_error(
+                    map_statement_error(
                         e,
                         in_transaction,
                         request_options.in_replica_cluster_mode(),

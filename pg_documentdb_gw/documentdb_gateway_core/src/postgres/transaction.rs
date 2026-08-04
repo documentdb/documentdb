@@ -40,6 +40,10 @@ impl Transaction {
             }
         };
 
+        // Marked before the statement is issued: if the batch fails partway or
+        // the caller is cancelled, only a set flag triggers the rollback.
+        conn.set_in_transaction(true);
+
         conn.batch_execute(&format!(
                 "START TRANSACTION ISOLATION LEVEL {isolation}; SET LOCAL lock_timeout='20ms'; SET LOCAL citus.max_adaptive_executor_pool_size=1;"
             ))
@@ -58,8 +62,12 @@ impl Transaction {
 
     /// # Errors
     /// Returns error if the operation fails.
+    ///
+    /// A failed COMMIT leaves the in-transaction flag set: the caller may still
+    /// abort, so the drop-time backstop stays armed.
     pub async fn commit(&mut self) -> Result<(), TransactionError> {
         self.conn.batch_execute("COMMIT").await?;
+        self.conn.set_in_transaction(false);
         self.committed = true;
         Ok(())
     }
@@ -68,6 +76,7 @@ impl Transaction {
     /// Returns error if the operation fails.
     pub async fn abort(&mut self) -> Result<(), TransactionError> {
         self.conn.batch_execute("ROLLBACK").await?;
+        self.conn.set_in_transaction(false);
         self.committed = true;
         Ok(())
     }

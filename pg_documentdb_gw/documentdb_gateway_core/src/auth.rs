@@ -27,6 +27,7 @@ use crate::{
     postgres::{
         conn_mgmt::{
             run_request_with_retries, Connection, ConnectionSource, QueryOptions, RequestOptions,
+            StatementError,
         },
         PgDataClient, PgDocument,
     },
@@ -239,7 +240,7 @@ async fn call_run_request_with_retries<T, F, Fut>(
 ) -> Result<T>
 where
     F: Fn(Arc<Connection>) -> Fut,
-    Fut: std::future::Future<Output = std::result::Result<T, tokio_postgres::Error>>,
+    Fut: std::future::Future<Output = std::result::Result<T, StatementError>>,
 {
     let pool = connection_context
         .service_context
@@ -500,7 +501,10 @@ async fn perform_oidc_authentication(
         let rows = connection
             .query(query, &[Type::TEXT, Type::TEXT], &[&oid, &token_string])
             .await?;
-        rows.first().map(|row| row.try_get(0)).transpose()
+        rows.first()
+            .map(|row| row.try_get(0))
+            .transpose()
+            .map_err(StatementError::from)
     };
 
     let result = call_run_request_with_retries(connection_context, request_context, run_func).await;
@@ -912,6 +916,7 @@ pub async fn get_user_oid(
         rows.first()
             .map(|row| row.try_get::<_, tokio_postgres::types::Oid>(0))
             .transpose()
+            .map_err(StatementError::from)
     };
 
     let user_oid_result =
