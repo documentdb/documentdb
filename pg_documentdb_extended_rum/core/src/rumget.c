@@ -55,6 +55,8 @@ static void entryGetItemOrdered(RumState *rumstate, RumScanEntry entry,
 static void entryFindItem(RumState *rumstate, RumScanEntry entry, RumItem *item, Snapshot
 						  snapshot);
 static void CopyPageContents(Page sourcePage, Page targetPage);
+static bool TrySkipScanToNextDistinctKey(IndexScanDesc scan, RumScanOpaque so,
+										 RumScanEntry entry);
 
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_get_current_index_key);
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_skip_tids_on_current_entry);
@@ -5415,6 +5417,7 @@ RMGR_PG_FUNCTION_DEF(documentdb_rum_skip_tids_on_current_entry)
 {
 	IndexScanDesc scan = (IndexScanDesc) PG_GETARG_POINTER(0);
 	BlockNumber block = PG_GETARG_UINT32(1);
+	bool skipScan = PG_NARGS() > 2 ? PG_GETARG_BOOL(2) : false;
 
 	RumScanOpaque so = (RumScanOpaque) scan->opaque;
 	if (so->scanType != RumOrderedScan)
@@ -5424,17 +5427,53 @@ RMGR_PG_FUNCTION_DEF(documentdb_rum_skip_tids_on_current_entry)
 	}
 
 	RumScanEntry entry = so->orderByScanData->orderByEntry;
+
+	/*
+	 * When skip-scan is requested, ask the opclass (via the same outer-ordering
+	 * function used to generate skip bounds) whether it can determine a bound to
+	 * jump ahead to the next distinct leading-key value. If it can, re-seek the
+	 * ordered scan to that bound instead of walking the remaining TIDs one by
+	 * one, and report that the skip scan was performed so the caller can keep
+	 * driving the scan through this path. If it cannot (e.g. a single-column
+	 * index, or an order-by prefix that already covers every index path, so
+	 * there is no trailing key to skip over), fall back to the per-TID skip
+	 * below and report false so the caller stops re-attempting the skip-scan
+	 * path for this scan.
+	 *
+	 * This is attempted before the "current entry finished" short-circuit below
+	 * because a composite key whose trailing suffix is highly selective (for
+	 * example a unique trailing column) exhausts its posting list after a single
+	 * TID, so the scan reaches the key boundary - exactly where we want to jump
+	 * to the next distinct leading value - with the entry already marked
+	 * finished.
+	 *
+	 * The re-seek does not coordinate with parallel workers, so the skip-scan
+	 * path is only taken for non-parallel scans; parallel scans always fall back
+	 * to the per-TID skip.
+	 */
+	if (skipScan &&
+		scan->parallel_scan == NULL &&
+		so->totalsearchentries == 1 &&
+		so->rumstate.canOuterOrdering[entry->attnum - 1] &&
+		so->rumstate.outerOrderingFn[entry->attnum - 1].fn_nargs == 4)
+	{
+		if (TrySkipScanToNextDistinctKey(scan, so, entry))
+		{
+			PG_RETURN_BOOL(true);
+		}
+	}
+
 	if (entry->isFinished)
 	{
 		/* Current entry is finished - no need to move forward */
-		PG_RETURN_VOID();
+		PG_RETURN_BOOL(false);
 	}
 
 	if (block == InvalidBlockNumber)
 	{
 		/* We wanna just skip the rest of the rows for this entry */
 		entry->isFinished = true;
-		PG_RETURN_VOID();
+		PG_RETURN_BOOL(false);
 	}
 
 	RumItem targetItem = { 0 };
@@ -5445,7 +5484,7 @@ RMGR_PG_FUNCTION_DEF(documentdb_rum_skip_tids_on_current_entry)
 	if (rumCompareItemPointers(&entry->curItem.iptr, &targetItem.iptr) >= 0)
 	{
 		/* Current item is after the target block - no need to move forward */
-		PG_RETURN_VOID();
+		PG_RETURN_BOOL(false);
 	}
 
 	while (!entry->isFinished &&
@@ -5459,7 +5498,7 @@ RMGR_PG_FUNCTION_DEF(documentdb_rum_skip_tids_on_current_entry)
 	if (entry->isFinished)
 	{
 		/* We finished the entry - we're done */
-		PG_RETURN_VOID();
+		PG_RETURN_BOOL(false);
 	}
 
 	/* If we got here, we reached the target block (or could have exceeded it by 1 entry)
@@ -5467,5 +5506,94 @@ RMGR_PG_FUNCTION_DEF(documentdb_rum_skip_tids_on_current_entry)
 	 * we rev offset back by one entry.
 	 */
 	entry->offset -= entry->scanDirection;
-	PG_RETURN_VOID();
+	PG_RETURN_BOOL(false);
+}
+
+
+/*
+ * Attempts to advance the ordered scan past the current leading-key value by
+ * asking the opclass for a distinct skip bound. Returns true when a bound was
+ * found and the scan was re-seeked, in which case the caller must not perform
+ * the per-TID skip. Returns false when no skip bound could be determined, so the
+ * caller should fall back to the per-TID skip.
+ */
+static bool
+TrySkipScanToNextDistinctKey(IndexScanDesc scan, RumScanOpaque so,
+							 RumScanEntry entry)
+{
+	/* Fetch the current index key value for the ordered entry. */
+	Page page = so->orderByScanData->orderByEntryPageCopy;
+	OffsetNumber off = so->orderByScanData->orderStack->off - so->orderScanDirection;
+	if (off < FirstOffsetNumber || off > PageGetMaxOffsetNumber(page))
+	{
+		return false;
+	}
+
+	ItemId itemId = PageGetItemId(page, off);
+	IndexTuple itup = (IndexTuple) PageGetItem(page, itemId);
+
+	RumNullCategory icategory;
+	Datum idatum = rumtuple_get_key(&so->rumstate, itup, &icategory);
+	if (icategory != RUM_CAT_NORM_KEY)
+	{
+		return false;
+	}
+
+	bool resetScan = false;
+	MemoryContext oldCtx = MemoryContextSwitchTo(so->tempCtx);
+	bool attbyval = TupleDescAttr(so->rumstate.origTupdesc, entry->attnum - 1)->attbyval;
+	int attlen = TupleDescAttr(so->rumstate.origTupdesc, entry->attnum - 1)->attlen;
+	Datum entryToUse = entry->queryKeyOverride != (Datum) 0 ?
+					   entry->queryKeyOverride : entry->queryKey;
+
+	/*
+	 * The opclass needs to know how far into the index paths the scan is
+	 * ordered so it only skips the trailing paths after the LAST order-by
+	 * column. The order-by columns need not be the leading index paths and need
+	 * not be contiguous: equality-constrained columns may precede them or sit
+	 * between them (an equality-pinned middle column still lets the index
+	 * satisfy the surrounding order-by columns). Hand the opclass the LAST
+	 * order-by query key so it can map that column to its index path position;
+	 * everything up to and including that path must stay pinned and only the
+	 * paths strictly after it are safe to skip.
+	 */
+	int lastOrderByKeyIdx = so->orderByKeyIndex + scan->numberOfOrderBys - 1;
+	Datum orderByQuery = (so->orderByKeyIndex >= 0 &&
+						  lastOrderByKeyIdx >= 0 &&
+						  lastOrderByKeyIdx < (int) so->nkeys) ?
+						 so->keys[lastOrderByKeyIdx]->query : (Datum) 0;
+	Datum skipBound = FunctionCall6Coll(
+		&so->rumstate.outerOrderingFn[entry->attnum - 1],
+		so->rumstate.supportCollation[entry->attnum - 1],
+		idatum,
+		entryToUse,
+		UInt16GetDatum(RumIndexTransform_IndexGenerateDistinctSkipBound),
+		PointerGetDatum(entry->extra_data),
+		Int32GetDatum(scan->numberOfOrderBys),
+		orderByQuery);
+	MemoryContextSwitchTo(oldCtx);
+
+	if (skipBound != (Datum) 0)
+	{
+		if (!attbyval && entry->queryKeyOverride != (Datum) 0)
+		{
+			pfree(DatumGetPointer(entry->queryKeyOverride));
+		}
+
+		entry->queryKeyOverride = datumTransfer(skipBound, attbyval, attlen);
+		resetScan = true;
+	}
+
+	MemoryContextReset(so->tempCtx);
+
+	if (!resetScan)
+	{
+		return false;
+	}
+
+	/* Re-seek the ordered scan to the new skip bound. */
+	rumFlushKilledEntries(so);
+	startScanEntryOrderedCore(so, entry, scan->xs_snapshot);
+	entry->isFinished = false;
+	return true;
 }
