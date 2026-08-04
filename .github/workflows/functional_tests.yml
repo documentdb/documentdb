@@ -349,10 +349,17 @@ jobs:
 
       # Same signatures + warning-only standard as the ADO gate's log check.
       # The OSS gateway runs as a PG background worker, so pglog IS the gateway log.
+      #
+      # The non-zero exit is converted into a warning annotation rather than
+      # left to continue-on-error: a step that exits non-zero is rendered as an
+      # ERROR annotation even when continue-on-error keeps the job green, which
+      # put seven red annotations on a fully passing run.
       - name: Check for Log Errors
         if: always()
-        continue-on-error: true
-        run: ./documentdb-local/functional-tests/scripts/validate_test_log_errors.sh "$RUNNER_TEMP/pgdata/pglog.log"
+        run: |
+          ./documentdb-local/functional-tests/scripts/validate_test_log_errors.sh \
+            "$RUNNER_TEMP/pgdata/pglog.log" \
+            || echo "::warning::internal-error signatures found in the engine log for ${{ matrix.tag }} (summary above); informational, does not gate"
 
       - name: Upload gate results
         if: always()
