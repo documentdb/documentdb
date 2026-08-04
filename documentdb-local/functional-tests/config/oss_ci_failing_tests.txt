@@ -6622,10 +6622,7 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expres
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/date/dateFromParts/test_dateFromParts_timezone.py::test_dateFromParts_timezone[documentdb-tz_olson_lowercase]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/date/dateFromParts/test_dateFromParts_timezone.py::test_dateFromParts_timezone[documentdb-tz_olson_uppercase]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/date/dateFromString/test_dateFromString_basic.py::test_dateFromString_basic[documentdb-auto_natural]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/date/dateFromString/test_dateFromString_basic.py::test_dateFromString_basic[documentdb-invalid_day]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/date/dateFromString/test_dateFromString_basic.py::test_dateFromString_basic[documentdb-leap_year_invalid]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/date/dateFromString/test_dateFromString_basic.py::test_dateFromString_basic[documentdb-natural_with_tz_offset]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/date/dateFromString/test_dateFromString_basic.py::test_dateFromString_basic[documentdb-non_leap_century]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/date/dateFromString/test_dateFromString_timezone.py::test_dateFromString_timezone[documentdb-offset_in_dateString_with_tz]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/date/dateFromString/test_dateFromString_timezone.py::test_dateFromString_timezone[documentdb-tz_0530_adjust]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/date/dateFromString/test_dateFromString_timezone.py::test_dateFromString_timezone[documentdb-tz_empty]
@@ -7802,10 +7799,6 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expres
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_insert[documentdb-string_leading_tab-toDate]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_insert[documentdb-string_multiple_space_separator-convert]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_insert[documentdb-string_multiple_space_separator-toDate]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_insert[documentdb-string_non_leap_century_1900-convert]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_insert[documentdb-string_non_leap_century_1900-toDate]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_insert[documentdb-string_non_leap_feb29-convert]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_insert[documentdb-string_non_leap_feb29-toDate]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_insert[documentdb-string_tab_separator-convert]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_insert[documentdb-string_tab_separator-toDate]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_insert[documentdb-string_trailing_nbsp-convert]
@@ -7832,10 +7825,6 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expres
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_literal[documentdb-string_leading_tab-toDate]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_literal[documentdb-string_multiple_space_separator-convert]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_literal[documentdb-string_multiple_space_separator-toDate]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_literal[documentdb-string_non_leap_century_1900-convert]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_literal[documentdb-string_non_leap_century_1900-toDate]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_literal[documentdb-string_non_leap_feb29-convert]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_literal[documentdb-string_non_leap_feb29-toDate]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_literal[documentdb-string_tab_separator-convert]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_literal[documentdb-string_tab_separator-toDate]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/type/toDate/test_toDate_basic.py::test_toDate_basic_literal[documentdb-string_trailing_nbsp-convert]
@@ -15796,3 +15785,11 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/system/diagnostic/co
 docdb_functional_tests/documentdb_tests/compatibility/tests/system/diagnostic/commands/validate/test_validate_response_structure.py::test_validate_response_properties[documentdb-nrecords_is_int]
 docdb_functional_tests/documentdb_tests/compatibility/tests/system/diagnostic/commands/validate/test_validate_response_structure.py::test_validate_response_properties[documentdb-repairMode_is_string]
 docdb_functional_tests/documentdb_tests/compatibility/tests/system/diagnostic/commands/validate/test_validate_response_structure.py::test_validate_response_properties[documentdb-uuid_exists]
+
+# $geometry with a GeometryCollection returns no match on this stack (the other
+# 14 GeoJSON types in test_geometry_geojson_types all pass). Not a regression:
+# the previous allowlist covered only test_smoke_geometry.py under
+# specifiers/geometry/, so the full-suite move is what first ran this case, and
+# the baseline was rebased from the backend gate's passing lists, where this
+# case passes. Deterministic, no engine restart. Per-gateway divergence.
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/query/geospatial/specifiers/geometry/test_geometry_geojson_types.py::test_geometry_geojson_types[documentdb-geometry_collection]
