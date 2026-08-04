@@ -1,37 +1,6 @@
 name: Functional tests
 run-name: ${{ github.event.pull_request.title || '' }}
 
-# Known-failures xfail gate over the FULL pinned suite (~50k tests at
-# source_sha 5a50ef4), split across parallel matrix legs — the same mechanism
-# the internal ADO backend gate runs (see scripts/run_pytest_split.sh):
-#
-#   * The BUILD job compiles the engine + gateway FROM SOURCE once and ships
-#     the installed tree as an artifact. Three cache layers keep it fast: the
-#     dependency tree (PostgreSQL, libbson, Citus, PostGIS, ... — everything
-#     that does not depend on this repo's sources) keyed on the install
-#     scripts; ccache for the DocumentDB C build; cargo caches for the
-#     pgrx-built gateway host.
-#   * Each PARALLEL leg installs the artifact, starts via
-#     start_oss_server.sh -c -g -r (extended_rum + gateway-in-PG), collects
-#     the non-no_parallel universe, and runs its stride slice
-#     (ids[SPLIT_ID::SPLIT_TOTAL]) with -n auto under conftest_known_failures
-#     (oss_ci_{failing,flaky} pair + the engine-level ci_crash_tests.txt skip
-#     list), then sequentially re-runs transient failures and gates on the
-#     merged report (functional_gate.py recover-and-gate; --expected-ids means
-#     green requires a recorded outcome for every assigned test).
-#   * The NO_PARALLEL leg runs every no_parallel test serially (-p no:xdist).
-#   * The verify-splits job asserts every parallel leg collected an IDENTICAL
-#     universe (functional_gate.py verify-split-universes) — a leg whose
-#     collection silently omitted a node would otherwise shift the stride and
-#     run part of the suite on NO leg while every leg still scored green.
-#
-# No allowlist, no documentdb-local image. Log scan is warning-only.
-#
-# Baseline maintenance (list reconciliation after a source_sha bump or an
-# engine fix): download the per-leg artifacts, fold the leg report.json files
-# into one with functional_gate.py merge-reports, then reconcile the combined
-# full-suite report into the oss_ci_* pair (see the functional-tests README).
-
 concurrency:
   group: functional-tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -83,25 +52,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      # --- Layer 1: the dependency tree. Nothing in it reads this repo's
-      #     sources, so it is cached as one tarball keyed on the install
-      #     scripts. The tar is taken from a --deps-only run BEFORE DocumentDB
-      #     is built, so a restored cache can never carry a previous commit's
-      #     engine files. ---
-      - name: Restore dependency-tree cache
-        id: deps-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/deps-tar/deps.tar.zst
-          # v3 salt: v1 swept all of /usr/local (dragging in ~11 GiB of the
-          # runner image's preinstalled toolchains); v2 used `find -newer`,
-          # which captured only 13 files — the dep installs land largely in
-          # /usr/include and /usr/lib and often preserve source mtimes, so the
-          # cache restored a 42 MB tree with no bson.h and the cache-HIT build
-          # failed to compile (run 30654379381).
-          key: deps-v3-pg${{ env.PG_VERSION }}-citus12-${{ hashFiles('scripts/install_setup_*.sh', 'scripts/install_citus_indent.sh', 'scripts/setup_versions.sh', 'scripts/utils.sh') }}
-
-      # --- Layer 2: ccache for the DocumentDB C build. PATH masquerade covers
+      # --- Layer 1: ccache for the DocumentDB C build. PATH masquerade covers
       #     the unprivileged `make`; `sudo make install` only copies. ---
       - name: Restore ccache
         uses: actions/cache@v4
@@ -110,7 +61,7 @@ jobs:
           key: ccache-pg${{ env.PG_VERSION }}-${{ github.sha }}
           restore-keys: ccache-pg${{ env.PG_VERSION }}-
 
-      # --- Layer 3: cargo caches. install_rust_tools.sh already no-ops when
+      # --- Layer 2: cargo caches. install_rust_tools.sh already no-ops when
       #     the pinned tool version is present, so restoring ~/.cargo/bin
       #     skips the 8-minute cargo-pgrx source build; the target cache makes
       #     the gateway-host build incremental. ---
@@ -135,15 +86,13 @@ jobs:
             gwhost-${{ hashFiles('pg_documentdb_gw_host/Cargo.lock', 'rust-toolchain.toml') }}-
             gwhost-
 
-      # The rust toolchain + cargo-pgrx setup needs NOTHING from the dependency
-      # tree, and on a cold path it is the single largest item (~8 min compiling
-      # cargo-pgrx). It runs in the BACKGROUND, overlapped with the deps
-      # build/restore and the engine build; only the gateway-host build (which
-      # needs pg_config AND pgrx) joins it. install_rustup.sh is pure curl (no
-      # apt), so it cannot contend with the dep phase's apt operations.
-      - name: Build engine + gateway (rust setup overlapped with deps)
-        env:
-          DEPS_HIT: ${{ steps.deps-cache.outputs.cache-hit }}
+      # The rust toolchain + cargo-pgrx setup needs NOTHING from the build, and
+      # on a cold path it is the single largest item (~8 min compiling
+      # cargo-pgrx). It runs in the BACKGROUND, overlapped with the engine
+      # build; only the gateway-host build (which needs pg_config AND pgrx)
+      # joins it. install_rustup.sh is pure curl (no apt), so it cannot
+      # contend with the build's apt operations.
+      - name: Build engine + gateway (rust setup overlapped with the build)
         run: |
           set -euo pipefail
           chmod +x ./scripts/build_documentdb_with_scripts.sh
@@ -156,59 +105,22 @@ jobs:
           ) > "$RUNNER_TEMP/rust-setup.log" 2>&1 &
           RUST_PID=$!
 
-          # --- foreground: dependency tree — build on miss, restore on hit ---
-          if [ "$DEPS_HIT" != "true" ]; then
-            # Exact before/after path diff over the roots the dep phase
-            # installs into. Path-set difference, NOT mtime: `make install`
-            # preserves source timestamps often enough that -newer misses most
-            # files, and a silently-thin dependency tar restores as a green
-            # cache hit whose build then fails on a missing header.
-            ROOTS="/usr/local /usr/include /usr/lib /etc/ld.so.conf.d"
-            sudo find $ROOTS \( -type f -o -type l \) 2>/dev/null | sort > /tmp/deps-before.txt
-            # SKIP_CITUS_INDENT: lint tooling (uncrustify) — nothing in this
-            # gate runs it. SKIP_RUM: this stack starts with -r and loads the
-            # in-repo documentdb_extended_rum; the public rum module is never
-            # referenced.
-            SKIP_CITUS_INDENT=1 SKIP_RUM=1 ./scripts/build_documentdb_with_scripts.sh \
-              --pg-version ${{ env.PG_VERSION }} --citus-version 12 --deps-only
-            sudo find $ROOTS \( -type f -o -type l \) 2>/dev/null | sort > /tmp/deps-after.txt
-            mkdir -p ~/deps-tar
-            { echo "usr/lib/postgresql/${{ env.PG_VERSION }}"; \
-              comm -13 /tmp/deps-before.txt /tmp/deps-after.txt | sed 's|^/||'; } > /tmp/deps-manifest
-            echo "dependency files added by this phase: $(wc -l < /tmp/deps-manifest)"
-            # Fail closed on an implausibly thin manifest rather than caching
-            # it: that is exactly how v2 poisoned the cache for every later run.
-            if [ "$(wc -l < /tmp/deps-manifest)" -lt 200 ]; then
-              echo "::error::dependency manifest has only $(wc -l < /tmp/deps-manifest) entries — refusing to cache a partial tree."
-              exit 1
-            fi
-            sudo tar -C / -cf - -T /tmp/deps-manifest | zstd -T0 -3 -o ~/deps-tar/deps.tar.zst
-            ls -lh ~/deps-tar/deps.tar.zst
-          else
-            sudo tar -C / --zstd -xf ~/deps-tar/deps.tar.zst
-            sudo ldconfig
-            # Sanity-check the restored tree before compiling against it. A
-            # cache entry that is present but thin otherwise surfaces as an
-            # inscrutable compile error hundreds of lines later (run
-            # 30654379381: "bson.h: No such file or directory").
-            missing=""
-            for f in /usr/include/libbson-1.0/bson/bson.h \
-                     /usr/lib/postgresql/${{ env.PG_VERSION }}/bin/pg_config \
-                     /usr/lib/postgresql/${{ env.PG_VERSION }}/lib/citus.so; do
-              [ -e "$f" ] || missing="$missing $f"
-            done
-            if [ -n "$missing" ]; then
-              echo "::error::restored dependency cache is incomplete (missing:$missing). Salt the deps cache key to rebuild."
-              exit 1
-            fi
-            echo "Dependency tree restored and verified."
-          fi
-
-          # --- DocumentDB C build (ccache via PATH masquerade) ---
+          # Snapshot the install roots BEFORE anything is built: the tar shipped
+          # to the legs is an exact before/after path-set difference over them.
+          # Path sets, NOT mtimes — `make install` preserves source timestamps
+          # often enough that `find -newer` misses most files and yields a
+          # silently thin tar whose legs then fail on a missing header.
+          # ccache is installed first so it stays out of that difference.
           sudo apt-get install -y --no-install-recommends ccache >/dev/null
+          ROOTS="/usr/local /usr/include /usr/lib /etc/ld.so.conf.d"
+          sudo find $ROOTS \( -type f -o -type l \) 2>/dev/null | sort > /tmp/install-before.txt
+
+          # --- foreground: dependencies + DocumentDB in one pass (ccache via
+          #     PATH masquerade covers the unprivileged `make`; the script's
+          #     `sudo make install` only copies) ---
           export CCACHE_DIR=~/.ccache CCACHE_MAXSIZE=500M
           PATH="/usr/lib/ccache:$PATH" ./scripts/build_documentdb_with_scripts.sh \
-            --pg-version ${{ env.PG_VERSION }} --skip-deps
+            --pg-version ${{ env.PG_VERSION }} --citus-version 12
           ccache -s | head -4
 
           # --- join the rust setup, then build the gateway host (needs both) ---
@@ -222,16 +134,28 @@ jobs:
           # -i installs into the PG dirs (start_oss_server -g loads it as an extension)
           ./scripts/build_and_install_with_pgrx.sh -v ${{ env.PG_VERSION }} -i -d ./pg_documentdb_gw_host
 
-      # --- Ship the installed tree to the legs as two tars: the dependency
-      #     tar (PG prefix + /usr/local delta, fresh-built or cache-restored)
-      #     plus a PG-prefix overlay carrying the DocumentDB + gateway build.
-      #     Legs untar deps first, then the overlay wins on the prefix. ---
+      # --- Ship the installed tree to the legs as ONE tar: the PostgreSQL
+      #     prefix (carrying DocumentDB + the gateway host) plus every file the
+      #     build added under the install roots. ---
       - name: Package install tree
         run: |
+          set -euo pipefail
+          ROOTS="/usr/local /usr/include /usr/lib /etc/ld.so.conf.d"
+          sudo find $ROOTS \( -type f -o -type l \) 2>/dev/null | sort > /tmp/install-after.txt
           mkdir -p "$RUNNER_TEMP/install-pkg"
-          cp ~/deps-tar/deps.tar.zst "$RUNNER_TEMP/install-pkg/"
-          sudo tar -C / -cf - "usr/lib/postgresql/${{ env.PG_VERSION }}" \
-            | zstd -T0 -3 -o "$RUNNER_TEMP/install-pkg/pgprefix.tar.zst"
+          { echo "usr/lib/postgresql/${{ env.PG_VERSION }}"; \
+            comm -13 /tmp/install-before.txt /tmp/install-after.txt | sed 's|^/||'; } > /tmp/install-manifest
+          echo "files added by the build: $(wc -l < /tmp/install-manifest)"
+          # Fail closed on an implausibly thin manifest rather than shipping it:
+          # a thin tar surfaces on the legs as an inscrutable compile/startup
+          # error hundreds of lines later (run 30654379381: "bson.h: No such
+          # file or directory").
+          if [ "$(wc -l < /tmp/install-manifest)" -lt 200 ]; then
+            echo "::error::install manifest has only $(wc -l < /tmp/install-manifest) entries — refusing to ship a partial tree."
+            exit 1
+          fi
+          sudo tar -C / -cf - -T /tmp/install-manifest \
+            | zstd -T0 -3 -o "$RUNNER_TEMP/install-pkg/install.tar.zst"
           ls -lh "$RUNNER_TEMP/install-pkg/"
 
       - name: Upload install tree
@@ -282,8 +206,7 @@ jobs:
 
       - name: Install DocumentDB from build artifact
         run: |
-          sudo tar -C / --zstd -xf "$RUNNER_TEMP/deps.tar.zst"
-          sudo tar -C / --zstd -xf "$RUNNER_TEMP/pgprefix.tar.zst"
+          sudo tar -C / --zstd -xf "$RUNNER_TEMP/install.tar.zst"
           sudo ldconfig
           # A tar that extracted thin otherwise surfaces as an inscrutable
           # failure much later (run 30654379381: "bson.h: No such file or
