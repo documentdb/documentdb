@@ -2,22 +2,19 @@
 # Run DocumentDB functional tests locally using the pinned upstream image.
 #
 # Modes:
-#   allowlist  Run the required PR-gate allowlist and summarize gate results.
+#   gate       Run the full suite under the known-failures xfail model (the CI
+#              gate): fail on any residual failed/error after re-run.
 #   single     Run one pytest node ID. Pass the node ID positionally or with --test.
 #   smoke      Run upstream smoke tests, excluding no_parallel tests.
-#   full       Run the full upstream suite.
-#   daily      Run the full upstream suite and summarize daily delta results.
-#   bootstrap  Generate an allowlist candidate from tests that pass every run.
+#   full       Run the full upstream suite (no gate; raw results).
 #
 # Examples:
-#   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh allowlist
+#   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh gate
 #   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh single --test compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_all_documents
-#   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh allowlist --build-and-start-documentdb
-#   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh allowlist --use-existing-documentdb-image ghcr.io/documentdb/documentdb/documentdb-local:latest
+#   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh gate --build-and-start-documentdb
+#   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh gate --use-existing-documentdb-image ghcr.io/documentdb/documentdb/documentdb-local:latest
 #   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh smoke --workers 4
 #   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh full --workers 4
-#   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh daily --workers 4
-#   ./documentdb-local/functional-tests/scripts/run-functional-tests.sh bootstrap --runs 3 --output allowlist-candidate.yml
 #
 # Additional pytest arguments can be passed after --.
 set -euo pipefail
@@ -28,9 +25,11 @@ REPO_ROOT="$(cd "$FUNCTIONAL_TESTS_DIR/../.." && pwd)"
 
 CONFIG_DIR="$FUNCTIONAL_TESTS_DIR/config"
 IMAGE_YML="$CONFIG_DIR/image.yml"
-ALLOWLIST_YML="$CONFIG_DIR/allowlist.yml"
-PLUGIN="$FUNCTIONAL_TESTS_DIR/tools/conftest_allowlist.py"
 GATE_TOOL="$FUNCTIONAL_TESTS_DIR/tools/functional_gate.py"
+# Known-failures xfail model (same as CI): plugin + the OSS gateway's pair.
+PLUGIN="$FUNCTIONAL_TESTS_DIR/tools/conftest_known_failures.py"
+FAILING_LIST="$CONFIG_DIR/oss_ci_failing_tests.txt"
+FLAKY_LIST="$CONFIG_DIR/oss_ci_flaky_tests.txt"
 
 MODE="${1:-}"
 CONNECTION_STRING_EXPLICIT=false
@@ -41,8 +40,6 @@ ENGINE_NAME="${ENGINE_NAME:-documentdb}"
 WORKERS=4
 RESULTS_DIR=""
 TEST_ID=""
-RUNS=1
-OUTPUT="allowlist-candidate.yml"
 BUILD_DOCUMENTDB=false
 START_DOCUMENTDB=false
 PULL_DOCUMENTDB_IMAGE=false
@@ -73,34 +70,28 @@ Usage:
   $0 <mode> [options] [-- <pytest args>]
 
 Modes:
-  allowlist  Run the required PR-gate allowlist and summarize gate results.
+  gate       Run the full suite under the known-failures xfail model (the CI
+             gate): fail on any residual failed/error after re-run.
   single     Run one pytest node ID. Pass the node ID positionally or with --test.
   smoke      Run upstream smoke tests, excluding no_parallel tests.
-  full       Run the full upstream suite.
-  daily      Run the full upstream suite and summarize daily delta results.
-  bootstrap  Generate an allowlist candidate from tests that pass every run.
+  full       Run the full upstream suite (no gate; raw results).
 
 Examples:
-  $0 allowlist
+  $0 gate
   $0 single compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_all_documents
   $0 single --test compatibility/tests/core/query-and-write/commands/find/test_find_basic_queries.py::test_find_all_documents
-  $0 allowlist --build-and-start-documentdb
-  $0 allowlist --use-existing-documentdb-image ghcr.io/documentdb/documentdb/documentdb-local:latest
+  $0 gate --build-and-start-documentdb
+  $0 gate --use-existing-documentdb-image ghcr.io/documentdb/documentdb/documentdb-local:latest
   $0 smoke --workers 4
   $0 full --workers 4
-  $0 daily --workers 4
-  $0 bootstrap --runs 3 --output allowlist-candidate.yml
 
 Options:
   --connection-string <url>  Override the DocumentDB connection string, including
                              the managed container connection string.
-  --engine-name <name>       Engine name passed to upstream pytest and the
-                             allowlist plugin (default: documentdb).
+  --engine-name <name>       Engine name passed to upstream pytest (default: documentdb).
   --workers <n>              Number of pytest-xdist workers (default: 4).
   --results-dir <path>       Output directory (default: .test-results/functional-tests/<mode>).
   --test <nodeid>            Pytest node ID for single mode.
-  --runs <n>                 Number of bootstrap runs (default: 1).
-  --output <path>            Bootstrap candidate output path (default: allowlist-candidate.yml).
   --build-documentdb         Build the local documentdb-local Docker image before running tests.
   --start-documentdb         Start documentdb-local, wait for readiness, then run tests.
   --build-and-start-documentdb
@@ -319,7 +310,7 @@ if [ -z "$MODE" ] || [ "$MODE" = "--help" ] || [ "$MODE" = "-h" ]; then
 fi
 
 case "$MODE" in
-    allowlist|single|smoke|full|daily|bootstrap) shift ;;
+    gate|single|smoke|full) shift ;;
     *)
         echo "Unknown mode: $MODE"
         echo ""
@@ -335,8 +326,6 @@ while [[ $# -gt 0 ]]; do
         --workers) WORKERS="$2"; shift 2 ;;
         --results-dir) RESULTS_DIR="$2"; shift 2 ;;
         --test) TEST_ID="$2"; shift 2 ;;
-        --runs) RUNS="$2"; shift 2 ;;
-        --output) OUTPUT="$2"; shift 2 ;;
         --build-documentdb) BUILD_DOCUMENTDB=true; shift ;;
         --start-documentdb) START_DOCUMENTDB=true; shift ;;
         --build-and-start-documentdb) BUILD_DOCUMENTDB=true; START_DOCUMENTDB=true; shift ;;
@@ -383,8 +372,8 @@ if [ ! -f "$IMAGE_YML" ]; then
     exit 1
 fi
 
-if [[ "$MODE" == "allowlist" || "$MODE" == "daily" ]]; then
-    for f in "$ALLOWLIST_YML" "$GATE_TOOL"; do
+if [ "$MODE" = "gate" ]; then
+    for f in "$GATE_TOOL" "$PLUGIN" "$FAILING_LIST" "$FLAKY_LIST"; do
         if [ ! -f "$f" ]; then
             echo "Required file not found: $f"
             exit 1
@@ -392,18 +381,8 @@ if [[ "$MODE" == "allowlist" || "$MODE" == "daily" ]]; then
     done
 fi
 
-if [ "$MODE" = "allowlist" ] && [ ! -f "$PLUGIN" ]; then
-    echo "Required file not found: $PLUGIN"
-    exit 1
-fi
-
 if [ "$MODE" = "single" ] && [ -z "$TEST_ID" ]; then
     echo "single mode requires --test <pytest-node-id>"
-    exit 1
-fi
-
-if [ "$MODE" = "bootstrap" ] && ! [[ "$RUNS" =~ ^[1-9][0-9]*$ ]]; then
-    echo "bootstrap --runs must be a positive integer"
     exit 1
 fi
 
@@ -456,10 +435,6 @@ fi
 if [ -n "$TEST_ID" ]; then
     echo "Test:        $TEST_ID"
 fi
-if [ "$MODE" = "bootstrap" ]; then
-    echo "Runs:        $RUNS"
-    echo "Output:      $OUTPUT"
-fi
 if [ "$PYTEST_ARGS_PRESENT" = "true" ]; then
     echo "Extra args:  ${PYTEST_ARGS[*]}"
 fi
@@ -468,20 +443,22 @@ echo ""
 TEST_EXIT=0
 
 case "$MODE" in
-    allowlist)
+    gate)
+        # Assemble the plugin + the OSS pair under the canonical names the
+        # plugin reads, mounted at /kf inside the suite container.
+        KF="$RESULTS_DIR/kf"; mkdir -p "$KF"
+        cp "$PLUGIN" "$KF/conftest_known_failures.py"
+        cp "$FAILING_LIST" "$KF/ci_failing_tests.txt"
+        cp "$FLAKY_LIST" "$KF/ci_flaky_tests.txt"
+
         docker run --rm --network host \
-            -v "$ALLOWLIST_YML:/allowlist.yml:ro" \
-            -v "$PLUGIN:/extra/conftest_allowlist.py:ro" \
+            -v "$KF:/kf:ro" -e "PYTHONPATH=/kf" \
             -v "$RESULTS_DIR:/results" \
-            -e "PYTHONPATH=/extra" \
             "$IMAGE" \
+            -p conftest_known_failures \
             documentdb_tests/compatibility/tests \
-            -p conftest_allowlist \
-            --allowlist /allowlist.yml \
             --engine-name "$ENGINE_NAME" \
-            --allowlist-engine-name "$ENGINE_NAME" \
             --connection-string "$CONNECTION_STRING" \
-            -m "not no_parallel" \
             -n "$WORKERS" \
             --json-report --json-report-file=/results/report.json \
             --junitxml=/results/results.xml \
@@ -490,17 +467,25 @@ case "$MODE" in
             || TEST_EXIT=$?
 
         if [ -f "$RESULTS_DIR/report.json" ]; then
-            SUMMARY_EXIT=0
-            if ! python3 "$GATE_TOOL" \
-                --image "$IMAGE_YML" \
-                --allowlist "$ALLOWLIST_YML" \
-                --engine-name "$ENGINE_NAME" \
-                summarize-gate \
+            if python3 "$GATE_TOOL" report-failures \
                 --report "$RESULTS_DIR/report.json" \
-                --output-dir "$RESULTS_DIR"; then
-                SUMMARY_EXIT=1
-            fi
-            if [ "$TEST_EXIT" -ne 0 ] || [ "$SUMMARY_EXIT" -ne 0 ]; then
+                --output "$RESULTS_DIR/gate-failures.txt"; then
+                FAIL=$(grep -c . "$RESULTS_DIR/gate-failures.txt" || true); FAIL=${FAIL:-0}
+                if [ "$FAIL" -gt 0 ]; then
+                    echo "Gate FAIL: $FAIL unexpected failure(s) / XPASS(strict). First 50:"
+                    head -50 "$RESULTS_DIR/gate-failures.txt"
+                    TEST_EXIT=1
+                else
+                    echo "Gate PASS: no unexpected failures."
+                    # Preserve a nonzero pytest exit: a collection/internal/plugin
+                    # error can exit nonzero while writing a report with zero
+                    # failed/error records, which would otherwise false-green.
+                    if [ "$TEST_EXIT" -ne 0 ]; then
+                        echo "Note: pytest exited nonzero ($TEST_EXIT) despite no per-test failures — preserving exit (likely a collection or internal error)."
+                    fi
+                fi
+            else
+                echo "report-failures could not evaluate the report."
                 TEST_EXIT=1
             fi
         else
@@ -510,7 +495,7 @@ case "$MODE" in
         ;;
 
     single)
-        # Allow users to paste allowlist-style short node IDs.
+        # Allow users to paste bare (rootdir-relative) short node IDs.
         if [[ "$TEST_ID" == compatibility/* ]]; then
             TEST_ID="documentdb_tests/$TEST_ID"
         fi
@@ -544,7 +529,7 @@ case "$MODE" in
             || TEST_EXIT=$?
         ;;
 
-    full|daily)
+    full)
         docker run --rm --network host \
             -v "$RESULTS_DIR:/results" \
             "$IMAGE" \
@@ -557,98 +542,6 @@ case "$MODE" in
             -v \
             ${PYTEST_ARGS[@]+"${PYTEST_ARGS[@]}"} \
             || TEST_EXIT=$?
-
-        if [ "$MODE" = "daily" ]; then
-            TEST_EXIT=0
-            if [ -f "$RESULTS_DIR/report.json" ]; then
-                python3 "$GATE_TOOL" \
-                    --image "$IMAGE_YML" \
-                    --allowlist "$ALLOWLIST_YML" \
-                    --engine-name "$ENGINE_NAME" \
-                    summarize-daily \
-                    --report "$RESULTS_DIR/report.json" \
-                    --output-dir "$RESULTS_DIR" \
-                    || TEST_EXIT=$?
-            else
-                echo "No report.json produced. Test execution may have failed before producing results."
-                TEST_EXIT=1
-            fi
-        fi
-        ;;
-
-    bootstrap)
-        ALL_PASSING=""
-
-        for RUN in $(seq 1 "$RUNS"); do
-            RUN_DIR="$RESULTS_DIR/run-$RUN"
-            mkdir -p "$RUN_DIR"
-            chmod 777 "$RUN_DIR"
-
-            echo "=== Bootstrap run $RUN/$RUNS ==="
-            docker run --rm --network host \
-                -v "$RUN_DIR:/results" \
-                "$IMAGE" \
-                documentdb_tests/compatibility/tests \
-                --engine-name "$ENGINE_NAME" \
-                --connection-string "$CONNECTION_STRING" \
-                -m "not no_parallel" \
-                -n "$WORKERS" \
-                --json-report --json-report-file=/results/report.json \
-                --junitxml=/results/results.xml \
-                -v \
-                ${PYTEST_ARGS[@]+"${PYTEST_ARGS[@]}"} \
-                || true
-
-            if [ ! -f "$RUN_DIR/report.json" ]; then
-                echo "No report.json produced in bootstrap run $RUN."
-                TEST_EXIT=1
-                break
-            fi
-
-            RUN_PASSING=$(python3 -c '
-import json
-import sys
-
-prefix = "documentdb_tests/"
-with open(sys.argv[1]) as f:
-    report = json.load(f)
-for test in report.get("tests", []):
-    if test.get("outcome") == "passed":
-        nodeid = test["nodeid"]
-        if nodeid.startswith(prefix):
-            nodeid = nodeid[len(prefix):]
-        print(nodeid)
-' "$RUN_DIR/report.json" | sort)
-
-            if [ "$RUN" -eq 1 ]; then
-                ALL_PASSING="$RUN_PASSING"
-            else
-                ALL_PASSING=$(comm -12 <(echo "$ALL_PASSING") <(echo "$RUN_PASSING"))
-            fi
-
-            echo "Passing in run $RUN: $(echo "$RUN_PASSING" | grep -c '.' || true)"
-        done
-
-        if [ "$TEST_EXIT" -eq 0 ]; then
-            python3 -c '
-import sys
-import yaml
-
-output_path = sys.argv[1]
-tests = sorted(line.strip() for line in sys.stdin if line.strip())
-header = (
-    "# Bootstrap output: every entry is a bare string (= applies to all engines).\n"
-    "# Bootstrap cannot infer per-engine scoping. If a candidate test should only\n"
-    "# run on one engine, convert it manually before promoting:\n"
-    "#   - id: <node-id>\n"
-    "#     engines: [<engine>]\n"
-)
-with open(output_path, "w") as f:
-    f.write(header)
-    yaml.dump({"schema_version": 2, "tests": tests}, f, default_flow_style=False, width=200)
-print(f"Wrote {len(tests)} tests to {output_path}")
-' "$OUTPUT" <<< "$ALL_PASSING"
-        fi
         ;;
 esac
 
@@ -658,17 +551,8 @@ echo ""
 echo "Result artifacts:"
 echo "  $RESULTS_DIR/report.json"
 echo "  $RESULTS_DIR/results.xml"
-if [ -f "$RESULTS_DIR/gate-summary.md" ]; then
-    echo "  $RESULTS_DIR/gate-summary.md"
-fi
-if [ -f "$RESULTS_DIR/daily-summary.md" ]; then
-    echo "  $RESULTS_DIR/daily-summary.md"
-fi
-if [ -f "$RESULTS_DIR/promotion-candidates.yml" ]; then
-    echo "  $RESULTS_DIR/promotion-candidates.yml"
-fi
-if [ "$MODE" = "bootstrap" ] && [ -f "$OUTPUT" ]; then
-    echo "  $OUTPUT"
+if [ -f "$RESULTS_DIR/gate-failures.txt" ]; then
+    echo "  $RESULTS_DIR/gate-failures.txt"
 fi
 
 exit "$TEST_EXIT"
