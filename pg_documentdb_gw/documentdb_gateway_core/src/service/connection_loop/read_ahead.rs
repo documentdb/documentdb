@@ -71,12 +71,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::task::Context;
 
     use tokio::io::{AsyncWriteExt, ReadBuf};
 
+    use super::*;
     use crate::protocol::opcode::OpCode;
 
     const NON_EXPIRING_IDLE_TIMEOUT: Duration = Duration::from_mins(1);

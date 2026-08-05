@@ -6,8 +6,9 @@
  *-------------------------------------------------------------------------
  */
 
-use dashmap::DashMap;
 use std::sync::Arc;
+
+use dashmap::DashMap;
 use tokio::time::Duration;
 use tokio_postgres::IsolationLevel;
 
@@ -19,15 +20,12 @@ use crate::{
             transaction_error::map_transaction_error, GatewayTransaction, RequestTransactionInfo,
             TransactionError,
         },
-        TransactionNumber,
+        ConnectionContext, LogicalSessionId, TransactionNumber,
     },
-    security::principal::Principal,
-    time::EpochClock,
-};
-use crate::{
-    context::{ConnectionContext, LogicalSessionId},
     error::{DocumentDBError, ErrorCode, Result},
     postgres::{conn_mgmt::Connection, PgDataClient},
+    security::principal::Principal,
+    time::EpochClock,
 };
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]

@@ -108,8 +108,10 @@ mod tests {
 
     #[test]
     fn hash_consistent_with_equality() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+        use std::{
+            collections::hash_map::DefaultHasher,
+            hash::{Hash, Hasher},
+        };
 
         let a = LogicalSessionId::new(vec![1, 2, 3]);
         let b = LogicalSessionId::new(vec![1, 2, 3]);

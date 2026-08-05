@@ -37,10 +37,9 @@
 //!         File Management        Certificate Loading      Automatic Reloading
 //! ```
 
-use std::{fmt::Debug, fs, path::Path, sync::Arc};
-
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use std::{fmt::Debug, fs, path::Path, sync::Arc};
 
 use arc_swap::ArcSwap;
 use openssl::{

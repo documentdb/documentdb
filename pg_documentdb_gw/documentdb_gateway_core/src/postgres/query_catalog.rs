@@ -6,8 +6,9 @@
  *-------------------------------------------------------------------------
  */
 
-use serde::Deserialize;
 use std::collections::HashMap;
+
+use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct QueryCatalog {

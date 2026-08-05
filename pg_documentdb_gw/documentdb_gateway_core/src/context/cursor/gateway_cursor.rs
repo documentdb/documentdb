@@ -12,7 +12,7 @@ use bson::RawDocumentBuf;
 use tokio::time::{Duration, Instant};
 
 use crate::{
-    context::CursorId, context::LogicalSessionId, context::TransactionNumber,
+    context::{CursorId, LogicalSessionId, TransactionNumber},
     postgres::conn_mgmt::Connection,
 };
 

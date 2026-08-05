@@ -6,8 +6,7 @@
  *-------------------------------------------------------------------------
  */
 
-use std::path::Path;
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 use bson::doc;
 use documentdb_tests::test_setup::initialize;

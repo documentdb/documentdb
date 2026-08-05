@@ -117,8 +117,9 @@ fn create_ipv6_only_listener(port: u16) -> std::io::Result<TcpListener> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::net::IpAddr;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_create_tcp_listeners_localhost_binds_to_ipv4_loopback_only() {

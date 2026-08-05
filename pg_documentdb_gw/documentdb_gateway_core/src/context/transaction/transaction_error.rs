@@ -9,9 +9,11 @@
 
 use std::fmt;
 
-use crate::error::{DocumentDBError, ErrorCode};
-use crate::postgres::conn_mgmt::StatementError;
-use crate::responses::map_pg_error;
+use crate::{
+    error::{DocumentDBError, ErrorCode},
+    postgres::conn_mgmt::StatementError,
+    responses::map_pg_error,
+};
 
 /// Error type for transaction operations that defers PG error mapping
 /// to the caller (typically `TransactionStore`).

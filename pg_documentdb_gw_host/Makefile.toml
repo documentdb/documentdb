@@ -1,9 +1,19 @@
 [config]
 default_to_workspace = false
 
+# `--all` and the formatting options live in the `gwfmt`/`gwfmt-check` cargo
+# aliases in `.cargo/config.toml`, so editors, CI, and `cargo make` stay in sync.
 [tasks.format-check]
 command = "cargo"
-args = ["fmt", "--all", "--check"]
+args = ["gwfmt-check"]
+
+# `clear` is required: cargo-make ships a built-in `format` task, and without it
+# this definition would merge with the built-in and inherit its
+# `install_crate = "rustfmt"` and pre/post hooks.
+[tasks.format]
+clear = true
+command = "cargo"
+args = ["gwfmt"]
 
 # Clippy uses PG version-specific features via PGVERSION env var (e.g., PGVERSION=16).
 # Defaults to pg16 if not set.

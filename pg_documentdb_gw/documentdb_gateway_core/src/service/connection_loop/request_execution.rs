@@ -148,12 +148,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::sync::Arc;
 
     use tokio::io::AsyncReadExt;
 
+    use super::*;
     use crate::{
         auth::{AuthKind, AuthState},
         error::ErrorCode,

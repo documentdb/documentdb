@@ -654,9 +654,9 @@ impl<'a> WireRequest<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use bson::rawdoc;
+
+    use super::*;
 
     #[test]
     fn wire_request_keeps_identity_separate_from_execution_mode() {

@@ -6,13 +6,18 @@
  *-------------------------------------------------------------------------
  */
 
-use dashmap::DashMap;
 use std::sync::Arc;
+
+use dashmap::DashMap;
 use tokio::{task::JoinHandle, time::Duration};
 
-use crate::context::{CursorId, CursorKey, CursorRef, CursorStoreEntry, TransactionNumber};
-use crate::security::principal::Principal;
-use crate::{configuration::DynamicConfiguration, context::LogicalSessionId};
+use crate::{
+    configuration::DynamicConfiguration,
+    context::{
+        CursorId, CursorKey, CursorRef, CursorStoreEntry, LogicalSessionId, TransactionNumber,
+    },
+    security::principal::Principal,
+};
 
 // Maps CursorKey -> Connection, Cursor
 #[derive(Debug)]
@@ -142,13 +147,11 @@ impl CursorStore {
 
 #[cfg(test)]
 mod tests {
-    use crate::principal;
-
-    use super::*;
     use bson::RawDocumentBuf;
     use tokio::time::Instant;
 
-    use super::super::Cursor;
+    use super::*;
+    use crate::{context::Cursor, principal};
 
     fn make_store() -> CursorStore {
         CursorStore {

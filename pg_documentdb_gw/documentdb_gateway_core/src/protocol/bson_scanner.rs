@@ -465,9 +465,9 @@ pub fn first_field_name(doc_bytes: &[u8]) -> Result<(&str, u8)> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use bson::rawdoc;
+
+    use super::*;
 
     fn cstring_field(element_type: u8, name: &str, value: &[u8]) -> Vec<u8> {
         let mut bytes = Vec::new();
