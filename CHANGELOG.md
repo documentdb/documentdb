@@ -8,6 +8,7 @@
 * Prefer an equality `$elemMatch` owner when multiple predicates constrain the leading reduced-correlated composite-index path, retaining its same-element secondary bounds while runtime-rechecking competing owners. A default-off first-owner fallback for predicates without a leading equality is available through `documentdb.enable_composite_reduced_correlated_first_owner_fallback`. *[Bugfix/Perf]*
 * Make the `$max`, `$min`, `$maxN`, and `$minN` expressions collation-aware, and align `$maxN`/`$minN` equal-value selection with the documented tie semantics. *[Feature/Bugfix]*
 * Support collation with $group keys *[Feature|Bugfix]*
+* Prevent index-only scans for projected queries with collation so projections return each row's stored values instead of a collation-equivalent value shared by the index entry. *[Bugfix]*
 
 ### documentdb v0.116-0 (Unreleased) ###
 * Rename the `$sample` EXPLAIN metric `Sample Heap Skips` to `Sample Heap Fetches`. *[Refactor]*
