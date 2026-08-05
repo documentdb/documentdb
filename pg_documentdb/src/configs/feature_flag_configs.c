@@ -473,6 +473,11 @@ bool EnableSubqueryPushdownForMatch = DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_MATCH
 #define DEFAULT_ENABLE_DOLLAR_SAMPLE_RESERVOIR_SCAN true
 bool EnableDollarSampleReservoirScan = DEFAULT_ENABLE_DOLLAR_SAMPLE_RESERVOIR_SCAN;
 
+/* Added in v117, Pending stabilization, enable in v119 */
+#define DEFAULT_ENABLE_RUM_INDEX_ONLY_SCAN_PROJECTION_WRAPPER false
+bool EnableRumIndexOnlyScanProjectionWrapper =
+	DEFAULT_ENABLE_RUM_INDEX_ONLY_SCAN_PROJECTION_WRAPPER;
+
 /* Added in v115, Pending stabilization, enable in v118 */
 #define DEFAULT_ENABLE_DOLLAR_SAMPLE_HEAP_SKIP_RESERVOIR_SCAN false
 bool EnableDollarSampleHeapSkipReservoirScan =
@@ -1613,6 +1618,18 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableDollarSampleReservoirScan,
 		DEFAULT_ENABLE_DOLLAR_SAMPLE_RESERVOIR_SCAN,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_rum_index_only_scan_projection_wrapper", newGucPrefix),
+		gettext_noop(
+			"Whether to wrap RUM index-only scans with the DocumentDBApiRumIndexOnlyScan "
+			"custom scan."),
+		NULL,
+		&EnableRumIndexOnlyScanProjectionWrapper,
+		DEFAULT_ENABLE_RUM_INDEX_ONLY_SCAN_PROJECTION_WRAPPER,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
