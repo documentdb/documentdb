@@ -154,6 +154,7 @@ extern bool EnableDollarSampleReservoirScan;
 extern bool EnableMergeSortForInPrefix;
 extern bool EnableDynamicCursorFastStartupScan;
 extern bool EnablePartialFilterEvalOnPlanner;
+extern bool EnableRumIndexOnlyScanProjectionWrapper;
 
 planner_hook_type ExtensionPreviousPlannerHook = NULL;
 set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook = NULL;
@@ -666,6 +667,12 @@ ExtensionRelPathlistHookCore(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	if (EnableDollarSampleReservoirScan && indexContext.reservoirSampleExpr != NULL)
 	{
 		AddReservoirSampleCustomPath(root, rel, indexContext.reservoirSampleExpr);
+	}
+
+	if (EnableRumIndexOnlyScanProjectionWrapper)
+	{
+		/* Wrap eligible RUM index-only scans with the custom scan wrapper */
+		AddRumIndexOnlyScanCustomScanWrapper(root, rel, rte);
 	}
 
 	if (EnableExtendedExplainPlans)

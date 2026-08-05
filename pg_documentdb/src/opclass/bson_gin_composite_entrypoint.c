@@ -59,8 +59,8 @@ typedef enum RumIndexTransformOperation
 	RumIndexTransform_IndexGenerateSkipBound = 1,
 	RumIndexTransform_DetermineOrderByDirection = 2,
 	RumIndexTransform_OrderedScanRequiresDedup = 3,
-	RumIndexTransform_HighKeyScalarCheck = 4,
-	RumIndexTransform_HighKeyPageIsolated = 5,
+	RumIndexTransform_PageLevelStatsScalarCheck = 4,
+	RumIndexTransform_PageLevelStatsPageIsolated = 5,
 	RumIndexTransform_IndexGenerateDistinctSkipBound = 6,
 } RumIndexTransformOperation;
 
@@ -256,7 +256,8 @@ static void ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElem
 									bool *isMultiKey,
 									bool *hasCorrelatedReducedTerms,
 									bool *supportsOrderedOperatorScans,
-									uint32_t *multiKeyBitMask);
+									uint32_t *multiKeyBitMask,
+									bool *projectRawIndexTuple);
 static int32_t RunCompareOnBounds(CompositeIndexBounds *bounds,
 								  SerializedCompositeTermPair *termPair,
 								  bool hasEqualityPrefix, bool isBackwardScan,
@@ -543,6 +544,8 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	bool supportsOrderedOperatorScans = false;
 	uint32_t multiKeyBitMask = 0;
 
+	bool projectRawIndexTuple = false;
+
 	/* Round 1, collect fixed index bounds and collect variable index bounds */
 	ScanDirection scanDir = NoMovementScanDirection;
 	if (strategy == BSON_INDEX_STRATEGY_UNIQUE_EQUAL)
@@ -578,7 +581,8 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 		ParseCompositeQuerySpec(query, &singleElement, &hasArrayPaths,
 								&isCorrelatedReducedScan,
 								&supportsOrderedOperatorScans,
-								&multiKeyBitMask);
+								&multiKeyBitMask,
+								&projectRawIndexTuple);
 		ParseBoundsForCompositeOperator(&singleElement, indexPaths, indexPathLengths,
 										sortOrders, numPaths,
 										metaInfo->wildcardPathIndex,
@@ -590,6 +594,7 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	}
 
 	metaInfo->hasArrayPaths = hasArrayPaths;
+	metaInfo->projectRawIndexTuple = projectRawIndexTuple;
 
 	/* Carry forward any serialized dedup state from the continuation so that
 	 * the ordered-scan dedup transform can hand it to the RUM scan for restore. */
@@ -2923,7 +2928,7 @@ RecheckFunctionsCompatibleWithHighKey(List *recheckFunctions,
 
 
 static Datum
-HighKeyScalarCheck(PG_FUNCTION_ARGS, bool pageIsolated)
+PageLevelStatsScalarCheck(PG_FUNCTION_ARGS, bool pageIsolated)
 {
 	Pointer extraData = PG_GETARG_POINTER(3);
 	CompositeQueryRunData *runData = (CompositeQueryRunData *) extraData;
@@ -2947,6 +2952,14 @@ HighKeyScalarCheck(PG_FUNCTION_ARGS, bool pageIsolated)
 																  serializedTerms);
 
 	bytea *lowKeyValue = PG_NARGS() > 4 ? PG_GETARG_BYTEA_PP(4) : NULL;
+	bool *pageProjectsRawIndexTuple = PG_NARGS() > 5 ? (bool *) PG_GETARG_POINTER(5) :
+									  NULL;
+
+	if (pageProjectsRawIndexTuple && runData->metaInfo->projectRawIndexTuple)
+	{
+		*pageProjectsRawIndexTuple = true;
+	}
+
 	SerializedCompositeTermPair lowKeyTerms[INDEX_MAX_KEYS] = { 0 };
 	if (pageIsolated)
 	{
@@ -3172,16 +3185,16 @@ gin_bson_composite_index_term_transform(PG_FUNCTION_ARGS)
 			PG_RETURN_BOOL(runData->metaInfo->hasArrayPaths);
 		}
 
-		case RumIndexTransform_HighKeyScalarCheck:
+		case RumIndexTransform_PageLevelStatsScalarCheck:
 		{
 			bool pageIsolated = false;
-			PG_RETURN_DATUM(HighKeyScalarCheck(fcinfo, pageIsolated));
+			PG_RETURN_DATUM(PageLevelStatsScalarCheck(fcinfo, pageIsolated));
 		}
 
-		case RumIndexTransform_HighKeyPageIsolated:
+		case RumIndexTransform_PageLevelStatsPageIsolated:
 		{
 			bool pageIsolated = true;
-			PG_RETURN_DATUM(HighKeyScalarCheck(fcinfo, pageIsolated));
+			PG_RETURN_DATUM(PageLevelStatsScalarCheck(fcinfo, pageIsolated));
 		}
 
 		case RumIndexTransform_IndexGenerateDistinctSkipBound:
@@ -3497,29 +3510,6 @@ gin_bson_composite_ordering_transform(PG_FUNCTION_ARGS)
 	BsonGinCompositePathOptions *options =
 		(BsonGinCompositePathOptions *) PG_GET_OPCLASS_OPTIONS();
 
-	/* We need to handle this case for amcostestimate - let
-	 * compare partial and consistent handle failures.
-	 */
-	const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
-	uint32_t indexPathLengths[INDEX_MAX_KEYS] = { 0 };
-	int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
-	int numPaths = GetIndexPathsFromOptionsWithLength(
-		options,
-		indexPaths,
-		indexPathLengths,
-		sortOrders);
-
-	SerializedCompositeTermPair compareTerms[INDEX_MAX_KEYS] = { 0 };
-	int32_t numPathsInIndex = LazyInitializeSerializedCompositeIndexTerm(compareValue,
-																		 compareTerms);
-	if (numPathsInIndex != numPaths)
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-						errmsg("Number of terms in the index term (%d) does not match "
-							   "the number of index paths (%d)",
-							   numPathsInIndex, numPaths)));
-	}
-
 	Datum result = (Datum) 0;
 
 	switch (strategy)
@@ -3527,6 +3517,22 @@ gin_bson_composite_ordering_transform(PG_FUNCTION_ARGS)
 		/* Index only scan, we need to reconstruct and project the document back. */
 		case UINT16_MAX:
 		{
+			if (PG_NARGS() >= 5)
+			{
+				CompositeQueryRunData *runData =
+					(CompositeQueryRunData *) PG_GETARG_POINTER(1);
+				if (runData != NULL && runData->metaInfo->projectRawIndexTuple)
+				{
+					bool *returnIndexTup = (bool *) PG_GETARG_POINTER(4);
+					*returnIndexTup = true;
+					break;
+				}
+			}
+
+			SerializedCompositeTermPair compareTerms[INDEX_MAX_KEYS] = { 0 };
+			int32_t numPathsInIndex = LazyInitializeSerializedCompositeIndexTerm(
+				compareValue,
+				compareTerms);
 			IndexProjectionCache *cache;
 
 			/*
@@ -3538,6 +3544,14 @@ gin_bson_composite_ordering_transform(PG_FUNCTION_ARGS)
 			 */
 			if (fcinfo->flinfo->fn_extra == NULL)
 			{
+				const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
+				uint32_t indexPathLengths[INDEX_MAX_KEYS] = { 0 };
+				int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
+				int numPaths = GetIndexPathsFromOptionsWithLength(
+					options,
+					indexPaths,
+					indexPathLengths,
+					sortOrders);
 				MemoryContext old = MemoryContextSwitchTo(fcinfo->flinfo->fn_mcxt);
 				cache = palloc0(sizeof(IndexProjectionCache));
 				cache->writer = PgbsonHeapWriterInit();
@@ -3551,6 +3565,15 @@ gin_bson_composite_ordering_transform(PG_FUNCTION_ARGS)
 			{
 				cache = (IndexProjectionCache *) fcinfo->flinfo->fn_extra;
 				PgbsonHeapWriterReset(cache->writer);
+			}
+
+			if (numPathsInIndex != cache->numPaths)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg(
+									"Number of terms in the index term (%d) does not match "
+									"the number of index paths (%d)",
+									numPathsInIndex, cache->numPaths)));
 			}
 
 			/*
@@ -3591,6 +3614,27 @@ gin_bson_composite_ordering_transform(PG_FUNCTION_ARGS)
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY:
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_REVERSE:
 		{
+			const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
+			uint32_t indexPathLengths[INDEX_MAX_KEYS] = { 0 };
+			int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
+			int numPaths = GetIndexPathsFromOptionsWithLength(
+				options,
+				indexPaths,
+				indexPathLengths,
+				sortOrders);
+
+			SerializedCompositeTermPair compareTerms[INDEX_MAX_KEYS] = { 0 };
+			int32_t numPathsInIndex = LazyInitializeSerializedCompositeIndexTerm(
+				compareValue,
+				compareTerms);
+			if (numPathsInIndex != numPaths)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg(
+									"Number of terms in the index term (%d) does not match "
+									"the number of index paths (%d)",
+									numPathsInIndex, numPaths)));
+			}
 			if (currentKey != (Datum) 0)
 			{
 				pgbson *currentOrdering = DatumGetPgBsonPacked(currentKey);
@@ -3630,6 +3674,28 @@ gin_bson_composite_ordering_transform(PG_FUNCTION_ARGS)
 
 		case BSON_INDEX_STRATEGY_DOLLAR_ORDERBY_INDEXTERM:
 		{
+			const char *indexPaths[INDEX_MAX_KEYS] = { 0 };
+			uint32_t indexPathLengths[INDEX_MAX_KEYS] = { 0 };
+			int8_t sortOrders[INDEX_MAX_KEYS] = { 0 };
+			int numPaths = GetIndexPathsFromOptionsWithLength(
+				options,
+				indexPaths,
+				indexPathLengths,
+				sortOrders);
+
+			SerializedCompositeTermPair compareTerms[INDEX_MAX_KEYS] = { 0 };
+			int32_t numPathsInIndex = LazyInitializeSerializedCompositeIndexTerm(
+				compareValue,
+				compareTerms);
+			if (numPathsInIndex != numPaths)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+								errmsg(
+									"Number of terms in the index term (%d) does not match "
+									"the number of index paths (%d)",
+									numPathsInIndex, numPaths)));
+			}
+
 			if (currentKey != (Datum) 0)
 			{
 				bytea *currentOrdering = DatumGetByteaPP(currentKey);
@@ -4699,6 +4765,7 @@ ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetSca
 	pgbson_array_writer queryWriter;
 	PgbsonWriterStartArray(&querySpecWriter, "q", 1, &queryWriter);
 
+	bson_value_t indexProjectionMetadata = { 0 };
 	for (int i = 0; i < nscankeys; i++)
 	{
 		if (scankey[i].sk_attno != 1 ||
@@ -4719,6 +4786,25 @@ ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetSca
 		 * selection time. */
 		pgbsonelement queryElement;
 		PgbsonToSinglePgbsonElementWithCollation(secondBson, &queryElement);
+
+		if (scankey[i].sk_strategy == BSON_INDEX_STRATEGY_DOLLAR_RANGE)
+		{
+			/* Check if it's one that's conveying metadata about the index */
+			DollarRangeParams rangeParams = { 0 };
+			InitializeQueryDollarRange(&queryElement.bsonValue, &rangeParams);
+
+			if (rangeParams.isIndexProjectionMetadata)
+			{
+				if (indexProjectionMetadata.value_type != BSON_TYPE_EOD)
+				{
+					ereport(ERROR, (errmsg(
+										"Multiple index projection metadata entries found in composite scan keys")));
+				}
+
+				indexProjectionMetadata = rangeParams.indexProjectionMetadata;
+				continue;
+			}
+		}
 
 		pgbson_writer clauseWriter;
 		PgbsonArrayWriterStartDocument(&queryWriter, &clauseWriter);
@@ -4744,6 +4830,11 @@ ModifyScanKeysForCompositeScan(ScanKey scankey, int nscankeys, ScanKey targetSca
 	if (multiKeyBitMask != 0)
 	{
 		PgbsonWriterAppendInt64(&querySpecWriter, "mk", 2, (int64_t) multiKeyBitMask);
+	}
+
+	if (indexProjectionMetadata.value_type != BSON_TYPE_EOD)
+	{
+		PgbsonWriterAppendValue(&querySpecWriter, "ip", 2, &indexProjectionMetadata);
 	}
 
 	Datum finalDatum = PointerGetDatum(
@@ -4818,7 +4909,8 @@ ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
 						bool *isMultiKey,
 						bool *hasCorrelatedReducedTerms,
 						bool *supportsOrderedOperatorScans,
-						uint32_t *multiKeyBitMask)
+						uint32_t *multiKeyBitMask,
+						bool *projectRawIndexTuple)
 {
 	bson_iter_t queryIter;
 	PgbsonInitIterator(querySpec, &queryIter);
@@ -4851,6 +4943,16 @@ ParseCompositeQuerySpec(pgbson *querySpec, pgbsonelement *singleElement,
 		else if (strcmp(key, "mk") == 0)
 		{
 			*multiKeyBitMask = (uint32_t) bson_iter_int64(&queryIter);
+		}
+		else if (strcmp(key, "ip") == 0)
+		{
+			bson_value_t indexProjectionMetadata = *bson_iter_value(&queryIter);
+			if (indexProjectionMetadata.value_type != BSON_TYPE_INT64)
+			{
+				ereport(ERROR, (errmsg("Index projection metadata must be an int64")));
+			}
+			int64_t indexProjectionMetadataValue = indexProjectionMetadata.value.v_int64;
+			*projectRawIndexTuple = indexProjectionMetadataValue < 0;
 		}
 		else
 		{

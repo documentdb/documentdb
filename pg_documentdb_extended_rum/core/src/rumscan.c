@@ -1194,9 +1194,6 @@ rumNewScanKey(IndexScanDesc scan, ScanDirection scanDirection)
 		int natts = RelationGetNumberOfAttributes(scan->indexRelation);
 
 		so->projectIndexTupleData = palloc0(sizeof(RumProjectIndexTupleData));
-		so->projectIndexTupleData->iscan_tuple = NULL;
-		so->projectIndexTupleData->indexTupleDatum = (Datum) 0;
-
 		so->projectIndexTupleData->indexTupleDesc = CreateTemplateTupleDesc(natts);
 		for (i = 0; i < natts; i++)
 		{

@@ -106,6 +106,17 @@ InitializeQueryDollarRange(const bson_value_t *filterValue,
 			rangeParams->isSample = true;
 			rangeParams->sampleSize = BsonValueAsInt64(bson_iter_value(&rangeIter));
 		}
+		else if (strcmp(key, "indexProjectionMetadata") == 0)
+		{
+			/*
+			 * Marker range that carries index projection metadata rather than a
+			 * scan bound. The index consumes the payload and, for negative
+			 * values, projects the raw index tuple instead of reconstructing the
+			 * document.
+			 */
+			rangeParams->isIndexProjectionMetadata = true;
+			rangeParams->indexProjectionMetadata = *bson_iter_value(&rangeIter);
+		}
 		else
 		{
 			ereport(ERROR, (errmsg("Range predicate not supported: %s", key),
