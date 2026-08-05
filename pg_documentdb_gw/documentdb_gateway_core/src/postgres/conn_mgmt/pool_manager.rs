@@ -361,13 +361,12 @@ pub async fn create_connection_pool_manager(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use bson::{rawbson, RawBson};
     use tokio::{task::yield_now, time::sleep};
 
+    use super::*;
     use crate::{
         configuration::{CertInputType, CertificateOptions, DocumentDBSetupConfiguration},
         error::{ErrorCode, ErrorKind},
@@ -444,8 +443,7 @@ mod tests {
         ///
         /// let pool_settings = PgPoolSettings::from_configuration(dynamic_config());
         ///
-        /// let mut prune_interval =
-        ///    tokio::time::interval(pool_settings.connection_pruning_interval());
+        /// let mut prune_interval = tokio::time::interval(pool_settings.connection_pruning_interval());
         /// ```
         /// and since the value of `get_u64` is overloaded to return 0 we need to overload
         /// this function to return non-zero value

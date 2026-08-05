@@ -6,17 +6,19 @@
  *-------------------------------------------------------------------------
  */
 
-use scc::HashSet;
 use std::sync::Arc;
+
+use scc::HashSet;
 use tokio_postgres::IsolationLevel;
 
-use crate::context::transaction::{TransactionError, TransactionNumber};
-use crate::context::CursorId;
-use crate::security::principal::Principal;
 use crate::{
-    context::LogicalSessionId,
+    context::{
+        transaction::{TransactionError, TransactionNumber},
+        CursorId, LogicalSessionId,
+    },
     error::ErrorCode,
     postgres::{self, conn_mgmt::Connection},
+    security::principal::Principal,
 };
 
 #[derive(Clone, Debug)]

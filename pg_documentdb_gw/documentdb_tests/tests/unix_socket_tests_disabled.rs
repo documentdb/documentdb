@@ -6,9 +6,10 @@
  *-------------------------------------------------------------------------
  */
 
+use std::path::Path;
+
 use bson::doc;
 use documentdb_tests::test_setup::{clients, initialize};
-use std::path::Path;
 
 #[tokio::test]
 async fn test_unix_socket_disabled() -> Result<(), mongodb::error::Error> {

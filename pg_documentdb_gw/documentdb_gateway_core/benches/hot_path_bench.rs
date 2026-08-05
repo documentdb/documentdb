@@ -18,17 +18,16 @@ use std::{
 
 use bson::{rawdoc, RawDocument, RawDocumentBuf};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use tokio::{
-    io::{AsyncWrite, AsyncWriteExt, BufReader},
-    runtime::Runtime,
-};
-use uuid::{Builder, Uuid};
-
 use documentdb_gateway_core::{
     protocol::{header::Header, opcode::OpCode, reader},
     requests::RequestMessage,
     responses::writer as response_writer,
 };
+use tokio::{
+    io::{AsyncWrite, AsyncWriteExt, BufReader},
+    runtime::Runtime,
+};
+use uuid::{Builder, Uuid};
 
 const MORE_TO_COME_FLAG: u32 = 0b10;
 

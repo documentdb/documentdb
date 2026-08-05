@@ -6,8 +6,9 @@
  *-------------------------------------------------------------------------
  */
 
-use bson::{spec::ElementType, RawBsonRef};
 use std::sync::Arc;
+
+use bson::{spec::ElementType, RawBsonRef};
 
 use crate::{
     bson::convert_to_bool,

@@ -6,6 +6,9 @@
  *-------------------------------------------------------------------------
  */
 
+use bson::RawDocument;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
+
 use crate::{
     error::{DocumentDBError, Result},
     protocol::{
@@ -13,8 +16,6 @@ use crate::{
     },
     responses::{error_to_raw_document_buf, Response},
 };
-use bson::RawDocument;
-use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 const OP_MSG_PREFIX_LENGTH: usize =
     Header::LENGTH + std::mem::size_of::<u32>() + std::mem::size_of::<u8>();

@@ -12,9 +12,10 @@
 
 use bson::{rawdoc, RawArrayBuf, RawDocumentBuf};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-
-use documentdb_gateway_core::protocol::{opcode::OpCode, reader};
-use documentdb_gateway_core::requests::RequestMessage;
+use documentdb_gateway_core::{
+    protocol::{opcode::OpCode, reader},
+    requests::RequestMessage,
+};
 
 /// Build a small BSON document as raw bytes.
 fn make_test_document(id: i32) -> Vec<u8> {

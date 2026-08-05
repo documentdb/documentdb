@@ -14,11 +14,13 @@ use documentdb_macros::{documentdb_error_code_enum, documentdb_extensive_log_pos
 use openssl::error::ErrorStack;
 use tokio_postgres::error::SqlState;
 
-use crate::postgres::conn_mgmt::StatementError;
-use crate::responses::constant::{
-    generic_internal_error_message, pg_returned_invalid_response_message,
+use crate::{
+    postgres::conn_mgmt::StatementError,
+    responses::{
+        constant::{generic_internal_error_message, pg_returned_invalid_response_message},
+        postgres_sqlstate_to_i32, CustomPgDbError,
+    },
 };
-use crate::responses::{postgres_sqlstate_to_i32, CustomPgDbError};
 
 documentdb_error_code_enum!();
 documentdb_extensive_log_postgres_errors!();
@@ -597,9 +599,9 @@ impl std::error::Error for DocumentDBError {}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use deadpool::managed::TimeoutType;
+
+    use super::*;
 
     /// Every `PoolError` variant that does not carry a backend `tokio_postgres`
     /// error takes the "other" branch, which must produce a PII-safe generic

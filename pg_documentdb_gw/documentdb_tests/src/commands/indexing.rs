@@ -20,7 +20,10 @@
 )]
 
 use bson::{doc, Document};
-use mongodb::{error::Error, error::WriteFailure, Database, IndexModel};
+use mongodb::{
+    error::{Error, WriteFailure},
+    Database, IndexModel,
+};
 
 pub async fn validate_list_indexes(db: &Database) -> Result<(), Error> {
     db.collection("test").insert_one(doc! {"a": 1}).await?;

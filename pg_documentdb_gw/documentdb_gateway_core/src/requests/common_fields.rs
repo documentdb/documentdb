@@ -269,10 +269,9 @@ fn extract_common_field<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use bson::{doc, rawdoc, RawDocumentBuf};
 
+    use super::*;
     use crate::requests::Request;
 
     #[test]

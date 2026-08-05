@@ -166,12 +166,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::sync::Arc;
 
     use tokio::io::AsyncReadExt;
 
+    use super::*;
     use crate::{
         protocol::opcode::OpCode,
         requests::{Request, RequestType, WireRequest},

@@ -6,10 +6,7 @@
  *-------------------------------------------------------------------------
  */
 
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{fmt::Debug, hash::Hash, sync::Arc, time::Duration};
 
 use crate::collections::cache::CacheError;
 

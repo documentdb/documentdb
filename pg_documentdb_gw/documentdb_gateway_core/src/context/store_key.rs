@@ -32,9 +32,8 @@ impl<K> StoreKey<K> {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::context::CursorId;
-
     use super::*;
+    use crate::context::CursorId;
 
     type ExampleCursorKey = StoreKey<CursorId>;
 
@@ -81,8 +80,10 @@ mod tests {
 
     #[test]
     fn cursor_key_hash_consistent_with_equality() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+        use std::{
+            collections::hash_map::DefaultHasher,
+            hash::{Hash, Hasher},
+        };
 
         let k1 = ExampleCursorKey {
             id: CursorId::new(5),

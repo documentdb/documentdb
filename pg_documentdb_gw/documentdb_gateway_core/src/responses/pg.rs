@@ -7,7 +7,6 @@
  */
 
 use bson::{Bson, Document, RawDocument, RawDocumentBuf};
-
 use documentdb_macros::documentdb_int_error_mapping;
 use tokio_postgres::{error::SqlState, Row};
 
@@ -20,11 +19,9 @@ use crate::{
             duplicate_key_violation_message, generic_internal_error_message,
             pg_returned_invalid_response_message,
         },
-        enhance_internal_error_message, global_custom_error_mapper,
+        enhance_internal_error_message, global_custom_error_mapper, RawResponse, Response,
     },
 };
-
-use super::{raw::RawResponse, Response};
 
 /// Converts an i32 to a Postgres `SqlState`
 ///
