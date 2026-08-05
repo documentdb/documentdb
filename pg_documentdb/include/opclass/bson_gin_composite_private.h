@@ -183,6 +183,9 @@ typedef struct CompositeQueryMetaInfo
 	CompositeOrderedScanEntryData *orderedScanEntryData;
 	bool isOrderedScan;
 	bool hasArrayPaths;
+
+	/* Whether the runtime requested the index to project out the raw index tuple */
+	bool projectRawIndexTuple;
 	const char *collation;
 
 	/* OPTIONAL: serialized deduplication state (row-pointer bitmap) supplied by

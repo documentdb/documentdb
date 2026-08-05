@@ -49,6 +49,10 @@ typedef struct DollarRangeParams
 	 * execution, so the index-bounds and runtime paths throw if it is ever
 	 * seen. */
 	bool isMergeSortInPrefixMarker;
+
+	/* Index projection metadata conveyed to the index */
+	bool isIndexProjectionMetadata;
+	bson_value_t indexProjectionMetadata;
 } DollarRangeParams;
 
 DollarRangeParams * ParseQueryDollarRange(pgbsonelement *filterElement);

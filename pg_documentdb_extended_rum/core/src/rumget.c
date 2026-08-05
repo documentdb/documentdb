@@ -1571,30 +1571,48 @@ PrepareOrderedMatchedEntry(RumScanOpaque so, RumScanEntry entry,
 
 	if (so->projectIndexTupleData)
 	{
-		/* This is the case where we want to project a document that maches the index paths */
-		MemoryContext oldContext;
-		Datum values[INDEX_MAX_KEYS] = { 0 };
-		bool isnull[INDEX_MAX_KEYS] = { true };
+		if (so->projectIndexTupleData->pageProjectsRawIndexTuple)
+		{
+			so->projectIndexTupleData->iscan_tuple = itup;
+		}
+		else
+		{
+			/* This is the case where we want to project a document that maches the index paths */
+			MemoryContext oldContext;
+			Datum values[INDEX_MAX_KEYS] = { 0 };
+			bool isnull[INDEX_MAX_KEYS] = { true };
 
-		memset(isnull, true, sizeof(bool) *
-			   so->projectIndexTupleData->indexTupleDesc->natts);
-		oldContext = MemoryContextSwitchTo(so->keyCtx);
+			memset(isnull, true, sizeof(bool) *
+				   so->projectIndexTupleData->indexTupleDesc->natts);
+			oldContext = MemoryContextSwitchTo(so->keyCtx);
 
-		so->projectIndexTupleData->indexTupleDatum = FunctionCall4(
-			&so->rumstate.orderingFn[0],
-			idatum,
-			(Datum) 0,
-			UInt16GetDatum(UINT16_MAX),
-			so->projectIndexTupleData->indexTupleDatum);
+			bool projectRawIndexTuple = false;
+			so->projectIndexTupleData->indexTupleDatum = FunctionCall5(
+				&so->rumstate.orderingFn[0],
+				idatum,
+				PointerGetDatum(so->orderByScanData->orderByEntry->extra_data),
+				UInt16GetDatum(UINT16_MAX),
+				so->projectIndexTupleData->indexTupleDatum,
+				PointerGetDatum(&projectRawIndexTuple));
 
-		/* Now form the index datum (freeing the prior one) */
-		values[0] = so->projectIndexTupleData->indexTupleDatum;
-		isnull[0] = false;
+			/* Now form the index datum (freeing the prior one) */
+			if (projectRawIndexTuple)
+			{
+				so->projectIndexTupleData->iscan_tuple = itup;
+			}
+			else
+			{
+				values[0] = so->projectIndexTupleData->indexTupleDatum;
+				isnull[0] = false;
+				so->projectIndexTupleData->iscan_tuple_built = IndexBuildTupleDynamic(
+					so->projectIndexTupleData->indexTupleDesc, values, isnull,
+					so->projectIndexTupleData->iscan_tuple_built, so->keyCtx);
+				so->projectIndexTupleData->iscan_tuple =
+					so->projectIndexTupleData->iscan_tuple_built;
+			}
 
-		so->projectIndexTupleData->iscan_tuple = IndexBuildTupleDynamic(
-			so->projectIndexTupleData->indexTupleDesc, values, isnull,
-			so->projectIndexTupleData->iscan_tuple, so->keyCtx);
-		MemoryContextSwitchTo(oldContext);
+			MemoryContextSwitchTo(oldContext);
+		}
 	}
 
 	if (RumIsPostingTree(itup))
@@ -3866,7 +3884,7 @@ CopyPageContents(Page sourcePage, Page targetPage)
 
 
 static bool
-TryApplyHighKeyOptimization(RumScanOpaque so, RumIndexTransformOperation operation)
+ComputePageLevelStats(RumScanOpaque so, RumIndexTransformOperation operation)
 {
 	RumOrderByScanData *scanData = so->orderByScanData;
 
@@ -3904,7 +3922,8 @@ TryApplyHighKeyOptimization(RumScanOpaque so, RumIndexTransformOperation operati
 		return false;
 	}
 
-	Datum recheckDatum = FunctionCall5Coll(
+	bool pageProjectsIndexTuple = false;
+	Datum recheckDatum = FunctionCall6Coll(
 		&so->rumstate.outerOrderingFn[scanData->orderByEntry->
 									  attnum - 1],
 		so->rumstate.supportCollation[scanData->orderByEntry->
@@ -3913,23 +3932,46 @@ TryApplyHighKeyOptimization(RumScanOpaque so, RumIndexTransformOperation operati
 		scanData->orderByEntry->queryKey,
 		UInt16GetDatum(operation),
 		PointerGetDatum(scanData->orderByEntry->extra_data),
-		lowerBoundDatum);
+		lowerBoundDatum,
+		PointerGetDatum(&pageProjectsIndexTuple));
 	if (recheckDatum != (Datum) 0)
 	{
 		scanData->highKeyMatchDatum = recheckDatum;
 		return true;
 	}
 
+	if (pageProjectsIndexTuple && so->projectIndexTupleData)
+	{
+		so->projectIndexTupleData->pageProjectsRawIndexTuple = true;
+	}
+
 	return false;
 }
 
 
+/*
+ * Shared entry point for the high key optimization. Resets any prior high key
+ * state, checks that the current page is eligible for the optimization, and if
+ * so asks the operator class (via ComputePageLevelStats) whether the page's high
+ * key transitively matches the scan condition. lastItemMatched gates the
+ * sequential case (where eligibility requires the last item of the previous
+ * page to have matched); the parallel case passes true since each page is
+ * evaluated in isolation. operation selects the transform semantics used for
+ * the operator class recheck.
+ */
 static void
-ApplyHighKeyOptimization(RumScanOpaque so, bool lastItemMatched)
+TryApplyPageLevelStatsOptimization(RumScanOpaque so, bool lastItemMatched,
+								   RumIndexTransformOperation operation)
 {
 	RumOrderByScanData *scanData = so->orderByScanData;
 
 	scanData->highKeyMatchDatum = (Datum) 0;
+	if (so->projectIndexTupleData)
+	{
+		/* Reset the metadata on first calculation */
+		so->projectIndexTupleData->pageProjectsRawIndexTuple = false;
+	}
+
 	if (so->rumstate.rumConfig[scanData->orderByEntry->attnum -
 							   1].enableHighKeyOptimization &&
 		so->totalsearchentries == 1 && scanData->boundEntryTuple == NULL &&
@@ -3938,7 +3980,7 @@ ApplyHighKeyOptimization(RumScanOpaque so, bool lastItemMatched)
 		so->rumstate.canOuterOrdering[scanData->orderByEntry->attnum - 1] &&
 		so->rumstate.outerOrderingFn[scanData->orderByEntry->attnum - 1].fn_nargs == 4)
 	{
-		if (TryApplyHighKeyOptimization(so, RumIndexTransform_HighKeyScalarCheck))
+		if (ComputePageLevelStats(so, operation))
 		{
 			scanData->highKeyEligiblePages++;
 		}
@@ -3947,24 +3989,18 @@ ApplyHighKeyOptimization(RumScanOpaque so, bool lastItemMatched)
 
 
 static void
-ApplyParallelHighKeyOptimization(RumScanOpaque so)
+ApplyPageLevelStatsOptimization(RumScanOpaque so, bool lastItemMatched)
 {
-	RumOrderByScanData *scanData = so->orderByScanData;
+	TryApplyPageLevelStatsOptimization(so, lastItemMatched,
+									   RumIndexTransform_PageLevelStatsScalarCheck);
+}
 
-	scanData->highKeyMatchDatum = (Datum) 0;
-	if (so->rumstate.rumConfig[scanData->orderByEntry->attnum -
-							   1].enableHighKeyOptimization &&
-		so->totalsearchentries == 1 && scanData->boundEntryTuple == NULL &&
-		PageGetMaxOffsetNumber(scanData->orderByEntryPageCopy) > FirstOffsetNumber &&
-		so->rumstate.canOuterOrdering[scanData->orderByEntry->attnum - 1] &&
-		so->rumstate.outerOrderingFn[scanData->orderByEntry->attnum - 1].fn_nargs == 4)
-	{
-		if (TryApplyHighKeyOptimization(so,
-										RumIndexTransform_HighKeyPageIsolated))
-		{
-			scanData->highKeyEligiblePages++;
-		}
-	}
+
+static void
+ApplyParallelPageLevelStatsOptimization(RumScanOpaque so)
+{
+	TryApplyPageLevelStatsOptimization(so, true,
+									   RumIndexTransform_PageLevelStatsPageIsolated);
 }
 
 
@@ -4024,6 +4060,13 @@ MoveBuffersForOrderedScan(RumScanOpaque so, RumBtree btree)
 	if (RumEnableSupportDeadIndexItems && so->numKilled > 0)
 	{
 		RumKillEntryItems(so, scanData);
+	}
+
+	/* Reset prior page data */
+	so->orderByScanData->highKeyMatchDatum = (Datum) 0;
+	if (so->projectIndexTupleData)
+	{
+		so->projectIndexTupleData->pageProjectsRawIndexTuple = false;
 	}
 
 	/* Now do the step to the direction requested */
@@ -4086,7 +4129,7 @@ MoveBuffersForOrderedScan(RumScanOpaque so, RumBtree btree)
 	 * Operator classes that support this opt-in via the rumConfig. We also only do this if there's 1
 	 * search entry since more than 1 requires more support functions to support.
 	 */
-	ApplyHighKeyOptimization(so, scanData->lastItemMatched);
+	ApplyPageLevelStatsOptimization(so, scanData->lastItemMatched);
 
 	return true;
 
@@ -4280,7 +4323,7 @@ MoveBuffersForOrderedScanParallel(RumScanOpaque so, RumBtree btree, ParallelInde
 				/* Only apply if there's more than lowkey, highkey and one element */
 				if (PageGetMaxOffsetNumber(scanData->orderByEntryPageCopy) > 3)
 				{
-					ApplyParallelHighKeyOptimization(so);
+					ApplyParallelPageLevelStatsOptimization(so);
 				}
 				return true;
 			}

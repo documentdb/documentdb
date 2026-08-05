@@ -904,8 +904,8 @@ typedef enum RumIndexTransformOperation
 	RumIndexTransform_IndexGenerateSkipBound = 1,
 	RumIndexTransform_DetermineOrderByDirection = 2,
 	RumIndexTransform_OrderedScanRequiresDedup = 3,
-	RumIndexTransform_HighKeyScalarCheck = 4,
-	RumIndexTransform_HighKeyPageIsolated = 5,
+	RumIndexTransform_PageLevelStatsScalarCheck = 4,
+	RumIndexTransform_PageLevelStatsPageIsolated = 5,
 	RumIndexTransform_IndexGenerateDistinctSkipBound = 6,
 } RumIndexTransformOperation;
 
@@ -920,6 +920,11 @@ typedef struct RumProjectIndexTupleData
 
 	/* The final index tuple built from the descriptor and the datum. */
 	IndexTuple iscan_tuple;
+
+	IndexTuple iscan_tuple_built;
+
+	/* Whether all entries in the page can project raw index tuples (applied when highkey checks are done) */
+	bool pageProjectsRawIndexTuple;
 } RumProjectIndexTupleData;
 
 typedef struct RumOrderByScanData
