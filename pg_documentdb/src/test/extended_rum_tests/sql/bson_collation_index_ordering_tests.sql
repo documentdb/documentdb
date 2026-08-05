@@ -2160,6 +2160,68 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_orderby_samefield", "filter": {}, "sort": { "a": 1 }, "hint": "idx_orderby_samefield_simple", "collation": { "locale": "en", "numericOrdering": true } }')
 $cmd$);
 
+-- 29ag: a collated group cannot stream from a simple index. "item02" and
+-- "item2" compare equal with numericOrdering but are separated in binary index
+-- order, so omitting the Sort would split one logical group into two.
+SET documentdb.enableNewWithExprAccumulators TO on;
+SET documentdb.enableCollationWithNewGroupAccumulators TO on;
+
+SELECT documentdb_api.insert_one(
+  'ord_coll_ordered_db',
+  'ord_orderby_samefield',
+  '{ "_id": 7, "a": "item02" }'
+);
+
+SELECT document FROM bson_aggregation_pipeline(
+  'ord_coll_ordered_db',
+  '{ "aggregate": "ord_orderby_samefield",
+     "pipeline": [
+       { "$group": { "_id": "$a", "count": { "$sum": 1 } } },
+       { "$sort": { "_id": 1 } }
+     ],
+     "hint": "idx_orderby_samefield_simple",
+     "collation": { "locale": "en", "numericOrdering": true } }'
+);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline(
+      'ord_coll_ordered_db',
+      '{ "aggregate": "ord_orderby_samefield",
+         "pipeline": [
+           { "$group": { "_id": "$a", "count": { "$sum": 1 } } },
+           { "$sort": { "_id": 1 } }
+         ],
+         "hint": "idx_orderby_samefield_simple",
+         "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+-- 29ah: the matching collated index can provide the group ordering directly.
+SELECT document FROM bson_aggregation_pipeline(
+  'ord_coll_ordered_db',
+  '{ "aggregate": "ord_orderby_samefield",
+     "pipeline": [
+       { "$group": { "_id": "$a", "count": { "$sum": 1 } } },
+       { "$sort": { "_id": 1 } }
+     ],
+     "hint": "idx_orderby_samefield_en_num",
+     "collation": { "locale": "en", "numericOrdering": true } }'
+);
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_pipeline(
+      'ord_coll_ordered_db',
+      '{ "aggregate": "ord_orderby_samefield",
+         "pipeline": [
+           { "$group": { "_id": "$a", "count": { "$sum": 1 } } },
+           { "$sort": { "_id": 1 } }
+         ],
+         "hint": "idx_orderby_samefield_en_num",
+         "collation": { "locale": "en", "numericOrdering": true } }')
+$cmd$);
+
+RESET documentdb.enableCollationWithNewGroupAccumulators;
+RESET documentdb.enableNewWithExprAccumulators;
+
 -- ============================================================
 -- Section 30: index-only scan under collation on collation-aware
 -- ordered indexes keyed on _id and on a compound (country, _id).

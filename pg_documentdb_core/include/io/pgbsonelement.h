@@ -30,6 +30,10 @@ const char * PgbsonToSinglePgbsonElementWithCollation(const pgbson *bson,
 													  pgbsonelement *element);
 void BsonIterToSinglePgbsonElement(bson_iter_t *iterator, pgbsonelement *element);
 bool TryGetSinglePgbsonElementFromPgbson(pgbson *bson, pgbsonelement *element);
+
+bool TryGetSinglePgbsonElementFromPgbsonWithCollation(pgbson *bson,
+													  pgbsonelement *element, const
+													  char **collationString);
 bool TryGetSinglePgbsonElementFromBsonIterator(bson_iter_t *iterator,
 											   pgbsonelement *element);
 void BsonValueToPgbsonElement(const bson_value_t *value, pgbsonelement *element);
