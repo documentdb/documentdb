@@ -76,7 +76,7 @@ $cmd$);
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Output: remote_scan.document
-   ->  Distributed Subplan 39_1
+   ->  Distributed Subplan 46_1
          Intermediate Data Size: 260 bytes
          Result destination: Write locally
          ->  HashAggregate (actual rows=3 loops=1)
@@ -97,12 +97,12 @@ $cmd$);
    Tuple data received from nodes: 152 bytes
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('39_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('46_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
          Tuple data received from node: 152 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
                Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6)
-               Function Call: read_intermediate_result('39_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('46_1'::text, 'binary'::citus_copy_format)
 (29 rows)
 
 ROLLBACK;
@@ -129,7 +129,7 @@ $cmd$);
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Output: remote_scan.document
-   ->  Distributed Subplan 41_1
+   ->  Distributed Subplan 48_1
          Intermediate Data Size: 159 bytes
          Result destination: Write locally
          ->  GroupAggregate (actual rows=3 loops=1)
@@ -154,7 +154,7 @@ $cmd$);
    Tuple data received from nodes: 90 bytes
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM (SELECT documentdb_core.bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('41_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_0) agg_stage_1 ORDER BY (documentdb_api_catalog.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
+         Query: SELECT document FROM (SELECT documentdb_core.bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('48_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_0) agg_stage_1 ORDER BY (documentdb_api_catalog.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
          Tuple data received from node: 90 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Sort (actual rows=3 loops=1)
@@ -163,7 +163,7 @@ $cmd$);
                Sort Method: quicksort  Memory: xxxkB
                ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
                      Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4), documentdb_api_catalog.bson_orderby(documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4), '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-                     Function Call: read_intermediate_result('41_1'::text, 'binary'::citus_copy_format)
+                     Function Call: read_intermediate_result('48_1'::text, 'binary'::citus_copy_format)
 (37 rows)
 
 ROLLBACK;
@@ -182,7 +182,7 @@ $cmd$);
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Output: remote_scan.document
-   ->  Distributed Subplan 43_1
+   ->  Distributed Subplan 50_1
          Intermediate Data Size: 260 bytes
          Result destination: Write locally
          ->  HashAggregate (actual rows=3 loops=1)
@@ -207,12 +207,12 @@ $cmd$);
    Tuple data received from nodes: 152 bytes
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('43_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('50_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
          Tuple data received from node: 152 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
                Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6)
-               Function Call: read_intermediate_result('43_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('50_1'::text, 'binary'::citus_copy_format)
 (33 rows)
 
 ROLLBACK;
@@ -239,7 +239,7 @@ $cmd$);
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Output: remote_scan.document
-   ->  Distributed Subplan 45_1
+   ->  Distributed Subplan 52_1
          Intermediate Data Size: 194 bytes
          Result destination: Write locally
          ->  GroupAggregate (actual rows=3 loops=1)
@@ -270,7 +270,7 @@ $cmd$);
    Tuple data received from nodes: 125 bytes
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM (SELECT documentdb_core.bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('45_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_0) agg_stage_1 ORDER BY (documentdb_api_catalog.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
+         Query: SELECT document FROM (SELECT documentdb_core.bson_repath_and_build(agg_stage_0.c1, agg_stage_0.c2, agg_stage_0.c3, agg_stage_0.c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('52_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_0) agg_stage_1 ORDER BY (documentdb_api_catalog.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST
          Tuple data received from node: 125 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Sort (actual rows=3 loops=1)
@@ -279,7 +279,7 @@ $cmd$);
                Sort Method: quicksort  Memory: xxxkB
                ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
                      Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4), documentdb_api_catalog.bson_orderby(documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4), '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-                     Function Call: read_intermediate_result('45_1'::text, 'binary'::citus_copy_format)
+                     Function Call: read_intermediate_result('52_1'::text, 'binary'::citus_copy_format)
 (43 rows)
 
 ROLLBACK;
@@ -331,7 +331,7 @@ $cmd$);
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Output: remote_scan.document
-   ->  Distributed Subplan 48_1
+   ->  Distributed Subplan 55_1
          Intermediate Data Size: 262 bytes
          Result destination: Write locally
          ->  HashAggregate (actual rows=3 loops=1)
@@ -362,12 +362,12 @@ $cmd$);
    Tuple data received from nodes: 154 bytes
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('48_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('55_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
          Tuple data received from node: 154 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
                Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6)
-               Function Call: read_intermediate_result('48_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('55_1'::text, 'binary'::citus_copy_format)
 (39 rows)
 
 ROLLBACK;
@@ -386,7 +386,7 @@ $cmd$);
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Output: remote_scan.document
-   ->  Distributed Subplan 50_1
+   ->  Distributed Subplan 57_1
          Intermediate Data Size: 262 bytes
          Result destination: Write locally
          ->  HashAggregate (actual rows=3 loops=1)
@@ -417,12 +417,12 @@ $cmd$);
    Tuple data received from nodes: 154 bytes
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('50_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('57_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
          Tuple data received from node: 154 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
                Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6)
-               Function Call: read_intermediate_result('50_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('57_1'::text, 'binary'::citus_copy_format)
 (39 rows)
 
 ROLLBACK;
@@ -478,7 +478,7 @@ $cmd$);
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Output: remote_scan.document
-   ->  Distributed Subplan 53_1
+   ->  Distributed Subplan 60_1
          Intermediate Data Size: 253 bytes
          Result destination: Write locally
          ->  HashAggregate (actual rows=3 loops=1)
@@ -499,12 +499,12 @@ $cmd$);
    Tuple data received from nodes: 145 bytes
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('53_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('60_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
          Tuple data received from node: 145 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
                Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6)
-               Function Call: read_intermediate_result('53_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('60_1'::text, 'binary'::citus_copy_format)
 (29 rows)
 
 ROLLBACK;
@@ -523,7 +523,7 @@ $cmd$);
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Output: remote_scan.document
-   ->  Distributed Subplan 55_1
+   ->  Distributed Subplan 62_1
          Intermediate Data Size: 253 bytes
          Result destination: Write locally
          ->  HashAggregate (actual rows=3 loops=1)
@@ -548,12 +548,12 @@ $cmd$);
    Tuple data received from nodes: 145 bytes
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('55_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('62_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
          Tuple data received from node: 145 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
                Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6)
-               Function Call: read_intermediate_result('55_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('62_1'::text, 'binary'::citus_copy_format)
 (33 rows)
 
 ROLLBACK;
@@ -605,7 +605,7 @@ $cmd$);
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Output: remote_scan.document
-   ->  Distributed Subplan 58_1
+   ->  Distributed Subplan 65_1
          Intermediate Data Size: 253 bytes
          Result destination: Write locally
          ->  HashAggregate (actual rows=3 loops=1)
@@ -636,12 +636,12 @@ $cmd$);
    Tuple data received from nodes: 145 bytes
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('58_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('65_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
          Tuple data received from node: 145 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
                Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6)
-               Function Call: read_intermediate_result('58_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('65_1'::text, 'binary'::citus_copy_format)
 (39 rows)
 
 ROLLBACK;
@@ -695,42 +695,45 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
   EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)
   SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$group": { "_id": "$category", "firstName": { "$first": "$name" }, "lastName": { "$last": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Output: remote_scan.document
-   ->  Distributed Subplan 61_1
+   ->  Distributed Subplan 68_1
          Intermediate Data Size: 276 bytes
          Result destination: Write locally
-         ->  HashAggregate (actual rows=3 loops=1)
+         ->  GroupAggregate (actual rows=3 loops=1)
                Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, coord_combine_agg('xxxx'::oid, remote_scan.c4, NULL::bson), remote_scan.c5, coord_combine_agg('xxxx'::oid, remote_scan.c6, NULL::bson)
                Group Key: remote_scan.c2
-               ->  Custom Scan (Citus Adaptive) (actual rows=6 loops=1)
-                     Output: remote_scan.c1, remote_scan.c2, remote_scan.c3, remote_scan.c4, remote_scan.c5, remote_scan.c6
-                     Task Count: 8
-                     Tuple data received from nodes: 762 bytes
-                     Tasks Shown: One of 8
-                     ->  Task
-                           Query: SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS c2, 'firstName'::text AS c3, pg_catalog.worker_partial_agg('documentdb_api_internal.bsonfirstwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)) AS c4, 'lastName'::text AS c5, pg_catalog.worker_partial_agg('documentdb_api_internal.bsonlastwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)) AS c6 FROM documentdb_data.documents_6400_640016 collection WHERE documentdb_api_internal.bson_dollar_fullscan(document, '{ "category" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson) GROUP BY (documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
-                           Tuple data received from node: 252 bytes
-                           Node: host=localhost port=58070 dbname=regression
-                           ->  HashAggregate (actual rows=2 loops=1)
-                                 Output: '_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'firstName'::text, worker_partial_agg('xxxx'::oid, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)), 'lastName'::text, worker_partial_agg('xxxx'::oid, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text))
-                                 Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
-                                 Batches: 1  Memory Usage: 32kB
-                                 ->  Seq Scan on documentdb_data.documents_6400_640016 collection (actual rows=2 loops=1)
-                                       Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), document
+               ->  Sort (actual rows=3 loops=1)
+                     Output: remote_scan.c2, remote_scan.c1, remote_scan.c3, remote_scan.c4, remote_scan.c5, remote_scan.c6
+                     Sort Key: remote_scan.c2 USING <<<
+                     ->  Custom Scan (Citus Adaptive) (never executed)
+                           Output: remote_scan.c2, remote_scan.c1, remote_scan.c3, remote_scan.c4, remote_scan.c5, remote_scan.c6
+                           Task Count: 8
+                           Tuple data received from nodes: 762 bytes
+                           Tasks Shown: One of 8
+                           ->  Task
+                                 Query: SELECT '_id'::text AS c1, documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text) AS c2, 'firstName'::text AS c3, pg_catalog.worker_partial_agg('documentdb_api_internal.bsonfirstwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)) AS c4, 'lastName'::text AS c5, pg_catalog.worker_partial_agg('documentdb_api_internal.bsonlastwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)) AS c6 FROM documentdb_data.documents_6400_640016 collection WHERE documentdb_api_internal.bson_dollar_fullscan(document, '{ "category" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson) GROUP BY (documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text))
+                                 Tuple data received from node: 252 bytes
+                                 Node: host=localhost port=58070 dbname=regression
+                                 ->  HashAggregate (actual rows=2 loops=1)
+                                       Output: '_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)), 'firstName'::text, worker_partial_agg('xxxx'::oid, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)), 'lastName'::text, worker_partial_agg('xxxx'::oid, ROW(document, '{ "" : "$name" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text))
+                                       Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text)
+                                       Batches: 1  Memory Usage: 32kB
+                                       ->  Seq Scan on documentdb_data.documents_6400_640016 collection (actual rows=2 loops=1)
+                                             Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$category" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, 'en-u-ks-level1'::text), document
    Task Count: 1
    Tuple data received from nodes: 168 bytes
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('61_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4, c5, c6) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6 FROM read_intermediate_result('68_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson, c5 text, c6 documentdb_core.bson)) agg_stage_0
          Tuple data received from node: 168 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
                Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4, intermediate_result.c5, intermediate_result.c6)
-               Function Call: read_intermediate_result('61_1'::text, 'binary'::citus_copy_format)
-(33 rows)
+               Function Call: read_intermediate_result('68_1'::text, 'binary'::citus_copy_format)
+(36 rows)
 
 ROLLBACK;
 SET documentdb.enableNewWithExprAccumulators TO off;
@@ -752,7 +755,7 @@ $cmd$);
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Output: remote_scan.document
-   ->  Distributed Subplan 63_1
+   ->  Distributed Subplan 70_1
          Intermediate Data Size: 159 bytes
          Result destination: Write locally
          ->  HashAggregate (actual rows=3 loops=1)
@@ -783,12 +786,12 @@ $cmd$);
    Tuple data received from nodes: 90 bytes
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('63_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_1
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('70_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_1
          Tuple data received from node: 90 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
                Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4)
-               Function Call: read_intermediate_result('63_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('70_1'::text, 'binary'::citus_copy_format)
 (39 rows)
 
 ROLLBACK;
@@ -810,7 +813,7 @@ $cmd$);
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive) (actual rows=3 loops=1)
    Output: remote_scan.document
-   ->  Distributed Subplan 65_1
+   ->  Distributed Subplan 72_1
          Intermediate Data Size: 159 bytes
          Result destination: Write locally
          ->  GroupAggregate (actual rows=3 loops=1)
@@ -834,12 +837,12 @@ $cmd$);
    Tuple data received from nodes: 90 bytes
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('65_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_core.bson_repath_and_build(c1, c2, c3, c4) AS document FROM (SELECT intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4 FROM read_intermediate_result('72_1'::text, 'binary'::citus_copy_format) intermediate_result(c1 text, c2 documentdb_core.bson, c3 text, c4 documentdb_core.bson)) agg_stage_0
          Tuple data received from node: 90 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result (actual rows=3 loops=1)
                Output: documentdb_core.bson_repath_and_build(intermediate_result.c1, intermediate_result.c2, intermediate_result.c3, intermediate_result.c4)
-               Function Call: read_intermediate_result('65_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('72_1'::text, 'binary'::citus_copy_format)
 (32 rows)
 
 ROLLBACK;

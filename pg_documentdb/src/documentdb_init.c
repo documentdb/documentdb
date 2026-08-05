@@ -102,6 +102,9 @@ InstallDocumentDBApiPostgresHooks(void)
 	ExtensionPreviousSetRelPathlistHook = set_rel_pathlist_hook;
 	set_rel_pathlist_hook = ExtensionRelPathlistHook;
 
+	ExtensionPreviousPostParseAnalyzeHook = post_parse_analyze_hook;
+	post_parse_analyze_hook = DocumentDBPostParseAnalyzeHook;
+
 	ExtensionPreviousGetRelationInfoHook = get_relation_info_hook;
 	get_relation_info_hook = ExtensionGetRelationInfoHook;
 
@@ -172,6 +175,9 @@ UninstallDocumentDBApiPostgresHooks(void)
 
 	set_rel_pathlist_hook = ExtensionPreviousSetRelPathlistHook;
 	ExtensionPreviousSetRelPathlistHook = NULL;
+
+	post_parse_analyze_hook = ExtensionPreviousPostParseAnalyzeHook;
+	ExtensionPreviousPostParseAnalyzeHook = NULL;
 
 	get_relation_info_hook = ExtensionPreviousGetRelationInfoHook;
 	ExtensionPreviousGetRelationInfoHook = NULL;

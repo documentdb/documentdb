@@ -536,7 +536,11 @@ BsonRepathAndBuildCore(PG_FUNCTION_ARGS, bool isBuildDocument)
 
 				if (EnableWriteDocumentsInRepath)
 				{
-					if (TryGetSinglePgbsonElementFromPgbson(pbson, &elem) &&
+					const char *collationStringIgnore = NULL;
+					if (TryGetSinglePgbsonElementFromPgbsonWithCollation(pbson, &elem,
+																		 &
+																		 collationStringIgnore)
+						&&
 						elem.pathLength == 0)
 					{
 						PgbsonWriterAppendValue(&writer, path, len, &elem.bsonValue);

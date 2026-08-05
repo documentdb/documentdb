@@ -318,6 +318,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the bson (ApiInternalSchemaV2.<<<) bson function */
 	Oid BsonOrderyByGtOperatorId;
 
+	/* OID of hte bson orderby compare operator family */
+	Oid BsonOrderByCompareOperatorFamilyId;
+
 	/* OID of hte bson order by index operator */
 	Oid BsonOrderByIndexOperatorId;
 
@@ -5578,6 +5581,24 @@ BsonOrderyByGtOperatorId(void)
 	return GetInternalBinaryOperatorId(
 		&Cache.BsonOrderyByGtOperatorId,
 		BsonTypeId(), ">>>", BsonTypeId());
+}
+
+
+Oid
+BsonOrderByCompareOperatorFamilyId(void)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (Cache.BsonOrderByCompareOperatorFamilyId == InvalidOid)
+	{
+		bool missingOk = false;
+		Cache.BsonOrderByCompareOperatorFamilyId = get_opfamily_oid(
+			BTREE_AM_OID, list_make2(makeString(DocumentDBApiInternalSchemaName),
+									 makeString("bson_btree_orderby_operators_family")),
+			missingOk);
+	}
+
+	return Cache.BsonOrderByCompareOperatorFamilyId;
 }
 
 

@@ -9,3 +9,4 @@ test: multinode/reservoir_sample_unsharded
 test: multinode/reservoir_sample_heap_skip
 test: multinode/move_collection_local_execution
 test: multinode/bson_composite_rct_planner_pruning_tests
+test: multinode/bson_collation_group_decomposed

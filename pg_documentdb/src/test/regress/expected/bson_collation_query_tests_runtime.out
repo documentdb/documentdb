@@ -3342,18 +3342,6 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
     "collation": { "locale": "en", "strength": 1 }
 }');
 psql:sql/bson_collation_query_tests_core.sql:985: ERROR:  collation is not supported in the $fill stage yet.
--- $group
-SELECT document FROM bson_aggregation_pipeline('coll_q_db',
-'{ "aggregate": "coll_strings",
-   "pipeline": [
-     { "$group": {
-         "_id": "$a",
-         "set": { "$addToSet": "$a" }
-     }}
-   ],
-   "collation": { "locale": "en", "strength": 1 }
-}');
-psql:sql/bson_collation_query_tests_core.sql:997: ERROR:  collation is not supported in $group stage yet.
 -- $setWindowFields
 SELECT document FROM bson_aggregation_pipeline('coll_q_db',
 '{ "aggregate": "coll_strings",
@@ -3367,7 +3355,7 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
    ],
    "collation": { "locale": "en", "strength": 1 }
 }');
-psql:sql/bson_collation_query_tests_core.sql:1011: ERROR:  collation is not supported in the $setWindowFields stage yet.
+psql:sql/bson_collation_query_tests_core.sql:999: ERROR:  collation is not supported in the $setWindowFields stage yet.
 -- $sortByCount
 SELECT document FROM bson_aggregation_pipeline('coll_q_db',
 '{ "aggregate": "coll_strings",
@@ -3383,13 +3371,13 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
    ],
    "collation": { "locale": "en", "strength": 1 }
 }');
-psql:sql/bson_collation_query_tests_core.sql:1027: ERROR:  collation is not supported in the $sortByCount stage yet.
+psql:sql/bson_collation_query_tests_core.sql:1015: ERROR:  collation is not supported in the $sortByCount stage yet.
 -- ==============================================================================
 -- SECTION 20: unsupported — $merge and write commands with collation
 -- ==============================================================================
 -- $merge: collation propagation through writes is not supported.
 SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_lookup_src", "pipeline": [{"$merge" : { "into": "coll_merge_target", "whenMatched" : "replace" }} ], "collation": { "locale": "en", "strength" : 1} }');
-psql:sql/bson_collation_query_tests_core.sql:1034: ERROR:  collation is not supported with $merge yet
+psql:sql/bson_collation_query_tests_core.sql:1022: ERROR:  collation is not supported with $merge yet
 -- $bucketAuto
 SELECT document FROM bson_aggregation_pipeline('coll_q_db',
 '{ "aggregate": "coll_strings",
@@ -3398,22 +3386,22 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
    ],
    "collation": { "locale": "en", "strength": 1 }
 }');
-psql:sql/bson_collation_query_tests_core.sql:1043: ERROR:  collation is not supported in the $bucketAuto stage yet.
+psql:sql/bson_collation_query_tests_core.sql:1031: ERROR:  collation is not supported in the $bucketAuto stage yet.
 -- findAndModify with collation.
 SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "coll_multi_collation", "query": {"a": 1}, "update": {"_id": 1, "b": 1}, "collation" : {"locale" : "en", "strength": 1} }');
-psql:sql/bson_collation_query_tests_core.sql:1046: ERROR:  findAndModify.collation is not implemented yet
+psql:sql/bson_collation_query_tests_core.sql:1034: ERROR:  findAndModify.collation is not implemented yet
 -- findAndModify $elemMatch projection with collation (documents current unimplemented state).
 SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "coll_multi_collation", "query": {"a": "Cat"}, "update": {"$set": {"b": 99}}, "fields": {"a": 1}, "collation": {"locale": "en", "strength": 1}}');
-psql:sql/bson_collation_query_tests_core.sql:1049: ERROR:  findAndModify.collation is not implemented yet
+psql:sql/bson_collation_query_tests_core.sql:1037: ERROR:  findAndModify.collation is not implemented yet
 -- update with collation + arrayFilters.
 SELECT documentdb_api.update('update', '{"update":"coll_multi_collation", "updates":[{"q":{"_id": 134111, "b": [ 5, 2, 4 ] },"u":{"$set" : {"b.$[a]":3} },"upsert":true, "collation" : {"locale" : "en", "strength": 1}, "arrayFilters": [ { "a": 2 } ]}]}');
-psql:sql/bson_collation_query_tests_core.sql:1052: ERROR:  BSON field 'update.updates.collation' is not yet supported
+psql:sql/bson_collation_query_tests_core.sql:1040: ERROR:  BSON field 'update.updates.collation' is not yet supported
 -- count with collation: unsupported
 SELECT documentdb_api.count_query('coll_q_db', '{"count":"coll_strings", "query":{"a":"cat"}, "collation":{"locale":"en","strength":1}}');
-psql:sql/bson_collation_query_tests_core.sql:1055: ERROR:  collation is not supported in the count command yet.
+psql:sql/bson_collation_query_tests_core.sql:1043: ERROR:  collation is not supported in the count command yet.
 -- distinct with collation: unsupported
 SELECT documentdb_api.distinct_query('coll_q_db', '{"distinct":"coll_strings", "key":"a", "query":{}, "collation":{"locale":"en","strength":1}}');
-psql:sql/bson_collation_query_tests_core.sql:1058: ERROR:  collation is not supported in the distinct command yet.
+psql:sql/bson_collation_query_tests_core.sql:1046: ERROR:  collation is not supported in the distinct command yet.
 -- ==============================================================================
 -- SECTION 21: covered $count and a collation-aware index keyed on `_id`
 -- ==============================================================================
@@ -3424,7 +3412,7 @@ psql:sql/bson_collation_query_tests_core.sql:1058: ERROR:  collation is not supp
 SET documentdb_core.enableCollation TO on;
 -- coll_ios: scalar `country` field, exercised by covered $count and range queries.
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 1, "country": "usa", "provider": "aws" }');
-psql:sql/bson_collation_query_tests_core.sql:1071: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:1059: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -3510,7 +3498,7 @@ SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_ios", "
 
 -- coll_id_ios: scalar string `_id` values that collate equally but differ byte-wise.
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "cat", "v": 1 }');
-psql:sql/bson_collation_query_tests_core.sql:1092: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:1080: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -3852,7 +3840,7 @@ SELECT documentdb_api_internal.bson_expression_get(
 -- flows command -> pipeline -> expression parse (the bson_expression_get tests above bypass this).
 -- Binary: $max "apple" / $min "Banana"; collation strength 1: $max "Banana" / $min "apple".
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_minmax_idx', '{ "_id": 1, "grp": "r", "vals": ["apple", "Banana"] }');
-psql:sql/bson_collation_query_tests_core.sql:1220: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:1208: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

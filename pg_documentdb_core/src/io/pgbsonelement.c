@@ -155,6 +155,37 @@ TryGetSinglePgbsonElementFromPgbson(pgbson *bson, pgbsonelement *element)
 }
 
 
+bool
+TryGetSinglePgbsonElementFromPgbsonWithCollation(pgbson *bson, pgbsonelement *element,
+												 const char **collationString)
+{
+	bson_iter_t iterator;
+	PgbsonInitIterator(bson, &iterator);
+	if (!bson_iter_next(&iterator))
+	{
+		/* No fields are currently available */
+		return false;
+	}
+
+	BsonIterToPgbsonElement(&iterator, element);
+
+	if (bson_iter_next(&iterator))
+	{
+		/* there's more fields. */
+		const char *key = bson_iter_key(&iterator);
+		if (strcmp(key, "collation") == 0 && BSON_ITER_HOLDS_UTF8(&iterator))
+		{
+			/* If the second field is collation, ignore and consider valid */
+			*collationString = bson_iter_utf8(&iterator, NULL);
+			return !bson_iter_next(&iterator);
+		}
+		return false;
+	}
+
+	return true;
+}
+
+
 /*
  * Converts a bson_iter_t that has exactly 1 value in it to a pgbsonelement.
  * returns true if it's a single pgbson element, false otherwise.

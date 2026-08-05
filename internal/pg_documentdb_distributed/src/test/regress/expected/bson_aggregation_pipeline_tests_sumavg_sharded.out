@@ -161,7 +161,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
                                                                                                                                                           QUERY PLAN                                                                                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 41_1
+   ->  Distributed Subplan 46_1
          ->  HashAggregate
                Group Key: remote_scan.c2
                ->  Custom Scan (Citus Adaptive)
@@ -186,7 +186,7 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
                                                                                                                                                           QUERY PLAN                                                                                                                                                          
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
-   ->  Distributed Subplan 43_1
+   ->  Distributed Subplan 48_1
          ->  HashAggregate
                Group Key: remote_scan.c2
                ->  Custom Scan (Citus Adaptive)
@@ -259,9 +259,8 @@ SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
                         document                        
 ---------------------------------------------------------------------
- { "_id" : "a", "matchCount" : { "$numberInt" : "0" } }
- { "_id" : "A", "matchCount" : { "$numberInt" : "1" } }
-(2 rows)
+ { "_id" : "a", "matchCount" : { "$numberInt" : "1" } }
+(1 row)
 
 -- Post-sharding constant group with collation
 SET documentdb.enableNewMinMaxAccumulators TO off;

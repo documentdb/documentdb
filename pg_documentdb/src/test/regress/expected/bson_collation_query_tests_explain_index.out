@@ -3771,21 +3771,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
 ERROR:  collation is not supported in the $fill stage yet.
 CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean,boolean) line 5 at FOR over EXECUTE statement
--- unsupported: $group
-SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db',
-'{ "aggregate": "coll_array_filter",
-   "pipeline": [
-     { "$group": {
-         "_id": "$a",
-         "set": { "$addToSet": "$a" }
-     }}
-   ],
-   "collation": { "locale": "en", "strength": 1 }
-}')
-$cmd$);
-ERROR:  collation is not supported in $group stage yet.
-CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean,boolean) line 5 at FOR over EXECUTE statement
 -- unsupported: $setWindowFields
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db',

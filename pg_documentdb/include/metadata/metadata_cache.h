@@ -236,6 +236,7 @@ Oid BsonOrderyByGtOperatorId(void);
 Oid BsonOrderByIndexOperatorId(void);
 Oid BsonOrderByReverseIndexOperatorId(void);
 Oid BsonOrderByBsonIndexTypeOperatorId(void);
+Oid BsonOrderByCompareOperatorFamilyId(void);
 
 /* Postgres internal functions */
 Oid PostgresDrandomFunctionId(void);

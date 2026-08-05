@@ -18,6 +18,7 @@
 #include <optimizer/planner.h>
 #include <optimizer/paths.h>
 #include <commands/explain.h>
+#include <parser/analyze.h>
 #if PG_VERSION_NUM >= 180000
 #include <commands/explain_state.h>
 #endif
@@ -37,6 +38,7 @@ extern PGDLLIMPORT node_worker_stmt_rewrite_hook_type node_worker_stmt_rewrite_h
 
 extern planner_hook_type ExtensionPreviousPlannerHook;
 extern set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook;
+extern post_parse_analyze_hook_type ExtensionPreviousPostParseAnalyzeHook;
 extern explain_get_index_name_hook_type ExtensionPreviousIndexNameHook;
 extern get_relation_info_hook_type ExtensionPreviousGetRelationInfoHook;
 extern ExplainOneQuery_hook_type ExtensionPreviousExplainOneQueryHook;
@@ -52,6 +54,9 @@ void DocumentDBApiExplainOneQuery(Query *query, int cursorOptions, IntoClause *i
 								  ParamListInfo params, QueryEnvironment *queryEnv);
 void ExtensionRelPathlistHook(PlannerInfo *root, RelOptInfo *rel, Index rti,
 							  RangeTblEntry *rte);
+
+void DocumentDBPostParseAnalyzeHook(ParseState *pstate, Query *query,
+									JumbleState *jstate);
 void ExtensionGetRelationInfoHook(PlannerInfo *root, Oid relationObjectId,
 								  bool inhparent, RelOptInfo *rel);
 bool IsDocumentDbCollectionBasedRTE(RangeTblEntry *rte);

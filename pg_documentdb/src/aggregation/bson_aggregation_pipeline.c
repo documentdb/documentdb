@@ -7739,7 +7739,33 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 				fieldVal, origEntry->expr);
 
 			FuncExpr *fieldGroupFunc;
-			if (context->variableSpec != NULL)
+			if (IsCollationApplicable(context->collationString))
+			{
+				Expr *variableSpec = context->variableSpec;
+				if (variableSpec == NULL)
+				{
+					variableSpec = (Expr *) MakeBsonConst(PgbsonInitEmpty());
+				}
+
+				groupArgs = list_make5(fieldDocExpr, MakeBsonConst(fieldGroupValue),
+									   MakeBoolValueConst(true), variableSpec,
+									   MakeTextConst(context->collationString,
+													 strlen(context->collationString)));
+				fieldGroupFunc = makeFuncExpr(
+					BsonExpressionGetWithLetAndCollationFunctionOid(), BsonTypeId(),
+					groupArgs, InvalidOid,
+					InvalidOid, COERCE_EXPLICIT_CALL);
+				if (IsDistributedShardContext(context) &&
+					BsonTypeId() != DocumentDBCoreBsonTypeId())
+				{
+					fieldGroupFunc = makeFuncExpr(
+						DocumentDBCoreBsonToBsonFunctionOId(), BsonTypeId(), list_make1(
+							fieldGroupFunc),
+						InvalidOid,
+						InvalidOid, COERCE_EXPLICIT_CALL);
+				}
+			}
+			else if (context->variableSpec != NULL)
 			{
 				List *fieldArgs = list_make4(fieldDocExpr,
 											 MakeBsonConst(fieldGroupValue),
@@ -7794,7 +7820,33 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 	{
 		pgbson *groupValue = BsonValueToDocumentPgbson(&idValue);
 		FuncExpr *groupFunc;
-		if (context->variableSpec != NULL)
+		if (IsCollationApplicable(context->collationString))
+		{
+			Expr *variableSpec = context->variableSpec;
+			if (variableSpec == NULL)
+			{
+				variableSpec = (Expr *) MakeBsonConst(PgbsonInitEmpty());
+			}
+
+			bsonExpressionGetFunction = BsonExpressionGetWithLetAndCollationFunctionOid();
+			groupArgs = list_make5(transformedGroupExpr, MakeBsonConst(groupValue),
+								   MakeBoolValueConst(true), variableSpec,
+								   MakeTextConst(context->collationString,
+												 strlen(context->collationString)));
+			groupFunc = makeFuncExpr(
+				bsonExpressionGetFunction, BsonTypeId(), groupArgs, InvalidOid,
+				InvalidOid, COERCE_EXPLICIT_CALL);
+			if (IsDistributedShardContext(context) &&
+				BsonTypeId() != DocumentDBCoreBsonTypeId())
+			{
+				groupFunc = makeFuncExpr(
+					DocumentDBCoreBsonToBsonFunctionOId(), BsonTypeId(), list_make1(
+						groupFunc),
+					InvalidOid,
+					InvalidOid, COERCE_EXPLICIT_CALL);
+			}
+		}
+		else if (context->variableSpec != NULL)
 		{
 			bsonExpressionGetFunction = BsonExpressionGetWithLetFunctionOid();
 			groupArgs = list_make4(transformedGroupExpr, MakeBsonConst(groupValue),
@@ -8592,10 +8644,22 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 			/* Assign the _id clause as what we're grouping on */
 			SortGroupClause *grpcl = makeNode(SortGroupClause);
 			grpcl->tleSortGroupRef = assignSortGroupRef(groupEntry, query->targetList);
-			grpcl->eqop = BsonEqualOperatorId();
-			grpcl->sortop = BsonLessThanOperatorId();
-			grpcl->nulls_first = false; /* OK with or without sortop */
-			grpcl->hashable = true;
+
+			if (IsCollationApplicable(context->collationString))
+			{
+				grpcl->eqop = BsonOrderyByEqOperatorId();
+				grpcl->sortop = BsonOrderyByLtOperatorId();
+				grpcl->nulls_first = false; /* OK with or without sortop */
+				grpcl->hashable = false;
+			}
+			else
+			{
+				grpcl->eqop = BsonEqualOperatorId();
+				grpcl->sortop = BsonLessThanOperatorId();
+				grpcl->nulls_first = false; /* OK with or without sortop */
+				grpcl->hashable = true;
+			}
+
 			query->groupClause = lappend(query->groupClause, grpcl);
 		}
 	}
@@ -8615,10 +8679,21 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 			/* Assign the _id clause as what we're grouping on */
 			SortGroupClause *grpcl = makeNode(SortGroupClause);
 			grpcl->tleSortGroupRef = assignSortGroupRef(groupEntry, query->targetList);
-			grpcl->eqop = BsonEqualOperatorId();
-			grpcl->sortop = BsonLessThanOperatorId();
-			grpcl->nulls_first = false; /* OK with or without sortop */
-			grpcl->hashable = true;
+			if (IsCollationApplicable(context->collationString))
+			{
+				grpcl->eqop = BsonOrderyByEqOperatorId();
+				grpcl->sortop = BsonOrderyByLtOperatorId();
+				grpcl->nulls_first = false; /* OK with or without sortop */
+				grpcl->hashable = false;
+			}
+			else
+			{
+				grpcl->eqop = BsonEqualOperatorId();
+				grpcl->sortop = BsonLessThanOperatorId();
+				grpcl->nulls_first = false; /* OK with or without sortop */
+				grpcl->hashable = true;
+			}
+
 			query->groupClause = lappend(query->groupClause, grpcl);
 		}
 

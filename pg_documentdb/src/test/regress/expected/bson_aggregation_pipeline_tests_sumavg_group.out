@@ -1488,8 +1488,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
                         document                        
 --------------------------------------------------------
  { "_id" : "A", "matchCount" : { "$numberInt" : "1" } }
- { "_id" : "a", "matchCount" : { "$numberInt" : "0" } }
-(2 rows)
+(1 row)
 
 -- Without collation baseline (binary: "cherry" != "CHERRY", no matches)
 SET documentdb.enableNewMinMaxAccumulators TO off;
@@ -1519,8 +1518,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
                         document                         
 ---------------------------------------------------------
  { "_id" : "A", "matchedSum" : { "$numberInt" : "10" } }
- { "_id" : "a", "matchedSum" : { "$numberInt" : "0" } }
-(2 rows)
+(1 row)
 
 -- Without collation baseline
 SET documentdb.enableNewMinMaxAccumulators TO off;
@@ -1550,8 +1548,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
                            document                           
 --------------------------------------------------------------
  { "_id" : "A", "matchedAvg" : { "$numberDouble" : "10.0" } }
- { "_id" : "a", "matchedAvg" : null }
-(2 rows)
+(1 row)
 
 -- Without collation baseline
 SET documentdb.enableNewMinMaxAccumulators TO off;
@@ -1581,29 +1578,28 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
                                               document                                               
 -----------------------------------------------------------------------------------------------------
  { "_id" : "A", "matchCount" : { "$numberInt" : "1" }, "matchedAvg" : { "$numberDouble" : "10.0" } }
- { "_id" : "a", "matchCount" : { "$numberInt" : "0" }, "matchedAvg" : null }
-(2 rows)
+(1 row)
 
 -- =============================================================================
 -- Test 22: EXPLAIN showing collation propagation in WithExpr aggregate functions
 -- =============================================================================
 -- With collation: collation text constant should appear in bsonsumwithexpr/bsonaveragewithexpr args
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
-                                                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                    
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                            
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Output: agg_stage_1.document, (documentdb_api_internal.bson_orderby_index(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
    Sort Key: (documentdb_api_internal.bson_orderby_index(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Subquery Scan on agg_stage_1
          Output: agg_stage_1.document, documentdb_api_internal.bson_orderby_index(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          ->  GroupAggregate
-               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'matchCount'::text, documentdb_api_internal.bsonsumwithexpr(collection.document, '{ "" : { "$cond" : { "if" : { "$eq" : [ "$name", "CHERRY" ] }, "then" : { "$numberInt" : "1" }, "else" : { "$numberInt" : "0" } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), 'matchCount'::text, documentdb_api_internal.bsonsumwithexpr(collection.document, '{ "" : { "$cond" : { "if" : { "$eq" : [ "$name", "CHERRY" ] }, "then" : { "$numberInt" : "1" }, "else" : { "$numberInt" : "0" } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text))
+               Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text))
                ->  Sort
-                     Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-                     Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), collection.document
+                     Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)) USING <<<
                      ->  Bitmap Heap Scan on documentdb_data.documents_25702015 collection
-                           Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                           Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), collection.document
                            Recheck Cond: (collection.shard_key_value = '25702015'::bigint)
                            ->  Bitmap Index Scan on _id_
                                  Index Cond: (collection.shard_key_value = '25702015'::bigint)
@@ -1633,21 +1629,21 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 
 -- EXPLAIN for $avg with collation
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchedAvg": { "$avg": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "$val", "else": null } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
-                                                                                                                                                                                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                                                                                                                                                                                     
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                             
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Output: agg_stage_1.document, (documentdb_api_internal.bson_orderby_index(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
    Sort Key: (documentdb_api_internal.bson_orderby_index(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
    ->  Subquery Scan on agg_stage_1
          Output: agg_stage_1.document, documentdb_api_internal.bson_orderby_index(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          ->  GroupAggregate
-               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'matchedAvg'::text, documentdb_api_internal.bsonaveragewithexpr(collection.document, '{ "" : { "$cond" : { "if" : { "$eq" : [ "$name", "CHERRY" ] }, "then" : "$val", "else" : null } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), 'matchedAvg'::text, documentdb_api_internal.bsonaveragewithexpr(collection.document, '{ "" : { "$cond" : { "if" : { "$eq" : [ "$name", "CHERRY" ] }, "then" : "$val", "else" : null } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text))
+               Group Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text))
                ->  Sort
-                     Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
-                     Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Output: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), collection.document
+                     Sort Key: (documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)) USING <<<
                      ->  Bitmap Heap Scan on documentdb_data.documents_25702015 collection
-                           Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
+                           Output: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$group" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), collection.document
                            Recheck Cond: (collection.shard_key_value = '25702015'::bigint)
                            ->  Bitmap Index Scan on _id_
                                  Index Cond: (collection.shard_key_value = '25702015'::bigint)
