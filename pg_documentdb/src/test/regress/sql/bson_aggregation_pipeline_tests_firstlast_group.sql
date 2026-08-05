@@ -91,7 +91,6 @@ SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 5, "g": "a
 -- 11. Basic collation with simple field reference (sanity: collation doesn't change order-based result)
 SET documentdb_core.enableCollation TO on;
 SET documentdb.enableNewWithExprAccumulators TO on;
-SET documentdb.enableNewWithExprAccumulators TO on;
 SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 
 -- With collation (case-insensitive strength 1)

@@ -984,18 +984,6 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
     "collation": { "locale": "en", "strength": 1 }
 }');
 
--- $group
-SELECT document FROM bson_aggregation_pipeline('coll_q_db',
-'{ "aggregate": "coll_strings",
-   "pipeline": [
-     { "$group": {
-         "_id": "$a",
-         "set": { "$addToSet": "$a" }
-     }}
-   ],
-   "collation": { "locale": "en", "strength": 1 }
-}');
-
 -- $setWindowFields
 SELECT document FROM bson_aggregation_pipeline('coll_q_db',
 '{ "aggregate": "coll_strings",

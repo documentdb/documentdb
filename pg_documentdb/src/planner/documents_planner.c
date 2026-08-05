@@ -26,6 +26,7 @@
 #include <nodes/nodeFuncs.h>
 #include <nodes/parsenodes.h>
 #include <nodes/print.h>
+#include <parser/parsetree.h>
 #include <parser/parse_target.h>
 #include <storage/lockdefs.h>
 #include <tcop/utility.h>
@@ -132,6 +133,8 @@ static Query * ExpandNestedAggregationFunction(Query *node, ParamListInfo boundP
 static void ForceExcludeNonIndexPaths(PlannerInfo *root, RelOptInfo *rel,
 									  Index rti, RangeTblEntry *rte);
 static List * AugmentBaseRestrictInfo(PlannerInfo *root, RelOptInfo *rel);
+static void ExtensionPostParseAnalyzeHookCore(ParseState *pstate, Query *query,
+											  JumbleState *jstate);
 
 extern bool ForceDisableSeqScan;
 extern bool EnableExtendedExplainPlans;
@@ -154,6 +157,7 @@ extern bool EnablePartialFilterEvalOnPlanner;
 
 planner_hook_type ExtensionPreviousPlannerHook = NULL;
 set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook = NULL;
+post_parse_analyze_hook_type ExtensionPreviousPostParseAnalyzeHook = NULL;
 explain_get_index_name_hook_type ExtensionPreviousIndexNameHook = NULL;
 get_relation_info_hook_type ExtensionPreviousGetRelationInfoHook = NULL;
 ExplainOneQuery_hook_type ExtensionPreviousExplainOneQueryHook = NULL;
@@ -704,6 +708,22 @@ ExtensionRelPathlistHook(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	if (ExtensionPreviousSetRelPathlistHook != NULL)
 	{
 		ExtensionPreviousSetRelPathlistHook(root, rel, rti, rte);
+	}
+}
+
+
+void
+DocumentDBPostParseAnalyzeHook(ParseState *pstate, Query *query,
+							   JumbleState *jstate)
+{
+	if (IsDocumentDBApiExtensionActive())
+	{
+		ExtensionPostParseAnalyzeHookCore(pstate, query, jstate);
+	}
+
+	if (ExtensionPreviousPostParseAnalyzeHook != NULL)
+	{
+		ExtensionPreviousPostParseAnalyzeHook(pstate, query, jstate);
 	}
 }
 
@@ -2313,4 +2333,137 @@ AugmentBaseRestrictInfo(PlannerInfo *root, RelOptInfo *rel)
 	/* This function is a placeholder for the actual implementation */
 	return (List *) expression_tree_mutator((Node *) clauselist,
 											AugmentBaseRestrictInfoCore, 0);
+}
+
+
+static bool
+IsCollatedGroupClause(Expr *node, Query *query)
+{
+	if (node == NULL)
+	{
+		return false;
+	}
+
+	if (IsA(node, Var))
+	{
+#if PG_VERSION_NUM >= 180000
+		Var *var = (Var *) node;
+		if (var->varlevelsup != 0 || var->varattno <= 0 ||
+			var->varno > list_length(query->rtable))
+		{
+			return false;
+		}
+
+		RangeTblEntry *rte = rt_fetch(var->varno, query->rtable);
+
+		/*
+		 * PostgreSQL 18 replaces grouped target expressions with Vars that
+		 * reference the corresponding expression in an RTE_GROUP. Resolve the
+		 * Var so the collation function below can be detected and its grouping
+		 * operators replaced.
+		 */
+		if (rte->rtekind == RTE_GROUP &&
+			var->varattno <= list_length(rte->groupexprs))
+		{
+			Expr *groupExpr = list_nth(rte->groupexprs, var->varattno - 1);
+			return IsCollatedGroupClause(groupExpr, query);
+		}
+#endif
+		return false;
+	}
+
+	if (!IsA(node, FuncExpr))
+	{
+		return false;
+	}
+
+	FuncExpr *funcExpr = (FuncExpr *) node;
+	if (funcExpr->funcid == DocumentDBCoreBsonToBsonFunctionOId())
+	{
+		Expr *argExpr = linitial(funcExpr->args);
+		if (!IsA(argExpr, FuncExpr))
+		{
+			return false;
+		}
+
+		funcExpr = (FuncExpr *) argExpr;
+	}
+
+	if (funcExpr->funcid != BsonExpressionGetWithLetAndCollationFunctionOid())
+	{
+		return false;
+	}
+
+	/* We are maybe processing a group with collation - collation is tagged if the last arg is not null */
+	if (list_length(funcExpr->args) >= 5)
+	{
+		Expr *collationArg = list_nth(funcExpr->args, 4);
+		if (!IsA(collationArg, Const))
+		{
+			return false;
+		}
+
+		Const *collationConst = (Const *) collationArg;
+		return !collationConst->constisnull;
+	}
+
+	return false;
+}
+
+
+static void
+CheckQueryForCollatedGroup(Query *query)
+{
+	ListCell *cell;
+	foreach(cell, query->groupClause)
+	{
+		SortGroupClause *sgc = (SortGroupClause *) lfirst(cell);
+		TargetEntry *tle = get_sortgroupclause_tle(sgc, query->targetList);
+		if (IsCollatedGroupClause(tle->expr, query))
+		{
+			sgc->eqop = BsonOrderyByEqOperatorId();
+			sgc->sortop = BsonOrderyByLtOperatorId();
+			sgc->hashable = false;
+		}
+	}
+}
+
+
+static bool
+CollationQueryTreeWalker(Node *node, void *context)
+{
+	if (node == NULL)
+	{
+		return false;
+	}
+
+	if (IsA(node, Query))
+	{
+		Query *childQuery = (Query *) node;
+		if (childQuery->groupClause != NIL)
+		{
+			CheckQueryForCollatedGroup(childQuery);
+		}
+
+		return query_tree_walker((Query *) node, CollationQueryTreeWalker, NULL, 0);
+	}
+
+	return false;
+}
+
+
+static void
+ExtensionPostParseAnalyzeHookCore(ParseState *pstate, Query *query, JumbleState *jstate)
+{
+	if (!EnableCollation)
+	{
+		return;
+	}
+
+	if (query->groupClause != NIL)
+	{
+		CheckQueryForCollatedGroup(query);
+	}
+
+	query_tree_walker(query, CollationQueryTreeWalker, NULL, QTW_DONT_COPY_QUERY);
 }

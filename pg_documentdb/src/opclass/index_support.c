@@ -3587,8 +3587,7 @@ GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby,
 
 			hasOrderBy = true;
 		}
-		else if (func->funcid == BsonExpressionGetFunctionOid() ||
-				 func->funcid == BsonExpressionGetWithLetFunctionOid())
+		else if (IsExpressionPathFunctionOid(func->funcid))
 		{
 			/* Reject GROUP BY pathkey appearing after ORDER BY pathkeys;
 			 * GROUP BY entries must form a leading prefix of the pathkey list. */
@@ -3609,7 +3608,8 @@ GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby,
 			}
 
 			FuncExpr *firstArgFunc = (FuncExpr *) firstArg;
-			if (firstArgFunc->funcid == BsonExpressionGetWithLetFunctionOid())
+			if (firstArgFunc->funcid == BsonExpressionGetWithLetFunctionOid() ||
+				firstArgFunc->funcid == BsonExpressionGetWithLetAndCollationFunctionOid())
 			{
 				func = firstArgFunc;
 			}
@@ -3649,6 +3649,34 @@ GetSortDetails(PlannerInfo *root, Index rti, bool *hasGroupby,
 		else
 		{
 			return NIL;
+		}
+
+		if (isGroupByEntry &&
+			func->funcid == BsonExpressionGetWithLetAndCollationFunctionOid())
+		{
+			if (list_length(func->args) < 5)
+			{
+				return NIL;
+			}
+
+			Expr *fifthArg = list_nth(func->args, 4);
+			if (IsA(fifthArg, RelabelType))
+			{
+				fifthArg = ((RelabelType *) fifthArg)->arg;
+			}
+
+			if (!IsA(fifthArg, Const))
+			{
+				return NIL;
+			}
+
+			Const *fifthConst = (Const *) fifthArg;
+			if (fifthConst->constisnull || fifthConst->consttype != TEXTOID)
+			{
+				return NIL;
+			}
+
+			collationConst = fifthConst;
 		}
 
 		/* This is an order by function */

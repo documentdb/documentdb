@@ -52,6 +52,7 @@ test: bson_collation_query_tests_dist_explain_index bson_collation_operators_tes
 test: bson_aggregation_pipeline_tests_maxmin_group 
 test: bson_aggregate_group_firstlast_sharded!PG18_OR_HIGHER!
 test: bson_aggregation_pipeline_tests_sumavg_sharded
+test: bson_collation_aggregation_group_tests_dist
 # This test is only run with pg17+ as EXPLAIN is broken for distributed scenario on older citus versions (known citus bug handling the cstring version)
 test: bson_aggregate_group_firstlast_explain_sharded!PG18_OR_HIGHER!
 
