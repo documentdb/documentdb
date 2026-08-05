@@ -2832,6 +2832,24 @@ IsProjectFunctionOid(Oid oid)
 }
 
 
+inline static bool
+IsProjectWithCollationFunctionOid(Oid oid)
+{
+	return oid == BsonDollarProjectWithLetAndCollationFunctionOid() ||
+		   oid == BsonDollarProjectFindWithLetAndCollationFunctionOid();
+}
+
+
+static bool
+IsCollatedIndexPath(const IndexPath *indexPath)
+{
+	return indexPath->indexinfo->opclassoptions != NULL &&
+		   indexPath->indexinfo->opclassoptions[0] != NULL &&
+		   IsCollationPresentOnQueryOrIndex(NULL,
+											indexPath->indexinfo->opclassoptions[0]);
+}
+
+
 /* tree_walker_callback that recursively checks if all field paths in the tree are covered by the index.
  * Returns true to exit early if any uncovered path is found. */
 static bool
@@ -2962,6 +2980,17 @@ CheckFieldCoverage(Node *node, void *context)
 						  TrackIndexOnlyScanFindCandidate) &&
 						 IsProjectFunctionOid(funcExpr->funcid))
 				{
+					/*
+					 * Collation-equivalent values can share one index entry, so its
+					 * term cannot reconstruct each row's projected BSON value.
+					 */
+					if (IsProjectWithCollationFunctionOid(funcExpr->funcid) &&
+						IsCollatedIndexPath(state->indexPath))
+					{
+						state->hasUncoveredField = true;
+						return true;
+					}
+
 					bool isProjectionCoveredByIndex = IsProjectionCoveredByIndex(
 						secondArg, state->indexPath, state->multiKeyState);
 
