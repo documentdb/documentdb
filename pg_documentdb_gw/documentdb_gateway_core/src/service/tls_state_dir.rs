@@ -12,10 +12,9 @@
  *-------------------------------------------------------------------------
  */
 
-use std::{env, fs, path::Path};
-
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use std::{env, fs, path::Path};
 
 use crate::error::{DocumentDBError, Result};
 

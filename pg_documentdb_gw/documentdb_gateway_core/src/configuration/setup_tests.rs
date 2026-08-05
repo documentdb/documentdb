@@ -10,8 +10,9 @@
  *-------------------------------------------------------------------------
  */
 
-use super::*;
 use std::path::PathBuf;
+
+use super::*;
 
 /// Minimal in-test replacement for `tempfile::NamedTempFile`. Creates a
 /// uniquely-named file under `std::env::temp_dir()` with the given

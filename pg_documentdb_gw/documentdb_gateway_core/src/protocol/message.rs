@@ -134,9 +134,9 @@ impl<'a> Message<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use ::bson::{rawdoc, RawDocumentBuf};
+
+    use super::*;
 
     fn op_msg_body(flags: MessageFlags, sections: &[Vec<u8>]) -> Vec<u8> {
         raw_op_msg_body(flags.bits(), sections)

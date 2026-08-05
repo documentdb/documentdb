@@ -12,8 +12,10 @@ use tokio::{
 };
 
 use crate::{
-    context::ConnectionContext, postgres::PgDataClient, responses,
-    service::connection_loop::read_ahead, service::connection_loop::request_pipeline,
+    context::ConnectionContext,
+    postgres::PgDataClient,
+    responses,
+    service::connection_loop::{read_ahead, request_pipeline},
 };
 
 const CONNECTION_WRITER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
@@ -98,8 +100,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::{
         io,
         pin::Pin,
@@ -109,6 +109,7 @@ mod tests {
 
     use tokio::io::{AsyncReadExt, ReadBuf};
 
+    use super::*;
     use crate::{
         error::ErrorCode,
         postgres::DocumentDBDataClient,

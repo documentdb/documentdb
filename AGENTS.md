@@ -51,6 +51,7 @@ For the Rust gateway:
 cd pg_documentdb_gw
 cargo make build        # Build workspace
 cargo make lint         # Clippy + format check + cargo deny
+cargo make format       # Apply the enforced formatting
 ```
 
 ## Testing
@@ -138,6 +139,9 @@ Rust code (gateway):
 - Follow the [Rust API Guidelines Checklist](https://rust-lang.github.io/api-guidelines/checklist.html) and [Microsoft Rust Guidelines Checklist](https://microsoft.github.io/rust-guidelines/guidelines/checklist/index.html) for public APIs
 - Formatted on save via rust-analyzer
 - Imports use `crate::` prefix
+- Import granularity, import grouping, and formatting of code in doc comments
+  are enforced by `cargo make format-check`. Run `cargo make format` to apply
+  them; a bare `cargo fmt` uses rustfmt defaults and will not match.
 
 ## Contributing
 

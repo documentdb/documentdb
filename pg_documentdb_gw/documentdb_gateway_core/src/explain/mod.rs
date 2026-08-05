@@ -7,7 +7,7 @@
  */
 
 use core::f64;
-use std::{cmp::Ordering, collections::HashMap, str::FromStr};
+use std::{cmp::Ordering, collections::HashMap, str::FromStr, sync::LazyLock};
 
 use bson::{rawdoc, Document, RawArrayBuf, RawBson, RawDocument, RawDocumentBuf};
 use model::{
@@ -15,7 +15,6 @@ use model::{
     PostgresExplain, VectorSearchParams,
 };
 use serde_json::Value;
-use std::sync::LazyLock;
 
 use crate::{
     context::{ConnectionContext, RequestContext},
@@ -2300,11 +2299,8 @@ fn smallest_from_i64(value: i64) -> RawBson {
 mod tests {
     use bson::rawdoc;
 
-    use crate::postgres::{create_query_catalog, QueryCatalog};
-
-    use super::model::{ExplainPlan, IndexDetails};
-    use super::{get_stage_from_plan, get_subtype_and_collection_name, query_planner};
-    use crate::requests::{ExplainTarget, RequestType};
+    use super::*;
+    use crate::postgres::create_query_catalog;
 
     /// Helper that builds a minimal [`ExplainPlan`] with the given `node_type`.
     fn plan_with_node_type(node_type: &str) -> ExplainPlan {

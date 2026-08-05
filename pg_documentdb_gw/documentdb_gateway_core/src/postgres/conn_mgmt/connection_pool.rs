@@ -469,10 +469,9 @@ impl Drop for ConnectionPool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use tokio::task::yield_now;
 
+    use super::*;
     use crate::{
         postgres::create_query_catalog,
         testing::{test_connection_pool, test_setup_configuration},

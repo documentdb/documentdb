@@ -83,9 +83,9 @@ pub fn convert_to_bool(bson: RawBsonRef) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use bson::rawdoc;
+
+    use super::*;
 
     #[test]
     fn read_document_bytes_rejects_negative_length() {

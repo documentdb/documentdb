@@ -522,11 +522,10 @@ fn explain_target_metadata(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use bson::{doc, rawdoc, Document};
     use bytes::Bytes;
 
+    use super::*;
     use crate::testing::{
         build_document_section, build_document_sequence_section, build_op_msg_parts_with_sections,
         build_raw_document,

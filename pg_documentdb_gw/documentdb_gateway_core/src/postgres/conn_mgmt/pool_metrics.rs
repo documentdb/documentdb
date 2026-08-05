@@ -213,8 +213,6 @@ impl ConnectionPoolMetrics {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::sync::{
         atomic::{AtomicBool, Ordering as AtomicOrdering},
         Arc,
@@ -223,6 +221,8 @@ mod tests {
     use deadpool::managed::TimeoutType;
     use deadpool_postgres::PoolError;
     use tokio::task::yield_now;
+
+    use super::*;
 
     fn pool_status() -> Status {
         Status {

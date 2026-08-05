@@ -7,8 +7,7 @@
  */
 
 use bson::RawDocument;
-use tokio_postgres::types::private::BytesMut;
-use tokio_postgres::types::{to_sql_checked, FromSql, ToSql, Type};
+use tokio_postgres::types::{private::BytesMut, to_sql_checked, FromSql, ToSql, Type};
 
 /// Provides ability to bind Raw bson in and out of postgres
 #[derive(Debug)]

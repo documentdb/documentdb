@@ -213,7 +213,7 @@ mod tests {
 
     use crate::{
         error::ErrorCode,
-        requests::{read_preference::ReadPreference, read_preference::ReadPreferenceMode},
+        requests::read_preference::{ReadPreference, ReadPreferenceMode},
     };
 
     #[test]

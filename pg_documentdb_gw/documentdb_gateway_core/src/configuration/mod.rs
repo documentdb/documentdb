@@ -12,14 +12,14 @@ mod pg_configuration;
 mod setup;
 mod version;
 
+use std::fmt::Debug;
+
 pub use certs::{CertInputType, CertificateOptions};
+use dyn_clone::{clone_trait_object, DynClone};
 pub use dynamic::{ClusterVersion, DynamicConfiguration};
 pub use pg_configuration::PgConfiguration;
 pub use setup::{env_keys, DocumentDBSetupConfiguration};
 pub use version::Version;
-
-use dyn_clone::{clone_trait_object, DynClone};
-use std::fmt::Debug;
 
 use crate::telemetry::config::TelemetryOptions;
 

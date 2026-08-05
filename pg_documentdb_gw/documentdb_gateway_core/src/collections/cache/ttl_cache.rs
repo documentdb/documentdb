@@ -6,19 +6,20 @@
  *-------------------------------------------------------------------------
  */
 
-use std::fmt::Debug;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::{hash::Hash, time::Duration};
+use std::{fmt::Debug, hash::Hash, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use scc::HashMap;
 use tokio::sync::{Mutex, MutexGuard};
 
-use crate::collections::cache::config::CapacityEnforcement;
-use crate::collections::cache::{AsyncCache, Cache, CacheConfiguration, CacheError};
-use crate::time::EpochClock;
+use crate::{
+    collections::cache::{
+        config::CapacityEnforcement, AsyncCache, Cache, CacheConfiguration, CacheError,
+    },
+    time::EpochClock,
+};
 
 #[cfg(test)]
 static DELAY_BOUNDED_INSERTS_FOR_TESTS: AtomicBool = AtomicBool::new(false);

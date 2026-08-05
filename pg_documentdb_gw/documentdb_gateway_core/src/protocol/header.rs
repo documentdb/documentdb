@@ -157,8 +157,9 @@ impl Header {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::io::Cursor;
+
+    use super::*;
 
     #[test]
     fn header_size_is_16_bytes() {

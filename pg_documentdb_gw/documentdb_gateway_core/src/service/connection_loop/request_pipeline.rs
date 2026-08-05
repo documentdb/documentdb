@@ -248,13 +248,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::sync::Arc;
 
     use bson::{doc, spec::BinarySubtype, Binary};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    use super::*;
     use crate::{
         error::{ErrorCode, Result},
         postgres::DocumentDBDataClient,

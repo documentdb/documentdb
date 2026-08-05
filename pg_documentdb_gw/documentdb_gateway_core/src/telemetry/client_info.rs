@@ -134,8 +134,9 @@ pub fn parse_client_info(client_information: Option<&RawDocumentBuf>) -> String 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use bson::doc;
+
+    use super::*;
 
     fn make_raw_doc(doc: &bson::Document) -> RawDocumentBuf {
         RawDocumentBuf::from_document(doc).expect("Failed to convert Document to RawDocumentBuf")

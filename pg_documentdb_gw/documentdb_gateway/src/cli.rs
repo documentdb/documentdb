@@ -218,8 +218,7 @@ documented environment variables:
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_cli_from_args, Cli};
-    use std::path::PathBuf;
+    use super::*;
 
     fn args(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| (*s).to_owned()).collect()

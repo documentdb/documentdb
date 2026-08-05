@@ -31,6 +31,21 @@
                 },
                 // Code style: use `crate` instead of `super` for rust-analyzer generated imports.
                 "rust-analyzer.imports.prefix": "crate",
+                // Code style: generate new imports in the shape the formatter enforces.
+                "rust-analyzer.imports.granularity.group": "crate",
+                "rust-analyzer.imports.group.enable": true,
+                "rust-analyzer.imports.merge.glob": true,
+                // Code style: mirror the `xfmt` cargo alias in `.cargo/config.toml` so format-on-save
+                // produces the same result as `cargo make format-check`. rust-analyzer runs rustfmt
+                // directly rather than through cargo, so it does not pick up the alias on its own.
+                "rust-analyzer.rustfmt.extraArgs": [
+                    "--config",
+                    "imports_granularity=Crate",
+                    "--config",
+                    "group_imports=StdExternalCrate",
+                    "--config",
+                    "format_code_in_doc_comments=true"
+                ],
                 // Rust-analyzer default behavior skips checking/building some parts of the Rust codebase.
                 // This makes it check and build everything, which can help discover issues sooner, instead of
                 // only in the pull request validation build. It does make the checking/building slower, though.

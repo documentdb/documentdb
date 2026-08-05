@@ -8,8 +8,10 @@
 
 use std::sync::Arc;
 
-use documentdb_gateway_core::configuration::{DynamicConfiguration, PgConfiguration};
-use documentdb_gateway_core::error::Result;
+use documentdb_gateway_core::{
+    configuration::{DynamicConfiguration, PgConfiguration},
+    error::Result,
+};
 use documentdb_tests::test_setup::{config::setup_configuration, postgres::get_pool_manager};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
