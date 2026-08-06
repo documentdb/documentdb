@@ -55,7 +55,7 @@ while [[ $# -gt 0 ]]; do
         --os)
             shift
             case $1 in
-                deb11|deb12|deb13|ubuntu22.04|ubuntu24.04)
+                deb11|deb12|deb13|ubuntu22.04|ubuntu24.04|ubuntu26.04)
                     OS=$1
                     PACKAGE_TYPE="deb"
                     ;;
@@ -64,7 +64,7 @@ while [[ $# -gt 0 ]]; do
                     PACKAGE_TYPE="rpm"
                     ;;
                 *)
-                    echo "Invalid --os value. Allowed values are [deb11, deb12, deb13, ubuntu22.04, ubuntu24.04, rhel8, rhel9]"
+                    echo "Invalid --os value. Allowed values are [deb11, deb12, deb13, ubuntu22.04, ubuntu24.04, ubuntu26.04, rhel8, rhel9]"
                     exit 1
                     ;;
             esac
@@ -171,6 +171,11 @@ if [[ "$PACKAGE_TYPE" == "deb" ]]; then
         ubuntu24.04)
             DOCKER_IMAGE="ubuntu:24.04"
             TEST_DOCKER_IMAGE="ubuntu:24.04"
+            DOCKERFILE="${script_dir}/packaging/gateway/deb/Dockerfile_gateway_ubuntu"
+            ;;
+        ubuntu26.04)
+            DOCKER_IMAGE="ubuntu:26.04"
+            TEST_DOCKER_IMAGE="ubuntu:26.04"
             DOCKERFILE="${script_dir}/packaging/gateway/deb/Dockerfile_gateway_ubuntu"
             ;;
     esac

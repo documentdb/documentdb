@@ -136,7 +136,11 @@ RUN sudo apt-get update && \
     . /etc/os-release && \
     wget -qO- https://www.mongodb.org/static/pgp/server-8.0.asc | sudo tee /etc/apt/trusted.gpg.d/server-8.0.asc >/dev/null && \
     if [ "$ID" = "ubuntu" ]; then \
-        echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu ${VERSION_CODENAME}/mongodb-org/8.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list; \
+        MONGOSH_CODENAME="$VERSION_CODENAME"; \
+        if [ "$MONGOSH_CODENAME" = "resolute" ]; then \
+            MONGOSH_CODENAME="noble"; \
+        fi; \
+        echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu ${MONGOSH_CODENAME}/mongodb-org/8.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list; \
     else \
         MONGOSH_CODENAME="$VERSION_CODENAME"; \
         if [ "$MONGOSH_CODENAME" = "trixie" ] || [ "$MONGOSH_CODENAME" = "bullseye" ]; then \
