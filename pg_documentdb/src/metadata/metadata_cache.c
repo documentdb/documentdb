@@ -645,6 +645,12 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the $bitsAnySet function function for bson_values */
 	Oid BsonValueBitsAnySetFunctionId;
 
+	/* OID of the $geoIntersects function for bson_values */
+	Oid BsonValueGeoIntersectsFunctionId;
+
+	/* OID of the $geoWithin function for bson_values */
+	Oid BsonValueGeoWithinFunctionId;
+
 	/* Oid of the bson_densify_range window function */
 	Oid BsonDensifyRangeWindowFunctionOid;
 
@@ -2810,6 +2816,32 @@ BsonValueBitsAnySetFunctionId(void)
 {
 	return GetInternalBinaryOperatorFunctionId(&Cache.BsonValueBitsAnySetFunctionId,
 											   "bson_value_dollar_bits_any_set",
+											   INTERNALOID,
+											   BsonTypeId());
+}
+
+
+/*
+ * Returns the OID of the <bson_value_t> $geoIntersects <bson> function.
+ */
+Oid
+BsonValueGeoIntersectsFunctionId(void)
+{
+	return GetInternalBinaryOperatorFunctionId(&Cache.BsonValueGeoIntersectsFunctionId,
+											   "bson_value_dollar_geointersects",
+											   INTERNALOID,
+											   BsonTypeId());
+}
+
+
+/*
+ * Returns the OID of the <bson_value_t> $geoWithin <bson> function.
+ */
+Oid
+BsonValueGeoWithinFunctionId(void)
+{
+	return GetInternalBinaryOperatorFunctionId(&Cache.BsonValueGeoWithinFunctionId,
+											   "bson_value_dollar_geowithin",
 											   INTERNALOID,
 											   BsonTypeId());
 }

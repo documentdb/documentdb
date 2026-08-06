@@ -51,6 +51,7 @@
 #include "geospatial/bson_geospatial_common.h"
 #include "geospatial/bson_geospatial_geonear.h"
 #include "metadata/collection.h"
+#include "metadata/index.h"
 #include "metadata/metadata_cache.h"
 #include "planner/mongo_query_operator.h"
 #include "planner/documentdb_planner.h"
@@ -1483,6 +1484,21 @@ ParseCreateIndexesArg(Datum *dbNameDatum, pgbson *arg, bool buildAsUniqueForPrep
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 						errmsg(
 							"You must provide at least one index in order to proceed with creation")));
+	}
+
+	/*
+	 * When force_index_builds_blocking is enabled, force every createIndexes to
+	 * request a blocking (non-concurrent) build. On the synchronous path this
+	 * builds inline; on the background-submit path the queued command becomes a
+	 * plain CREATE INDEX instead of CREATE INDEX CONCURRENTLY. Either way the
+	 * build no longer waits out unrelated long-running transactions cluster-wide
+	 * (the CIC drain wait), which otherwise head-of-line blocks other index
+	 * builds under heavy parallel load. All submit paths consume
+	 * createIndexesArg.blocking, so setting it here covers them uniformly.
+	 */
+	if (ForceIndexBuildsBlocking)
+	{
+		createIndexesArg.blocking = true;
 	}
 
 	return createIndexesArg;

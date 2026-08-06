@@ -284,6 +284,13 @@ delete_expired_rows(PG_FUNCTION_ARGS)
 		PG_RETURN_VOID();
 	}
 
+	if (XactReadOnly && !EnableTtlJobsOnReadOnly)
+	{
+		ereport(INFO, errmsg(
+					"TTL job skipping because transaction is read-only."));
+		PG_RETURN_VOID();
+	}
+
 	/* We have the TTL index records, now cleanup as much as we can in individual transactions before the time budget expires. */
 	instr_time startTime;
 	INSTR_TIME_SET_CURRENT(startTime);
@@ -406,12 +413,6 @@ delete_expired_rows(PG_FUNCTION_ARGS)
 					CommitTransactionCommand();
 					StartTransactionCommand();
 					SetGUCLocally("transaction_read_only", "false");
-				}
-				else
-				{
-					ereport(INFO, errmsg(
-								"TTL job skipping because transaction is read-only."));
-					continue;
 				}
 			}
 

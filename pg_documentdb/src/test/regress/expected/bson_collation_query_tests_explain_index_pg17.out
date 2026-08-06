@@ -1,3 +1,4 @@
+\i sql/bson_collation_query_tests_explain_index.sql
 SET citus.next_shard_id TO 8460000;
 SET documentdb.next_collection_id TO 8800;
 SET documentdb.next_collection_index_id TO 8800;
@@ -11,7 +12,7 @@ SET enable_seqscan TO OFF;
 -- SECTION 1: Setup — coll_array_filter inserts
 -- ======================================================================
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_array_filter', '{ "_id": 1, "a": "Cat" }');
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:15: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -197,7 +198,7 @@ $cmd$);
 -- ======================================================================
 -- $expr
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_agg_proj', '{ "_id": 1, "a": "cat" }');
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:55: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1127,7 +1128,7 @@ $cmd$);
 
 -- $sortArray
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_sortArray', '{"_id":1,"a":"one", "b":["10","1"]}', NULL);
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:231: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1339,7 +1340,7 @@ $cmd$);
 
 -- $redact
 SELECT documentdb_api.insert_one('coll_q_db','coll_redact','{ "_id": 1, "level": "public", "content": "content 1", "details": { "level": "public", "value": "content 1.1", "moreDetails": { "level": "restricted", "info": "content 1.1.1" } } }', NULL);
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:285: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1973,7 +1974,7 @@ $cmd$);
 -- ======================================================================
 -- find with positional queries
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_find_positional', '{"_id":1, "a":"cat", "b":[{"a":"cat"},{"a":"caT"}], "c": ["cat"]}', NULL);
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:421: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2089,7 +2090,7 @@ SELECT documentdb_api.drop_collection('coll_q_db', 'coll_find_positional');
 
 -- $in: []
 SELECT documentdb_api.insert_one('coll_q_db', 'collTest', '{"_id": 1, "name": "cat", "sound": "meow"}');
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:464: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2384,7 +2385,7 @@ SELECT documentdb_api.drop_collection('coll_q_db', 'collTest');
 -- SECTION 7: Setup — single-field and compound indexes with collation
 -- ======================================================================
 SELECT documentdb_api.insert_one('coll_q_db','single_field', '{"_id": 1, "a": "apple"}', NULL);
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:629: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2445,7 +2446,7 @@ SELECT documentdb_api.insert_one('coll_q_db','single_field', '{"_id": 10, "a": n
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_q_db','compound_field', '{"_id": 1, "a": "DOG", "b": 10}', NULL);
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:640: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2758,7 +2759,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim(format($cmd$
 -- ======================================================================
 -- nested pipleline tests
 SELECT documentdb_api.insert_one('coll_q_db','coll_lookup', '{"_id": "DOG", "a" : { "b" : "DOG" }}', NULL);
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:730: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2961,7 +2962,7 @@ $cmd$);
 
 -- $graphLookup 
 SELECT documentdb_api.insert_one('coll_q_db','coll_graph_src', '{"_id": "alice", "pet" : "dog" }', NULL);
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:768: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2974,7 +2975,7 @@ SELECT documentdb_api.insert_one('coll_q_db','coll_graph_src', '{"_id": "bob", "
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_q_db','coll_graph_dst', '{"_id": "DOG", "name" : "DOG" }', NULL);
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:771: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -3400,7 +3401,7 @@ ROLLBACK;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_lookup", "pipeline": [{"$merge" : { "into": "coll_merge_target", "whenMatched" : "replace" }} ], "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
-ERROR:  collation is not supported with $merge yet
+psql:sql/bson_collation_query_tests_explain_index.sql:817: ERROR:  collation is not supported with $merge yet
 CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean,boolean) line 5 at FOR over EXECUTE statement
 -- ======================================================================
 -- SECTION 10: $in with deeply nested arrays — collection-backed find plans
@@ -3408,7 +3409,7 @@ CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,bo
 -- Verifies plans for $in matches against deeply nested array fields under
 -- collation, exercised through bson_aggregation_find.
 SELECT documentdb_api.insert_one('coll_q_db', 'nested_arrays', '{ "_id": 1, "a": ["dog"] }');
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:825: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -3493,7 +3494,7 @@ $cmd$);
 (15 rows)
 
 SELECT documentdb_api.insert_one('coll_q_db', 'nested_docs', '{ "_id": 1, "a": { "b": "cat" } }');
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:839: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -3613,7 +3614,7 @@ $cmd$);
 (15 rows)
 
 SELECT documentdb_api.insert_one('coll_q_db', 'nested_arrays_docs', '{ "_id": 1, "a": { "b": ["cat"] } }');
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:860: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -3725,7 +3726,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     "collation": { "locale": "en", "strength": 1 }
 }')
 $cmd$);
-ERROR:  Collation is currently unsupported in the $bucket stage.
+psql:sql/bson_collation_query_tests_explain_index.sql:906: ERROR:  Collation is currently unsupported in the $bucket stage.
 CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean,boolean) line 5 at FOR over EXECUTE statement
 -- unsupported: $geoNear
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -3744,7 +3745,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    "collation": { "locale": "en", "strength": 1 }
 }')
 $cmd$);
-ERROR:  collation is not supported in the $geoNear stage yet.
+psql:sql/bson_collation_query_tests_explain_index.sql:924: ERROR:  collation is not supported in the $geoNear stage yet.
 CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean,boolean) line 5 at FOR over EXECUTE statement
 -- unsupported: $fill
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -3769,7 +3770,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
     "collation": { "locale": "en", "strength": 1 }
 }')
 $cmd$);
-ERROR:  collation is not supported in the $fill stage yet.
+psql:sql/bson_collation_query_tests_explain_index.sql:948: ERROR:  collation is not supported in the $fill stage yet.
 CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean,boolean) line 5 at FOR over EXECUTE statement
 -- unsupported: $setWindowFields
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -3786,7 +3787,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    "collation": { "locale": "en", "strength": 1 }
 }')
 $cmd$);
-ERROR:  collation is not supported in the $setWindowFields stage yet.
+psql:sql/bson_collation_query_tests_explain_index.sql:964: ERROR:  collation is not supported in the $setWindowFields stage yet.
 CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean,boolean) line 5 at FOR over EXECUTE statement
 -- unsupported: $sortByCount
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -3805,7 +3806,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    "collation": { "locale": "en", "strength": 1 }
 }')
 $cmd$);
-ERROR:  collation is not supported in the $sortByCount stage yet.
+psql:sql/bson_collation_query_tests_explain_index.sql:982: ERROR:  collation is not supported in the $sortByCount stage yet.
 CONTEXT:  PL/pgSQL function documentdb_test_helpers.run_explain_and_trim(text,boolean,boolean) line 5 at FOR over EXECUTE statement
 -- ======================================================================
 -- TODO_COLLATION: $expr / $lookup must not use a collation-aware secondary index,
@@ -3908,14 +3909,14 @@ $cmd$);
 -- (an empty target falls back to a join filter); collation+unique is disallowed so
 -- the unique index always co-exists.
 SELECT documentdb_api.insert_one('coll_q_db','coll_merge_src', '{"_id": 1, "k": "a"}', NULL);
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:1016: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_q_db','coll_merge_dst', '{"_id": 1, "k": "a"}', NULL);
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:1017: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -3943,14 +3944,13 @@ $cmd$);
                ->  Bitmap Heap Scan on documentdb_data.documents_8814 collection
                      Output: collection.document, collection.ctid
                      Recheck Cond: (collection.shard_key_value = '8814'::bigint)
-                     Filter: (collection.document IS NOT NULL)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (collection.shard_key_value = '8814'::bigint)
          ->  Index Scan using uq_merge_k on documentdb_data.documents_8815
                Output: documents_8815.ctid, documents_8815.document
                Index Cond: (documents_8815.document @= documentdb_api_internal.bson_dollar_extract_merge_filter(collection.document, 'k'::text))
                Filter: ((documents_8815.shard_key_value OPERATOR(pg_catalog.=) '8815'::bigint) AND documentdb_api_internal.bson_dollar_merge_join(documents_8815.document, documentdb_api_internal.bson_dollar_extract_merge_filter(collection.document, 'k'::text), 'k'::text))
-(17 rows)
+(16 rows)
 
 SELECT documentdb_api.drop_collection('coll_q_db','coll_merge_src');
  drop_collection 
@@ -3976,7 +3976,7 @@ SELECT documentdb_api.drop_collection('coll_q_db','coll_merge_dst');
 SET enable_bitmapscan TO off;
 -- coll_ios: scalar `country` values with a compound {country, _id} collation index.
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 1, "country": "usa", "provider": "aws" }');
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:1038: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -4035,7 +4035,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
 
 -- coll_id_ios: scalar string `_id` values with a collation-aware index keyed on `_id`.
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "cat", "v": 1 }');
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:1052: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -4206,7 +4206,7 @@ SELECT documentdb_api.drop_collection('coll_q_db', 'coll_id_ios');
 -- SECTION: $max/$min/$maxN/$minN
 -- ======================================================================
 SELECT documentdb_api.insert_one('coll_q_db','coll_minmax_idx', '{ "_id": 1, "grp": "r", "vals": ["apple", "Banana"] }', NULL);
-NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:1103: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

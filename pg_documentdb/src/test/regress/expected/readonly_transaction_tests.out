@@ -8,7 +8,7 @@ NOTICE:  creating collection
  { "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
-SELECT documentdb_api.insert_one('db', 'test', '{ "_id": 1, "a": 1, "ttl": 0 }');
+SELECT documentdb_api.insert_one('db', 'test', '{ "_id": 1, "a": 1, "ttl": { "$date": { "$numberLong": "100" } }, "ttl2": { "$date": { "$numberLong": "100" } } }');
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -18,6 +18,12 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
                                                                                                    create_indexes_non_concurrently                                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "test", "indexes": [ { "key": { "ttl2": 1 }, "name": "ttlIndex2", "expireAfterSeconds": 300 } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
 -- set the default transaction mode.
@@ -81,3 +87,8 @@ CALL documentdb_api_internal.delete_expired_rows();
 INFO:  TTL job skipping because transaction is read-only.
 set documentdb.enableTTLJobsOnReadOnly to on;
 CALL documentdb_api_internal.delete_expired_rows();
+SELECT document FROM documentdb_api.collection('db', 'test');
+ document 
+----------
+(0 rows)
+

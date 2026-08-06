@@ -21,6 +21,7 @@
 
 #include "commands/parse_error.h"
 #include "commands/commands_common.h"
+#include "io/bsonvalue_utils.h"
 #include "utils/documentdb_errors.h"
 #include "metadata/collection.h"
 #include "planner/documentdb_planner.h"
@@ -656,14 +657,14 @@ ParseIndexSpecSetCollModOptions(bson_iter_t *indexSpecIter,
 									"expected types '[long, int, decimal, double']",
 									BsonTypeName(value->value_type))));
 			}
-			int64 expireAfterSeconds = BsonValueAsInt64(value);
+			int32 expireAfterSeconds = BsonValueAsInt32Clamped(value);
 			if (expireAfterSeconds < 0)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDOPTIONS),
 								errmsg(
 									"BSON field 'collMod.index.expireAfterSeconds' cannot be less than 0.")));
 			}
-			collModIndexOptions->expireAfterSeconds = (uint64) expireAfterSeconds;
+			collModIndexOptions->expireAfterSeconds = expireAfterSeconds;
 			*specFlags |= HAS_INDEX_OPTION_EXPIRE_AFTER_SECONDS;
 		}
 		else if (strcmp(key, "reindex") == 0)
