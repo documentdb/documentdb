@@ -275,10 +275,13 @@ where
 /// # Errors
 ///
 /// Returns an error if the operation fails.
-#[tracing::instrument(
-    name = "gateway.auth",
-    skip_all,
-    fields(otel.kind = "internal", auth.kind = tracing::field::Empty)
+#[cfg_attr(
+    feature = "request-tracing",
+    tracing::instrument(
+        name = "gateway.auth",
+        skip_all,
+        fields(db.auth.scheme = tracing::field::Empty)
+    )
 )]
 pub async fn process<T>(
     connection_context: &mut ConnectionContext,

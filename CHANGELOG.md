@@ -9,6 +9,7 @@
 * Make the `$max`, `$min`, `$maxN`, and `$minN` expressions collation-aware, and align `$maxN`/`$minN` equal-value selection with the documented tie semantics. *[Feature/Bugfix]*
 * Support collation with $group keys *[Feature|Bugfix]*
 * Prevent index-only scans for projected queries with collation so projections return each row's stored values instead of a collation-equivalent value shared by the index entry. *[Bugfix]*
+* Refactor Gateway telemetry and metrics to be provider neutral *[Refactor]*
 
 ### documentdb v0.116-0 (Unreleased) ###
 * Rename the `$sample` EXPLAIN metric `Sample Heap Skips` to `Sample Heap Fetches`. *[Refactor]*

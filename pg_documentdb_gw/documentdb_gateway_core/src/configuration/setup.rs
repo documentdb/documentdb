@@ -13,7 +13,7 @@ use serde::Deserialize;
 use crate::{
     configuration::{CertInputType, CertificateOptions, SetupConfiguration},
     error::{DocumentDBError, Result},
-    telemetry::config::TelemetryOptions,
+    telemetry::TelemetrySettings,
 };
 
 /// Environment variable names recognized by `DocumentDBSetupConfiguration::from_env`.
@@ -113,7 +113,10 @@ pub struct DocumentDBSetupConfiguration {
     pub instance_kind: Option<String>,
 
     // Telemetry configuration
-    pub telemetry_options: Option<TelemetryOptions>,
+    #[serde(rename = "TelemetryOptions")]
+    pub telemetry_provider_options: Option<serde_json::Value>,
+    #[serde(skip)]
+    pub telemetry_settings: TelemetrySettings,
 
     // Whether to enable refreshing settings from pg_file_settings
     pub enable_pg_file_settings_refresh: Option<bool>,
@@ -191,7 +194,11 @@ impl std::fmt::Debug for DocumentDBSetupConfiguration {
                 &self.unix_socket_file_permissions,
             )
             .field("instance_kind", &self.instance_kind)
-            .field("telemetry_options", &self.telemetry_options)
+            .field(
+                "telemetry_provider_options",
+                &self.telemetry_provider_options,
+            )
+            .field("telemetry_settings", &self.telemetry_settings)
             .field(
                 "enable_pg_file_settings_refresh",
                 &self.enable_pg_file_settings_refresh,
@@ -967,8 +974,12 @@ impl SetupConfiguration for DocumentDBSetupConfiguration {
         self.instance_kind.as_deref().unwrap_or("")
     }
 
-    fn telemetry_options(&self) -> Option<&TelemetryOptions> {
-        self.telemetry_options.as_ref()
+    fn telemetry_provider_options(&self) -> Option<&serde_json::Value> {
+        self.telemetry_provider_options.as_ref()
+    }
+
+    fn telemetry_settings(&self) -> TelemetrySettings {
+        self.telemetry_settings
     }
 
     fn enable_pg_file_settings_refresh(&self) -> Option<bool> {
@@ -979,8 +990,12 @@ impl SetupConfiguration for DocumentDBSetupConfiguration {
 impl DocumentDBSetupConfiguration {
     /// Returns the telemetry options from the configuration, if present.
     #[must_use]
-    pub const fn telemetry_options(&self) -> Option<&TelemetryOptions> {
-        self.telemetry_options.as_ref()
+    pub const fn telemetry_provider_options(&self) -> Option<&serde_json::Value> {
+        self.telemetry_provider_options.as_ref()
+    }
+
+    pub const fn set_telemetry_settings(&mut self, settings: TelemetrySettings) {
+        self.telemetry_settings = settings;
     }
 }
 

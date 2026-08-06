@@ -27,7 +27,7 @@ use crate::{
         create_query_catalog,
     },
     service::TlsProvider,
-    telemetry::{MetricsOptions, TelemetryOptions, TelemetryProvider},
+    telemetry::{TelemetryProvider, TelemetrySettings},
 };
 
 pub async fn test_connection_context(
@@ -145,13 +145,7 @@ fn test_setup_configuration(metrics_enabled: bool) -> DocumentDBSetupConfigurati
         },
         postgres_system_user: system_user.clone(),
         postgres_data_user: system_user,
-        telemetry_options: Some(TelemetryOptions {
-            metrics: Some(MetricsOptions {
-                enabled: Some(metrics_enabled),
-                ..Default::default()
-            }),
-            ..Default::default()
-        }),
+        telemetry_settings: TelemetrySettings::new(metrics_enabled),
         ..Default::default()
     }
 }

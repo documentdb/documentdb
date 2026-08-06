@@ -7383,21 +7383,24 @@ class GatewayListenerPidSafetyTests(unittest.TestCase):
             # shell's image ("bash -lc ...") in /proc/<pid>/cmdline until it
             # execs nohup/sleep, so on a slow or loaded host (2-core CI agents)
             # a single immediate read loses that race and misreads a CORRECT
-            # daemon pid as the subshell. Only the '-lc' shell image is
-            # retried; a pid that never leaves it (a real regression that
-            # recorded the enclosing subshell, whose image is '-lc' for life)
-            # still fails below once the ~5s budget lapses. Nothing appended
-            # can mask the group's own behaviour because (a) asserts file
-            # contents, not rc.
+            # daemon pid as the subshell. A read can also be empty while exec
+            # replaces the process image. Empty reads and the '-lc' shell image
+            # are retried; a pid that never leaves either state still fails
+            # below once the ~5s budget lapses. Nothing appended can mask the
+            # group's own behaviour because (a) asserts file contents, not rc.
+            # Plant an empty first observation so this race branch is exercised
+            # deterministically rather than only on a sufficiently loaded host.
             cmd_a = (
                 f"cd {tmp} && set -a && . {envfile} && set +a && "
                 f"{{ nohup sleep 30 > {tmp}/gw.log 2>&1 & "
                 f"{{ echo $! > {pidfile}; }} 2>/dev/null || true; }}; "
                 f"gwpid=$(cat {pidfile} 2>/dev/null); "
-                f"for _ in $(seq 1 50); do "
+                f"for _attempt in $(seq 1 50); do "
+                f"if (( _attempt == 1 )); then : > {cmdfile}; else "
                 f"tr '\\0' ' ' < /proc/$gwpid/cmdline > {cmdfile} 2>/dev/null"
-                f" || true; "
-                f"grep -q -- -lc {cmdfile} 2>/dev/null || break; "
+                f" || true; fi; "
+                f"if [[ -s {cmdfile} ]] && "
+                f"! grep -q -- -lc {cmdfile} 2>/dev/null; then break; fi; "
                 f"sleep 0.1; "
                 f"done"
             )

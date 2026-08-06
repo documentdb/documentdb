@@ -9,6 +9,15 @@ readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = []
+# Compiles request span creation and inbound W3C parent extraction.
+request-tracing = []
+# Compiles outbound PostgreSQL SQLCommenter generation.
+postgres-sql-commenter = [
+	"request-tracing",
+]
+
 [dependencies]
 arc-swap.workspace = true
 async-trait.workspace = true
@@ -23,11 +32,9 @@ documentdb_macros.workspace = true
 dyn-clone.workspace = true
 either.workspace = true
 hex.workspace = true
+metrics.workspace = true
 once_cell.workspace = true
 openssl.workspace = true
-opentelemetry.workspace = true
-opentelemetry-otlp.workspace = true
-opentelemetry_sdk.workspace = true
 rand.workspace = true
 regex.workspace = true
 scc.workspace = true
@@ -40,7 +47,6 @@ tokio-openssl.workspace = true
 tokio-postgres.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
-tracing-opentelemetry.workspace = true
 uuid.workspace = true
 whoami.workspace = true
 
