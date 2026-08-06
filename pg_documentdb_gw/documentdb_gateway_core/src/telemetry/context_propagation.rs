@@ -17,115 +17,49 @@
 //! gateway (and the downstream `postgres.execute` span it produces) appear under
 //! the caller's trace.
 //!
-//! Outbound correlation on the gateway -> Postgres hop is handled separately by
-//! [`super::sql_commenter`].
+//! Provider-specific context handling is supplied by a process-wide
+//! [`TraceContextBridge`].
 
-use opentelemetry::{
-    trace::{SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState},
-    Context,
-};
+use std::{fmt::Debug, sync::OnceLock};
+
 use serde_json::Value;
 
-/// Extracts a parent [`Context`] from a request `comment` field, if it carries a
-/// valid W3C `traceparent`.
-///
-/// The expected shape is `{"traceparent": "00-<trace_id>-<span_id>-<flags>"}`.
-/// Anything else — a plain user comment, malformed JSON, an unsupported version,
-/// or all-zero identifiers — yields `None` so the request is unaffected and the
-/// gateway simply starts a fresh trace. This keeps the feature backward
-/// compatible with the user-facing `comment` field.
-#[must_use]
-pub fn extract_context_from_comment(comment: &str) -> Option<Context> {
-    // A non-JSON comment (the common case) fails to parse here and returns
-    // early, so plain user comments incur only a cheap parse attempt.
-    let json: Value = serde_json::from_str(comment).ok()?;
-    let traceparent = json.get("traceparent")?.as_str()?;
-
-    // W3C `traceparent`: version "-" trace-id "-" span-id "-" flags.
-    // See <https://www.w3.org/TR/trace-context/#traceparent-header>.
-    let parts: Vec<&str> = traceparent.split('-').collect();
-    if parts.len() != 4 || parts[0] != "00" {
-        return None;
-    }
-
-    let trace_id = TraceId::from_hex(parts[1]).ok()?;
-    let span_id = SpanId::from_hex(parts[2]).ok()?;
-    let flags = TraceFlags::new(u8::from_str_radix(parts[3], 16).ok()?);
-
-    if trace_id == TraceId::INVALID || span_id == SpanId::INVALID {
-        return None;
-    }
-
-    let span_context = SpanContext::new(trace_id, span_id, flags, true, TraceState::default());
-    Some(Context::current().with_remote_span_context(span_context))
+/// Adapter implemented by the configured distributed tracing provider.
+pub trait TraceContextBridge: Send + Sync + Debug {
+    /// Sets the remote W3C parent on `span`, returning whether it was valid.
+    fn set_parent(&self, span: &tracing::Span, traceparent: &str) -> bool;
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+static TRACE_CONTEXT_BRIDGE: OnceLock<&'static dyn TraceContextBridge> = OnceLock::new();
 
-    #[test]
-    fn extract_returns_none_for_invalid_traceparent() {
-        assert!(extract_context_from_comment(r#"{"traceparent": "invalid"}"#).is_none());
-    }
+/// Installs the process-wide distributed trace-context bridge.
+///
+/// Returns `false` when a bridge was already installed.
+#[must_use]
+pub fn install_trace_context_bridge(bridge: &'static dyn TraceContextBridge) -> bool {
+    TRACE_CONTEXT_BRIDGE.set(bridge).is_ok()
+}
 
-    #[test]
-    fn extract_returns_none_when_traceparent_absent() {
-        assert!(extract_context_from_comment(r#"{"other": "field"}"#).is_none());
-    }
+/// Extracts a `traceparent` from a request `comment` field and asks the
+/// configured provider bridge to attach it to `span`.
+///
+/// The expected shape is `{"traceparent": "00-<trace_id>-<span_id>-<flags>"}`.
+/// A plain user comment, malformed JSON, invalid context, or absent provider
+/// leaves the span unchanged.
+#[must_use]
+pub fn set_parent_from_comment(span: &tracing::Span, comment: &str) -> bool {
+    let Ok(json) = serde_json::from_str::<Value>(comment) else {
+        return false;
+    };
+    let Some(traceparent) = json.get("traceparent").and_then(Value::as_str) else {
+        return false;
+    };
+    TRACE_CONTEXT_BRIDGE
+        .get()
+        .is_some_and(|bridge| bridge.set_parent(span, traceparent))
+}
 
-    #[test]
-    fn extract_returns_none_for_malformed_json() {
-        assert!(extract_context_from_comment("not json").is_none());
-    }
-
-    #[test]
-    fn extract_returns_none_for_empty_string() {
-        assert!(extract_context_from_comment("").is_none());
-    }
-
-    #[test]
-    fn extract_returns_none_for_wrong_version() {
-        // The W3C version field must be "00".
-        let comment =
-            r#"{"traceparent": "01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}"#;
-        assert!(extract_context_from_comment(comment).is_none());
-    }
-
-    #[test]
-    fn extract_returns_none_for_zero_trace_id() {
-        let comment =
-            r#"{"traceparent": "00-00000000000000000000000000000000-00f067aa0ba902b7-01"}"#;
-        assert!(extract_context_from_comment(comment).is_none());
-    }
-
-    #[test]
-    fn extract_returns_none_for_zero_span_id() {
-        let comment =
-            r#"{"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01"}"#;
-        assert!(extract_context_from_comment(comment).is_none());
-    }
-
-    #[test]
-    fn extract_succeeds_with_extra_fields() {
-        let comment = r#"{"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", "other": "data"}"#;
-        assert!(extract_context_from_comment(comment).is_some());
-    }
-
-    #[test]
-    fn extract_preserves_trace_and_span_ids() {
-        let comment =
-            r#"{"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}"#;
-        let context =
-            extract_context_from_comment(comment).expect("valid traceparent should parse");
-        let span = context.span();
-        let span_context = span.span_context();
-
-        assert_eq!(
-            span_context.trace_id().to_string(),
-            "4bf92f3577b34da6a3ce929d0e0e4736"
-        );
-        assert_eq!(span_context.span_id().to_string(), "00f067aa0ba902b7");
-        assert!(span_context.trace_flags().is_sampled());
-    }
+/// Marks a span as failed using the provider-neutral status field.
+pub fn mark_span_error(span: &tracing::Span) {
+    span.record("span.status_code", "error");
 }

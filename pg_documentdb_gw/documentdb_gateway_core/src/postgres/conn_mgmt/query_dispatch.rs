@@ -23,6 +23,7 @@ use crate::{
     },
     requests::{request_tracker::RequestTracker, RequestIntervalKind},
     responses::map_pg_error,
+    telemetry::context_propagation::mark_span_error,
 };
 
 /// Caller-facing enum describing how to obtain a connection for a query.
@@ -334,14 +335,18 @@ async fn set_statement_timeout(
     clippy::too_many_lines,
     reason = "complex logic that would be harder to read if split across multiple functions"
 )]
-#[tracing::instrument(
-    name = "postgres.execute",
-    skip_all,
-    fields(
-        otel.kind = "client",
-        otel.status_code = tracing::field::Empty,
-        db.system.name = "postgresql",
-        retry.count = tracing::field::Empty,
+#[cfg_attr(
+    feature = "request-tracing",
+    tracing::instrument(
+        name = "postgres.execute",
+        skip_all,
+        fields(
+            span.kind = "client",
+            span.status_code = tracing::field::Empty,
+            span.status_message = tracing::field::Empty,
+            db.system.name = "postgresql",
+            retry.count = tracing::field::Empty,
+        )
     )
 )]
 pub async fn run_request_with_retries<T, F, Fut>(
@@ -397,12 +402,9 @@ where
                     );
 
                     match acquire {
-                        Ok(pool_conn) => Arc::new(Connection::new(
-                            pool_conn,
-                            false,
-                            pool.sql_commenter_enabled(),
-                            pool.command_deadline(),
-                        )),
+                        Ok(pool_conn) => {
+                            Arc::new(Connection::new(pool_conn, false, pool.command_deadline()))
+                        }
                         Err(e) => {
                             if needs_timeout_pool {
                                 tracing::warn!(
@@ -566,11 +568,11 @@ where
                     &request_options,
                     retry_context.stopwatch.elapsed(),
                 ) {
-                    tracing::Span::current().record("otel.status_code", "ERROR");
+                    mark_span_error(&tracing::Span::current());
                     return Err(timeout_error);
                 }
 
-                tracing::Span::current().record("otel.status_code", "ERROR");
+                mark_span_error(&tracing::Span::current());
                 return Err(error);
             }
         }

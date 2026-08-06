@@ -13,7 +13,6 @@ use crate::{
     context::{CursorStore, SessionManager, TransactionStore},
     postgres::{conn_mgmt::PoolManager, QueryCatalog},
     service::TlsProvider,
-    telemetry::TelemetryConfig,
 };
 
 #[derive(Debug)]
@@ -37,9 +36,9 @@ impl ServiceContext {
         connection_pool_manager: Arc<PoolManager>,
         tls_provider: TlsProvider,
     ) -> Self {
-        let request_metrics_enabled = TelemetryConfig::new(setup_configuration.telemetry_options())
-            .metrics()
-            .metrics_enabled();
+        let request_metrics_enabled = setup_configuration
+            .telemetry_settings()
+            .request_metrics_enabled();
         let timeout_secs = setup_configuration.transaction_timeout_secs();
         let cursor_store = CursorStore::with_reaper(Arc::clone(&dynamic_configuration), true);
         let transaction_store = TransactionStore::new(Duration::from_secs(timeout_secs));

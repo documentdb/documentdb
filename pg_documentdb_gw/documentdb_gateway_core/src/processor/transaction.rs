@@ -15,10 +15,9 @@ use crate::{
 };
 
 // Create the transaction if required, and populate the context information with the transaction info
-#[tracing::instrument(
-    name = "postgres.transaction",
-    skip_all,
-    fields(otel.kind = "internal")
+#[cfg_attr(
+    feature = "request-tracing",
+    tracing::instrument(name = "postgres.transaction", skip_all)
 )]
 pub async fn handle(
     request_context: &RequestContext<'_>,

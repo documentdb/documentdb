@@ -42,7 +42,6 @@ use crate::{
         },
         QueryCatalog,
     },
-    telemetry::TracingConfig,
     time::{self, EpochClock},
 };
 
@@ -199,10 +198,6 @@ pub struct ConnectionPool {
     identifier: String,
     credential_fingerprint: [u8; 32],
     prune_task: JoinHandle<()>,
-    /// Whether sampled queries from this pool should carry a `SQLCommenter`
-    /// `traceparent` comment for Postgres log correlation. Resolved once from
-    /// telemetry configuration at pool creation.
-    sql_commenter_enabled: bool,
     /// Client-side deadline for statements executed on connections from this
     /// pool; see [`command_deadline_for`].
     command_deadline: Duration,
@@ -291,13 +286,6 @@ impl ConnectionPool {
             pool_settings.adjusted_max_connections()
         );
 
-        let sql_commenter_enabled = TracingConfig::new(
-            setup_configuration
-                .telemetry_options()
-                .and_then(|t| t.tracing.as_ref()),
-        )
-        .sql_commenter_enabled();
-
         let command_deadline = command_deadline_for(setup_configuration);
 
         Ok(Self {
@@ -308,7 +296,6 @@ impl ConnectionPool {
             identifier: pool_identifier,
             credential_fingerprint: credential_fingerprint(password),
             prune_task,
-            sql_commenter_enabled,
             command_deadline,
         })
     }
@@ -321,10 +308,13 @@ impl ConnectionPool {
     /// # Errors
     /// Returns a [`deadpool_postgres::PoolError`] if the pool is exhausted or
     /// the connection cannot be established.
-    #[tracing::instrument(
-        name = "postgres.acquire_connection",
-        skip_all,
-        fields(otel.kind = "client", db.system.name = "postgresql", pool = "primary")
+    #[cfg_attr(
+        feature = "request-tracing",
+        tracing::instrument(
+            name = "postgres.acquire_connection",
+            skip_all,
+            fields(span.kind = "client", db.system.name = "postgresql", pool = "primary")
+        )
     )]
     pub async fn acquire_connection(
         &self,
@@ -350,10 +340,13 @@ impl ConnectionPool {
     /// # Errors
     /// Returns a [`deadpool_postgres::PoolError`] if the pool is exhausted or
     /// the connection cannot be established.
-    #[tracing::instrument(
-        name = "postgres.acquire_connection",
-        skip_all,
-        fields(otel.kind = "client", db.system.name = "postgresql", pool = "timeout")
+    #[cfg_attr(
+        feature = "request-tracing",
+        tracing::instrument(
+            name = "postgres.acquire_connection",
+            skip_all,
+            fields(span.kind = "client", db.system.name = "postgresql", pool = "timeout")
+        )
     )]
     pub async fn acquire_timeout_connection(
         &self,
@@ -412,13 +405,6 @@ impl ConnectionPool {
             &self.credential_fingerprint,
             &credential_fingerprint(password),
         )
-    }
-
-    /// Whether sampled queries from this pool should carry a `SQLCommenter`
-    /// `traceparent` comment for Postgres log correlation.
-    #[must_use]
-    pub const fn sql_commenter_enabled(&self) -> bool {
-        self.sql_commenter_enabled
     }
 
     /// Client-side deadline applied to statements executed without a result set

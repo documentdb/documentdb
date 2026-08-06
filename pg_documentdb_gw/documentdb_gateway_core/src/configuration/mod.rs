@@ -21,7 +21,7 @@ pub use pg_configuration::PgConfiguration;
 pub use setup::{env_keys, DocumentDBSetupConfiguration};
 pub use version::Version;
 
-use crate::telemetry::config::TelemetryOptions;
+use crate::telemetry::TelemetrySettings;
 
 pub(crate) const SOCKET_CONNECTION_IDLE_TIMEOUT_KEY: &str = "SocketConnectionIdleTimeout";
 pub(crate) const SOCKET_CONNECTION_IDLE_TIMEOUT_DEFAULT_SECS: u64 = 18_000;
@@ -115,7 +115,10 @@ pub trait SetupConfiguration: DynClone + Send + Sync + Debug {
     fn instance_kind(&self) -> &str;
 
     /// Returns telemetry options from static setup configuration, if present.
-    fn telemetry_options(&self) -> Option<&TelemetryOptions>;
+    fn telemetry_provider_options(&self) -> Option<&serde_json::Value>;
+
+    /// Returns provider-neutral telemetry capabilities resolved at startup.
+    fn telemetry_settings(&self) -> TelemetrySettings;
 
     /// Provides a way to downcast the trait object to a concrete type.
     fn as_any(&self) -> &dyn std::any::Any;

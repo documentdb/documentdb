@@ -55,9 +55,6 @@ pub trait PgDataClient: Send + Sync {
 
     async fn pull_connection_with_transaction(&self, in_transaction: bool) -> Result<Connection> {
         let pool_connection = self.acquire_pool_connection().await?;
-        let sql_commenter_enabled = self
-            .connection_pool()
-            .is_ok_and(ConnectionPool::sql_commenter_enabled);
 
         // Mirror the pool's deadline when one is available; otherwise derive it
         // from the same configuration the pool would have used, so a connection
@@ -70,7 +67,6 @@ pub trait PgDataClient: Send + Sync {
         Ok(Connection::new(
             pool_connection,
             in_transaction,
-            sql_commenter_enabled,
             command_deadline,
         ))
     }

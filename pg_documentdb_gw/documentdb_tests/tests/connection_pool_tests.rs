@@ -323,7 +323,6 @@ async fn transaction_commit_clears_transaction_flag() {
     let connection = Arc::new(Connection::new(
         pool.acquire_connection().await.unwrap(),
         false,
-        pool.sql_commenter_enabled(),
         pool.command_deadline(),
     ));
 
@@ -346,7 +345,6 @@ async fn transaction_abort_clears_transaction_flag() {
     let connection = Arc::new(Connection::new(
         pool.acquire_connection().await.unwrap(),
         false,
-        pool.sql_commenter_enabled(),
         pool.command_deadline(),
     ));
 
@@ -369,7 +367,6 @@ async fn scoped_transaction_drop_clears_flag_after_rollback() {
     let connection = Arc::new(Connection::new(
         pool.acquire_connection().await.unwrap(),
         false,
-        pool.sql_commenter_enabled(),
         pool.command_deadline(),
     ));
 
@@ -404,7 +401,6 @@ async fn dropping_connection_in_transaction_rolls_back_before_pool_reuse() {
         let connection = Connection::new(
             pool.acquire_connection().await.unwrap(),
             false,
-            pool.sql_commenter_enabled(),
             pool.command_deadline(),
         );
         connection
@@ -418,7 +414,6 @@ async fn dropping_connection_in_transaction_rolls_back_before_pool_reuse() {
     let reused = Connection::new(
         pool.acquire_connection().await.unwrap(),
         false,
-        pool.sql_commenter_enabled(),
         pool.command_deadline(),
     );
 
@@ -445,7 +440,6 @@ async fn batch_execute_enforces_command_deadline() {
     let short_deadline = Connection::new(
         pool.acquire_connection().await.unwrap(),
         false,
-        pool.sql_commenter_enabled(),
         Duration::from_millis(50),
     );
     let timed_out = short_deadline.batch_execute("SELECT pg_sleep(1)").await;
@@ -457,7 +451,6 @@ async fn batch_execute_enforces_command_deadline() {
     let generous_deadline = Connection::new(
         pool.acquire_connection().await.unwrap(),
         false,
-        pool.sql_commenter_enabled(),
         Duration::from_secs(5),
     );
     generous_deadline
@@ -537,7 +530,6 @@ async fn postgres_statement_error_maps_to_unmapped_transaction_postgres_error() 
     let connection = Connection::new(
         pool.acquire_connection().await.unwrap(),
         false,
-        pool.sql_commenter_enabled(),
         pool.command_deadline(),
     );
 
@@ -586,7 +578,6 @@ async fn postgres_statement_error_exposes_the_backend_error_as_its_source() {
     let connection = Connection::new(
         pool.acquire_connection().await.unwrap(),
         false,
-        pool.sql_commenter_enabled(),
         pool.command_deadline(),
     );
 
@@ -623,7 +614,6 @@ async fn failed_set_statement_timeout_rolls_back_gateway_transaction_and_clears_
     let connection = Arc::new(Connection::new(
         pool.acquire_connection().await.unwrap(),
         false,
-        pool.sql_commenter_enabled(),
         pool.command_deadline(),
     ));
 
@@ -684,7 +674,6 @@ async fn gateway_commit_timeout_clears_transaction_flag() {
     let connection = Arc::new(Connection::new(
         pool.acquire_connection().await.unwrap(),
         false,
-        pool.sql_commenter_enabled(),
         Duration::from_secs(1),
     ));
 
@@ -745,7 +734,6 @@ async fn query_enforces_command_deadline() {
     let short_deadline = Connection::new(
         pool.acquire_connection().await.unwrap(),
         false,
-        pool.sql_commenter_enabled(),
         Duration::from_millis(50),
     );
     let timed_out = short_deadline.query("SELECT pg_sleep(1)", &[], &[]).await;
@@ -757,7 +745,6 @@ async fn query_enforces_command_deadline() {
     let generous_deadline = Connection::new(
         pool.acquire_connection().await.unwrap(),
         false,
-        pool.sql_commenter_enabled(),
         Duration::from_secs(5),
     );
     generous_deadline
@@ -778,7 +765,6 @@ async fn command_deadline_follows_the_current_request() {
     let connection = Connection::new(
         pool.acquire_connection().await.unwrap(),
         false,
-        pool.sql_commenter_enabled(),
         Duration::from_secs(90),
     );
 
@@ -822,7 +808,6 @@ async fn rollback_that_cannot_complete_on_drop_discards_the_connection() {
         let connection = Connection::new(
             pool.acquire_connection().await.unwrap(),
             false,
-            pool.sql_commenter_enabled(),
             Duration::from_millis(500),
         );
         connection.batch_execute("START TRANSACTION").await.unwrap();
@@ -870,7 +855,6 @@ async fn statement_abandoned_at_the_deadline_closes_the_connection() {
         let connection = Connection::new(
             pool.acquire_connection().await.unwrap(),
             false,
-            pool.sql_commenter_enabled(),
             Duration::from_millis(50),
         );
         let timed_out = connection.query("SELECT pg_sleep(30)", &[], &[]).await;
@@ -883,7 +867,6 @@ async fn statement_abandoned_at_the_deadline_closes_the_connection() {
     let next = Connection::new(
         pool.acquire_connection().await.unwrap(),
         false,
-        pool.sql_commenter_enabled(),
         Duration::from_millis(500),
     );
     next.query("SELECT 1", &[], &[])
@@ -903,7 +886,6 @@ async fn statements_after_an_abandoned_one_fail_without_waiting() {
     let connection = Connection::new(
         pool.acquire_connection().await.unwrap(),
         false,
-        pool.sql_commenter_enabled(),
         Duration::from_millis(200),
     );
 
