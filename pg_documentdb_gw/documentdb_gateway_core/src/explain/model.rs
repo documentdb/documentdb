@@ -220,6 +220,19 @@ pub struct ExplainPlan {
     /// executionStats stage when > 0.
     #[serde(rename = "Duplicate Rows Removed")]
     pub duplicate_rows_removed: Option<f64>,
+
+    /// Gateway-set breadcrumb: the surviving stage absorbed a collapsed
+    /// distinct-pushdown scan (index skip scan for DISTINCT). Not parsed from
+    /// the plan; set in `skip_stage` and reported in the queryPlanner stage.
+    #[serde(skip)]
+    pub has_distinct_dedup: bool,
+
+    /// Gateway-set breadcrumb: the surviving stage absorbed a collapsed TID
+    /// de-duplicating scan (drops duplicate documents from a sort-merge). Not
+    /// parsed from the plan; set in `skip_stage` and reported in the
+    /// queryPlanner stage.
+    #[serde(skip)]
+    pub has_multi_key_row_dedup: bool,
 }
 
 #[derive(Deserialize, Debug, Clone)]

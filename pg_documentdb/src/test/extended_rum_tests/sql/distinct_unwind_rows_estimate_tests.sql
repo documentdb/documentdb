@@ -1,5 +1,10 @@
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documentdb_api_internal,public;
 
+-- enableDistinctCustomScan is enabled by default starting in v116. Pin it off
+-- here so these row-estimate tests keep exercising the non-custom-scan distinct
+-- plan shape. Remove this pin when the flag is retired.
+SET documentdb.enableDistinctCustomScan TO off;
+
 -- ============================================================
 -- Row-estimate correctness for the distinct-unwind planner support
 -- function attached to bson_distinct_unwind.

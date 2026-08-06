@@ -354,8 +354,8 @@ bool EnablePGPrngCursorId = DEFAULT_ENABLE_PG_PRNG_CURSOR_ID;
 #define DEFAULT_ENABLE_INDEX_PATH_KEY_SUMMARIZATION true
 bool EnableIndexPathKeySummarization = DEFAULT_ENABLE_INDEX_PATH_KEY_SUMMARIZATION;
 
-/* Added in v114, pending stabilization, enable in v116 */
-#define DEFAULT_ENABLE_DISTINCT_CUSTOM_SCAN false
+/* Added in v114, enabled in v117, remove after v119 */
+#define DEFAULT_ENABLE_DISTINCT_CUSTOM_SCAN true
 bool EnableDistinctCustomScan = DEFAULT_ENABLE_DISTINCT_CUSTOM_SCAN;
 
 /* Added in v114, enabled in v117, remove after v119 */
