@@ -1380,6 +1380,14 @@ fn query_planner(
                 doc.append("cursorScanType", cursor_scan_type);
             }
 
+            if plan.has_distinct_dedup {
+                doc.append("hasDistinctDedup", true);
+            }
+
+            if plan.has_multi_key_row_dedup {
+                doc.append("hasMultiKeyRowDedup", true);
+            }
+
             if stage_name != "FETCH" {
                 if let Some(index_name) = plan.index_name.as_deref() {
                     doc.append("indexName", index_name);
@@ -2069,6 +2077,13 @@ fn collect_index_costs(
 #[expect(clippy::expect_used, reason = "values are checked before access")]
 fn skip_stage(mut plan: ExplainPlan, query_catalog: &QueryCatalog) -> ExplainPlan {
     loop {
+        // De-dup breadcrumbs are set on the surviving child of a collapsed
+        // wrapper; carry them across further collapses above that wrapper so the
+        // flag still surfaces on the final surviving stage. `bool` is `Copy`, so
+        // capture before `plan` is consumed and re-apply after the collapse.
+        let carried_distinct_dedup = plan.has_distinct_dedup;
+        let carried_multi_key_row_dedup = plan.has_multi_key_row_dedup;
+
         plan = if plan.node_type == "Subquery Scan"
             && plan.output.as_ref().is_some_and(|o| {
                 o.len() == 1
@@ -2124,7 +2139,9 @@ fn skip_stage(mut plan: ExplainPlan, query_catalog: &QueryCatalog) -> ExplainPla
         {
             // The de-duplicating scan is an internal wrapper over its child.
             // Strip it and inline the "Duplicate Rows Removed" counter onto the
-            // surviving child stage, mirroring the plan explain output.
+            // surviving child stage, mirroring the plan explain output. Flag the
+            // surviving stage so the collapsed de-duplication remains visible in
+            // the query planner output.
             let mut new_plan = plan.inner_plans.expect("Checked").remove(0);
             if new_plan.alias.is_none() {
                 new_plan.alias = plan.alias;
@@ -2138,10 +2155,36 @@ fn skip_stage(mut plan: ExplainPlan, query_catalog: &QueryCatalog) -> ExplainPla
             if new_plan.duplicate_rows_removed.is_none() {
                 new_plan.duplicate_rows_removed = plan.duplicate_rows_removed;
             }
+            new_plan.has_multi_key_row_dedup = true;
+            new_plan
+        } else if plan.node_type == "Custom Scan"
+            && plan.custom_plan_provider.as_deref() == Some("DocumentDBApiDistinctQueryScan")
+            && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
+        {
+            // The distinct-pushdown scan is an internal wrapper over the index
+            // scan that materializes the distinct keys. Flag the surviving stage so the
+            // collapsed distinct pushdown remains visible in the query planner output.
+            let mut new_plan = plan.inner_plans.expect("Checked").remove(0);
+            if new_plan.alias.is_none() {
+                new_plan.alias = plan.alias;
+            }
+            if new_plan.namespace_name.is_none() {
+                new_plan.namespace_name = plan.namespace_name;
+            }
+            if new_plan.cursor_scan_type.is_none() {
+                new_plan.cursor_scan_type = plan.cursor_scan_type;
+            }
+            if new_plan.skipped_tuples.is_none() {
+                new_plan.skipped_tuples = plan.skipped_tuples;
+            }
+            new_plan.has_distinct_dedup = true;
             new_plan
         } else {
             break plan;
         };
+
+        plan.has_distinct_dedup |= carried_distinct_dedup;
+        plan.has_multi_key_row_dedup |= carried_multi_key_row_dedup;
     }
 }
 
@@ -2501,6 +2544,113 @@ mod tests {
         let result = super::skip_stage(plan, &catalog);
 
         assert_eq!(result.duplicate_rows_removed, Some(3.0));
+    }
+
+    #[test]
+    fn tid_dedup_scan_sets_has_multi_key_row_dedup_flag_on_surviving_stage() {
+        let catalog = QueryCatalog::default();
+
+        let child = ExplainPlan {
+            node_type: "Bitmap Heap Scan".to_owned(),
+            ..Default::default()
+        };
+        let plan = ExplainPlan {
+            node_type: "Custom Scan".to_owned(),
+            custom_plan_provider: Some("DocumentDBApiTidDedup".to_owned()),
+            inner_plans: Some(vec![child]),
+            ..Default::default()
+        };
+
+        let result = super::skip_stage(plan, &catalog);
+
+        assert_eq!(result.node_type, "Bitmap Heap Scan");
+        assert!(result.has_multi_key_row_dedup);
+        assert!(!result.has_distinct_dedup);
+    }
+
+    #[test]
+    fn distinct_query_scan_is_inlined_and_sets_has_distinct_dedup_flag() {
+        let catalog = QueryCatalog::default();
+
+        let child = ExplainPlan {
+            node_type: "Index Only Scan".to_owned(),
+            ..Default::default()
+        };
+        let plan = ExplainPlan {
+            node_type: "Custom Scan".to_owned(),
+            custom_plan_provider: Some("DocumentDBApiDistinctQueryScan".to_owned()),
+            inner_plans: Some(vec![child]),
+            ..Default::default()
+        };
+
+        let result = super::skip_stage(plan, &catalog);
+
+        // The distinct-pushdown wrapper is stripped, surfacing the child index
+        // scan, and the breadcrumb flag is set on the surviving stage.
+        assert_eq!(result.node_type, "Index Only Scan");
+        assert!(result.has_distinct_dedup);
+        assert!(!result.has_multi_key_row_dedup);
+    }
+
+    #[test]
+    fn dedup_flag_propagates_through_wrapping_scan() {
+        let catalog = QueryCatalog::default();
+
+        let index_scan = ExplainPlan {
+            node_type: "Index Only Scan".to_owned(),
+            ..Default::default()
+        };
+        let distinct_scan = ExplainPlan {
+            node_type: "Custom Scan".to_owned(),
+            custom_plan_provider: Some("DocumentDBApiDistinctQueryScan".to_owned()),
+            inner_plans: Some(vec![index_scan]),
+            ..Default::default()
+        };
+        let wrapper = ExplainPlan {
+            node_type: "Custom Scan".to_owned(),
+            custom_plan_provider: Some("DocumentDBApiScan".to_owned()),
+            inner_plans: Some(vec![distinct_scan]),
+            ..Default::default()
+        };
+
+        let result = super::skip_stage(wrapper, &catalog);
+
+        // A distinct pushdown nested beneath a generic wrapper scan still
+        // surfaces the breadcrumb flag on the final surviving stage.
+        assert_eq!(result.node_type, "Index Only Scan");
+        assert!(result.has_distinct_dedup);
+    }
+
+    #[test]
+    fn dedup_flag_survives_collapse_of_the_flagged_wrapper() {
+        let catalog = QueryCatalog::default();
+
+        // Inverted nesting: the distinct pushdown sits *above* a further
+        // collapsible wrapper. The distinct branch sets the flag on that inner
+        // wrapper, which is then itself stripped, so only the carry
+        // (capture-before / re-apply-after the collapse) keeps the breadcrumb on
+        // the final surviving stage.
+        let index_scan = ExplainPlan {
+            node_type: "Index Only Scan".to_owned(),
+            ..Default::default()
+        };
+        let wrapper = ExplainPlan {
+            node_type: "Custom Scan".to_owned(),
+            custom_plan_provider: Some("DocumentDBApiScan".to_owned()),
+            inner_plans: Some(vec![index_scan]),
+            ..Default::default()
+        };
+        let distinct_scan = ExplainPlan {
+            node_type: "Custom Scan".to_owned(),
+            custom_plan_provider: Some("DocumentDBApiDistinctQueryScan".to_owned()),
+            inner_plans: Some(vec![wrapper]),
+            ..Default::default()
+        };
+
+        let result = super::skip_stage(distinct_scan, &catalog);
+
+        assert_eq!(result.node_type, "Index Only Scan");
+        assert!(result.has_distinct_dedup);
     }
 
     #[test]

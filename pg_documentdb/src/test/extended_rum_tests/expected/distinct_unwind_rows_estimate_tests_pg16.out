@@ -1,5 +1,9 @@
 \i sql/distinct_unwind_rows_estimate_tests.sql
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documentdb_api_internal,public;
+-- enableDistinctCustomScan is enabled by default starting in v116. Pin it off
+-- here so these row-estimate tests keep exercising the non-custom-scan distinct
+-- plan shape. Remove this pin when the flag is retired.
+SET documentdb.enableDistinctCustomScan TO off;
 -- ============================================================
 -- Row-estimate correctness for the distinct-unwind planner support
 -- function attached to bson_distinct_unwind.
@@ -23,7 +27,7 @@ SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documen
 -- Ensure database 'db' exists so the system sentinel collection does not
 -- consume a test collection id when running in standalone mode.
 SELECT documentdb_api.insert_one('db', 'duw_sentinel', '{ "_id": 0 }');
-psql:sql/distinct_unwind_rows_estimate_tests.sql:26: NOTICE:  creating collection
+psql:sql/distinct_unwind_rows_estimate_tests.sql:31: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -44,7 +48,7 @@ SET documentdb.next_collection_index_id TO 91000;
 SELECT COUNT(documentdb_api.insert_one('db', 'duw_sparse',
     format('{ "_id": %s, "a": %s }', i, i)::documentdb_core.bson))
 FROM generate_series(1, 90) AS i;
-psql:sql/distinct_unwind_rows_estimate_tests.sql:38: NOTICE:  creating collection
+psql:sql/distinct_unwind_rows_estimate_tests.sql:43: NOTICE:  creating collection
  count 
 -------
     90
@@ -62,7 +66,7 @@ FROM generate_series(91, 100) AS i;
 SELECT COUNT(documentdb_api.insert_one('db', 'duw_dense',
     format('{ "_id": %s, "a": [1, 2, 3] }', i)::documentdb_core.bson))
 FROM generate_series(1, 100) AS i;
-psql:sql/distinct_unwind_rows_estimate_tests.sql:46: NOTICE:  creating collection
+psql:sql/distinct_unwind_rows_estimate_tests.sql:51: NOTICE:  creating collection
  count 
 -------
    100
@@ -74,7 +78,7 @@ psql:sql/distinct_unwind_rows_estimate_tests.sql:46: NOTICE:  creating collectio
 SELECT COUNT(documentdb_api.insert_one('db', 'duw_null_none',
     format('{ "_id": %s, "a": [1, 2, 3] }', i)::documentdb_core.bson))
 FROM generate_series(1, 10) AS i;
-psql:sql/distinct_unwind_rows_estimate_tests.sql:53: NOTICE:  creating collection
+psql:sql/distinct_unwind_rows_estimate_tests.sql:58: NOTICE:  creating collection
  count 
 -------
     10
@@ -95,7 +99,7 @@ FROM generate_series(11, 100) AS i;
 SELECT COUNT(documentdb_api.insert_one('db', 'duw_null_heavy',
     format('{ "_id": %s, "a": [1, 2, 3] }', i)::documentdb_core.bson))
 FROM generate_series(1, 10) AS i;
-psql:sql/distinct_unwind_rows_estimate_tests.sql:64: NOTICE:  creating collection
+psql:sql/distinct_unwind_rows_estimate_tests.sql:69: NOTICE:  creating collection
  count 
 -------
     10

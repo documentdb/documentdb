@@ -126,6 +126,16 @@
           "type": "string",
           "description": "The scan direction of the index scan (e.g. 'Forward' or 'Backward'). Only present for index scan stages."
         },
+        "hasDistinctDedup": {
+          "type": "boolean",
+          "const": true,
+          "description": "Indicates this stage absorbed a collapsed distinct-pushdown scan (an index skip scan that materializes distinct keys). The dedicated scan node is an internal wrapper and is not surfaced separately; this flag (present and true) preserves that a distinct pushdown was used."
+        },
+        "hasMultiKeyRowDedup": {
+          "type": "boolean",
+          "const": true,
+          "description": "Indicates this stage absorbed a collapsed TID de-duplicating scan that drops duplicate documents produced by a sort-merge over a multi-key index. The dedicated scan node is an internal wrapper and is not surfaced separately; this flag (present and true) preserves that TID de-duplication was applied."
+        },
         "isBitmap": {
           "type": "boolean",
           "const": true,
