@@ -38,6 +38,7 @@
 #define IdsKeyLength 3
 
 extern int MaxNumActiveUsersIndexBuilds;
+extern bool ForceIndexBuildsBlocking;
 
 typedef enum BoolIndexOption
 {

@@ -3037,6 +3037,15 @@ CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 										bson_iter_type(operatorDocIterator)))));
 			}
 
+			bool isBsonValueInput =
+				context->inputType == MongoQueryOperatorInputType_BsonValue;
+			if (isBsonValueInput &&
+				!IsClusterVersionAtleast(DocDB_V0, 117, 0))
+			{
+				ereport(ERROR, (errmsg(
+									"BSON value geospatial queries require cluster version at least 0.117.0")));
+			}
+
 			const bson_value_t *value = bson_iter_value(operatorDocIterator);
 			bson_value_t shapesValue;
 			const ShapeOperator *shapeOperator = GetShapeOperatorByValue(value,
@@ -3051,6 +3060,11 @@ CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 
 			Expr *geoWithinFuncExpr = CreateFuncExprForSimpleQueryOperator(
 				operatorDocIterator, context, operator, path);
+			if (isBsonValueInput)
+			{
+				return geoWithinFuncExpr;
+			}
+
 			return WithIndexSupportExpression(context->documentExpr, geoWithinFuncExpr,
 											  path, shapeOperator->isSpherical);
 		}
@@ -3092,8 +3106,22 @@ CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 			/* Validate the query at planning */
 			shapeOperator->getShapeDatum(&shapesValue, opInfo);
 
+			bool isBsonValueInput =
+				context->inputType == MongoQueryOperatorInputType_BsonValue;
+			if (isBsonValueInput &&
+				!IsClusterVersionAtleast(DocDB_V0, 117, 0))
+			{
+				ereport(ERROR, (errmsg(
+									"BSON value geospatial queries require cluster version at least 0.117.0")));
+			}
+
 			Expr *geoIntersectsFuncExpr = CreateFuncExprForSimpleQueryOperator(
 				operatorDocIterator, context, operator, path);
+			if (isBsonValueInput)
+			{
+				return geoIntersectsFuncExpr;
+			}
+
 			return WithIndexSupportExpression(context->documentExpr,
 											  geoIntersectsFuncExpr,
 											  path, shapeOperator->isSpherical);

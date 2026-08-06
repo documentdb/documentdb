@@ -571,6 +571,8 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5,
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5,6,7,8,9,10]}', '{ "": { "$push" : {"a": { "$each" : [], "$slice": -6 }} } }', '{}', NULL, NULL, NULL) as update_bson_document;
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5,6,7,8,9,10]}', '{ "": { "$push" : {"a": { "$each" : [], "$slice": 20 }} } }', '{}', NULL, NULL, NULL) as update_bson_document;
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5,6,7,8,9,10]}', '{ "": { "$push" : {"a": { "$each" : [], "$slice": -11 }} } }', '{}', NULL, NULL, NULL) as update_bson_document;
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3]}', '{ "": { "$push" : {"a": { "$each" : [4], "$slice": {"$numberLong": "9223372036854775807"} }} } }', '{}', NULL, NULL, NULL) as update_bson_document;
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3]}', '{ "": { "$push" : {"a": { "$each" : [4], "$slice": {"$numberLong": "-9223372036854775808"} }} } }', '{}', NULL, NULL, NULL) as update_bson_document;
 
 -- $push with $slice: 0 must empty a previously non-empty array (not a no-op)
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5]}', '{ "": { "$push" : {"a": { "$each" : [], "$slice": 0 }} } }', '{}', NULL, NULL, NULL) as update_bson_document;
@@ -587,6 +589,9 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5,
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5,6,7,8,9,10]}', '{ "": { "$push" : {"a": { "$each" : [-1, 0], "$position": -20 }} } }', '{}', NULL, NULL, NULL) as update_bson_document;
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5,6,7,8,9,10]}', '{ "": { "$push" : {"a": { "$each" : [-1, 0], "$position": 6 }} } }', '{}', NULL, NULL, NULL) as update_bson_document;
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4,5,6,7,8,9,10]}', '{ "": { "$push" : {"a": { "$each" : [-1, 0], "$position": -8 }} } }', '{}', NULL, NULL, NULL) as update_bson_document;
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3]}', '{ "": { "$push" : {"a": { "$each" : [4], "$position": {"$numberLong": "4294967296"} }} } }', '{}', NULL, NULL, NULL) as update_bson_document;
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3]}', '{ "": { "$push" : {"a": { "$each" : [4], "$position": {"$numberLong": "9223372036854775807"} }} } }', '{}', NULL, NULL, NULL) as update_bson_document;
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3]}', '{ "": { "$push" : {"a": { "$each" : [4], "$position": {"$numberLong": "-9223372036854775808"} }} } }', '{}', NULL, NULL, NULL) as update_bson_document;
 
 -- $push with $sort modifier in non-dotted path
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3]}', '{ "": { "$push" : {"a": { "$each" : [1,2,"3", {"four": 4}, false, [3,1,2]], "$sort": -1 }} } }', '{}', NULL, NULL, NULL) as update_bson_document;

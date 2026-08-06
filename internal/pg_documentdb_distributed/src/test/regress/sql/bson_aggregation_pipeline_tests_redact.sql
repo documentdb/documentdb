@@ -46,6 +46,15 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest3", "pipeline": [ { "$redact": "$$PRUNE"}], "cursor": {} }');
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest3", "pipeline": [ { "$redact": "$$DESCEND"}], "cursor": {} }');
 
+/* a system variable that is not $$KEEP/$$PRUNE/$$DESCEND must produce the
+ * documented error, not terminate the backend */
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest3", "pipeline": [ { "$redact": "$$CURRENT"}], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest3", "pipeline": [ { "$redact": "$$ROOT"}], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest3", "pipeline": [ { "$redact": "$$REMOVE"}], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest3", "pipeline": [ { "$redact": { "$cond": [true, "$$REMOVE", "$$KEEP"] } }], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest3", "pipeline": [ { "$redact": { "$let": { "vars": { "v": "$level" }, "in": "$$CURRENT" } } }], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest3", "pipeline": [ { "$redact": { "$cond": [{"$lte": ["$level", 2]}, "$$CURRENT", "$$PRUNE"] } }], "cursor": {} }');
+
 /*switch case*/
 SELECT documentdb_api.insert_one('db','redactTestSwitch','{ "_id": 1, "title": "Document 1", "classification": "confidential", "content": "This is confidential content.", "metadata": { "author": "Alice", "revision": 3 } }', NULL);
 SELECT documentdb_api.insert_one('db','redactTestSwitch','{ "_id": 2, "title": "Document 2", "classification": "public", "content": "This is public content.", "metadata": { "author": "Bob", "revision": 1 } }', NULL);

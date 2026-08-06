@@ -158,6 +158,8 @@ Oid BsonValueBitsAllClearFunctionId(void);
 Oid BsonValueBitsAnyClearFunctionId(void);
 Oid BsonValueBitsAllSetFunctionId(void);
 Oid BsonValueBitsAnySetFunctionId(void);
+Oid BsonValueGeoIntersectsFunctionId(void);
+Oid BsonValueGeoWithinFunctionId(void);
 Oid BsonNotLessThanEqualFunctionId(void);
 Oid BsonNotLessThanFunctionId(void);
 Oid BsonNotGreaterThanFunctionId(void);

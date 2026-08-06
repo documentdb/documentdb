@@ -26,6 +26,7 @@
 #include "utils/version_utils.h"
 #include "commands/parse_error.h"
 #include "commands/commands_common.h"
+#include "io/bsonvalue_utils.h"
 #include "commands/diagnostic_commands_common.h"
 #include "api_hooks.h"
 
@@ -156,7 +157,7 @@ command_coll_stats_aggregation(PG_FUNCTION_ARGS)
 	bson_iter_t collStatsSpecIter;
 	PgbsonInitIterator(collStatsSpec, &collStatsSpecIter);
 
-	int64 storageScale = 1;
+	int32 storageScale = 1;
 	CollStatsAggMode aggregateMode = CollStatsAggMode_None;
 	while (bson_iter_next(&collStatsSpecIter))
 	{
@@ -192,7 +193,8 @@ command_coll_stats_aggregation(PG_FUNCTION_ARGS)
 			}
 			else
 			{
-				storageScale = BsonValueAsInt64(&storageStatsElement.bsonValue);
+				storageScale = BsonValueAsInt32Clamped(
+					&storageStatsElement.bsonValue);
 			}
 
 			aggregateMode |= CollStatsAggMode_Storage;
@@ -261,6 +263,13 @@ command_coll_stats_aggregation(PG_FUNCTION_ARGS)
 	}
 
 	CollStatsResult result = { 0 };
+	result.scaleFactor = storageScale;
+	if (storageScale < 1)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION51024), errmsg(
+							"The BSON field 'scale' must have a value of at least 1, but the provided value is '%d'.",
+							storageScale)));
+	}
 	BuildResultData(databaseName, collectionName, &result, collection, storageScale,
 					aggregateMode);
 	if ((aggregateMode & CollStatsAggMode_Count) != 0)

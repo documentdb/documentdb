@@ -1,3 +1,4 @@
+\i sql/bson_aggregation_stage_out_tests_2.sql
 SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog;
 SET citus.next_shard_id TO 9830000;
 SET documentdb.next_collection_id TO 9830;
@@ -11,14 +12,14 @@ SELECT documentdb_api.insert('db', '{"insert":"source", "documents":[
    { "_id" : 5, "movie": "Iron Man 2", "Budget": 140000000, "year": 2013 },
    { "_id" : 6, "movie": "Iron Man 1", "Budget": 130000000, "year": 2013 }
 ]}');
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:16: NOTICE:  creating collection
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""6"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
 SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "source", "pipeline": [  {"$out" : "target"} ], "cursor": { "batchSize": 1 } }', 4294967294);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:19: NOTICE:  creating collection
                                                            cursorpage                                                           | continuation | persistconnection | cursorid 
 ---------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.source", "firstBatch" : [  ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
@@ -36,7 +37,7 @@ SELECT document FROM documentdb_api.collection('db', 'target');
 (6 rows)
 
 SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "source", "pipeline": [  {"$out" : { "db" : "db", "coll" : "target2" }  } ], "cursor": { "batchSize": 1 } }', 4294967294);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:22: NOTICE:  creating collection
                                                            cursorpage                                                           | continuation | persistconnection | cursorid 
 ---------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.source", "firstBatch" : [  ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
@@ -80,14 +81,14 @@ SELECT documentdb_api.insert('newdb', '{"insert":"source", "documents":[
    { "_id" : 5, "movie": "Iron Man 2", "Budget": 140000000, "year": 2013 },
    { "_id" : 6, "movie": "Iron Man 1", "Budget": 130000000, "year": 2013 }
 ]}');
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:37: NOTICE:  creating collection
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""6"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
 SELECT * FROM aggregate_cursor_first_page('newdb', '{ "aggregate": "source", "pipeline": [  {"$out" : "target"} ], "cursor": { "batchSize": 1 } }', 4294967294);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:39: NOTICE:  creating collection
                                                             cursorpage                                                             | continuation | persistconnection | cursorid 
 ---------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "newdb.source", "firstBatch" : [  ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
@@ -105,7 +106,7 @@ SELECT document FROM documentdb_api.collection('newdb', 'target');
 (6 rows)
 
 SELECT * FROM aggregate_cursor_first_page('newdb', '{ "aggregate": "source", "pipeline": [  {"$out" : { "db" : "newdb", "coll" : "target2" }  } ], "cursor": { "batchSize": 1 } }', 4294967294);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:42: NOTICE:  creating collection
                                                             cursorpage                                                             | continuation | persistconnection | cursorid 
 ---------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "newdb.source", "firstBatch" : [  ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
@@ -142,14 +143,14 @@ SELECT documentdb_api.drop_collection('newdb','target2');
 
 -- when source and target collection are same 
 SELECT documentdb_api.insert('newdb', '{"insert":"source", "documents":[{ "_id" : 1, "data": "This is source collection"}]}');
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:50: NOTICE:  creating collection
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
 SELECT * FROM aggregate_cursor_first_page('newdb', '{ "aggregate": "source", "pipeline": [ {"$project" : {"data" : "updating same"} } ,{"$out" : { "db" : "newdb", "coll" : "source" }  } ], "cursor": { "batchSize": 1 } }', 4294967294);
-ERROR:  The target collection cannot be the same as the source collection in $out stage.
+psql:sql/bson_aggregation_stage_out_tests_2.sql:51: ERROR:  The target collection cannot be the same as the source collection in $out stage.
 SELECT document FROM documentdb_api.collection('newdb', 'source');
                                  document                                 
 ---------------------------------------------------------------------
@@ -164,14 +165,14 @@ SELECT documentdb_api.drop_collection('newdb','source');
 
 -- case where target collection already exist:
 SELECT documentdb_api.insert('newdb', '{"insert":"source", "documents":[{ "_id" : 1, "data": "This is source collection"}]}');
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:56: NOTICE:  creating collection
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
 SELECT documentdb_api.insert('newdb', '{"insert":"target", "documents":[{ "_id" : 1, "data": "This is target collection"}]}');
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:57: NOTICE:  creating collection
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
@@ -203,14 +204,14 @@ SELECT documentdb_api.drop_collection('newdb','target');
 
 -- when target db is different:
 SELECT documentdb_api.insert('newdb', '{"insert":"source", "documents":[{ "_id" : 1, "data": "This is source collection"}]}');
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:64: NOTICE:  creating collection
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
 SELECT * FROM aggregate_cursor_first_page('newdb', '{ "aggregate": "source", "pipeline": [  {"$out" : { "db" : "db2", "coll" : "target" }  } ], "cursor": { "batchSize": 1 } }', 4294967294);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:65: NOTICE:  creating collection
                                                             cursorpage                                                             | continuation | persistconnection | cursorid 
 ---------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "newdb.source", "firstBatch" : [  ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
@@ -237,7 +238,7 @@ SELECT documentdb_api.drop_collection('db2','target');
 -- index validation: 
 -- 1. If source and target are same collection, only data will get updated index should remain
 SELECT documentdb_api.insert('newdb', '{"insert":"src", "documents":[{ "_id" : 1, "data": "This is source collection"}]}');
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:73: NOTICE:  creating collection
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
@@ -264,7 +265,7 @@ SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.
 (3 rows)
 
 SELECT * FROM aggregate_cursor_first_page('newdb', '{ "aggregate": "src", "pipeline": [ {"$project" : {"data" : "updating data"} }, {"$out" : { "db" : "newdb", "coll" : "src" }  } ], "cursor": { "batchSize": 1 } }', 4294967294);
-ERROR:  The target collection cannot be the same as the source collection in $out stage.
+psql:sql/bson_aggregation_stage_out_tests_2.sql:79: ERROR:  The target collection cannot be the same as the source collection in $out stage.
 SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('newdb', '{ "listIndexes": "src" }') ORDER BY 1;
                                                                                                                                   bson_dollar_unwind                                                                                                                                  
 ---------------------------------------------------------------------
@@ -287,14 +288,14 @@ SELECT documentdb_api.drop_collection('newdb','src');
 
 -- 2. if target already exist only data will get updated index should remain
 SELECT documentdb_api.insert('newdb', '{"insert":"src", "documents":[{ "_id" : 1, "data": "This is source collection"}]}');
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:86: NOTICE:  creating collection
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
 (1 row)
 
 SELECT documentdb_api.insert('newdb', '{"insert":"tar", "documents":[{ "_id" : 1, "data": "This is target collection"}]}');
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:87: NOTICE:  creating collection
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
@@ -354,7 +355,7 @@ SELECT documentdb_api.drop_collection('newdb','tar');
 
 -- complex query with last stage $out:
 SELECT documentdb_api.insert_one('newdb','source',' {"_id": 1, "company": "Company A", "products": ["product1", "product2"], "amount": 100 , "services": ["service1", "service2"]}', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:98: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -367,7 +368,7 @@ SELECT documentdb_api.insert_one('newdb','source','{ "_id": 2, "company": "Compa
 (1 row)
 
 SELECT documentdb_api.insert_one('newdb','target','{ "_id": 1, "item": "product1", "company_name": "Company A"}', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:101: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -429,14 +430,14 @@ SELECT documentdb_api.drop_collection('newdb','target');
 
 -- case when _id is missing from last stage:
 SELECT documentdb_api.insert_one('newdb','source',' {"_id": 1, "name": "Test Case"}', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:130: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT * FROM aggregate_cursor_first_page('newdb', '{ "aggregate": "source", "pipeline": [ {"$project" : {"_id" : 0} } ,{"$out" : "target"  } ], "cursor": { "batchSize": 1 } }', 4294967294);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:131: NOTICE:  creating collection
                                                             cursorpage                                                             | continuation | persistconnection | cursorid 
 ---------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "newdb.source", "firstBatch" : [  ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
@@ -462,7 +463,7 @@ SELECT documentdb_api.drop_collection('newdb','target');
 
 -- test when source collection is view
 SELECT documentdb_api.insert('newdb', '{"insert":"source", "documents":[{ "_id" : 1, "a" : 1, "b" : 1  }]}');
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:137: NOTICE:  creating collection
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
@@ -475,7 +476,7 @@ SELECT documentdb_api.create_collection_view('newdb', '{ "create": "sourceView",
 (1 row)
 
 SELECT * FROM aggregate_cursor_first_page('newdb', '{ "aggregate": "sourceView", "pipeline": [  {"$out" : "target" } ], "cursor": { "batchSize": 1 } }', 4294967294);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:139: NOTICE:  creating collection
                                                               cursorpage                                                               | continuation | persistconnection | cursorid 
 ---------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "newdb.sourceView", "firstBatch" : [  ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
@@ -501,7 +502,7 @@ SELECT documentdb_api.drop_collection('newdb','target');
 
 -- test when source is sharded:
 SELECT documentdb_api.insert_one('newdb','source',' {"_id": 1, "name": "Test Case"}', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:145: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -514,7 +515,7 @@ SELECT documentdb_api.shard_collection('newdb', 'source', '{ "a": "hashed" }', f
 (1 row)
 
 SELECT * FROM aggregate_cursor_first_page('newdb', '{ "aggregate": "source", "pipeline": [ {"$out" : "target" } ], "cursor": { "batchSize": 1 } }', 4294967294);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:147: NOTICE:  creating collection
                                                             cursorpage                                                             | continuation | persistconnection | cursorid 
 ---------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "newdb.source", "firstBatch" : [  ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
@@ -540,26 +541,26 @@ SELECT documentdb_api.drop_collection('newdb','target');
 
 -- Negative test cases
 SELECT documentdb_api.insert_one('newdb','source',' {"_id": 1, "name": "Test Case"}', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:153: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT * FROM aggregate_cursor_first_page('newdb', '{ "aggregate": "source", "pipeline": [ {"$out" : 1 } ], "cursor": { "batchSize": 1 } }', 4294967294);
-ERROR:  Expected 'string' or 'document' type but found 'int' type
+psql:sql/bson_aggregation_stage_out_tests_2.sql:154: ERROR:  Expected 'string' or 'document' type but found 'int' type
 SELECT * FROM aggregate_cursor_first_page('newdb', '{ "aggregate": "source", "pipeline": [ {"$out" : {} } ], "cursor": { "batchSize": 1 } }', 4294967294);
-ERROR:  If an object is passed to $out it must have exactly 2 fields: 'db' and 'coll'
+psql:sql/bson_aggregation_stage_out_tests_2.sql:155: ERROR:  If an object is passed to $out it must have exactly 2 fields: 'db' and 'coll'
 SELECT * FROM aggregate_cursor_first_page('newdb', '{ "aggregate": "source", "pipeline": [ {"$out" : {"db" : "a"} } ], "cursor": { "batchSize": 1 } }', 4294967294);
-ERROR:  If an object is passed to $out it must have exactly 2 fields: 'db' and 'coll'
+psql:sql/bson_aggregation_stage_out_tests_2.sql:156: ERROR:  If an object is passed to $out it must have exactly 2 fields: 'db' and 'coll'
 SELECT * FROM aggregate_cursor_first_page('newdb', '{ "aggregate": "source", "pipeline": [ {"$out" : {"coll" : "a"} } ], "cursor": { "batchSize": 1 } }', 4294967294);
-ERROR:  If an object is passed to $out it must have exactly 2 fields: 'db' and 'coll'
+psql:sql/bson_aggregation_stage_out_tests_2.sql:157: ERROR:  If an object is passed to $out it must have exactly 2 fields: 'db' and 'coll'
 SELECT * FROM aggregate_cursor_first_page('newdb', '{ "aggregate": "source", "pipeline": [ {"$out" : {"db" : "a", "coll" : "a", "other" : "a"} } ], "cursor": { "batchSize": 1 } }', 4294967294);
-ERROR:  If an object is passed to $out it must have exactly 2 fields: 'db' and 'coll'
+psql:sql/bson_aggregation_stage_out_tests_2.sql:158: ERROR:  If an object is passed to $out it must have exactly 2 fields: 'db' and 'coll'
 SELECT * FROM aggregate_cursor_first_page('newdb', '{ "aggregate": "source", "pipeline": [ {"$out" : {"db" : "a", "coll" : 1} } ], "cursor": { "batchSize": 1 } }', 4294967294);
-ERROR:  Field type mismatch in (coll): int expected string
+psql:sql/bson_aggregation_stage_out_tests_2.sql:159: ERROR:  Field type mismatch in (coll): int expected string
 SELECT * FROM aggregate_cursor_first_page('newdb', '{ "aggregate": "source", "pipeline": [ {"$out" : {"db" : 1, "coll" : "a"} } ], "cursor": { "batchSize": 1 } }', 4294967294);
-ERROR:  wrong type for field (db) int != string
+psql:sql/bson_aggregation_stage_out_tests_2.sql:160: ERROR:  wrong type for field (db) int != string
 -- test when target is view:
 SELECT documentdb_api.insert('newdb', '{"insert":"source", "documents":[{ "_id" : 1, "a" : 1, "b" : 1  }]}');
                                                                                                                                            insert                                                                                                                                            
@@ -574,7 +575,7 @@ SELECT documentdb_api.create_collection_view('newdb', '{ "create": "targetView",
 (1 row)
 
 SELECT * FROM aggregate_cursor_first_page('newdb', '{ "aggregate": "source", "pipeline": [  {"$out" :  "targetView" } ], "cursor": { "batchSize": 1 } }', 4294967294);
-ERROR:  The namespace newdb.targetView refers to a view object rather than a collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:165: ERROR:  The namespace newdb.targetView refers to a view object rather than a collection
 SELECT documentdb_api.drop_collection('newdb','source');
  drop_collection 
 ---------------------------------------------------------------------
@@ -583,14 +584,14 @@ SELECT documentdb_api.drop_collection('newdb','source');
 
 -- test when target is sharded:
 SELECT documentdb_api.insert_one('newdb','source',' {"_id": 1, "name": "Test Case"}', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:169: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_api.insert_one('newdb','target',' {"_id": 1, "name": "Test Case"}', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:170: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -603,7 +604,7 @@ SELECT documentdb_api.shard_collection('newdb', 'target', '{ "a": "hashed" }', f
 (1 row)
 
 SELECT * FROM aggregate_cursor_first_page('newdb', '{ "aggregate": "source", "pipeline": [ {"$out" : "target" } ], "cursor": { "batchSize": 1 } }', 4294967294);
-ERROR:  newdb.target cannot be sharded
+psql:sql/bson_aggregation_stage_out_tests_2.sql:172: ERROR:  newdb.target cannot be sharded
 SELECT documentdb_api.drop_collection('newdb','source');
  drop_collection 
 ---------------------------------------------------------------------
@@ -619,30 +620,30 @@ SELECT documentdb_api.drop_collection('newdb','target');
 -- let's verify we insert or update proper data in database.
 --try to insert 16 MB Document
 SELECT documentdb_api.insert_one('newdb','sourceDataValidation','{ "_id": 1, "item": "a" }' , NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:178: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT * FROM aggregate_cursor_first_page('newdb', FORMAT('{ "aggregate": "sourceDataValidation", "pipeline": [ {"$addFields" : { "newLargeField": "%s"} }, {"$out" : "targetDataValidation"} ], "cursor": { "batchSize": 1 } }',repeat('a', 16*1024*1024) )::bson, 4294967294);
-NOTICE:  creating collection
-ERROR:  Size 16777262 is larger than MaxDocumentSize 16777216
+psql:sql/bson_aggregation_stage_out_tests_2.sql:179: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:179: ERROR:  Size 16777262 is larger than MaxDocumentSize 16777216
 --try to insert bad _id field
 SELECT * FROM aggregate_cursor_first_page('newdb', '{ "aggregate": "sourceDataValidation", "pipeline": [ {"$project" : {"_id" : [1,2,3]}}, {"$out" : "targetDataValidation"} ], "cursor": { "batchSize": 1 } }');
-NOTICE:  creating collection
-ERROR:  The '_id' field value must not be a type of array
+psql:sql/bson_aggregation_stage_out_tests_2.sql:182: NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:182: ERROR:  The '_id' field value must not be a type of array
 -- Let's take a look at explain plan
 --1) colocated tables , single shard distributed
 SELECT documentdb_api.insert_one('newdb','explainsrc',' {"_id": 1, "name": "Test Case"}', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:187: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('newdb', '{ "aggregate": "explainsrc", "pipeline": [{"$out" :  "target"} ] }');
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:188: NOTICE:  creating collection
                                        QUERY PLAN                                        
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
@@ -654,7 +655,6 @@ NOTICE:  creating collection
                ->  Nested Loop Left Join
                      ->  Bitmap Heap Scan on documents_9861_9830116 collection
                            Recheck Cond: (shard_key_value = '9861'::bigint)
-                           Filter: (document IS NOT NULL)
                            ->  Bitmap Index Scan on _id_
                                  Index Cond: (shard_key_value = '9861'::bigint)
                      ->  Materialize
@@ -662,18 +662,18 @@ NOTICE:  creating collection
                                  Recheck Cond: (shard_key_value = '9862'::bigint)
                                  ->  Bitmap Index Scan on _id_
                                        Index Cond: (shard_key_value = '9862'::bigint)
-(17 rows)
+(16 rows)
 
 --2) non colocated tables, hash shard distributed
 SELECT documentdb_api.insert_one('db','explainsrc',' {"_id": 1, "name": "Test Case"}', NULL);
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:191: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "explainsrc", "pipeline": [{"$out" :  "target"} ] }');
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:192: NOTICE:  creating collection
                                                                                                                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                                                                                                                             
 ---------------------------------------------------------------------
  Custom Scan (Citus MERGE INTO ...)
@@ -688,10 +688,9 @@ NOTICE:  creating collection
                ->  Bitmap Heap Scan on documentdb_data.documents_9863_9830125 collection
                      Output: collection.document, '9864'::bigint, documentdb_api_internal.bson_dollar_merge_generate_object_id(collection.document)
                      Recheck Cond: (collection.shard_key_value = '9863'::bigint)
-                     Filter: (collection.document IS NOT NULL)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (collection.shard_key_value = '9863'::bigint)
-(15 rows)
+(14 rows)
 
 --3) sharded source
 SELECT documentdb_api.shard_collection('newdb', 'explainsrc', '{ "a": "hashed" }', false);
@@ -715,16 +714,15 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('
                ->  Bitmap Heap Scan on documentdb_data.documents_9863_9830125 collection
                      Output: collection.document, '9864'::bigint, documentdb_api_internal.bson_dollar_merge_generate_object_id(collection.document)
                      Recheck Cond: (collection.shard_key_value = '9863'::bigint)
-                     Filter: (collection.document IS NOT NULL)
                      ->  Bitmap Index Scan on _id_
                            Index Cond: (collection.shard_key_value = '9863'::bigint)
-(15 rows)
+(14 rows)
 
 -- simplest test case working with db database
 SELECT documentdb_api.insert('db', '{"insert":"source", "documents":[
    { "_id" : 11, "movie": "Thor", "Budget": 123456, "year": 1987 }
 ]}');
-NOTICE:  creating collection
+psql:sql/bson_aggregation_stage_out_tests_2.sql:201: NOTICE:  creating collection
                                          insert                                         
 ---------------------------------------------------------------------
  ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
@@ -732,12 +730,12 @@ NOTICE:  creating collection
 
 --validate empty collection check
 SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "source", "pipeline": [  {"$out" : ""} ], "cursor": { "batchSize": 1 } }', 4294967294);
-ERROR:  An invalid and empty namespace has been specified
+psql:sql/bson_aggregation_stage_out_tests_2.sql:204: ERROR:  An invalid and empty namespace has been specified
 -- out should fail when query has mutable function, if query non existent collection or query has $sample stage
 SELECT * FROM  aggregate_cursor_first_page('db', '{ "aggregate": "nonImmutable", "pipeline": [ {"$lookup": {"from": "bar", "as": "x", "localField": "f_id", "foreignField": "_id"}}, {"$out" :  "bar" } ], "cursor": { "batchSize": 1 } }', 4294967294);
-ERROR:  The query references collections that do not exist. Create the missing collections and retry.
+psql:sql/bson_aggregation_stage_out_tests_2.sql:207: ERROR:  The query references collections that do not exist. Create the missing collections and retry.
 SELECT * FROM  aggregate_cursor_first_page('db', '{ "aggregate": "nonImmutable", "pipeline": [ { "$sample": { "size": 1000000 } }, {"$out" :  "bar" } ], "cursor": { "batchSize": 1 } }', 4294967294);
-ERROR:  The $out stage is not yet supported with the $sample aggregation stage.
+psql:sql/bson_aggregation_stage_out_tests_2.sql:208: ERROR:  The $out stage is not yet supported with the $sample aggregation stage.
 -- Documents pruned at the root by $redact are not written by $out.
 SELECT documentdb_api.insert('db', '{"insert":"source", "documents":[
    { "_id" : 12, "level": 1 },

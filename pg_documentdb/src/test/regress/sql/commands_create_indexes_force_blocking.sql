@@ -1,0 +1,78 @@
+SET documentdb.next_collection_id TO 25730000;
+SET documentdb.next_collection_index_id TO 25730000;
+
+SET search_path to documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
+
+-- Disable cron jobs so queued createIndexes requests persist for inspection and
+-- so we can drive the build steps ourselves.
+SELECT documentdb_test_helpers.change_index_jobs_status(false);
+
+-- Pre-create the collection so createIndexes takes the queue path. A collection
+-- auto-created in the same transaction always builds inline regardless of the
+-- GUC, which would not exercise the concurrent-vs-blocking decision.
+SELECT documentdb_api.insert_one('fib_db','fib_coll', '{"_id": 1, "a": 10, "b": 20, "c": 30}', NULL);
+
+-------------------------------------------------------------------
+-- Part A: GUC off (default) -> concurrent background build.
+-- The queued command is a CREATE INDEX CONCURRENTLY.
+-------------------------------------------------------------------
+SET documentdb.force_index_builds_blocking TO off;
+DELETE FROM documentdb_api_catalog.documentdb_index_queue;
+SELECT documentdb_api.create_indexes_background(
+  'fib_db',
+  '{ "createIndexes": "fib_coll", "indexes": [{"key": {"a": 1}, "name": "idx_a"}] }'
+);
+SELECT (index_cmd LIKE '%CONCURRENTLY%') AS is_concurrent
+  FROM documentdb_api_catalog.documentdb_index_queue ORDER BY index_id;
+
+-- Build it and confirm it becomes a valid, usable index.
+CALL documentdb_api_internal.build_index_concurrently(1);
+CALL documentdb_api_internal.build_index_background(1);
+SELECT * FROM documentdb_test_helpers.count_collection_indexes('fib_db', 'fib_coll') ORDER BY 1,2;
+
+-------------------------------------------------------------------
+-- Part B: GUC on -> forced blocking (non-concurrent) build.
+-- The queued command is a plain CREATE INDEX with no CONCURRENTLY, so it does
+-- not wait out unrelated long-running statements on the cluster.
+-------------------------------------------------------------------
+SET documentdb.force_index_builds_blocking TO on;
+DELETE FROM documentdb_api_catalog.documentdb_index_queue;
+SELECT documentdb_api.create_indexes_background(
+  'fib_db',
+  '{ "createIndexes": "fib_coll", "indexes": [{"key": {"b": 1}, "name": "idx_b"}] }'
+);
+SELECT (index_cmd LIKE '%CONCURRENTLY%') AS is_concurrent
+  FROM documentdb_api_catalog.documentdb_index_queue ORDER BY index_id;
+
+CALL documentdb_api_internal.build_index_concurrently(1);
+CALL documentdb_api_internal.build_index_background(1);
+SELECT * FROM documentdb_test_helpers.count_collection_indexes('fib_db', 'fib_coll') ORDER BY 1,2;
+
+-------------------------------------------------------------------
+-- Part C: GUC on overrides an explicit "blocking": false in the request.
+-------------------------------------------------------------------
+DELETE FROM documentdb_api_catalog.documentdb_index_queue;
+SELECT documentdb_api.create_indexes_background(
+  'fib_db',
+  '{ "createIndexes": "fib_coll", "indexes": [{"key": {"c": 1}, "name": "idx_c"}], "blocking": false }'
+);
+SELECT (index_cmd LIKE '%CONCURRENTLY%') AS is_concurrent
+  FROM documentdb_api_catalog.documentdb_index_queue ORDER BY index_id;
+
+-------------------------------------------------------------------
+-- Part D: GUC off honors an explicit "blocking": true in the request.
+-------------------------------------------------------------------
+SET documentdb.force_index_builds_blocking TO off;
+DELETE FROM documentdb_api_catalog.documentdb_index_queue;
+SELECT documentdb_api.create_indexes_background(
+  'fib_db',
+  '{ "createIndexes": "fib_coll", "indexes": [{"key": {"d": 1}, "name": "idx_d"}], "blocking": true }'
+);
+SELECT (index_cmd LIKE '%CONCURRENTLY%') AS is_concurrent
+  FROM documentdb_api_catalog.documentdb_index_queue ORDER BY index_id;
+
+-- Cleanup.
+DELETE FROM documentdb_api_catalog.documentdb_index_queue;
+RESET documentdb.force_index_builds_blocking;
+SELECT documentdb_test_helpers.change_index_jobs_status(true);
+SELECT documentdb_api.drop_collection('fib_db', 'fib_coll');

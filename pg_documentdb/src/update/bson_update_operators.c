@@ -13,6 +13,7 @@
 #include <utils/builtins.h>
 
 #include "update/bson_update_operators.h"
+#include "io/bsonvalue_utils.h"
 #include "query/bson_compare.h"
 #include "types/decimal128.h"
 #include "utils/documentdb_errors.h"
@@ -1496,11 +1497,11 @@ ValidateUpdateSpecAndSetPushUpdateState(const bson_value_t *fieldUpdateValue,
 	}
 	else if (BsonValueIsNumber(&sliceBsonValue))
 	{
-		double sliceValue = BsonValueAsDouble(&sliceBsonValue);
-		if (floor(sliceValue) == sliceValue)
+		bool checkFixedInteger = true;
+		if (IsBsonValue64BitInteger(&sliceBsonValue, checkFixedInteger))
 		{
 			validSliceValue = true;
-			pushState->slice = (int64_t) sliceValue;
+			pushState->slice = BsonValueAsInt64(&sliceBsonValue);
 		}
 	}
 	if (!validSliceValue)
@@ -1520,11 +1521,11 @@ ValidateUpdateSpecAndSetPushUpdateState(const bson_value_t *fieldUpdateValue,
 	}
 	else if (BsonValueIsNumber(&positionBsonValue))
 	{
-		double positionValue = BsonValueAsDouble(&positionBsonValue);
-		if (floor(positionValue) == positionValue)
+		bool checkFixedInteger = true;
+		if (IsBsonValue64BitInteger(&positionBsonValue, checkFixedInteger))
 		{
 			validPositionValue = true;
-			pushState->position = (int64_t) positionValue;
+			pushState->position = BsonValueAsInt64(&positionBsonValue);
 		}
 	}
 	if (!validPositionValue)
@@ -1581,10 +1582,9 @@ ApplyDollarPushModifiers(const bson_value_t *bsonArray,
 	int64_t existingArrLen = elementsArrLen - pushState->dollarEachElementCount;
 	if (position < 0)
 	{
-		position = -position;
-		position = (position >= existingArrLen) ? 0 : existingArrLen - position;
+		position = position <= -existingArrLen ? 0 : existingArrLen + position;
 	}
-	while (index < (uint32_t) position &&
+	while ((int64_t) index < position &&
 		   bson_iter_next(&existingArrItr))
 	{
 		elementsArr[index] = *GetElementWithIndex(bson_iter_value(&existingArrItr),
@@ -1629,9 +1629,8 @@ ApplyDollarPushModifiers(const bson_value_t *bsonArray,
 	if (sliceIndex < 0)
 	{
 		/* negative slice value, skip from front*/
-		sliceIndex = -sliceIndex;
-		pushState->sliceStart = sliceIndex > elementsArrLen ? 0 :
-								elementsArrLen - sliceIndex;
+		pushState->sliceStart = sliceIndex <= -elementsArrLen ? 0 :
+								elementsArrLen + sliceIndex;
 		pushState->sliceEnd = elementsArrLen;
 	}
 	else

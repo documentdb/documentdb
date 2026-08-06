@@ -51,5 +51,14 @@ SELECT documentdb_api.insert_one('geodb','geopushdown_pfe','{ "_id": 2, "region"
 -- Query matches the PFE (region = west) - uses the partial 2dsphere index.
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('geodb', '{ "find": "geopushdown_pfe", "filter": { "region": "west", "loc": { "$geoWithin": { "$geometry": { "type": "Polygon", "coordinates": [ [ [ -10, -10 ], [ 10, -10 ], [ 10, 10 ], [ -10, 10 ], [ -10, -10 ] ] ] } } } } }');
 
+-- Geospatial predicates inside query and projection $elemMatch evaluate each
+-- array element using the BSON-value runtime path.
+SET documentdb.forceDisableSeqScan TO off;
+SELECT documentdb_api.insert_one('geodb','geopushdown','{ "_id": 6, "locations": [ { "type": "Point", "coordinates": [ 0, 0 ] }, { "type": "Point", "coordinates": [ 50, 50 ] } ], "places": [ { "loc": { "type": "Point", "coordinates": [ 40, 40 ] } }, { "loc": { "type": "Point", "coordinates": [ 0, 0 ] } } ] }');
+
+SELECT document FROM bson_aggregation_find('geodb', '{ "find": "geopushdown", "filter": { "locations": { "$elemMatch": { "$geoWithin": { "$geometry": { "type": "Polygon", "coordinates": [ [ [ -10, -10 ], [ 10, -10 ], [ 10, 10 ], [ -10, 10 ], [ -10, -10 ] ] ] } } } } }, "projection": { "places": { "$elemMatch": { "loc": { "$geoWithin": { "$centerSphere": [ [ 0, 0 ], 0.01 ] } } } } } }');
+
+SELECT document FROM bson_aggregation_find('geodb', '{ "find": "geopushdown", "filter": { "_id": 6 }, "projection": { "places": { "$elemMatch": { "loc": { "$geoIntersects": { "$geometry": { "type": "Polygon", "coordinates": [ [ [ 39, 39 ], [ 41, 39 ], [ 41, 41 ], [ 39, 41 ], [ 39, 39 ] ] ] } } } } } } }');
+
 SELECT documentdb_api.drop_collection('geodb', 'geopushdown');
 SELECT documentdb_api.drop_collection('geodb', 'geopushdown_pfe');

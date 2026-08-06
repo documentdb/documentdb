@@ -141,6 +141,27 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('geodb', '{ "find
          Index Cond: (bson_validate_geography(document, 'loc'::text) @|-| '{ "loc" : { "$geometry" : { "type" : "Polygon", "coordinates" : [ [ [ { "$numberInt" : "-10" }, { "$numberInt" : "-10" } ], [ { "$numberInt" : "10" }, { "$numberInt" : "-10" } ], [ { "$numberInt" : "10" }, { "$numberInt" : "10" } ], [ { "$numberInt" : "-10" }, { "$numberInt" : "10" } ], [ { "$numberInt" : "-10" }, { "$numberInt" : "-10" } ] ] ] } } }'::bson)
 (4 rows)
 
+-- Geospatial predicates inside query and projection $elemMatch evaluate each
+-- array element using the BSON-value runtime path.
+SET documentdb.forceDisableSeqScan TO off;
+SELECT documentdb_api.insert_one('geodb','geopushdown','{ "_id": 6, "locations": [ { "type": "Point", "coordinates": [ 0, 0 ] }, { "type": "Point", "coordinates": [ 50, 50 ] } ], "places": [ { "loc": { "type": "Point", "coordinates": [ 40, 40 ] } }, { "loc": { "type": "Point", "coordinates": [ 0, 0 ] } } ] }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('geodb', '{ "find": "geopushdown", "filter": { "locations": { "$elemMatch": { "$geoWithin": { "$geometry": { "type": "Polygon", "coordinates": [ [ [ -10, -10 ], [ 10, -10 ], [ 10, 10 ], [ -10, 10 ], [ -10, -10 ] ] ] } } } } }, "projection": { "places": { "$elemMatch": { "loc": { "$geoWithin": { "$centerSphere": [ [ 0, 0 ], 0.01 ] } } } } } }');
+                                                                        document                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "6" }, "places" : [ { "loc" : { "type" : "Point", "coordinates" : [ { "$numberInt" : "0" }, { "$numberInt" : "0" } ] } } ] }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('geodb', '{ "find": "geopushdown", "filter": { "_id": 6 }, "projection": { "places": { "$elemMatch": { "loc": { "$geoIntersects": { "$geometry": { "type": "Polygon", "coordinates": [ [ [ 39, 39 ], [ 41, 39 ], [ 41, 41 ], [ 39, 41 ], [ 39, 39 ] ] ] } } } } } } }');
+                                                                         document                                                                          
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "6" }, "places" : [ { "loc" : { "type" : "Point", "coordinates" : [ { "$numberInt" : "40" }, { "$numberInt" : "40" } ] } } ] }
+(1 row)
+
 SELECT documentdb_api.drop_collection('geodb', 'geopushdown');
  drop_collection 
 -----------------

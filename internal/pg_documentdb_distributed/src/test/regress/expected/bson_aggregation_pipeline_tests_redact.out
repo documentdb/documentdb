@@ -217,6 +217,20 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest
  { "_id" : { "$numberInt" : "3" }, "level" : { "$numberInt" : "3" }, "a" : { "level" : { "$numberInt" : "3" }, "b" : { "$numberInt" : "3" } }, "c" : { "level" : { "$numberInt" : "3" }, "d" : { "$numberInt" : "3" } } }
 (3 rows)
 
+/* a system variable that is not $$KEEP/$$PRUNE/$$DESCEND must produce the
+ * documented error, not terminate the backend */
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest3", "pipeline": [ { "$redact": "$$CURRENT"}], "cursor": {} }');
+ERROR:  The $redact stage must evaluate to one of the variables $$KEEP, $$DESCEND, or $$PRUNE, but instead it produced '{ "_id" : 1, "level" : 1, "a" : { "level" : 1, "b" : 1 }, "c" : { "level" : 1, "d" : 1 } }'.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest3", "pipeline": [ { "$redact": "$$ROOT"}], "cursor": {} }');
+ERROR:  The $redact stage must evaluate to one of the variables $$KEEP, $$DESCEND, or $$PRUNE, but instead it produced '{ "_id" : 1, "level" : 1, "a" : { "level" : 1, "b" : 1 }, "c" : { "level" : 1, "d" : 1 } }'.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest3", "pipeline": [ { "$redact": "$$REMOVE"}], "cursor": {} }');
+ERROR:  The $redact stage must evaluate to one of the variables $$KEEP, $$DESCEND, or $$PRUNE, but instead it produced a missing value.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest3", "pipeline": [ { "$redact": { "$cond": [true, "$$REMOVE", "$$KEEP"] } }], "cursor": {} }');
+ERROR:  The $redact stage must evaluate to one of the variables $$KEEP, $$DESCEND, or $$PRUNE, but instead it produced a missing value.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest3", "pipeline": [ { "$redact": { "$let": { "vars": { "v": "$level" }, "in": "$$CURRENT" } } }], "cursor": {} }');
+ERROR:  The $redact stage must evaluate to one of the variables $$KEEP, $$DESCEND, or $$PRUNE, but instead it produced '{ "_id" : 1, "level" : 1, "a" : { "level" : 1, "b" : 1 }, "c" : { "level" : 1, "d" : 1 } }'.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "redactTest3", "pipeline": [ { "$redact": { "$cond": [{"$lte": ["$level", 2]}, "$$CURRENT", "$$PRUNE"] } }], "cursor": {} }');
+ERROR:  The $redact stage must evaluate to one of the variables $$KEEP, $$DESCEND, or $$PRUNE, but instead it produced '{ "_id" : 1, "level" : 1, "a" : { "level" : 1, "b" : 1 }, "c" : { "level" : 1, "d" : 1 } }'.
 /*switch case*/
 SELECT documentdb_api.insert_one('db','redactTestSwitch','{ "_id": 1, "title": "Document 1", "classification": "confidential", "content": "This is confidential content.", "metadata": { "author": "Alice", "revision": 3 } }', NULL);
 NOTICE:  creating collection

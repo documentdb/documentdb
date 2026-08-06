@@ -650,6 +650,38 @@ BsonValueAsInt32(const bson_value_t *value)
 
 
 /*
+ * Converts a numeric BSON value to int32, saturating out-of-range values.
+ * Decimal128 rounds half to even, other types truncate toward zero, and NaN
+ * converts to zero.
+ */
+int32_t
+BsonValueAsInt32Clamped(const bson_value_t *value)
+{
+	double valueDouble = BsonValueAsDoubleQuiet(value);
+
+	if (isnan(valueDouble))
+	{
+		return 0;
+	}
+
+	if (valueDouble >= (double) PG_INT32_MAX)
+	{
+		return PG_INT32_MAX;
+	}
+
+	if (valueDouble <= (double) PG_INT32_MIN)
+	{
+		return PG_INT32_MIN;
+	}
+
+	return value->value_type == BSON_TYPE_DECIMAL128 ?
+		   (int32_t) GetBsonDecimal128AsInt64(value,
+											  ConversionRoundingMode_NearestEven) :
+		   (int32_t) BsonValueAsInt64(value);
+}
+
+
+/*
  * Converts Numeric bson value to 32 bit integer with the specified rounding mode
  * This method throws `ERRCODE_DOCUMENTDB_CONVERSIONFAILURE` if bson_value_type is v_decimal128 and :
  *    - NaN is attempted in conversion

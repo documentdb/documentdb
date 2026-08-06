@@ -1,0 +1,1 @@
+\i sql/dynamic_cursor_selection_tests.sql

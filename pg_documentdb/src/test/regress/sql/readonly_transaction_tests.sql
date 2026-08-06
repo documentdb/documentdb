@@ -3,9 +3,10 @@ SET documentdb.next_collection_id TO 2100;
 SET documentdb.next_collection_index_id TO 2100;
 
 SELECT documentdb_api.create_collection_view('db', '{ "create": "test" }');
-SELECT documentdb_api.insert_one('db', 'test', '{ "_id": 1, "a": 1, "ttl": 0 }');
+SELECT documentdb_api.insert_one('db', 'test', '{ "_id": 1, "a": 1, "ttl": { "$date": { "$numberLong": "100" } }, "ttl2": { "$date": { "$numberLong": "100" } } }');
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "test", "indexes": [ { "key": { "ttl": 1 }, "name": "ttlIndex", "expireAfterSeconds": 300 } ] }', TRUE);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "test", "indexes": [ { "key": { "ttl2": 1 }, "name": "ttlIndex2", "expireAfterSeconds": 300 } ] }', TRUE);
 
 -- set the default transaction mode.
 set default_transaction_read_only = on;
@@ -34,3 +35,4 @@ CALL documentdb_api_internal.delete_expired_rows();
 
 set documentdb.enableTTLJobsOnReadOnly to on;
 CALL documentdb_api_internal.delete_expired_rows();
+SELECT document FROM documentdb_api.collection('db', 'test');

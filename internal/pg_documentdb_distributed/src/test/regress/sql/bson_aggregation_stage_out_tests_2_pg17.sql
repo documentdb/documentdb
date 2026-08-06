@@ -1,0 +1,1 @@
+\i sql/bson_aggregation_stage_out_tests_2.sql

@@ -458,16 +458,16 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dolla
  { "_id" : { "$numberInt" : "28" }, "titular" : "Manzana con pera y baya", "writer" : "xyz", "score" : { "$numberInt" : "10" } }
 (7 rows)
 
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dollar_ops_text_search", "cursor": {}, "pipeline": [ { "$match": { "$text": { "$search": "Manzana baya cosechar" } } }, { "$project": { "_id": 1, "titular": 1, "rank": { "$meta": "textScore" } } } ] }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dollar_ops_text_search", "cursor": {}, "pipeline": [ { "$match": { "$text": { "$search": "Manzana baya cosechar" } } }, { "$project": { "_id": 1, "titular": 1, "rank": { "$meta": "textScore" } } }, { "$sort": { "_id": 1 } } ] }');
                                                      document                                                     
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "21" }, "titular" : "Manzana", "rank" : { "$numberDouble" : "1.0" } }
  { "_id" : { "$numberInt" : "22" }, "titular" : "Comprar Manzana", "rank" : { "$numberDouble" : "1.0" } }
- { "_id" : { "$numberInt" : "28" }, "titular" : "Manzana con pera y baya", "rank" : { "$numberDouble" : "2.0" } }
  { "_id" : { "$numberInt" : "23" }, "titular" : "Cosechando una baya", "rank" : { "$numberDouble" : "2.0" } }
+ { "_id" : { "$numberInt" : "24" }, "titular" : "Cosechar", "rank" : { "$numberDouble" : "1.0" } }
  { "_id" : { "$numberInt" : "25" }, "titular" : "Manzana con baya", "rank" : { "$numberDouble" : "2.0" } }
  { "_id" : { "$numberInt" : "27" }, "titular" : "Manzana con pera", "rank" : { "$numberDouble" : "1.0" } }
- { "_id" : { "$numberInt" : "24" }, "titular" : "Cosechar", "rank" : { "$numberDouble" : "1.0" } }
+ { "_id" : { "$numberInt" : "28" }, "titular" : "Manzana con pera y baya", "rank" : { "$numberDouble" : "2.0" } }
 (7 rows)
 
 -- now add sort

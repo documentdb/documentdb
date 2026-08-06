@@ -21,6 +21,7 @@ SELECT document FROM documentdb_api.collection('db', 'target');
 
 SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "source", "pipeline": [  {"$out" : { "db" : "db", "coll" : "target2" }  } ], "cursor": { "batchSize": 1 } }', 4294967294);
 SELECT document FROM documentdb_api.collection('db', 'target2');
+
 SELECT documentdb_api.drop_collection('db','source');
 SELECT documentdb_api.drop_collection('db','target');
 SELECT documentdb_api.drop_collection('db','target2');
@@ -205,3 +206,12 @@ SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "source", "pipel
 -- out should fail when query has mutable function, if query non existent collection or query has $sample stage
 SELECT * FROM  aggregate_cursor_first_page('db', '{ "aggregate": "nonImmutable", "pipeline": [ {"$lookup": {"from": "bar", "as": "x", "localField": "f_id", "foreignField": "_id"}}, {"$out" :  "bar" } ], "cursor": { "batchSize": 1 } }', 4294967294);
 SELECT * FROM  aggregate_cursor_first_page('db', '{ "aggregate": "nonImmutable", "pipeline": [ { "$sample": { "size": 1000000 } }, {"$out" :  "bar" } ], "cursor": { "batchSize": 1 } }', 4294967294);
+
+-- Documents pruned at the root by $redact are not written by $out.
+SELECT documentdb_api.insert('db', '{"insert":"source", "documents":[
+   { "_id" : 12, "level": 1 },
+   { "_id" : 13, "level": 5 },
+   { "_id" : 14, "level": 2 }
+]}');
+SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "source", "pipeline": [ { "$redact": { "$cond": { "if": { "$lte": [ "$level", 2 ] }, "then": "$$KEEP", "else": "$$PRUNE" } } }, { "$out": "target" } ], "cursor": { "batchSize": 1 } }', 4294967294);
+SELECT document FROM documentdb_api.collection('db', 'target') ORDER BY object_id;

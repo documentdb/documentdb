@@ -1,3 +1,4 @@
+\i sql/dynamic_cursor_selection_tests.sql
 -- ============================================================================
 -- Dynamic Cursor Selection Tests
 -- ============================================================================
@@ -95,7 +96,7 @@ SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 -- Create a test collection and insert sample data
 SELECT documentdb_api.insert_one('dyncurdb', 'dyncoll', '{ "_id": 1, "a": 1, "b": "hello" }');
-NOTICE:  creating collection
+psql:sql/dynamic_cursor_selection_tests.sql:99: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -605,7 +606,7 @@ SELECT document FROM bson_aggregation_find('dyncurdb', '{ "find": "dyncoll", "so
 ------------------------------------------------------------
 -- Also create a second collection for $lookup tests
 SELECT documentdb_api.insert_one('dyncurdb', 'lookup_coll', '{ "_id": 1, "x": 1 }');
-NOTICE:  creating collection
+psql:sql/dynamic_cursor_selection_tests.sql:262: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1674,7 +1675,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- ============================================================================
 -- Create collection with vector data
 SELECT documentdb_api.insert_one('dyncurdb', 'veccoll', '{ "_id": 1, "v": [1.0, 2.0, 3.0], "a": "hello" }');
-NOTICE:  creating collection
+psql:sql/dynamic_cursor_selection_tests.sql:536: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1770,7 +1771,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- ============================================================================
 -- Create collection with geo data and 2dsphere index
 SELECT documentdb_api.insert_one('dyncurdb', 'geocoll', '{ "_id": 1, "loc": { "type": "Point", "coordinates": [0, 0] } }');
-NOTICE:  creating collection
+psql:sql/dynamic_cursor_selection_tests.sql:560: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1833,7 +1834,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- $merge — non-streamable (RequiresPersistentCursorTrue)
 SET documentdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$merge": { "into": "merge_output" } }], "cursor": {} }');
-NOTICE:  creating collection
+psql:sql/dynamic_cursor_selection_tests.sql:584: NOTICE:  creating collection
                                                                                       QUERY PLAN                                                                                      
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Merge on documentdb_data.documents_2605
@@ -1841,11 +1842,10 @@ NOTICE:  creating collection
          Output: documents_2605.ctid, collection.document, collection.ctid
          ->  Seq Scan on documentdb_data.documents_2601 collection
                Output: collection.document, collection.ctid
-               Filter: (collection.document IS NOT NULL)
          ->  Index Scan using _id_ on documentdb_data.documents_2605
                Output: documents_2605.ctid, documents_2605.object_id
                Index Cond: ((documents_2605.shard_key_value OPERATOR(pg_catalog.=) '2605'::bigint) AND (documents_2605.object_id = bson_get_value(collection.document, '_id'::text)))
-(9 rows)
+(8 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$merge": { "into": "merge_output" } }], "cursor": {} }');
@@ -1856,16 +1856,15 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          Output: documents_2605.ctid, collection.document, collection.ctid
          ->  Seq Scan on documentdb_data.documents_2601 collection
                Output: collection.document, collection.ctid
-               Filter: (collection.document IS NOT NULL)
          ->  Index Scan using _id_ on documentdb_data.documents_2605
                Output: documents_2605.ctid, documents_2605.object_id
                Index Cond: ((documents_2605.shard_key_value OPERATOR(pg_catalog.=) '2605'::bigint) AND (documents_2605.object_id = bson_get_value(collection.document, '_id'::text)))
-(9 rows)
+(8 rows)
 
 -- $out — non-streamable (RequiresPersistentCursorTrue)
 -- $out creates the target collection, so we need it to exist first
 SELECT documentdb_api.insert_one('dyncurdb', 'out_target', '{ "_id": 0 }');
-NOTICE:  creating collection
+psql:sql/dynamic_cursor_selection_tests.sql:590: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1880,13 +1879,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          Output: documents_2606.ctid, collection.document, collection.ctid
          ->  Seq Scan on documentdb_data.documents_2601 collection
                Output: collection.document, collection.ctid
-               Filter: (collection.document IS NOT NULL)
          ->  Bitmap Heap Scan on documentdb_data.documents_2606
                Output: documents_2606.ctid
                Recheck Cond: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) '2606'::bigint)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) '2606'::bigint)
-(11 rows)
+(10 rows)
 
 SET documentdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$out": "out_target" }], "cursor": {} }');
@@ -1897,13 +1895,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          Output: documents_2606.ctid, collection.document, collection.ctid
          ->  Seq Scan on documentdb_data.documents_2601 collection
                Output: collection.document, collection.ctid
-               Filter: (collection.document IS NOT NULL)
          ->  Bitmap Heap Scan on documentdb_data.documents_2606
                Output: documents_2606.ctid
                Recheck Cond: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) '2606'::bigint)
                ->  Bitmap Index Scan on _id_
                      Index Cond: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) '2606'::bigint)
-(11 rows)
+(10 rows)
 
 -- ============================================================================
 -- Section 9: Internal combined stages and admin stages
