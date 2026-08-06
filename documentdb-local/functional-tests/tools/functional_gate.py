@@ -5,15 +5,17 @@ DocumentDB Functional Test Gate Tooling — known-failures xfail model.
 The functional gate runs the full suite under conftest_known_failures.py against
 a per-gateway failing/flaky pair and gates with these commands:
 
-* report-failures — node IDs that failed/errored (re-run set + gate verdict)
-* merge-reports   — fold sequential re-run outcomes into the base report
-* reconcile       — fold a gate run back into a list (source_sha bump / drift)
-* shard-collection — split the full collection manifest across parallel runners
-* compare-engines — reference-engine (mongo:8.0) comparison lane
+* split-collection       — slice the collection manifest for one parallel leg
+* report-failures        — node IDs that failed/errored (re-run set + gate verdict)
+* recover-and-gate       — serial re-run of transient victims, gate on the merge
+* merge-reports          — fold sequential re-run outcomes into the base report
+* verify-split-universes — assert every parallel leg collected the same universe
+* reconcile              — fold a gate run back into a list (source_sha bump / drift)
+* compare-engines        — reference-engine (mongo:8.0) comparison lane
 
-The gate path (report-failures / merge-reports / reconcile) has zero
-third-party dependencies; PyYAML is imported lazily in load_yaml() (used only
-by compare-engines) so a lane without pyyaml cannot crash the gate.
+The gate path has zero third-party dependencies; PyYAML is imported lazily in
+load_yaml() (used only by compare-engines) so a lane without pyyaml cannot crash
+the gate.
 """
 
 from __future__ import annotations
@@ -461,14 +463,11 @@ def cmd_reconcile(args):
 
     if getattr(args, "summary_json", ""):
         # Machine-readable classification for the auto-reconcile bot. "clean" is
-        # true when the reconcile is safe to auto-apply: it ONLY drops XPASS(strict)
-        # entries — no new failures to triage, no listed-but-errored tests, no
-        # flaky-overlap conflicts, and no uncollected entries. Uncollected entries
-        # (a listed test the run did not collect — deleted/renamed upstream, or a
-        # run that did not cover the list) make it false whether or not they were
-        # pruned: dropping them is a suite-composition change beyond XPASS drift,
-        # so a human should confirm. A red gate with clean=true is baseline drift a
-        # bot can PR; clean=false means a human must look.
+        # true when the reconcile is safe to auto-apply: it ONLY drops
+        # XPASS(strict) entries. Uncollected entries (a listed test the run did
+        # not collect — deleted/renamed upstream, or a run that did not cover the
+        # list) make it false whether or not they were pruned, since dropping them
+        # is a suite-composition change a human should confirm.
         clean = (not result["added"] and not result["kept_errored"]
                  and not result["skipped_flaky"] and not result["uncollected"])
         summary = {
@@ -965,17 +964,14 @@ def cmd_recover_and_gate(args):
                                      "@" + rerun_args])
         rerun_reports = [rerun_json] if os.path.exists(rerun_json) else []
         if not rerun_reports:
-            # The batch died without writing a report. The usual cause is a
-            # --timeout kill: pytest-timeout's `thread` method dumps stacks and
-            # takes the interpreter down with os._exit, so json-report never gets
-            # to write. Batched, that costs EVERY test in the set its recovery --
-            # one hang and the whole cascade is scored as residual (observed in a
-            # full-suite run: test_near_combined_with_text_errors hung the full
-            # 600s and all 21 crash victims were failed without ever being
-            # re-run). Re-run them one process per test instead, so a hang costs
-            # only the test that hung. Callers also pass --timeout-method=signal
-            # to make the common case recoverable in-process; this is the backstop
-            # for when the timeout is not deliverable as a signal.
+            # The batch died without writing a report — usually a --timeout kill,
+            # since pytest-timeout's `thread` method takes the interpreter down
+            # with os._exit before json-report writes. Batched, one hang costs
+            # EVERY test in the set its recovery (a full-suite run scored 21 crash
+            # victims as residual after a single test hung for 600s). Re-run one
+            # process per test so a hang costs only the test that hung; callers
+            # also pass --timeout-method=signal to make the common case
+            # recoverable in-process.
             print("re-run produced no report (batch aborted); "
                   "falling back to one process per test.", flush=True)
             rerun_reports = _rerun_isolated(rerun_cmd, ids, args.prefix, workdir)

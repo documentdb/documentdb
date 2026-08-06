@@ -2,15 +2,14 @@
 # Scan engine/gateway logs for internal-error signatures.
 #
 # Exits 1 when any signature is present so a caller can gate on it. The
-# functional workflow does NOT gate: it turns a non-zero exit into a GitHub
-# warning annotation, because these signatures are informational there and a
-# step that exits non-zero under continue-on-error is rendered as an ERROR
-# annotation on an otherwise green run.
+# functional workflow does not: it converts the non-zero exit into a warning
+# annotation, because a step exiting non-zero under continue-on-error still
+# renders as an ERROR annotation on an otherwise green run.
 #
 # Output is a per-signature count plus the distinct messages behind it. A raw
-# dump is unreadable here: a single gateway error line runs past 500 characters,
-# and one known gap (a missing SQL function) accounts for hundreds of them, so
-# the distinct-message summary is what makes a NEW signature visible.
+# dump is unreadable: one gateway error line runs past 500 characters, and a
+# single known gap accounts for hundreds of them, so the distinct-message
+# summary is what makes a NEW signature visible.
 #
 # Usage: validate_test_log_errors.sh <log-file> [<log-file>...]
 set -u
@@ -21,9 +20,8 @@ for file in "$@"; do
     echo "Checking log $file for errors"
     for pattern in "ContractViolationException" "InternalError"; do
         # Capture first, then test the captured text. `if grep ... | head; then`
-        # would test the exit status of head, which is 0 whether or not grep
-        # matched, so the check reported every signature on every run and always
-        # exited 1 — a warning that carried no information.
+        # tests head's exit status, which is 0 whether or not grep matched — so
+        # the check reported every signature on every run.
         matches=$(grep -i "$pattern" "$file") || true
         [ -n "$matches" ] || continue
         echo "Found $pattern in $file ($(printf '%s\n' "$matches" | wc -l | tr -d ' ') occurrence(s)); distinct messages:"

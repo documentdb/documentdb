@@ -2,9 +2,8 @@
 # Split DocDB functional-test runner + known-failures gate for one matrix leg —
 # OSS-gateway lane (the GitHub Actions gate in .github/workflows/functional_tests.yml).
 #
-# "Split" here means TEST SPLITTING — dividing the pytest suite across parallel
-# CI jobs. It has nothing to do with DocumentDB/Mongo sharded (hash-partitioned)
-# collections; no naming in this file refers to data sharding.
+# "Split" means TEST SPLITTING — dividing the pytest suite across parallel CI
+# jobs. Nothing here refers to sharded (hash-partitioned) collections.
 #
 # The suite is too large to finish inside the job cap on a single runner, so it
 # is split across matrix legs:
@@ -14,13 +13,12 @@
 #   SPLIT_MODE=noparallel: the dedicated leg that runs every no_parallel test
 #                          serially (-p no:xdist -m no_parallel).
 #
-# After the main pass each leg does the same crash-cascade recovery: the -n auto
-# pass is stochastic — an engine crash restarts the cluster and a batch of
-# concurrent tests cascade with connection errors. report-failures picks the
-# still-failing set, it is re-run sequentially (-n=0, no contention -> transient
-# victims pass), and the outcome is merged. The GATE is report-failures on the
-# MERGED report: any residual failed/error (real regression or XPASS(strict))
-# fails the leg -> workflow -> gate.
+# Each leg then recovers crash cascades: the -n auto pass is stochastic — an
+# engine crash restarts the cluster and a batch of concurrent tests cascade with
+# connection errors — so the still-failing set is re-run sequentially (-n=0, no
+# contention -> transient victims pass) and merged. The GATE is report-failures
+# on the MERGED report: any residual failed/error (real regression or
+# XPASS(strict)) fails the leg -> workflow -> gate.
 #
 # Required env: SPLIT_MODE SPLIT_ID SPLIT_TOTAL SPLIT_TAG RESULTS_DIR TMPDIR
 #               CONN_USER CONN_PASS CONN_PORT
@@ -50,12 +48,9 @@ JUNIT="${RESULTS_DIR}/results.xml"
 
 mkdir -p "${RESULTS_DIR}"
 
-# Assemble the plugin + this lane's lists under the canonical names the plugin
-# reads from its own directory. The config/ pair carries an oss_ prefix, so
-# stage a kf dir per leg.
-#
-# CRASH_LIST is an override hook for reproducing another lane's skip set (or a
-# capacity-constrained runner's) without editing the checked-in list.
+# Stage the plugin + this lane's lists under the canonical names the plugin reads
+# from its own directory (the config/ pair carries an oss_ prefix). CRASH_LIST
+# overrides the skip set without editing the checked-in list.
 KF="${TMPDIR}/kf-oss-${SPLIT_TAG}"
 mkdir -p "${KF}"
 cp "${FT}/tools/conftest_known_failures.py" "${KF}/conftest_known_failures.py"
@@ -66,26 +61,20 @@ echo "crash/skip list: ${CRASH_LIST:-ci_crash_tests.txt} ($(grep -cv '^#\|^$' "$
 export PYTHONPATH="${KF}:${PYTHONPATH:-}"
 export PYTEST_ADDOPTS="-p conftest_known_failures"
 
-# json-report drives report-failures/merge; pytest-timeout bounds the serial re-run
-# (--timeout=600 --timeout-method=signal below). Install if the runner lacks them
-# (no-op if already present).
+# json-report drives report-failures/merge; pytest-timeout bounds the serial
+# re-run. No-op if already present.
 #
-# --timeout-method=signal matters: the gate's re-run sessions report
-# `timeout method: thread` (selected upstream of this script, by the pinned
-# suite's pytest config -- pytest-timeout itself defaults to signal wherever
-# SIGALRM exists). The thread method dumps stacks and kills the interpreter
-# outright, so json-report writes nothing and recover-and-gate loses the WHOLE
-# batch's recovery to one hanging test. The re-run is always -n=0, i.e. tests
-# run on the main thread, which is where SIGALRM is deliverable, so the signal
-# method is available there and makes a hang fail just that test while the
-# session finishes and still writes its report. functional_gate.py falls back
-# to one process per test if a report is still lost.
+# --timeout-method=signal on the re-run: the pinned suite's config selects the
+# thread method, which kills the interpreter outright, so json-report writes
+# nothing and one hanging test costs the WHOLE batch its recovery. The re-run is
+# -n=0, i.e. on the main thread where SIGALRM is deliverable, so signal works
+# there and a hang fails only that test. functional_gate.py falls back to one
+# process per test if a report is still lost.
 python3 -m pip install --user --quiet pytest-json-report pytest-timeout 2>/dev/null || true
 
-# Fail CLOSED with a named error if a known-failure list is not valid UTF-8: the
-# conftest_known_failures hook reads them during collection, and a stray non-UTF-8
-# byte (e.g. a CP1252 em-dash from a Windows edit) raises UnicodeDecodeError -> an
-# opaque INTERNALERROR with 0 tests run.
+# Fail CLOSED if a known-failure list is not valid UTF-8: the conftest hook reads
+# them during collection, and a stray byte (e.g. a CP1252 em-dash from a Windows
+# edit) raises UnicodeDecodeError -> an opaque INTERNALERROR with 0 tests run.
 for L in "${KF}/ci_failing_tests.txt" "${KF}/ci_flaky_tests.txt" "${KF}/ci_crash_tests.txt"; do
   if ! python3 -c "import sys; open(sys.argv[1], encoding='utf-8').read()" "$L" 2>/dev/null; then
     err "$L is not valid UTF-8 — re-author it as UTF-8/ASCII (a bad byte crashes conftest collection)."; exit 1
@@ -104,13 +93,12 @@ run_pytest() {  # $1 = json report path ; rest = parallelism + markers + targets
 }
 
 # A collection that silently under-collects (transient engine hiccup, or a marker
-# renamed/removed by a source_sha bump) must RED the leg, never score green. Both
-# modes derive an EXPECTED count and the main-pass floor is applied UNCONDITIONALLY.
-# MIN_MANIFEST guards the parallel collect against a partial/skewed universe; a
-# short manifest on one leg desyncs its ids[split_id::total] stride from the
-# others and drops tests at some positions on no leg.
-# The non-no_parallel suite is ~48k; bump MIN_MANIFEST if a source_sha update
-# legitimately shrinks it.
+# renamed by a source_sha bump) must RED the leg, never score green. Both modes
+# derive an EXPECTED count and the main-pass floor is applied UNCONDITIONALLY.
+# MIN_MANIFEST additionally guards the parallel collect: a short manifest on one
+# leg desyncs its ids[split_id::total] stride from the others, dropping tests at
+# some positions on no leg. Bump it if a source_sha update legitimately shrinks
+# the ~48k non-no_parallel suite.
 MIN_MANIFEST=30000
 COLLECT_RC=0
 COLLECT_N=0
@@ -119,10 +107,9 @@ collect_count() {  # $1 = out manifest ; rest = -m marker + targets.
   # COLLECT_N (the node-ID count) as globals.
   #
   # MUST be called directly -- never as `X=$(collect_count ...)`. Command
-  # substitution forks a SUBSHELL, so the globals set here would die with it and
-  # the caller would keep reading the initialized values. That is precisely how
-  # the collect-error guard below once got silently disabled: it compared a
-  # COLLECT_RC that was always 0. tests/test_run_pytest_split.sh T1 pins this.
+  # substitution forks a SUBSHELL, so these globals would die with it and the
+  # caller would keep reading the initial values — which is how the collect-error
+  # guard once got silently disabled. tests/test_run_pytest_split.sh T1 pins this.
   local out="$1"; shift
   # -o addopts= neutralizes pytest.ini's -vv so --collect-only -q emits flat node IDs.
   # pytest writes BOTH the node IDs and (on failure) its ERRORS section to STDOUT;
@@ -132,9 +119,9 @@ collect_count() {  # $1 = out manifest ; rest = -m marker + targets.
     --engine-name="${ENGINE}" --connection-string="${CS}" --rootdir="${ROOTDIR}" "$@" \
     > "${out}" 2>"${out}.err"
   COLLECT_RC=$?
-  # `|| true`, NOT `|| echo 0`: grep -c already prints 0 when nothing matches (and
-  # exits 1), so `|| echo 0` produced "0\n0" — which made the numeric guards die
-  # with "integer expression expected" and SKIP the zero-collection check.
+  # `|| true`, NOT `|| echo 0`: grep -c already prints 0 when nothing matches, so
+  # `|| echo 0` produced "0\n0" — which made the numeric guards die with "integer
+  # expression expected" and SKIP the zero-collection check.
   COLLECT_N=$(grep -c '::' "${out}" 2>/dev/null || true)
   COLLECT_N=${COLLECT_N:-0}
 }
@@ -149,12 +136,11 @@ dump_collect_diag() {  # $1 = manifest. pytest's ERRORS section lands on STDOUT,
 }
 
 guard_collection() {  # $1 = manifest. Reds the leg on an incomplete collection.
-  # pytest exit codes: 0 = ok, 5 = "no tests collected" (the count guards below own
-  # that case and print a better message). Anything else — notably 2, e.g. an
-  # ImportError in ONE test module — means the universe is INCOMPLETE: pytest still
-  # lists every healthy module's IDs and exits non-zero, so the broken module's
-  # tests would silently vanish from every leg's slice while the counts still look
-  # plausible (one module is far below the MIN_MANIFEST margin). Never gate on that.
+  # pytest exit codes: 0 = ok, 5 = "no tests collected" (the count guards own that
+  # case). Anything else — notably 2, e.g. an ImportError in ONE module — means the
+  # universe is INCOMPLETE: pytest still lists every healthy module's IDs and exits
+  # non-zero, so the broken module's tests would silently vanish from every leg's
+  # slice while the counts still look plausible. Never gate on that.
   if [ "${COLLECT_RC}" -ne 0 ] && [ "${COLLECT_RC}" -ne 5 ]; then
     err "pytest collection exited ${COLLECT_RC} — the collected universe is incomplete (import/collection error); those tests would be dropped from every leg. Refusing to gate."
     dump_collect_diag "$1"; exit 1
@@ -163,19 +149,18 @@ guard_collection() {  # $1 = manifest. Reds the leg on an incomplete collection.
 
 universe_hash() {  # $1 = manifest. Stable fingerprint of the collected universe.
   # Node-ID lines ONLY: the trailing "N tests collected in X.XXs" summary carries
-  # timing and would differ on every leg, defeating the comparison. Equal hashes
-  # across the parallel legs prove they sliced the SAME universe (the no_parallel
-  # leg collects a different marker set by design, so its hash differs).
+  # timing and would differ on every leg. Equal hashes across the parallel legs
+  # prove they sliced the SAME universe (no_parallel collects a different marker
+  # set by design, so its hash differs).
   local h
   h=$(grep '::' "$1" 2>/dev/null | sort -u | sha256sum 2>/dev/null | cut -c1-16) || h=""
   printf '%s' "${h:-unavailable}"
 }
 
 write_universe_record() {  # $1 = universe hash, $2 = collected count.
-  # Published with this leg's results artifact and consumed by the verify job
-  # (functional_gate.py verify-split-universes), which fails the workflow unless
-  # every parallel leg reports the SAME hash. Written before the main pass so it
-  # exists even if the run itself dies.
+  # Consumed by the verify job (functional_gate.py verify-split-universes), which
+  # fails the workflow unless every parallel leg reports the SAME hash. Written
+  # before the main pass so it exists even if the run dies.
   local mode="parallel"
   [ "${SPLIT_MODE}" = "noparallel" ] && mode="noparallel"
   printf '%s %s %s %s\n' "${SPLIT_TAG}" "${mode}" "$1" "$2" \
@@ -222,11 +207,9 @@ else
   collect_count "${MAN}" -m "not no_parallel" "${TESTPATH}"
   guard_collection "${MAN}"
   COLLECTED=${COLLECT_N}
-  # Logged per leg for humans AND written to universe.txt for the cross-leg
-  # check: skew here desyncs the ids[split_id::total] stride and drops tests at
-  # some positions on NO leg, which no per-leg guard can see. The verify job
-  # (functional_gate.py verify-split-universes) turns that from detectable-in-
-  # hindsight into a hard failure.
+  # Logged per leg AND written to universe.txt for the cross-leg check: skew here
+  # desyncs the ids[split_id::total] stride and drops tests at some positions on
+  # NO leg, which no per-leg guard can see.
   UH=$(universe_hash "${MAN}")
   echo "universe-hash: ${UH} (${COLLECTED} ids)"
   write_universe_record "${UH}" "${COLLECTED}"
@@ -244,55 +227,47 @@ else
     err "split ${SPLIT_ID} slice empty — test splitting failed?"; exit 1
   fi
   EXPECTED="${ASSIGNED}"
-  # Per-LEG limit: the worst crash-cascade residual observed in a full-suite run
-  # was 14, so 100 keeps ample headroom for a cascade while making a real
-  # breakage (which must NOT be masked by re-run recovery) fail fast.
-  # Deliberately absolute, not scaled by SPLIT_TOTAL: a cascade costs ~1 in-flight
-  # test per killed xdist worker (~16), which tracks core count, not split width.
+  # Per-LEG limit: the worst crash-cascade residual seen in a full-suite run was
+  # 14, so 100 leaves headroom for a cascade while making a real breakage fail
+  # fast. Absolute, not scaled by SPLIT_TOTAL: a cascade costs ~1 in-flight test
+  # per killed xdist worker (~16), which tracks core count, not split width.
   TRANSIENT_LIMIT=100
-  # xdist worker deaths (OOM kills in the memory-heavy geospatial region) can
-  # lose part of a dead worker's queue: those tests end the session with NO
-  # recorded outcome — and without this guard the leg would score green.
-  # recover-and-gate re-runs them serially from the slice file; above the limit
-  # the loss is systemic.
+  # xdist worker deaths (OOM kills in the memory-heavy geospatial region) can lose
+  # part of a dead worker's queue: those tests end the session with NO recorded
+  # outcome, and without this guard the leg would score green. recover-and-gate
+  # re-runs them serially; above the limit the loss is systemic.
   MISSING_LIMIT=1500
   EXPECTED_IDS="${SL}"
   # -m "not no_parallel" makes conftest Phase 2 a no-op here (dedicated leg owns no_parallel).
   #
   # --max-worker-restart=200: xdist's DEFAULT cap is numprocesses*4 (16 on a
-  # 4-cpu runner), and hitting it triggershutdown()s the session, ABANDONING the
-  # whole unexecuted tail (observed in a full-suite run: ~1,200-1,700 of a leg's
-  # ~12k assigned outcomes lost exactly this way; workers OOM-killed in the
-  # memory-heavy geo/planCache/diagnostic region). With a high cap, xdist
-  # replaces every dead worker and re-queues its pending tests, so the session
-  # always completes; the errored in-flight tests are healed by the serial
-  # recovery below and recover-and-gate's --expected-ids check still fails
-  # closed if outcomes are lost some other way.
+  # 4-cpu runner), and hitting it shuts the session down, ABANDONING the whole
+  # unexecuted tail (a full-suite run lost ~1,200-1,700 of a leg's ~12k outcomes
+  # this way, to workers OOM-killed in the geo/planCache/diagnostic region). With
+  # a high cap xdist replaces every dead worker and re-queues its pending tests,
+  # so the session completes; the errored in-flight tests are healed by the serial
+  # recovery below.
   #
-  # --timeout=240 --timeout-method=thread bounds a main-pass hang: the thread
-  # method kills the worker interpreter, which under a high restart cap is just
-  # one more replaced worker + an errored test for serial recovery — vs the
-  # whole leg burning to its job cap. signal-method is not deliverable on xdist
-  # worker threads, so thread is correct HERE (the serial re-run uses signal).
+  # --timeout=240 --timeout-method=thread bounds a main-pass hang. The thread
+  # method kills the worker interpreter — under a high restart cap just one more
+  # replaced worker plus an errored test for recovery, vs the whole leg burning to
+  # its job cap. signal is not deliverable on xdist worker threads, so thread is
+  # correct HERE (the serial re-run uses signal).
   #
-  # 240, not 900: when the engine's 2-executor index-build queue wedges (the
-  # convoy — see the internal gate-stabilization notes), every waiting worker
-  # burns the FULL timeout before its slot frees, so the timeout IS the
-  # per-stall price. 240s caps a stall at ~5 min while still being far above
-  # any healthy test (the suite's tests run in seconds). A convoy victim killed
-  # at 240s is re-run serially by recover-and-gate, where the queue is idle and
-  # it passes; a test that cannot finish in 600s even serially is genuinely
-  # broken and must red the gate.
+  # 240, not 900: when the engine's 2-executor index-build queue wedges, every
+  # waiting worker burns the FULL timeout before its slot frees, so the timeout IS
+  # the per-stall price. 240s caps a stall at ~5 min and is still far above any
+  # healthy test. A victim killed at 240s passes on the serial re-run, where the
+  # queue is idle; a test that cannot finish in 600s serially is genuinely broken.
   MAIN_ARGS=(-n auto --max-worker-restart=200 --timeout=240 --timeout-method=thread \
              -m "not no_parallel" "@${SL}")
 fi
 
 # --- engine observer: 5s sampler of active/waiting backends and the background
 #     index-build queue, published with the leg's artifact. Diagnostic only —
-#     failures inside it are silenced so it can never affect the gate. The OSS
-#     engine listens on the local 9712 coordinator port; peer auth as the
-#     runner user. Wait events name what a wedged CreateIndexes waits on, and
-#     queue rows carry per-build attempts/status. ---
+#     failures inside it are silenced so it can never affect the gate. Wait
+#     events name what a wedged CreateIndexes waits on; queue rows carry
+#     per-build attempts/status. ---
 OBSERVER_LOG="${RESULTS_DIR}/engine-observer.log"
 if command -v psql >/dev/null 2>&1; then
   (
@@ -322,9 +297,7 @@ fi
 #     results.xml is informational. ---
 run_pytest "${REPORT}" --junitxml="${JUNIT}" "${MAIN_ARGS[@]}" || true
 
-# Stop the observer before exec below replaces this shell (its output is
-# complete once the main pass ends; the serial recovery is single-threaded and
-# not convoy-prone).
+# Stop the observer before the exec below replaces this shell.
 [ -n "${OBSERVER_PID}" ] && kill "${OBSERVER_PID}" 2>/dev/null || true
 
 # --- fail CLOSED on a missing/partial run (never let a collapse score green) ---
@@ -340,17 +313,13 @@ if [ "${RAN}" -lt "${FLOOR}" ]; then
 fi
 
 # --- sequential re-run recovery + gate on the merged report ---
-# functional_gate.py recover-and-gate is the single shared implementation: it
-# re-runs the still-failing set serially (-n=0, no contention -> transient
-# crash victims pass), merges each pass (bounded to 3; over the transient limit
-# = real breakage), and exits 1 on any residual failed/error (real regression
-# or XPASS(strict)). The re-run command mirrors the main pass minus the
-# marker/targets; recover-and-gate appends --json-report and the @argfile of
-# failing IDs. exec so the leg's exit status is recover-and-gate's verdict.
-# --output goes straight into RESULTS_DIR (the upload-artifact path) so the
-# residual list ships with the artifact; TMPDIR is never published. It cannot
-# be a copy AFTER the gate: this exec replaces the shell, so nothing below it
-# would ever run.
+# recover-and-gate re-runs the still-failing set serially (-n=0, no contention ->
+# transient crash victims pass), merges each pass (bounded to 3; over the
+# transient limit = real breakage), and exits 1 on any residual failed/error. The
+# re-run command mirrors the main pass minus the marker/targets; recover-and-gate
+# appends --json-report and the @argfile of failing IDs. exec so the leg's exit
+# status IS the verdict — which is also why --output must write straight into
+# RESULTS_DIR (nothing below the exec would ever run to copy it there).
 # shellcheck disable=SC2086
 exec ${GATE} recover-and-gate \
   --report "${REPORT}" --strip-prefix "${PFX}" --prefix "${PFX}" \

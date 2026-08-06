@@ -87,12 +87,11 @@ jobs:
             gwhost-${{ hashFiles('pg_documentdb_gw_host/Cargo.lock', 'rust-toolchain.toml') }}-
             gwhost-
 
-      # The rust toolchain + cargo-pgrx setup needs NOTHING from the build, and
-      # on a cold path it is the single largest item (~8 min compiling
-      # cargo-pgrx). It runs in the BACKGROUND, overlapped with the engine
-      # build; only the gateway-host build (which needs pg_config AND pgrx)
-      # joins it. install_rustup.sh is pure curl (no apt), so it cannot
-      # contend with the build's apt operations.
+      # The rust toolchain + cargo-pgrx setup needs NOTHING from the build and is
+      # the largest cold-path item (~8 min compiling cargo-pgrx), so it runs in
+      # the BACKGROUND; only the gateway-host build (which needs pg_config AND
+      # pgrx) joins it. install_rustup.sh is pure curl, so it cannot contend with
+      # the build's apt operations.
       - name: Build engine + gateway (rust setup overlapped with the build)
         run: |
           set -euo pipefail
@@ -272,13 +271,10 @@ jobs:
           mkdir -p .test-results/functional-tests
           cp "$RUNNER_TEMP/pgdata/pglog.log" .test-results/functional-tests/postgres.log 2>/dev/null || true
 
-      # Warning-only log scan: informational, does not gate.
-      # The OSS gateway runs as a PG background worker, so pglog IS the gateway log.
-      #
-      # The non-zero exit is converted into a warning annotation rather than
-      # left to continue-on-error: a step that exits non-zero is rendered as an
-      # ERROR annotation even when continue-on-error keeps the job green, which
-      # put seven red annotations on a fully passing run.
+      # Warning-only log scan. The OSS gateway runs as a PG background worker, so
+      # pglog IS the gateway log. The non-zero exit becomes a warning annotation
+      # rather than relying on continue-on-error, which still renders a non-zero
+      # step as an ERROR annotation (seven red marks on a fully passing run).
       - name: Check for Log Errors
         if: always()
         run: |
@@ -295,16 +291,13 @@ jobs:
           path: .test-results/functional-tests/
 
   # Cross-leg guard. Each parallel leg slices ids[SPLIT_ID::SPLIT_TOTAL] of a
-  # universe it collected ITSELF, so the slices only tile the suite if every
-  # leg collected the same universe. A leg whose collection silently omits a
-  # node (a partial collect that still exits 0, which the in-leg guards cannot
-  # catch) shifts every later position by one: it starts running the next
-  # leg's tests while its own share runs on NO leg. Each leg still clears
-  # MIN_MANIFEST and still reports PASS, so nothing inside a leg can detect
-  # it — this job makes it fail the workflow instead.
-  #
-  # `needs` runs this exactly when every leg succeeded, which is the only case
-  # where undetected skew would otherwise be scored green.
+  # universe it collected ITSELF, so the slices only tile the suite if every leg
+  # collected the same universe. A leg that silently omits one node (a partial
+  # collect still exiting 0) shifts every later position by one: it runs the next
+  # leg's tests while its own share runs on NO leg — and every leg still clears
+  # MIN_MANIFEST and reports PASS, so nothing inside a leg can detect it.
+  # `needs` runs this exactly when every leg succeeded, the only case where the
+  # skew would otherwise be scored green.
   verify-splits:
     name: Verify split universes agree
     needs: functional-gate

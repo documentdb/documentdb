@@ -1,40 +1,22 @@
 # Engine-crasher tests: applied as pytest.mark.skip by conftest_known_failures.
-# These tests are NEVER RUN. xfail is not enough for a crasher: an xfailed test
-# still executes, and these crash the backend, restarting the whole cluster and
-# cascading connection errors onto every concurrently-running test. The crasher
-# itself often scores GREEN (pymongo retryable reads re-send the command and the
-# retry passes, or its own xfail mark absorbs the connection error), so the only
-# visible symptom is unrelated tests failing "randomly" and passing on retry.
+# NEVER RUN. xfail is not enough — an xfailed test still executes, and these
+# crash the backend, restart the cluster, and cascade connection errors onto
+# every concurrent test. The crasher itself often scores green (retryable reads
+# re-send the command), so the only symptom is unrelated tests failing at random.
 #
-# Scoped to what is genuinely the ENGINE's fault, so it holds on any runner:
-#   * the $redact SIGSEGV family (aggregate_cursor_first_page),
-#   * session wedgers proven on this gate by two-run fingerprints.
+# Entry forms (full-prefix paths, as in oss_ci_failing_tests.txt):
+#   exact node ID   .../test_x.py::test_case[documentdb-param]
+#   file            .../test_x.py     (skips every test in the file)
+#   directory       .../some_dir/     (skips everything under it)
+# Prefer the directory form for a crashing family: it survives suite pin bumps.
+# Prefixes are crash-list-only — a prefix xfail fails OPEN (masks any new
+# failure under it), a prefix skip fails CLOSED. Failing/flaky entries under a
+# prefix stay in their lists, shadowed until the prefix is removed.
 #
-# Entry forms (full-prefix paths, same matching roots as oss_ci_failing_tests.txt):
-#   - exact node ID:   .../test_x.py::test_case[documentdb-param]
-#   - file:            .../test_x.py            (skips every test in the file)
-#   - directory:       .../some_dir/            (skips everything under it)
-# Prefer the directory form for a crashing feature family: it survives suite
-# pin bumps (renamed/new cases are auto-covered instead of silently running
-# and crashing). Prefixes are crash-list-only by design — a prefix xfail would
-# fail OPEN (mask any new failure under the directory); a prefix skip fails
-# CLOSED. Failing/flaky entries covered by a prefix here stay in their lists:
-# they are shadowed while the skip exists, and removing the prefix after the
-# engine fix restores the exact xfail baseline with no regeneration.
-#
-# What is deliberately NOT here: the geospatial / index-build families. Those
-# wedge only where runner capacity is the constraint — each such test needs a
-# user index build, those run on the engine's two background executors, and on
-# a small (4-cpu) agent they convoy under parallel load until the per-test
-# timeout takes the xdist worker down. That is a capacity property, not an
-# engine defect. Measured on run 30667428483 with them enabled: 2,564 tests
-# ran, ZERO exceeded 60s, no worker deaths, and legs grew only ~1-2 minutes.
-# Of that set 1,323 PASS (real coverage that would otherwise be invisible) and
-# the failures are carried as ordinary strict entries in oss_ci_failing_tests.txt.
-#
-# The long-term home for this knowledge is the suite's own engine_xcrash marker
-# (upstream documentdb/functional-tests), which a dedicated crash job can still
-# opt into via --run-crash-tests.
+# Deliberately NOT here: the geospatial / index-build families. They wedge only
+# where runner capacity is the constraint (index builds queue on the engine's
+# two background executors), not through any engine defect: enabled on run
+# 30667428483 they cost ~1-2 min per leg, none exceeded 60s, and 1,323 passed.
 
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/commands/createIndexes/test_createIndexes_field_behavior.py::test_createIndexes_field_behavior[documentdb-bindata_values]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/string/regexFindAll/test_regexFindAll_size_limit.py
@@ -42,10 +24,8 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expres
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/merge/test_stages_merge_on_matching.py
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/redact/
 
-# --- Skipped, not carried as a strict expected-failure ---------------------
-# This case wedges for ~12 minutes waiting on an index build that never
-# completes on this gate, then fails — burning a leg's wall-clock for no
-# signal. Keep it here rather than as an entry in oss_ci_failing_tests.txt:
-# that pair is shared with other lanes, and conftest_known_failures.py requires
-# an exact node ID to live in exactly one list.
+# Not a crasher: this case wedges ~12 min on an index build that never
+# completes, then fails. Kept here rather than in oss_ci_failing_tests.txt,
+# which is shared with lanes that already skip this ID — conftest_known_failures
+# requires an exact node ID to live in exactly one list.
 docdb_functional_tests/documentdb_tests/compatibility/tests/system/administration/commands/setIndexCommitQuorum/test_smoke_setIndexCommitQuorum.py::test_smoke_setIndexCommitQuorum[documentdb]
