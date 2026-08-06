@@ -1,9 +1,10 @@
 # OSS (documentdb engine) flaky list for the functional gate: xfail(strict=False).
 # One pytest node ID per line (full-prefix).
 #
-# Two-run calibration at 5a50ef4: the ADO backend gate's ci_flaky_tests.txt wholesale
-# (flakiness is suite-inherent) plus every test that failed in exactly one of runs
-# 30577635951 / 30584070226 (18 XPASS(strict) flappers of run 2 among them).
+# Two-run calibration at 5a50ef4: another gateway's flaky list for the same pin,
+# carried wholesale (flakiness is suite-inherent), plus every test that failed in
+# exactly one of runs 30577635951 / 30584070226 (18 XPASS(strict) flappers of
+# run 2 among them).
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_hint_rejection.py::test_aggregate_hint_rejection[documentdb-hint_reject_nonexistent_index]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_expressions.py::test_collation_aggregate_expressions[documentdb-expr_max_affected]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_expressions.py::test_collation_aggregate_expressions[documentdb-expr_maxn_affected]

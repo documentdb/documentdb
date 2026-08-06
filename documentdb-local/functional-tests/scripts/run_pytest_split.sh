@@ -2,14 +2,6 @@
 # Split DocDB functional-test runner + known-failures gate for one matrix leg —
 # OSS-gateway lane (the GitHub Actions gate in .github/workflows/functional_tests.yml).
 #
-# This is the OSS twin of the internal backend gate's split runner
-# (scripts/docdb_tests/run_pytest_split.sh in the pgmongo repo). The mechanism —
-# collection guards, universe records, stride slices, floors, limits, timeout
-# methods, recover-and-gate — is kept IDENTICAL; only the lane-specific inputs
-# differ (this lane's failing/flaky pair, oss_pytest.args, GitHub ::error::
-# annotations instead of ADO ##vso). When the backend runner's mechanism
-# changes, port the change here in the same PR.
-#
 # "Split" here means TEST SPLITTING — dividing the pytest suite across parallel
 # CI jobs. It has nothing to do with DocumentDB/Mongo sharded (hash-partitioned)
 # collections; no naming in this file refers to data sharding.
@@ -35,14 +27,12 @@
 # Optional env: SPLIT_TESTPATH (override test root; local testing)
 #               ENGINE_NAME (default documentdb)
 #               CRASH_LIST  (crash/skip list, relative to config/; default
-#                            github_ci_crash_tests.txt — the engine-level set.
-#                            ci_crash_tests.txt is the ADO mirror and adds that
-#                            environment's index-build-convoy sections.)
+#                            ci_crash_tests.txt)
 # CWD must be the repository root (the tree that holds documentdb-local/ and
 # docdb_functional_tests/).
 set -uo pipefail
 
-err() {  # GitHub error annotation + plain stderr line (twin of ADO's ##vso).
+err() {  # GitHub error annotation + plain stderr line.
   echo "::error::$1"
   echo "ERROR: $1" >&2
 }
@@ -61,23 +51,18 @@ JUNIT="${RESULTS_DIR}/results.xml"
 mkdir -p "${RESULTS_DIR}"
 
 # Assemble the plugin + this lane's lists under the canonical names the plugin
-# reads from its own directory (the backend gate keeps them pre-assembled in
-# scripts/docdb_tests/; this lane's pair carries the oss_ prefix, so stage a
-# kf dir per leg).
+# reads from its own directory. The config/ pair carries an oss_ prefix, so
+# stage a kf dir per leg.
 #
-# CRASH_LIST defaults to the ENGINE-LEVEL skip set. The ADO mirror
-# (ci_crash_tests.txt) additionally skips that environment's index-build-convoy
-# families; those 2,564 tests run clean here (measured, run 30667428483: zero
-# tests over 60s, no worker deaths, ~1-2 min added per leg), so skipping them on
-# this runner would drop real coverage for a problem this environment does not
-# have. Point CRASH_LIST at ci_crash_tests.txt to reproduce the ADO lane exactly.
+# CRASH_LIST is an override hook for reproducing another lane's skip set (or a
+# capacity-constrained runner's) without editing the checked-in list.
 KF="${TMPDIR}/kf-oss-${SPLIT_TAG}"
 mkdir -p "${KF}"
 cp "${FT}/tools/conftest_known_failures.py" "${KF}/conftest_known_failures.py"
 cp "${FT}/config/oss_ci_failing_tests.txt"  "${KF}/ci_failing_tests.txt"
 cp "${FT}/config/oss_ci_flaky_tests.txt"    "${KF}/ci_flaky_tests.txt"
-cp "${FT}/config/${CRASH_LIST:-github_ci_crash_tests.txt}" "${KF}/ci_crash_tests.txt"
-echo "crash/skip list: ${CRASH_LIST:-github_ci_crash_tests.txt} ($(grep -cv '^#\|^$' "${KF}/ci_crash_tests.txt" || echo 0) entries)"
+cp "${FT}/config/${CRASH_LIST:-ci_crash_tests.txt}" "${KF}/ci_crash_tests.txt"
+echo "crash/skip list: ${CRASH_LIST:-ci_crash_tests.txt} ($(grep -cv '^#\|^$' "${KF}/ci_crash_tests.txt" || echo 0) entries)"
 export PYTHONPATH="${KF}:${PYTHONPATH:-}"
 export PYTEST_ADDOPTS="-p conftest_known_failures"
 
@@ -259,7 +244,7 @@ else
     err "split ${SPLIT_ID} slice empty — test splitting failed?"; exit 1
   fi
   EXPECTED="${ASSIGNED}"
-  # Per-LEG limit: the worst crash-cascade residual observed on the backend gate
+  # Per-LEG limit: the worst crash-cascade residual observed in a full-suite run
   # was 14, so 100 keeps ample headroom for a cascade while making a real
   # breakage (which must NOT be masked by re-run recovery) fail fast.
   # Deliberately absolute, not scaled by SPLIT_TOTAL: a cascade costs ~1 in-flight
@@ -276,7 +261,7 @@ else
   #
   # --max-worker-restart=200: xdist's DEFAULT cap is numprocesses*4 (16 on a
   # 4-cpu runner), and hitting it triggershutdown()s the session, ABANDONING the
-  # whole unexecuted tail (observed on the backend gate: ~1,200-1,700 of a leg's
+  # whole unexecuted tail (observed in a full-suite run: ~1,200-1,700 of a leg's
   # ~12k assigned outcomes lost exactly this way; workers OOM-killed in the
   # memory-heavy geo/planCache/diagnostic region). With a high cap, xdist
   # replaces every dead worker and re-queues its pending tests, so the session
@@ -316,8 +301,8 @@ if command -v psql >/dev/null 2>&1; then
       psql -p 9712 -d postgres -tA -F' | ' -c \
         "SELECT 'ACT', pid, state, wait_event_type, wait_event, left(regexp_replace(coalesce(query,''), E'[\n\r]+', ' ', 'g'),120) \
            FROM pg_stat_activity WHERE state <> 'idle' AND pid <> pg_backend_pid()" 2>&1
-      # queue table name varies by stack (helio_index_queue / documentdb_index_queue);
-      # discover it and dump raw rows, schema-agnostically.
+      # The index queue table name varies by stack; discover it and dump raw
+      # rows, schema-agnostically.
       psql -p 9712 -d postgres -tA -c \
         "SELECT format('SELECT ''QUEUE'', * FROM %s LIMIT 8', n.nspname||'.'||c.relname) \
            FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace \

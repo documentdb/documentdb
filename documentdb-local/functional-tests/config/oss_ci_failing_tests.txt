@@ -1,13 +1,14 @@
 # OSS (documentdb engine) expected-failure baseline for the functional gate.
 # One pytest node ID per line (full-prefix). strict xfail: a PASSING entry reds the gate.
 #
-# Two-run calibration at suite pin 5a50ef4 (SOP rule: strict = failed in BOTH runs),
+# Two-run calibration at suite pin 5a50ef4 (rule: strict = failed in BOTH runs),
 # from GitHub runs 30577635951 (raw baseline) and 30584070226 (validation under the
-# ADO-derived lists), full 50,234-outcome coverage each. Cross-checked against the
-# ADO backend gate's passing lists: tests the backend lists but this stack passes
-# (the $text-class per-gateway divergence) are omitted; ADO-flaky members are on
-# oss_ci_flaky_tests.txt instead. Entries under a ci_crash_tests.txt prefix are
-# shadowed while the skip exists and resume when it is removed.
+# seeded lists), full 50,234-outcome coverage each. Cross-checked against another
+# gateway's baseline for the same pin: tests that baseline expects to fail but this
+# stack passes (the $text-class per-gateway divergence) are omitted, and entries
+# that proved non-deterministic are on oss_ci_flaky_tests.txt instead. Entries
+# under a ci_crash_tests.txt prefix are shadowed while the skip exists and resume
+# when it is removed.
 docdb_functional_tests/documentdb_tests/compatibility/tests/changeStreams/create/test_smoke_changeStream_create.py::test_smoke_changeStream_create[documentdb]
 docdb_functional_tests/documentdb_tests/compatibility/tests/changeStreams/createIndexes/test_smoke_changeStream_createIndexes.py::test_smoke_changeStream_createIndexes[documentdb]
 docdb_functional_tests/documentdb_tests/compatibility/tests/changeStreams/delete/test_smoke_changeStream_delete.py::test_smoke_changeStream_delete[documentdb]
@@ -14633,9 +14634,10 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/system/security/auth
 docdb_functional_tests/documentdb_tests/compatibility/tests/system/security/authorization/user/commands/usersInfo/test_smoke_usersInfo.py::test_smoke_usersInfo[documentdb]
 docdb_functional_tests/documentdb_tests/compatibility/tests/system/security/encryption/test_smoke_encryption.py::test_smoke_encryption[documentdb]
 # Convoy-family coverage restored (GitHub runs 30667428483 + 30675941033, two-run rule):
-# these families were skipped only because the ADO agents convoy on index builds;
-# on this runner they execute clean (0 tests >60s, no worker deaths). 1,323 of the
-# re-enabled tests PASS; the entries below fail deterministically in BOTH runs.
+# these families are skipped only where runner capacity makes background index
+# builds convoy; on these runners they execute clean (0 tests >60s, no worker
+# deaths). 1,323 of the re-enabled tests PASS; the entries below fail
+# deterministically in BOTH runs.
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/projection/positional/test_positional_operators.py::test_positional_logical_operators[documentdb-all_returns_last_value_index]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/projection/positional/test_positional_operators.py::test_positional_logical_operators[documentdb-and_same_array_uses_first_index]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/projection/positional/test_positional_operators.py::test_positional_with_collation[documentdb]
@@ -15790,6 +15792,6 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/system/diagnostic/co
 # 14 GeoJSON types in test_geometry_geojson_types all pass). Not a regression:
 # the previous allowlist covered only test_smoke_geometry.py under
 # specifiers/geometry/, so the full-suite move is what first ran this case, and
-# the baseline was rebased from the backend gate's passing lists, where this
+# the baseline was seeded from another gateway's lists, where this
 # case passes. Deterministic, no engine restart. Per-gateway divergence.
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/query/geospatial/specifiers/geometry/test_geometry_geojson_types.py::test_geometry_geojson_types[documentdb-geometry_collection]

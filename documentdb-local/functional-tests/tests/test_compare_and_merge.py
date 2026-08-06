@@ -91,9 +91,9 @@ class TestCompareEngines:
             {"nodeid": "tests/commands/find/test_x.py::gap_test", "outcome": "passed"},
         ], filename="b.json")
 
-        result = compare_engines(report_a, report_b, "pgmongo", "reference", valid_image)
+        result = compare_engines(report_a, report_b, "documentdb", "reference", valid_image)
         md = render_comparison_markdown(result)
-        assert "pgmongo vs reference" in md
+        assert "documentdb vs reference" in md
         assert "Compatibility Gaps" in md
         assert "gap_test" in md
 
@@ -107,14 +107,14 @@ class TestCompareEngines:
         output_dir = tmp_path / "out"
         args = type("Args", (), {
             "report_a": report_a, "report_b": report_b,
-            "engine_a": "pgmongo", "engine_b": "documentdb",
+            "engine_a": "documentdb", "engine_b": "reference",
             "image": valid_image, "output_dir": str(output_dir),
         })()
 
         assert cmd_compare_engines(args) == 0
         assert (output_dir / "comparison-summary.md").exists()
         data = json.loads((output_dir / "comparison-summary.json").read_text())
-        assert data["engine_a"] == "pgmongo"
+        assert data["engine_a"] == "documentdb"
         assert data["total_compared"] == 1
 
 

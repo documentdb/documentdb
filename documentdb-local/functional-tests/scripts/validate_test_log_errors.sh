@@ -1,6 +1,5 @@
 #!/bin/bash
-# Scan engine/gateway logs for internal-error signatures (same patterns and
-# warning-only standard as the ADO gate's log check).
+# Scan engine/gateway logs for internal-error signatures.
 #
 # Exits 1 when any signature is present so a caller can gate on it. The
 # functional workflow does NOT gate: it turns a non-zero exit into a GitHub

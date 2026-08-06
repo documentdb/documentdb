@@ -1,9 +1,7 @@
 #!/bin/bash
 # Smoke tests for scripts/run_pytest_split.sh's collection guards (OSS lane).
 #
-# Twin of the internal backend gate's harness (scripts/docdb_tests/
-# test_run_pytest_split.sh in the pgmongo repo) — same tests, pointed at the
-# OSS split runner. These exist because the guards are the part of the script
+# These exist because the guards are the part of the script
 # that must FAIL CLOSED, and two of them were once silently disabled by
 # pure-bash mistakes that no amount of reading caught:
 #   * `grep -c ... || echo 0` emitted "0\n0", so the callers' `-eq 0` tests died

@@ -116,9 +116,9 @@ class TestRecoverAndGate:
         return f
 
     def test_batch_abort_falls_back_to_isolated_rerun(self, tmp_path):
-        # Regression (gate build 228232606): the batched re-run is a single pytest
-        # process, so a --timeout kill on ONE hanging test takes the whole batch
-        # down before json-report writes anything. Recovery used to stop there,
+        # Regression from a full-suite gate run: the batched re-run is a single
+        # pytest process, so a --timeout kill on ONE hanging test takes the whole
+        # batch down before json-report writes anything. Recovery used to stop there,
         # scoring every crash victim in the set as residual (21 of them, of which
         # only the hanger was real). It must now fall back to one process per
         # test: the hanger stays failed, everything else still recovers.
@@ -157,11 +157,11 @@ class TestRecoverAndGate:
 
     def test_merge_staged_in_report_dir_survives_cross_device(self, tmp_path, monkeypatch):
         # Regression: the merged report must be staged in the REPORT's directory so
-        # the final os.replace is intra-device. On ADO the --workdir
-        # ($(Agent.TempDirectory), /__w/_temp) and the report (artifact-staging dir,
-        # /__w/1/a) are different mounts; staging the merged file in workdir made
-        # os.replace raise OSError(EXDEV) and abort recovery, reding the gate on
-        # transient crash-cascade victims that the serial re-run had already cleared.
+        # the final os.replace is intra-device. When --workdir (a runner temp dir)
+        # and the report (an artifact-staging dir) are different mounts, staging the
+        # merged file in workdir made os.replace raise OSError(EXDEV) and abort
+        # recovery, reding the gate on transient crash-cascade victims that the
+        # serial re-run had already cleared.
         import errno
         from argparse import Namespace
         import functional_gate as fg
@@ -187,7 +187,7 @@ class TestRecoverAndGate:
         assert rc == 0  # merged staged in report_dir -> intra-device replace -> recovered
 
     # ---- --expected-ids: the xdist worker-death hole (assigned tests whose
-    # ---- outcomes were never recorded; build 228667621 p1 lost 1,175 of
+    # ---- outcomes were never recorded; a full-suite leg lost 1,175 of
     # ---- 12,094 that way and scored green) --------------------------------
 
     def _expected(self, tmp_path, ids, noise=True):
@@ -381,15 +381,15 @@ class TestVerifySplitUniverses:
 class TestVerifySplitUniversesArtifactLayout:
     """Pins the REAL downloaded layout, which the first cut of these tests missed.
 
-    Build 228524875 failed with "no universe.txt found" even though all five
-    legs wrote one. Cause: DownloadPipelineArtifact matches its patterns against
+    A gate run failed with "no universe.txt found" even though all five
+    legs wrote one. Cause: the artifact download matches its patterns against
     each file's path INSIDE its artifact, not against '<artifactName>/<path>',
     so an artifact-name-qualified pattern filtered 0 files from all 107
     artifacts. The unit tests could not have caught it -- they built a flat
     directory of records rather than the <workspace>/<artifactName>/universe.txt
     tree the download actually produces. These tests use that tree.
     """
-    PFX = "docdb-pytest-results-pg16-azl3-citus12"
+    PFX = "functional-test-results"
 
     def _leg(self, ws, tag, uhash, count, mode="parallel", attempt=1, prefix=None):
         d = ws / f"{prefix or self.PFX}-{tag}-{attempt}"
@@ -420,15 +420,16 @@ class TestVerifySplitUniversesArtifactLayout:
         assert fg.cmd_verify_split_universes(self._ns(tmp_path, 4, self.PFX)) == 1
 
     def test_records_from_another_stage_are_ignored(self, tmp_path):
-        # A second instance of this stage template (e.g. a rust-gateway variant)
-        # publishes its own legs into the same run. Those must not be counted
-        # here, or the split count and duplicate checks fire for no real reason.
+        # A second instance of this stage template (e.g. a standalone-gateway
+        # variant) publishes its own legs into the same run. Those must not be
+        # counted here, or the split count and duplicate checks fire for no real
+        # reason.
         import functional_gate as fg
         for i in range(4):
             self._leg(tmp_path, f"p{i}", "4a433410c839bd86", 48374)
         for i in range(4):
             self._leg(tmp_path, f"p{i}", "ffff0000ffff0000", 12345,
-                      prefix="docdb-pytest-results-pg16-mariner-citus12")
+                      prefix="standalone-gw-test-results")
         assert fg.cmd_verify_split_universes(self._ns(tmp_path, 4, self.PFX)) == 0
 
     def test_stage_retry_layout_passes(self, tmp_path):
@@ -445,7 +446,7 @@ class TestVerifySplitUniversesArtifactLayout:
         assert fg.cmd_verify_split_universes(self._ns(tmp_path, 4, self.PFX)) == 1
 
     def test_prefix_filtering_everything_out_fails_closed(self, tmp_path):
-        # The 228524875 shape: records exist, but none are accepted. Must fail,
+        # The same shape: records exist, but none are accepted. Must fail,
         # and must not be mistaken for "nothing disagreed".
         import functional_gate as fg
         for i in range(4):

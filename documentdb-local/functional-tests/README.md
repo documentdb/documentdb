@@ -1,8 +1,8 @@
 # DocumentDB functional tests
 
 Runs the upstream `documentdb/functional-tests` wire-protocol suite against
-DocumentDB under the **known-failures xfail model** — the same framework both CI
-systems use (the ADO functional pipeline and `.github/workflows/functional_tests.yml`).
+DocumentDB under the **known-failures xfail model**, driven by
+`.github/workflows/functional_tests.yml`.
 
 There is **no allowlist**. The full suite runs under
 `tools/conftest_known_failures.py`, which marks a per-gateway **failing** list as

@@ -2,9 +2,8 @@
 """
 DocumentDB Functional Test Gate Tooling — known-failures xfail model.
 
-Both CI systems (ADO functional pipeline + the GitHub workflow) run the full
-suite under conftest_known_failures.py against a per-gateway failing/flaky pair
-and gate with these commands:
+The functional gate runs the full suite under conftest_known_failures.py against
+a per-gateway failing/flaky pair and gates with these commands:
 
 * report-failures — node IDs that failed/errored (re-run set + gate verdict)
 * merge-reports   — fold sequential re-run outcomes into the base report
@@ -23,6 +22,17 @@ import argparse
 import json
 import os
 import sys
+
+# Error annotations. GitHub Actions renders a line prefixed with "::error::" as
+# an annotation on the run; a CI system with different syntax can set
+# CI_ERROR_PREFIX instead of forking this file. Either way the gate's verdict is
+# the exit code, so the prefix only affects presentation.
+_CI_ERROR_PREFIX = os.environ.get("CI_ERROR_PREFIX", "::error::")
+
+
+def ci_error(message: str, *, flush: bool = False) -> None:
+    """Emit ``message`` as a CI error annotation."""
+    print(f"{_CI_ERROR_PREFIX}{message}", flush=flush)
 
 
 def load_yaml(path: str) -> dict:
@@ -220,7 +230,7 @@ def cmd_verify_split_universes(args):
         print(f"  found {r}")
     if problems:
         for p in problems:
-            print(f"##vso[task.logissue type=error]split-universe check: {p}")
+            ci_error(f"split-universe check: {p}")
             print(f"ERROR: {p}", file=sys.stderr)
         return 1
     print(f"split-universe check PASS: {args.expected_splits} parallel split(s) "
@@ -838,9 +848,8 @@ def _rerun_isolated(rerun_cmd: list[str], ids: list[str], prefix: str,
 
 def cmd_recover_and_gate(args):
     """Sequential re-run recovery of transient crash victims + gate on the merged
-    report. The single canonical implementation shared by the single-job lane
-    (functional_tests_run_gate.yml) and the split backend gate
-    (scripts/docdb_tests/run_pytest_split.sh).
+    report. The single canonical implementation shared by the single-job lane and
+    the split matrix lane (scripts/run_pytest_split.sh).
 
     The parallel (-n auto) pass is stochastic: a backend crash (e.g. the
     $meta:textScore dynamic-cursor UAF) restarts the cluster and cascades a batch
@@ -858,7 +867,7 @@ def cmd_recover_and_gate(args):
     pass ALSO re-runs assigned tests that have no recorded outcome at all. That
     is the xdist worker-death hole: a killed worker's in-flight test gets a
     crash error, but tests still in its queue can vanish from the report
-    entirely — observed on build 228667621 leg p1, where 20 worker deaths left
+    entirely — observed in a full-suite run where 20 worker deaths left
     1,175 of 12,094 assigned tests unrecorded and the leg scored green (the
     RAN >= EXPECTED/2 floor is far too lax to see it). Above --missing-limit
     unrecorded tests the loss is systemic (a leg-wide collapse must red, not
@@ -872,12 +881,13 @@ def cmd_recover_and_gate(args):
     if rerun_cmd and rerun_cmd[0] == "--":
         rerun_cmd = rerun_cmd[1:]
     if not rerun_cmd:
-        print("##vso[task.logissue type=error]recover-and-gate: no pytest re-run "
-              "command was given after '--'.", flush=True)
+        ci_error("recover-and-gate: no pytest re-run "
+                 "command was given after '--'.", flush=True)
         return 1
     if not os.path.exists(args.report):
-        print(f"##vso[task.logissue type=error]recover-and-gate: report {args.report} "
-              f"does not exist — refusing to score green on a missing run.", flush=True)
+        ci_error(f"recover-and-gate: report {args.report} "
+                 f"does not exist — refusing to score green on a missing run.",
+                 flush=True)
         return 1
 
     expected_ids: list[str] = []
@@ -885,18 +895,18 @@ def cmd_recover_and_gate(args):
         try:
             expected_ids = _read_manifest_ids(args.expected_ids)
         except OSError as exc:
-            print(f"##vso[task.logissue type=error]recover-and-gate: cannot read "
-                  f"--expected-ids {args.expected_ids} ({exc}) — refusing to gate "
-                  f"without the assigned set.", flush=True)
+            ci_error(f"recover-and-gate: cannot read "
+                     f"--expected-ids {args.expected_ids} ({exc}) — refusing to gate "
+                     f"without the assigned set.", flush=True)
             return 1
         if args.strip_prefix:
             expected_ids = [i[len(args.strip_prefix):] if i.startswith(args.strip_prefix)
                             else i for i in expected_ids]
         expected_ids = sorted(set(expected_ids))
         if not expected_ids:
-            print(f"##vso[task.logissue type=error]recover-and-gate: --expected-ids "
-                  f"{args.expected_ids} holds no node IDs — refusing to gate against "
-                  f"an empty assigned set.", flush=True)
+            ci_error(f"recover-and-gate: --expected-ids "
+                     f"{args.expected_ids} holds no node IDs — refusing to gate against "
+                     f"an empty assigned set.", flush=True)
             return 1
 
     # getattr defaults keep direct callers (tests build a bare Namespace) and
@@ -912,11 +922,11 @@ def cmd_recover_and_gate(args):
     workdir = args.workdir or (os.path.dirname(os.path.abspath(args.report)) or ".")
     os.makedirs(workdir, exist_ok=True)
     # The final os.replace onto args.report is atomic only within one filesystem;
-    # across devices it raises OSError(EXDEV, "Invalid cross-device link"). On ADO
-    # --workdir is $(Agent.TempDirectory) (/__w/_temp) while the report lives under
-    # the artifact-staging dir (/__w/1/a) — a different mount — so the merged file
-    # MUST be staged in the report's own directory, not in workdir. Re-run scratch
-    # (which is never renamed across dirs) can stay in workdir.
+    # across devices it raises OSError(EXDEV, "Invalid cross-device link"). When
+    # --workdir is a runner temp dir on a different mount from the artifact-staging
+    # directory the report lives in, the merged file MUST be staged in the report's
+    # own directory, not in workdir. Re-run scratch (which is never renamed across
+    # dirs) can stay in workdir.
     report_dir = os.path.dirname(os.path.abspath(args.report)) or "."
     rerun_json = os.path.join(workdir, "recover_rerun.json")
     merged_json = os.path.join(report_dir, ".recover_merged.json")
@@ -959,8 +969,8 @@ def cmd_recover_and_gate(args):
             # --timeout kill: pytest-timeout's `thread` method dumps stacks and
             # takes the interpreter down with os._exit, so json-report never gets
             # to write. Batched, that costs EVERY test in the set its recovery --
-            # one hang and the whole cascade is scored as residual (observed on
-            # build 228232606: test_near_combined_with_text_errors hung the full
+            # one hang and the whole cascade is scored as residual (observed in a
+            # full-suite run: test_near_combined_with_text_errors hung the full
             # 600s and all 21 crash victims were failed without ever being
             # re-run). Re-run them one process per test instead, so a hang costs
             # only the test that hung. Callers also pass --timeout-method=signal
@@ -989,8 +999,8 @@ def cmd_recover_and_gate(args):
         residual = report_failure_ids(args.report, args.strip_prefix)
         still_missing = _unrecorded()
     except Exception as e:
-        print(f"##vso[task.logissue type=error]recover-and-gate could not evaluate "
-              f"the merged report ({e}) — failing the gate.", flush=True)
+        ci_error(f"recover-and-gate could not evaluate "
+                 f"the merged report ({e}) — failing the gate.", flush=True)
         return 1
     residual_all = residual + [i for i in still_missing if i not in set(residual)]
     if args.output:
@@ -999,9 +1009,9 @@ def cmd_recover_and_gate(args):
     print(f"gate failures after re-run recovery: {len(residual)} failed/error, "
           f"{len(still_missing)} unrecorded", flush=True)
     if residual_all:
-        print(f"##vso[task.logissue type=error]{len(residual)} residual "
-              f"failure(s)/XPASS(strict) and {len(still_missing)} assigned "
-              f"test(s) with no recorded outcome. First 50:", flush=True)
+        ci_error(f"{len(residual)} residual "
+                 f"failure(s)/XPASS(strict) and {len(still_missing)} assigned "
+                 f"test(s) with no recorded outcome. First 50:", flush=True)
         for r in residual_all[:50]:
             print(r, flush=True)
         return 1
@@ -1114,7 +1124,7 @@ def main():
 
     # recover-and-gate: sequential re-run recovery of transient crash victims,
     # then gate on the merged report. Shared by the single-job lane and the
-    # split backend gate. The pytest re-run command follows '--'.
+    # split matrix lane. The pytest re-run command follows '--'.
     recover_parser = subparsers.add_parser(
         "recover-and-gate",
         help="Sequentially re-run the still-failing set (transient crash victims) "

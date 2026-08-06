@@ -22,17 +22,18 @@ on:
     - cron: '0 6 * * *'  # Daily at 06:00 UTC
 
 env:
-  # Matches the ADO OSS lane (azl3/PG16). Bump both sides together.
+  # PG16: the configuration the known-failure baseline is calibrated against.
+  # Bump the lists and this value together.
   PG_VERSION: 16
   ENGINE_NAME: documentdb
   DOCUMENTDB_USER: docdb_admin
   DOCUMENTDB_PORT: 10260
   # Width of the parallel split. THREE places must agree: this value, the
   # number of `mode: parallel` entries in the matrix below, and each parallel
-  # entry's `total:` field. (ADO generates all three from one list; GitHub
-  # Actions cannot reference env inside strategy.matrix, hence the manual
-  # invariant.) The verify-splits job fails closed if a parallel leg is
-  # missing, so a miscount cannot silently drop coverage.
+  # entry's `total:` field. (GitHub Actions cannot reference env inside
+  # strategy.matrix, hence the manual invariant.) The verify-splits job fails
+  # closed if a parallel leg is missing, so a miscount cannot silently drop
+  # coverage.
   PARALLEL_SPLITS: 6
 
 jobs:
@@ -225,7 +226,7 @@ jobs:
       - name: Export pg_config PATH
         run: echo "/usr/lib/postgresql/${{ env.PG_VERSION }}/bin" >> $GITHUB_PATH
 
-      # --- Start the engine exactly like the ADO OSS lane ---
+      # --- Start the engine: source build, extended_rum + gateway ---
       - name: Generate DocumentDB password
         run: |
           PASSWORD=$(python3 -c 'import secrets, string; print("".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32)))')
@@ -242,7 +243,8 @@ jobs:
           timeout 240 bash -c 'until (echo > /dev/tcp/localhost/${{ env.DOCUMENTDB_PORT }}) 2>/dev/null; do sleep 2; done'
           echo "Gateway is ready."
 
-      # --- Clone the suite at source_sha (same layout/node-id form as ADO) ---
+      # --- Clone the suite at source_sha (the layout the known-failure lists'
+      #     node IDs are written against) ---
       - name: Setup functional-tests suite (pinned source_sha)
         run: |
           ./documentdb-local/functional-tests/scripts/setup_functional_tests.sh "$GITHUB_WORKSPACE/docdb_functional_tests"
@@ -270,7 +272,7 @@ jobs:
           mkdir -p .test-results/functional-tests
           cp "$RUNNER_TEMP/pgdata/pglog.log" .test-results/functional-tests/postgres.log 2>/dev/null || true
 
-      # Same signatures + warning-only standard as the ADO gate's log check.
+      # Warning-only log scan: informational, does not gate.
       # The OSS gateway runs as a PG background worker, so pglog IS the gateway log.
       #
       # The non-zero exit is converted into a warning annotation rather than

@@ -1,13 +1,16 @@
 # Engine-crasher tests: applied as pytest.mark.skip by conftest_known_failures.
 # These tests are NEVER RUN. xfail is not enough for a crasher: an xfailed test
-# still executes, and these crash the backend (SIGSEGV/SIGABRT in
-# aggregate_cursor_first_page), restarting the whole cluster and cascading
-# connection errors onto every concurrently-running test. The crasher itself
-# often scores GREEN (pymongo retryable reads re-send the aggregate and the
+# still executes, and these crash the backend, restarting the whole cluster and
+# cascading connection errors onto every concurrently-running test. The crasher
+# itself often scores GREEN (pymongo retryable reads re-send the command and the
 # retry passes, or its own xfail mark absorbs the connection error), so the only
 # visible symptom is unrelated tests failing "randomly" and passing on retry.
 #
-# Entry forms (full-prefix paths, same matching roots as ci_failing_tests.txt):
+# Scoped to what is genuinely the ENGINE's fault, so it holds on any runner:
+#   * the $redact SIGSEGV family (aggregate_cursor_first_page),
+#   * session wedgers proven on this gate by two-run fingerprints.
+#
+# Entry forms (full-prefix paths, same matching roots as oss_ci_failing_tests.txt):
 #   - exact node ID:   .../test_x.py::test_case[documentdb-param]
 #   - file:            .../test_x.py            (skips every test in the file)
 #   - directory:       .../some_dir/            (skips everything under it)
@@ -15,106 +18,34 @@
 # pin bumps (renamed/new cases are auto-covered instead of silently running
 # and crashing). Prefixes are crash-list-only by design — a prefix xfail would
 # fail OPEN (mask any new failure under the directory); a prefix skip fails
-# CLOSED. ci_failing/ci_flaky entries covered by a prefix here stay in their
-# lists: they are shadowed while the skip exists, and removing the prefix after
-# the engine fix restores the exact xfail baseline with no regeneration.
+# CLOSED. Failing/flaky entries covered by a prefix here stay in their lists:
+# they are shadowed while the skip exists, and removing the prefix after the
+# engine fix restores the exact xfail baseline with no regeneration.
 #
-# Current contents: the $redact stage family (156 cases as of pinned suite
-# 5a50ef4). Evidence (ADO pipeline 20085, PR 2214164 builds): every backend
-# crash storm across builds 228599646 / 228536802 / 228490591 was STARTED,
-# from a healthy cluster, by a $redact case — identified by matching the
-# crashed backend's test database name hash (sha256(nodeid)[:8]) in
-# postgres.log/gateway.log:
-#   build 228599646 leg p1: test_redact_sentinel_cases[documentdb-prune_removes_embedded_document_field]  (1 crash,  sig6)
-#   build 228599646 leg p2: test_redact_validation_cases[documentdb-defined_variable_current]             (12-crash storm, sig6)
-#   build 228599646 leg p3: test_redact_expression_cases[documentdb-sentinel_get_field_prune]             (10-crash storm, sig11)
-#   build 228536802 leg p3: test_redact_expression_cases[documentdb-sentinel_get_field_prune]             (12-crash storm, sig11)
-#   build 228490591 leg p1: test_redact_output_cases[documentdb-passthrough_descend_maxkey]               (12-crash storm, sig6)
-# Secondary crashes inside a storm hit unrelated error-path aggregates
-# (geoNear/out/merge/indexStats/...) only during the post-restart window; legs
-# with no $redact trigger (e.g. 228599646 p0/np) show ZERO crashes, so only the
-# $redact family is suppressed. Crashing cases include ones that normally PASS
-# (sentinels/output above), hence the directory form rather than per-case IDs.
+# What is deliberately NOT here: the geospatial / index-build families. Those
+# wedge only where runner capacity is the constraint — each such test needs a
+# user index build, those run on the engine's two background executors, and on
+# a small (4-cpu) agent they convoy under parallel load until the per-test
+# timeout takes the xdist worker down. That is a capacity property, not an
+# engine defect. Measured on run 30667428483 with them enabled: 2,564 tests
+# ran, ZERO exceeded 60s, no worker deaths, and legs grew only ~1-2 minutes.
+# Of that set 1,323 PASS (real coverage that would otherwise be invisible) and
+# the failures are carried as ordinary strict entries in oss_ci_failing_tests.txt.
 #
-# Remove the entry when the engine $redact crash is fixed; the long-term home
-# for this knowledge is the suite's own engine_xcrash marker (upstream
-# documentdb/functional-tests), which the dedicated crash job can still opt
-# into via --run-crash-tests.
+# The long-term home for this knowledge is the suite's own engine_xcrash marker
+# (upstream documentdb/functional-tests), which a dedicated crash job can still
+# opt into via --run-crash-tests.
+
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/commands/createIndexes/test_createIndexes_field_behavior.py::test_createIndexes_field_behavior[documentdb-bindata_values]
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/string/regexFindAll/test_regexFindAll_size_limit.py
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/expressions/string/replaceAll/test_replaceAll_size_limit.py
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/merge/test_stages_merge_on_matching.py
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/redact/
 
-# --- Index-build convoy wedge-head files (added 2026-07-29) -----------------
-# 354 tests, 16 files. These files' tests repeatedly host xdist worker deaths
-# across EVERY split configuration tried (4-way and 6-way strides, builds
-# 228667621/228693633/228703329/228722814/228738856/228767940): each test
-# needs a user index build (geo/2dsphere, partial, TTL) or reads index/plan
-# metadata behind one, and user builds run on the engine's TWO hard-registered
-# background executors with a 300s per-invocation budget — so under parallel
-# load these tests wedge on the queue, burn the per-test timeout, and take
-# their worker down ('node down: Not properly terminated'), 20-30 times per
-# affected leg per run. Case-level skipping was tried and reverted: sibling
-# parametrized cases inherit the wedge (the file is the correct granularity;
-# e.g. geoNear_includeLocs stopped dying while skipped and resumed after the
-# revert). File entries shadow any strict/flaky node-ID entries for the same
-# tests, which stay in their lists for restoration.
-# REMOVE this whole section when the engine index-build convoy is fixed
-# (work item: raise executor count / per-build budget or build inline).
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/geoNear/test_geoNear_distanceField_type_errors.py
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/geoNear/test_geoNear_distance_filtering.py
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/geoNear/test_geoNear_includeLocs_type_errors.py
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/geoNear/test_geoNear_query_operators.py
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/geoNear/test_geoNear_distance_calculation.py
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/test_stages_position_geoNear.py
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/query/geospatial/near/test_near_errors.py
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/partial/test_partial_query_behavior.py
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/indexStats/test_indexStats_output_structure.py
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/test_stages_position_indexStats.py
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/query_planning/commands/planCacheSetFilter/test_planCacheSetFilter_cross_command.py
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/query-planning/commands/planCacheListFilters/test_planCacheListFilters_lifecycle.py
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/query_planning/commands/planCacheClear/test_planCacheClear_behavior.py
-docdb_functional_tests/documentdb_tests/compatibility/tests/system/diagnostic/commands/validate/test_validate_indexes.py
-docdb_functional_tests/documentdb_tests/compatibility/tests/system/diagnostic/commands/dataSize/test_dataSize_optional_params.py
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/collStats/test_collStats_data_values.py
-
-# --- Residual index-build waiters, directory level (added 2026-07-29) -------
-# Build 228791856 (first build WITH the 16-file skip) still recorded worker
-# deaths in SIBLING files of the same families (geoNear distance_multiplier/
-# near_point, nearSphere/geoIntersects/center/box, the planCache* command
-# family in both dir spellings, validate/dbStats/dataSize, position/lookup
-# combinations) — file-level exclusion chases siblings, so these go out at
-# DIRECTORY level. Mechanism (proven locally, exp E1/E2/E2b/E2c/E4): these
-# tests create/wait on background index builds; CREATE INDEX CONCURRENTLY
-# waits out ANY long-running statement on the cluster (86.9s wedge from one
-# 90s holder; 0.2s via the blocking build path), so under parallel load they
-# queue, hit the per-test timeout, and take their worker down. They are
-# QUEUE VICTIMS, not defects: all pass serially. Restore this section (and
-# the file section above) when the engine offers non-CIC builds for test
-# stacks (blocking:true default GUC — engine work item).
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/geoNear/
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/query/geospatial/near/
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/query/geospatial/nearSphere/
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/query/geospatial/geoIntersects/
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/query/geospatial/specifiers/center/
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/query/geospatial/specifiers/box/
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/query_planning/commands/
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/query-planning/commands/
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/indexStats/
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/collStats/
-docdb_functional_tests/documentdb_tests/compatibility/tests/system/diagnostic/commands/validate/
-docdb_functional_tests/documentdb_tests/compatibility/tests/system/diagnostic/commands/dbStats/
-docdb_functional_tests/documentdb_tests/compatibility/tests/system/diagnostic/commands/dataSize/
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/test_stages_position_lookup.py
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/test_stages_position_planCacheStats.py
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/match/test_match_pipeline_semantics.py
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/projection/positional/test_positional_operators.py
-
-# --- 12-minute straggler waiters (added 2026-07-29, build 228828750) --------
-# Five tests each pin an xdist worker for ~665-730s (uniform internal wait
-# timeouts) waiting on index builds / \$text state that never completes on the
-# gate, then fail and get xfail-absorbed - costing a leg ~12 min per test and
-# explaining the p3=44m/p5=57m skew (serial-sum minus these ~= 5-10 min/leg).
-# Same queue-victim mechanism as the directory section above; restore with it.
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/query_and_write/commands/update/test_update_hint.py::test_update_hint_with_index_spec[documentdb]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/merge/test_stages_merge_unique_index.py::test_stages_merge_unique_index[documentdb-unique_idx_err_wildcard]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/test_stages_position_project.py::test_stages_position_project_cases[documentdb-pipeline_project_meta_textscore]
+# --- Skipped, not carried as a strict expected-failure ---------------------
+# This case wedges for ~12 minutes waiting on an index build that never
+# completes on this gate, then fails — burning a leg's wall-clock for no
+# signal. Keep it here rather than as an entry in oss_ci_failing_tests.txt:
+# that pair is shared with other lanes, and conftest_known_failures.py requires
+# an exact node ID to live in exactly one list.
 docdb_functional_tests/documentdb_tests/compatibility/tests/system/administration/commands/setIndexCommitQuorum/test_smoke_setIndexCommitQuorum.py::test_smoke_setIndexCommitQuorum[documentdb]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/lookup/test_lookup_sub_pipeline.py::test_lookup_text_in_sub_pipeline[documentdb]
