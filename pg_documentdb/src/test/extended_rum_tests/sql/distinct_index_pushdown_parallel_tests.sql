@@ -19,6 +19,11 @@
 -- Plans use EXPLAIN without ANALYZE so the shape is stable across PostgreSQL
 -- versions (per-worker actual row counts differ by version).
 SET search_path TO documentdb_api_catalog, documentdb_core, public;
+-- enableDistinctCustomScan is enabled by default starting in v117. Pin it off
+-- here so Parts 1, 2a and 2b keep exercising the non-custom-scan distinct plan
+-- shape; Parts 2c/2d toggle it on explicitly with SET LOCAL. Remove this pin
+-- when the flag is retired.
+SET documentdb.enableDistinctCustomScan TO off;
 SET documentdb.next_collection_id TO 24800;
 SET documentdb.next_collection_index_id TO 24800;
 

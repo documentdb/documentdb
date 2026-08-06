@@ -68,11 +68,13 @@ $cmd$);
                      Output: (documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text))
                      ->  ProjectSet
                            Output: documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text)
-                           ->  Index Only Scan using idx_a on documentdb_data.documents_1984601_198460002 collection
+                           ->  Custom Scan (DocumentDBApiDistinctQueryScan)
                                  Output: collection.document
-                                 Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@<>) '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
-                                 Order By: (collection.document OPERATOR(documentdb_api_catalog.|-<>) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-(17 rows)
+                                 ->  Index Only Scan using idx_a on documentdb_data.documents_1984601_198460002 collection
+                                       Output: collection.document
+                                       Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@<>) '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
+                                       Order By: (collection.document OPERATOR(documentdb_api_catalog.|-<>) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+(19 rows)
 
 ROLLBACK;
 -- ============================================================
@@ -137,11 +139,13 @@ $cmd$);
                      Output: (documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text))
                      ->  ProjectSet
                            Output: documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text)
-                           ->  Index Only Scan using idx_a on documentdb_data.documents_1984601_198460002 collection
+                           ->  Custom Scan (DocumentDBApiDistinctQueryScan)
                                  Output: collection.document
-                                 Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "$numberInt" : "5" } }'::documentdb_core.bson)
-                                 Order By: (collection.document OPERATOR(documentdb_api_catalog.|-<>) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
-(17 rows)
+                                 ->  Index Only Scan using idx_a on documentdb_data.documents_1984601_198460002 collection
+                                       Output: collection.document
+                                       Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@>=) '{ "a" : { "$numberInt" : "5" } }'::documentdb_core.bson)
+                                       Order By: (collection.document OPERATOR(documentdb_api_catalog.|-<>) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+(19 rows)
 
 ROLLBACK;
 -- ============================================================
@@ -402,10 +406,12 @@ $cmd$);
                                        Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text))
                                        ->  ProjectSet
                                              Output: documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text)
-                                             ->  Index Only Scan using idx_a on documentdb_data.documents_1984603_198460008 collection
+                                             ->  Custom Scan (DocumentDBApiDistinctQueryScan)
                                                    Output: document
-                                                   Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@<>) '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
-                                                   Order By: (collection.document OPERATOR(documentdb_api_catalog.|-<>) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                                                   ->  Index Only Scan using idx_a on documentdb_data.documents_1984603_198460008 collection
+                                                         Output: document
+                                                         Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@<>) '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
+                                                         Order By: (collection.document OPERATOR(documentdb_api_catalog.|-<>) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
    Task Count: 1
    Tasks Shown: All
    ->  Task
@@ -416,7 +422,7 @@ $cmd$);
                ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                      Output: intermediate_result.document
                      Function Call: read_intermediate_result('85_1'::text, 'binary'::citus_copy_format)
-(33 rows)
+(35 rows)
 
 ROLLBACK;
 -- ============================================================
@@ -548,10 +554,12 @@ $cmd$);
                                        Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text))
                                        ->  ProjectSet
                                              Output: documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text)
-                                             ->  Index Only Scan using idx_a on documentdb_data.documents_1984603_198460008 collection
+                                             ->  Custom Scan (DocumentDBApiDistinctQueryScan)
                                                    Output: document
-                                                   Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@<>) '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
-                                                   Order By: (collection.document OPERATOR(documentdb_api_catalog.|-<>) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
+                                                   ->  Index Only Scan using idx_a on documentdb_data.documents_1984603_198460008 collection
+                                                         Output: document
+                                                         Index Cond: (collection.document OPERATOR(documentdb_api_catalog.@<>) '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::documentdb_core.bson)
+                                                         Order By: (collection.document OPERATOR(documentdb_api_catalog.|-<>) '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson)
    Task Count: 1
    Tasks Shown: All
    ->  Task
@@ -562,7 +570,7 @@ $cmd$);
                ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                      Output: intermediate_result.document
                      Function Call: read_intermediate_result('98_1'::text, 'binary'::citus_copy_format)
-(33 rows)
+(35 rows)
 
 ROLLBACK;
 -- ============================================================

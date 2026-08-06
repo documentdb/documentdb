@@ -150,8 +150,11 @@ SELECT COUNT(*) FROM r1;
 -- Parallel ordered scan: distinct query
 -- Exercises parallel index scan with distinct pushdown on the
 -- createdAt field (10 distinct year values: 2015-2024).
+-- enableDistinctCustomScan is explicitly off here to keep coverage
+-- of the non-custom-scan distinct pushdown path.
 -- ============================================================
 SET documentdb.enableDistinctIndexPushdown TO on;
+SET documentdb.enableDistinctCustomScan TO off;
 
 -- Verify distinct plan uses parallel scan on RUM index
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_distinct('pord_db',
@@ -169,6 +172,7 @@ SELECT document FROM bson_aggregation_distinct('pord_db',
     '{ "distinct": "ordered_scan", "key": "createdAt", "query": { "createdAt": { "$gte": { "$date": "2017-01-01T00:00:00Z" }, "$lt": { "$date": "2020-01-01T00:00:00Z" } } } }');
 
 RESET documentdb.enableDistinctIndexPushdown;
+RESET documentdb.enableDistinctCustomScan;
 
 -- ============================================================
 -- Parallel ordered scan: custom distinct scan

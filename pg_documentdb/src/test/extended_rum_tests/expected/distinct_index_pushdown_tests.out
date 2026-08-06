@@ -1,4 +1,9 @@
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documentdb_api_internal,public;
+-- enableDistinctCustomScan is enabled by default starting in v116. Pin it off
+-- here so Tests 1-20 keep exercising the non-custom-scan distinct plan shape;
+-- Tests 21-28 toggle it explicitly with SET LOCAL. Remove this pin when the
+-- flag is retired.
+SET documentdb.enableDistinctCustomScan TO off;
 -- ============================================================
 -- Setup: Create collection with varied data for distinct tests
 -- ============================================================
