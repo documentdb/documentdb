@@ -455,14 +455,15 @@ impl From<PoolError> for DocumentDBError {
             | PoolError::PostCreateHook(deadpool_postgres::HookError::Backend(pg_error)) => {
                 if let Some(db_error) = pg_error.as_db_error() {
                     let state = db_error.code().clone();
-                    let error_message = db_error.to_string();
+                    let error_message = format!("Pool error due to database error: {db_error}");
                     map_pool_db_error_code(&state, error_message, Box::new(pg_error))
                 } else {
-                    let error_message = pg_error.to_string();
                     Self::new_documentdb_error(
                         ErrorCode::InternalError,
                         generic_internal_error_message().to_owned(),
-                        Some(error_message),
+                        Some(format!(
+                            "Pool error due to generic postgres error: {pg_error}"
+                        )),
                         Some(Box::new(pg_error)),
                         ErrorKind::Pool,
                     )
@@ -471,7 +472,7 @@ impl From<PoolError> for DocumentDBError {
             other => Self::new_documentdb_error(
                 ErrorCode::InternalError,
                 generic_internal_error_message().to_owned(),
-                Some(format!("Connection pool error: {other}")),
+                Some(format!("Pool error: {other}")),
                 Some(Box::new(other)),
                 ErrorKind::Pool,
             ),
@@ -608,7 +609,7 @@ mod tests {
     /// user message, a diagnostic internal message, and preserve the original
     /// `PoolError` as the source so retry logic can downcast via `as_pool_error`.
     fn assert_other_branch(pool_error: PoolError) {
-        let expected_internal = format!("Connection pool error: {pool_error}");
+        let expected_internal = format!("Pool error: {pool_error}");
         let error = DocumentDBError::from(pool_error);
 
         assert_eq!(error.error_code(), ErrorCode::InternalError);
