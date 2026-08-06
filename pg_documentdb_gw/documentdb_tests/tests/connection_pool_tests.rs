@@ -125,13 +125,12 @@ async fn pool_backend_error_converts_to_pool_kind_documentdb_error() {
         .expect("Backend arm should preserve the tokio_postgres error as source");
     assert!(error.as_pool_error().is_none());
     // The Backend arm has no DbError for a connection failure, so the internal
-    // message is exactly the underlying postgres error's string. tokio_postgres
-    // surfaces the connect failure as "error connecting to server" (the OS-level
-    // detail is carried on the error's source, not its Display).
+    // message identifies the generic postgres-error path and includes the
+    // underlying postgres error's string.
     assert_eq!(pg_error.to_string(), "error connecting to server");
     assert_eq!(
         error.error_message_internal(),
-        Some("error connecting to server")
+        Some("Pool error due to generic postgres error: error connecting to server")
     );
 }
 
