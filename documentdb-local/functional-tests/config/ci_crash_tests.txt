@@ -9,9 +9,8 @@
 #   file            .../test_x.py     (skips every test in the file)
 #   directory       .../some_dir/     (skips everything under it)
 # Prefer the directory form for a crashing family: it survives suite pin bumps.
-# Prefixes are crash-list-only — a prefix xfail fails OPEN (masks any new
-# failure under it), a prefix skip fails CLOSED. Failing/flaky entries under a
-# prefix stay in their lists, shadowed until the prefix is removed.
+# Prefixes are crash-list-only, and failing/flaky entries under one stay in their
+# lists, shadowed until it is removed — conftest_known_failures.py explains why.
 #
 # Deliberately NOT here: the geospatial / index-build families. They wedge only
 # where runner capacity is the constraint (index builds queue on the engine's
