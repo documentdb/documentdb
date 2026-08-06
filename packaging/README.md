@@ -155,6 +155,7 @@ Supported DEB/Ubuntu distributions:
 - deb13 — Debian 13 (trixie)
 - ubuntu22.04 — Ubuntu 22.04 (jammy)
 - ubuntu24.04 — Ubuntu 24.04 (noble)
+- ubuntu26.04 — Ubuntu 26.04 (resolute)
 
 Supported PG versions: 15, 16, 17, 18
 

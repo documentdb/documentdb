@@ -48,7 +48,9 @@ RUN install -d -m 0755 /etc/apt/keyrings && \
     . /etc/os-release && \
     wget -qO- https://www.mongodb.org/static/pgp/server-8.0.asc \
         > /etc/apt/trusted.gpg.d/server-8.0.asc && \
-    echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu ${VERSION_CODENAME}/mongodb-org/8.0 multiverse" \
+    MONGOSH_CODENAME="$VERSION_CODENAME" && \
+    if [ "$MONGOSH_CODENAME" = "resolute" ]; then MONGOSH_CODENAME="noble"; fi && \
+    echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu ${MONGOSH_CODENAME}/mongodb-org/8.0 multiverse" \
         > /etc/apt/sources.list.d/mongodb-org-8.0.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends mongodb-mongosh && \

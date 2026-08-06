@@ -15,8 +15,9 @@
 #
 #   WEEKLY (Sunday 04:00 UTC)
 #     - Broad-OS install sweep over representative Tier-2/3 combinations
-#       (deb12, deb13, ubuntu22.04, rhel8). These are build-on-demand combos
-#       with no first-party guarantee; this is drift *signal*, not a gate.
+#       (deb12, deb13, ubuntu22.04, rhel8, ubuntu26.04). These are
+#       build-on-demand combos with no first-party guarantee; this is drift
+#       *signal*, not a gate.
 #     - Scenario suites against the paved test images: package hygiene
 #       (conffile-survives-upgrade, reinstall, purge-residue), extra
 #       scenarios (dry-run/brownfield/port-keep/...), and multi-major
@@ -159,6 +160,8 @@ jobs:
             pg_version: '16'
           - os: rhel8
             pg_version: '17'
+          - os: ubuntu26.04
+            pg_version: '18'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
