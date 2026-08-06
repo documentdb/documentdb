@@ -31,8 +31,8 @@ RUN echo "deb [signed-by=/usr/share/keyrings/pgdg-archive-keyring.gpg] http://ap
 # actual dependencies of the package, plus libipc-run-perl for the TAP suites
 # (extended_rum_recovery_tests): PostgreSQL::Test::Cluster requires IPC::Run,
 # and without it every t/*.pl dies at compile ("Can't locate IPC/Run.pm",
-# "No plan found in TAP output") -- the build image already installs it
-# (libipc-run-perl in Dockerfile-deb), this test image must too.
+# "No plan found in TAP output"). This image is where `make check` actually
+# runs, so it is the image that needs it.
 RUN apt-get update && apt-get install -y \
     postgresql-${POSTGRES_VERSION} \
     postgresql-${POSTGRES_VERSION}-cron \
