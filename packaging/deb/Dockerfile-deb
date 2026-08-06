@@ -28,6 +28,10 @@ ENV LANG=en_US.UTF-8
 RUN echo "deb [signed-by=/usr/share/keyrings/pgdg-archive-keyring.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main ${POSTGRES_VERSION}" > /etc/apt/sources.list.d/pgdg.list && \
     wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor > /usr/share/keyrings/pgdg-archive-keyring.gpg
 
+# Build-time dependencies only. The extension's runtime dependencies -- the
+# server package and the cron/pgvector/postgis/rum extensions -- are declared in
+# debian/control and resolved when the .deb is installed; nothing in the package
+# build compiles or links against them, so they are not installed here.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     tzdata \
@@ -35,14 +39,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     cmake \
     git \
-    postgresql-${POSTGRES_VERSION} \
     postgresql-server-dev-${POSTGRES_VERSION} \
     libpq-dev \
     libicu-dev \
     libkrb5-dev \
-    postgresql-${POSTGRES_VERSION}-cron \
-    postgresql-${POSTGRES_VERSION}-pgvector \
-    $(if [ "${POSTGRES_VERSION}" -lt 18 ]; then echo "postgresql-${POSTGRES_VERSION}-rum"; fi) \
     devscripts \
     debhelper \
     dpkg-dev \
@@ -60,20 +60,6 @@ RUN export CLEAN_SETUP=1 && \
     MAKE_PROGRAM=cmake /tmp/install_setup/install_setup_libbson.sh && \
     /tmp/install_setup/install_setup_pcre2.sh && \
     /tmp/install_setup/install_setup_intel_decimal_math_lib.sh
-
-# Install PostGIS - try package first, fall back to building from source if not available
-RUN apt-get update && \
-    (apt-get install -y --no-install-recommends postgresql-${POSTGRES_VERSION}-postgis-3 || \
-     (apt-get update && \
-      apt-get install -qy \
-      libproj-dev \
-      libxml2-dev \
-      libjson-c-dev \
-      libgeos-dev \
-      libgeos++-dev \
-    && rm -rf /var/lib/apt/lists/* && \
-    export INSTALL_DEPENDENCIES_ROOT=/tmp/install_setup && \
-    PGVERSION=${POSTGRES_VERSION} /tmp/install_setup/install_setup_postgis.sh))
 
 # Set the working directory inside the container
 WORKDIR /build
