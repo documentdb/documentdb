@@ -22,6 +22,14 @@
 set -euo pipefail
 umask 077
 
+# install -d applies -m only to its explicit arguments; under this script's
+# umask 077 an intermediate like /etc/documentdb/local is created 0700
+# root-only, and the gateway group then cannot traverse to its env/state
+# files. Pin the whole chain explicitly.
+ensure_etc_dir() {
+    install -d -m 0755 /etc/documentdb "$(dirname "$1")" "$1"
+}
+
 readonly PROG="documentdb-register-gateway"
 readonly PG_HBA_BLOCK_START="# >>> documentdb-setup managed hba >>>"
 readonly PG_HBA_BLOCK_END="# <<< documentdb-setup managed hba <<<"
@@ -839,6 +847,11 @@ create_gateway_role() {
 }
 
 write_connection_secret() {
+    # SECRET_DIR's parents may not exist when this script runs standalone;
+    # implicit intermediates get umask-077 modes and would block the gateway
+    # user's traversal to the secret. Pin them (ownership is left to the
+    # setup wizard's own pinning where it applies).
+    install -d -m 0755 "$(dirname "$(dirname "${SECRET_DIR}")")" "$(dirname "${SECRET_DIR}")"
     install -d -m 0750 -o root -g "${GW_OS_USER}" "${SECRET_DIR}"
     # libpq-standard URL with host/port carried as query params so the
     # Unix-socket directory path doesn't collide with the URL's literal
@@ -926,7 +939,7 @@ create_admin_user() {
 
 record_state() {
     if [[ -n "${STATE_FILE}" ]]; then
-        install -d -m 0755 "$(dirname "${STATE_FILE}")"
+        ensure_etc_dir "$(dirname "${STATE_FILE}")"
         # Write atomically via
         # tempfile + rename so a SIGTERM mid-write cannot leave a
         # truncated state file that defeats --restore/postrm cleanup.
@@ -1015,7 +1028,7 @@ record_state() {
 # at end-of-setup to update with the SECRET_FILE pointer.
 write_recovery_marker() {
     [[ -n "${STATE_FILE}" ]] || return 0
-    install -d -m 0755 "$(dirname "${STATE_FILE}")"
+    ensure_etc_dir "$(dirname "${STATE_FILE}")"
     local tmp
     # Treat mktemp failure as fatal. The
     # whole point of this helper is to leave a state-file pointer before we
@@ -1172,7 +1185,7 @@ write_gateway_env_fragment() {
     else
         env_target="/etc/documentdb/gateway/gateway.env"
     fi
-    install -d -m 0755 "$(dirname "${env_target}")"
+    ensure_etc_dir "$(dirname "${env_target}")"
     # Ensure the file exists so the systemd unit's non-optional
     # EnvironmentFile= form doesn't fail on first install.
     touch "${env_target}"

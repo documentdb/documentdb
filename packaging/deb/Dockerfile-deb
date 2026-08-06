@@ -52,12 +52,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY scripts /tmp/install_setup
 
+# citus_indent is a formatter only, not needed for packaging; its pinned
+# uncrustify 0.68.1 does not compile with GCC >= 15, so skip it there.
 RUN export CLEAN_SETUP=1 && \
     export INSTALL_DEPENDENCIES_ROOT=/tmp/install_setup && \
     MAKE_PROGRAM=cmake /tmp/install_setup/install_setup_libbson.sh && \
     /tmp/install_setup/install_setup_pcre2.sh && \
     /tmp/install_setup/install_setup_intel_decimal_math_lib.sh && \
-    /tmp/install_setup/install_citus_indent.sh
+    if [ "$(gcc -dumpversion | cut -d. -f1)" -lt 15 ]; then \
+        /tmp/install_setup/install_citus_indent.sh; \
+    else \
+        echo "Skipping citus_indent: uncrustify 0.68.1 does not compile with GCC >= 15"; \
+    fi
 
 # Install PostGIS - try package first, fall back to building from source if not available
 RUN apt-get update && \

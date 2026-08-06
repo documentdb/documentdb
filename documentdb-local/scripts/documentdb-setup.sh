@@ -1071,7 +1071,11 @@ persist_self_managed_postgres_state() {
     if [[ -n "${PG_VERSION}" && "${PG_VERSION}" =~ ^[0-9]+$ ]]; then
         local per_major_dir="/etc/documentdb/local/${PG_VERSION}"
         local per_major_conf="${per_major_dir}/setup.conf"
-        install -d -m 0755 "${per_major_dir}"
+        # install -d applies -m only to its explicit arguments; under the
+        # script's umask 077 an implicit /etc/documentdb/local intermediate
+        # is created 0700 root-only, unreachable for the gateway group.
+        # Pin every level.
+        install -d -m 0755 /etc/documentdb /etc/documentdb/local "${per_major_dir}"
 
         # Symmetric counterpart to the greenfield check in
         # persist_brownfield_state: refuse to lay a greenfield install on top
@@ -1162,7 +1166,9 @@ persist_brownfield_state() {
     local per_major_dir="/etc/documentdb/local/${PG_VERSION}"
     local brownfield_conf="${per_major_dir}/brownfield.conf"
     local legacy_setup_conf="${per_major_dir}/setup.conf"
-    install -d -m 0755 "${per_major_dir}"
+    # Pin intermediates too — see the umask note in
+    # persist_self_managed_postgres_state.
+    install -d -m 0755 /etc/documentdb /etc/documentdb/local "${per_major_dir}"
 
     # A host upgraded from a legacy
     # documentdb-N package may have a left-over setup.conf from an
@@ -2141,6 +2147,10 @@ preflight_validation() {
 ensure_socket_dir_writable() {
     local socket_parent
     socket_parent="$(dirname "${PG_SOCKET_DIR}")"
+    # The grandparent (/run/documentdb-local) would otherwise be an implicit
+    # 0700 root-only intermediate under umask 077, blocking the gateway
+    # user's traversal to the socket.
+    install -d -m 0755 "$(dirname "${socket_parent}")"
     install -d -o documentdb-local -g documentdb-gateway -m 0750 "${socket_parent}"
     install -d -o documentdb-local -g documentdb-gateway -m 0750 "${PG_SOCKET_DIR}"
 }

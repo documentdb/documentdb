@@ -68,14 +68,16 @@ jobs:
       # PG {17, 18}. Other distros (Debian 11/12/13, Ubuntu 22.04) and majors
       # (PG 15/16) are Tier 2/3: build on demand with
       # `packaging/build_packages.sh --os <os> --pg <N>` (see packaging/README.md).
-      # PRs use a 2-cell subset of the same paved distro to stay fast.
-      # PR cells: amd64 runs the paved-road default (PG 18) so the PR-gating
-      # install E2E below runs on the proven path; arm64 covers the PG 17
-      # build. The full matrix exercises every cell either way.
+      # PRs use a 3-cell subset to stay fast: amd64 runs the paved-road
+      # default (PG 18) so the PR-gating install E2E below runs on the proven
+      # path; arm64 covers the PG 17 build; the ubuntu26.04 cell gates the
+      # incoming LTS toolchain (GCC 15, const-correct glibc), which accepts
+      # strictly less than 24.04's. 26.04 stays out of the full/release
+      # matrix until promoted per packaging/distribution-design.md.
       matrix:
         ${{ fromJson(
           (github.event_name == 'pull_request' && !inputs.use_full_matrix) &&
-          '{"include":[{"os":"ubuntu24.04","arch":"amd64","runner":"ubuntu-24.04","pg_version":"18"},{"os":"ubuntu24.04","arch":"arm64","runner":"ubuntu-24.04-arm","pg_version":"17"}]}' ||
+          '{"include":[{"os":"ubuntu24.04","arch":"amd64","runner":"ubuntu-24.04","pg_version":"18"},{"os":"ubuntu24.04","arch":"arm64","runner":"ubuntu-24.04-arm","pg_version":"17"},{"os":"ubuntu26.04","arch":"amd64","runner":"ubuntu-24.04","pg_version":"18"}]}' ||
           '{"os":["ubuntu24.04"],"arch":["amd64","arm64"],"include":[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}],"pg_version":["17","18"]}'
         ) }}
 
@@ -215,7 +217,7 @@ jobs:
       # EVERY full-matrix cell, so piggybacking on it would install lintian
       # and emit a duplicate report four times per run.
       - name: Package lint (lintian, informational)
-        if: matrix.arch == 'amd64' && matrix.pg_version == env.PAVED_PG_MAJOR
+        if: matrix.os == 'ubuntu24.04' && matrix.arch == 'amd64' && matrix.pg_version == env.PAVED_PG_MAJOR
         continue-on-error: true
         run: |
           sudo apt-get update
