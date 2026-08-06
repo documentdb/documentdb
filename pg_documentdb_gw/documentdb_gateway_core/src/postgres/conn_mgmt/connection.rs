@@ -17,10 +17,9 @@ use tokio_postgres::{
     Row,
 };
 
-use crate::{
-    postgres::{conn_mgmt::PoolConnection, PgDocument},
-    telemetry::sql_commenter,
-};
+use crate::postgres::{conn_mgmt::PoolConnection, PgDocument};
+#[cfg(feature = "postgres-sql-commenter")]
+use crate::telemetry::sql_commenter;
 
 /// Failure executing a SQL statement against the backend: either the backend
 /// rejected the statement or the connection's deadline expired first.
@@ -90,10 +89,6 @@ pub struct Connection {
     /// healthy. Deadlines are floored at [`MIN_COMMAND_DEADLINE`], so a real
     /// one is never `0`. See [`Self::with_command_deadline`].
     abandoned_deadline_nanos: AtomicU64,
-    /// Whether sampled queries on this connection should carry a `SQLCommenter`
-    /// `traceparent` comment for Postgres log correlation. Inherited from the
-    /// owning pool's telemetry configuration.
-    sql_commenter_enabled: bool,
     /// Nanoseconds of the deadline for the current request; see
     /// [`Self::set_command_deadline`].
     command_deadline_nanos: AtomicU64,
@@ -107,14 +102,12 @@ impl Connection {
     pub fn new(
         pool_connection: PoolConnection,
         in_transaction: bool,
-        sql_commenter_enabled: bool,
         command_deadline: Duration,
     ) -> Self {
         Self {
             inner: Some(pool_connection),
             in_transaction: AtomicBool::new(in_transaction),
             abandoned_deadline_nanos: AtomicU64::new(0),
-            sql_commenter_enabled,
             command_deadline_nanos: AtomicU64::new(duration_to_nanos(command_deadline)),
             default_command_deadline: command_deadline,
         }
@@ -233,8 +226,9 @@ impl Connection {
         parameter_types: &[Type],
         params: &[&(dyn ToSql + Sync)],
     ) -> std::result::Result<Vec<Row>, StatementError> {
-        if self.sql_commenter_enabled && parameter_types.len() == params.len() {
-            if let Some(comment) = sql_commenter::current_trace_comment() {
+        #[cfg(feature = "postgres-sql-commenter")]
+        if parameter_types.len() == params.len() {
+            if let Some(comment) = sql_commenter::current_comment() {
                 // A per-request comment changes the statement text, so execute it
                 // as an ephemeral unnamed statement rather than caching it. This
                 // keeps the prepared-statement cache free of high-cardinality,

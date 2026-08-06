@@ -4,6 +4,7 @@
 members = [
     "documentdb_gateway",
     "documentdb_gateway_core",
+    "documentdb_gateway_otel",
     "documentdb_macros",
     "documentdb_tests"
 ]
@@ -36,10 +37,15 @@ deadpool = { version = "0.12.3", features = ["rt_tokio_1"] }
 deadpool-postgres = "0.14.1"
 documentdb_macros = { path = "documentdb_macros" }
 documentdb_gateway_core = { path = "documentdb_gateway_core" }
+documentdb_gateway_otel = { path = "documentdb_gateway_otel" }
 dyn-clone = "1.0.20"
 either = "1.15.0"
 futures = "0.3.32"
 hex = "0.4.3"
+metrics = "0.24.6"
+# FIXME: When the metrics-exporter-opentelemetry crate version is bumped with a supported otel version - add a specific version here instead. 
+# This is currently pinned to this git commit in order to support OpenTelemetry 0.32+
+metrics-exporter-opentelemetry = { git = "https://github.com/Noelware/metrics-exporter-opentelemetry", rev = "493caa6f428013dcab57a89883671e3d46969ccf" }
 mimalloc = "0.1.52"
 # mongodb rust driver that we use to write test cases for DocumentDB
 mongodb = { version = "3.6.0", default-features = false, features = [
@@ -48,9 +54,9 @@ mongodb = { version = "3.6.0", default-features = false, features = [
 ] }
 once_cell = "1.21.4"
 openssl = "0.10.79"
-opentelemetry = { version = "0.30", features = ["metrics", "trace"] }
-opentelemetry-otlp = { version = "0.30", features = ["grpc-tonic", "metrics", "trace"] }
-opentelemetry_sdk = { version = "0.30", features = ["rt-tokio", "metrics", "trace"] }
+opentelemetry = { version = "0.32.0", features = ["metrics", "trace"] }
+opentelemetry-otlp = { version = "0.32.0", features = ["grpc-tonic", "metrics", "trace"] }
+opentelemetry_sdk = { version = "0.32.0", features = ["rt-tokio", "metrics", "trace"] }
 rand = "0.10.0"
 regex = "1.12.3"
 scc = { version = "3.7.0", features = ["equivalent", "serde"] }
@@ -63,7 +69,7 @@ tokio-openssl = "0.6.5"
 tokio-postgres = { version = "0.7.18", features = ["with-serde_json-1", "array-impls"] }
 tokio-util = "0.7.18"
 tracing = "0.1.44"
-tracing-opentelemetry = "0.31"
+tracing-opentelemetry = "0.33.0"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 uuid = { version = "1.23.1", features = ["v4"] }
 whoami = "2.0.1"

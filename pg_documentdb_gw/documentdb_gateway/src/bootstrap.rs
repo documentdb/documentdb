@@ -8,16 +8,9 @@
 
 use std::{env, path::PathBuf};
 
-use documentdb_gateway_core::{
-    configuration::{env_keys, DocumentDBSetupConfiguration},
-    telemetry::TelemetryManager,
-};
-use opentelemetry::trace::TracerProvider as _;
+use documentdb_gateway_core::configuration::{env_keys, DocumentDBSetupConfiguration};
+use documentdb_gateway_otel::TelemetryManager;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-
-/// Tracer name used when bridging `tracing` spans into OpenTelemetry. Must match the
-/// instrumentation library identity surfaced on exported spans.
-const TRACER_NAME: &str = "documentdb_gateway";
 
 pub fn init_tracing() {
     let _ = tracing_subscriber::registry()
@@ -27,24 +20,7 @@ pub fn init_tracing() {
 }
 
 pub fn init_tracing_with_telemetry(telemetry_manager: Option<&TelemetryManager>) {
-    let registry = tracing_subscriber::registry()
-        .with(create_env_filter())
-        .with(tracing_subscriber::fmt::layer());
-
-    let result =
-        if let Some(provider) = telemetry_manager.and_then(TelemetryManager::tracer_provider) {
-            registry
-                .with(tracing_opentelemetry::OpenTelemetryLayer::new(
-                    provider.tracer(TRACER_NAME),
-                ))
-                .try_init()
-        } else {
-            registry.try_init()
-        };
-
-    if let Err(err) = result {
-        eprintln!("documentdb-gateway: failed to install tracing subscriber: {err}");
-    }
+    documentdb_gateway_otel::init_tracing_subscriber(create_env_filter(), telemetry_manager);
 }
 
 pub fn with_bootstrap_tracing<T>(f: impl FnOnce() -> T) -> T {

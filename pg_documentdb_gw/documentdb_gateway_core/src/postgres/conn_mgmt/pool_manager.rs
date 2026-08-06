@@ -36,7 +36,6 @@ async fn acquire_pooled_connection(pool: &ConnectionPool) -> Result<Connection> 
     Ok(Connection::new(
         pool_connection,
         false,
-        pool.sql_commenter_enabled(),
         pool.command_deadline(),
     ))
 }

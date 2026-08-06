@@ -163,8 +163,8 @@ where
 /// Records the gateway startup duration through the single shared call site.
 ///
 /// Routes through the [`TelemetryProvider`] when one is supplied (so providers
-/// like the Geneva provider can emit to their own sinks in addition to
-/// `OpenTelemetry`); otherwise records the `OpenTelemetry` startup metrics
+/// like the Geneva provider can emit to their own sinks in addition to the
+/// global metrics recorder); otherwise records through the metrics facade
 /// directly, matching the trait's default behavior.
 fn record_startup(elapsed: Duration, telemetry: Option<&dyn TelemetryProvider>) {
     tracing::info!(

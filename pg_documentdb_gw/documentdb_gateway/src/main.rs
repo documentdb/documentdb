@@ -32,9 +32,9 @@ use documentdb_gateway_core::{
     service::TlsProvider,
     shutdown_controller::SHUTDOWN_CONTROLLER,
     startup::{create_postgres_object, get_service_context},
-    telemetry::{TelemetryConfig, TelemetryManager},
     time::STARTUP_INSTANT,
 };
+use documentdb_gateway_otel::TelemetryManager;
 use tokio::{signal, time::Instant};
 
 fn main() {
@@ -75,32 +75,30 @@ fn main() {
     runtime.block_on(start_gateway(setup_configuration));
 }
 
-async fn start_gateway(setup_configuration: DocumentDBSetupConfiguration) {
-    // Initialize telemetry first so the OTLP tracer provider is available before the
-    // `tracing` subscriber is constructed. Both providers are owned by the manager and
-    // shut down before the runtime exits, ensuring batched data is flushed.
-    let telemetry_config = TelemetryConfig::new(setup_configuration.telemetry_options());
-
-    let telemetry_manager = if telemetry_config.any_signal_enabled() {
-        match TelemetryManager::init_telemetry(&telemetry_config, None) {
-            Ok(manager) => Some(manager),
-            Err(e) => {
-                eprintln!("Failed to initialize OpenTelemetry: {e}");
-                None
-            }
+async fn start_gateway(mut setup_configuration: DocumentDBSetupConfiguration) {
+    // Initialize the telemetry adapter before constructing the tracing subscriber.
+    // The manager owns provider resources and flushes them during shutdown.
+    let telemetry_manager = match TelemetryManager::init_telemetry(
+        setup_configuration.telemetry_provider_options(),
+        None,
+    ) {
+        Ok(manager) => {
+            setup_configuration.set_telemetry_settings(manager.settings());
+            Some(manager)
         }
-    } else {
-        None
+        Err(e) => {
+            eprintln!("Failed to initialize telemetry: {e}");
+            None
+        }
     };
 
     bootstrap::init_tracing_with_telemetry(telemetry_manager.as_ref());
 
     tracing::info!(
-        "Tracing subscriber installed (otel_traces_enabled={})",
+        "Tracing subscriber installed (trace_export_enabled={})",
         telemetry_manager
             .as_ref()
-            .and_then(TelemetryManager::tracer_provider)
-            .is_some()
+            .is_some_and(TelemetryManager::traces_enabled)
     );
 
     let shutdown_token = SHUTDOWN_CONTROLLER.token();

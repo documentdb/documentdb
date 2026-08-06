@@ -1,0 +1,30 @@
+[package]
+name = "documentdb_gateway_otel"
+description = "OpenTelemetry Observability Adapter for DocumentDb Gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = []
+postgres-sql-commenter = ["documentdb_gateway_core/postgres-sql-commenter"]
+
+[dependencies]
+documentdb_gateway_core.workspace = true
+metrics.workspace = true
+metrics-exporter-opentelemetry.workspace = true
+opentelemetry.workspace = true
+opentelemetry-otlp.workspace = true
+opentelemetry_sdk.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-opentelemetry.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

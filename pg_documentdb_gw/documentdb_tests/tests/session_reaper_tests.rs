@@ -60,7 +60,6 @@ async fn session_reaper_rolls_back_expired_transactions_and_invalidates_their_cu
         let connection = Arc::new(Connection::new(
             pool.acquire_connection().await.unwrap(),
             false,
-            pool.sql_commenter_enabled(),
             pool.command_deadline(),
         ));
 
