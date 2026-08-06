@@ -1390,11 +1390,14 @@ EvaluateRedactDocument(pgbson *document, const BsonReplaceRootRedactState *state
 
 			default:
 			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION17053),
-								errmsg(
-									"The $redact stage must evaluate to one of the variables $$KEEP, $$DESCEND, or $$PRUNE, but instead it produced '%s'.",
-									BsonValueToJsonForLogging(
-										&(state->expressionData->value)))));
+				/*
+				 * The expression resolved directly to a system variable that is
+				 * not $$KEEP, $$DESCEND, or $$PRUNE (for example $$CURRENT or
+				 * $$ROOT). A system variable expression does not populate the
+				 * "value" field, so it must not be logged here. Fall through to
+				 * the general evaluation path below, which resolves the variable
+				 * and reports the documented error using the evaluated value.
+				 */
 				break;
 			}
 		}
@@ -1407,7 +1410,12 @@ EvaluateRedactDocument(pgbson *document, const BsonReplaceRootRedactState *state
 
 	pgbson *evaluatedResult = PgbsonWriterGetPgbson(&evaluatedResultWriter);
 	pgbsonelement evaluatedResultElement = { 0 };
-	PgbsonToSinglePgbsonElement(evaluatedResult, &evaluatedResultElement);
+	if (!TryGetSinglePgbsonElementFromPgbson(evaluatedResult, &evaluatedResultElement))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION17053),
+						errmsg(
+							"The $redact stage must evaluate to one of the variables $$KEEP, $$DESCEND, or $$PRUNE, but instead it produced a missing value.")));
+	}
 
 	AggregationExpressionData *parsedValue = palloc0(sizeof(AggregationExpressionData));
 	ParseAggregationExpressionContext context = { .allowRedactVariables = true };

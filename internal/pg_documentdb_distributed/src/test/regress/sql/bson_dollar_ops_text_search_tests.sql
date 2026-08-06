@@ -116,7 +116,7 @@ SELECT cursorPage, continuation, persistConnection FROM documentdb_api.find_curs
 -- pipeline cases
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dollar_ops_text_search", "cursor": {}, "pipeline": [ { "$project": { "_id": 1 } }, { "$match": { "$text": { "$search": "Manzana baya cosechar" } } } ] }');
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dollar_ops_text_search", "cursor": {}, "pipeline": [ { "$match": { "$text": { "$search": "Manzana baya cosechar" } } }, { "$sort": { "_id": 1 } } ] }');
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dollar_ops_text_search", "cursor": {}, "pipeline": [ { "$match": { "$text": { "$search": "Manzana baya cosechar" } } }, { "$project": { "_id": 1, "titular": 1, "rank": { "$meta": "textScore" } } } ] }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dollar_ops_text_search", "cursor": {}, "pipeline": [ { "$match": { "$text": { "$search": "Manzana baya cosechar" } } }, { "$project": { "_id": 1, "titular": 1, "rank": { "$meta": "textScore" } } }, { "$sort": { "_id": 1 } } ] }');
 
 -- now add sort
 SELECT document FROM documentdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana Cosechando" } }' ORDER BY bson_orderby(document, '{ "score": {"$meta": "textScore"} }') DESC;

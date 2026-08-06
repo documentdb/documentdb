@@ -323,6 +323,44 @@ SELECT options FROM documentdb_api_catalog.collections WHERE database_name = 'co
  { "statsEnabled" : true, "changeStreamPreAndPostImages" : { "enabled" : true }, "enableUpdateDescription" : true }
 (1 row)
 
+-- Oversized expireAfterSeconds values clamp before updating the int32 metadata field.
+SELECT documentdb_api.create_collection('collmod', 'coll_mod_test_ttl');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'collmod',
+    '{ "createIndexes": "coll_mod_test_ttl", "indexes": [{ "key": { "expiresAt": 1 }, "name": "expires_ttl", "expireAfterSeconds": 100 }]}',
+    TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api.coll_mod(
+    'collmod',
+    'coll_mod_test_ttl',
+    '{ "collMod": "coll_mod_test_ttl", "index": { "name": "expires_ttl", "expireAfterSeconds": { "$numberLong": "2147483648" } } }');
+                                                                         coll_mod                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "ok" : { "$numberInt" : "1" }, "expireAfterSeconds_old" : { "$numberLong" : "100" }, "expireAfterSeconds_new" : { "$numberDouble" : "2147483647.0" } }
+(1 row)
+
+SELECT (index_spec).index_expire_after_seconds
+FROM documentdb_api_catalog.collection_indexes
+WHERE collection_id = (
+    SELECT collection_id
+    FROM documentdb_api_catalog.collections
+    WHERE database_name = 'collmod' AND collection_name = 'coll_mod_test_ttl')
+AND (index_spec).index_name = 'expires_ttl';
+ index_expire_after_seconds 
+----------------------------
+                 2147483647
+(1 row)
+
 RESET documentdb.enablePerCollectionPlannerStatistics;
 RESET documentdb.enablePlannerStatisticsNewCollections;
 RESET documentdb.enablePreImages;

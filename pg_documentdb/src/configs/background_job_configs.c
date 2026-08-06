@@ -28,6 +28,9 @@ int IndexQueueEvictionIntervalInSec = DEFAULT_INDEX_BUILD_EVICTION_INTERVAL_IN_S
 #define DEFAULT_MAX_NUM_ACTIVE_USERS_INDEX_BUILDS 2
 int MaxNumActiveUsersIndexBuilds = DEFAULT_MAX_NUM_ACTIVE_USERS_INDEX_BUILDS;
 
+#define DEFAULT_FORCE_INDEX_BUILDS_BLOCKING false
+bool ForceIndexBuildsBlocking = DEFAULT_FORCE_INDEX_BUILDS_BLOCKING;
+
 #define DEFAULT_MAX_TTL_DELETE_BATCH_SIZE 1000
 int MaxTTLDeleteBatchSize = DEFAULT_MAX_TTL_DELETE_BATCH_SIZE;
 
@@ -233,6 +236,20 @@ InitializeBackgroundJobConfigurations(const char *prefix, const char *newGucPref
 		gettext_noop("Max number of active users Index Builds that can run."),
 		NULL, &MaxNumActiveUsersIndexBuilds,
 		DEFAULT_MAX_NUM_ACTIVE_USERS_INDEX_BUILDS, 1, INT_MAX,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.force_index_builds_blocking", prefix),
+		gettext_noop(
+			"Forces createIndexes to request a blocking (non-concurrent) build "
+			"instead of a CREATE INDEX CONCURRENTLY background build. Intended for "
+			"parallel test stacks where the concurrent build path waits out "
+			"unrelated long-running transactions cluster-wide and head-of-line "
+			"blocks other index builds."),
+		NULL, &ForceIndexBuildsBlocking,
+		DEFAULT_FORCE_INDEX_BUILDS_BLOCKING,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

@@ -135,7 +135,7 @@ def pytest_collection_modifyitems(config, items):
     crash_prefixes = _build_prefix_tuple(crash_prefix_entries, rootdir)
 
     xfail_strict = pytest.mark.xfail(
-        reason="Known failure (ci_failing_tests.txt)",
+        reason="Known failure - Expect fail test now passes (ci_failing_tests.txt)",
         strict=True,
     )
     xfail_flaky = pytest.mark.xfail(

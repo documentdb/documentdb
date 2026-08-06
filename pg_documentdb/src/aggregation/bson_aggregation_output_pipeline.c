@@ -163,6 +163,9 @@ static inline void AddTargetCollectionRTEDollarMerge(Query *query,
 static HTAB * InitHashTableFromStringArray(const bson_value_t *onValues, int
 										   onValuesArraySize);
 static inline void ValidatePreOutputStages(Query *query, char *stageName);
+static Query * MigrateQueryToFilteredOutputSubQuery(Query *query,
+													AggregationPipelineBuildContext *
+													context);
 static bool MergeQueryCTEWalker(Node *node, void *context);
 static inline void ValidateFinalPgbsonBeforeWriting(const pgbson *finalBson, const
 													pgbson *targetDocument,
@@ -713,8 +716,7 @@ HandleMerge(const bson_value_t *existingValue, Query *query,
 									&mergeArgs.on);
 	}
 
-	context->expandTargetList = true;
-	query = MigrateQueryToSubQuery(query, context);
+	query = MigrateQueryToFilteredOutputSubQuery(query, context);
 	query->commandType = CMD_MERGE;
 	AddTargetCollectionRTEDollarMerge(query, targetCollection);
 
@@ -2012,8 +2014,7 @@ HandleOut(const bson_value_t *existingValue, Query *query,
 	}
 
 	RearrangeTargetListForMerge(query, targetCollection, false, NULL);
-	context->expandTargetList = true;
-	query = MigrateQueryToSubQuery(query, context);
+	query = MigrateQueryToFilteredOutputSubQuery(query, context);
 	query->commandType = CMD_MERGE;
 	AddTargetCollectionRTEDollarMerge(query, targetCollection);
 
@@ -2076,6 +2077,49 @@ HandleOut(const bson_value_t *existingValue, Query *query,
 													InvalidOid);
 #endif
 	return query;
+}
+
+
+/*
+ * Output stages must discard rows pruned by stages such as $redact before
+ * constructing the MERGE source relation.
+ */
+static Query *
+MigrateQueryToFilteredOutputSubQuery(Query *query,
+									 AggregationPipelineBuildContext *context)
+{
+	context->expandTargetList = true;
+	query = MigrateQueryToSubQuery(query, context);
+
+	TargetEntry *documentEntry = linitial(query->targetList);
+	NullTest *documentNotNull = makeNode(NullTest);
+	documentNotNull->arg = documentEntry->expr;
+	documentNotNull->nulltesttype = IS_NOT_NULL;
+	documentNotNull->argisrow = false;
+	query->jointree->quals = (Node *) documentNotNull;
+
+	RangeTblEntry *sourceRte = linitial(query->rtable);
+	ListCell *cell;
+	foreach(cell, sourceRte->subquery->targetList)
+	{
+		TargetEntry *sourceEntry = lfirst(cell);
+		if (sourceEntry->resjunk || sourceEntry->resno == documentEntry->resno)
+		{
+			continue;
+		}
+
+		Var *sourceVar = makeVar(1, sourceEntry->resno,
+								 exprType((Node *) sourceEntry->expr),
+								 exprTypmod((Node *) sourceEntry->expr),
+								 exprCollation((Node *) sourceEntry->expr), 0);
+		query->targetList = lappend(
+			query->targetList,
+			makeTargetEntry((Expr *) sourceVar, sourceEntry->resno,
+							sourceEntry->resname, false));
+	}
+
+	context->expandTargetList = true;
+	return MigrateQueryToSubQuery(query, context);
 }
 
 

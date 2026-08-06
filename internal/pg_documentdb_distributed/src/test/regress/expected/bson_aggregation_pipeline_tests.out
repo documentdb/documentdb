@@ -1977,6 +1977,7 @@ EXPLAIN (VERBOSE OFF, COSTS OFF) SELECT document FROM bson_aggregation_pipeline(
                      Join Filter: (documents_4115.object_id OPERATOR(documentdb_core.=) documentdb_core.bson_get_value(collection.document, '_id'::text))
                      ->  Bitmap Heap Scan on documents_4115_411090 collection
                            Recheck Cond: (shard_key_value = '4115'::bigint)
+                           Filter: (document IS NOT NULL)
                            ->  Bitmap Index Scan on _id_
                                  Index Cond: (shard_key_value = '4115'::bigint)
                      ->  Materialize
@@ -1984,7 +1985,7 @@ EXPLAIN (VERBOSE OFF, COSTS OFF) SELECT document FROM bson_aggregation_pipeline(
                                  Recheck Cond: (shard_key_value = '4115'::bigint)
                                  ->  Bitmap Index Scan on _id_
                                        Index Cond: (shard_key_value = '4115'::bigint)
-(17 rows)
+(18 rows)
 
 SELECT documentdb_api.create_collection('pipelineDB', 'agg_pipeline_optimizations_new');
 NOTICE:  creating collection
@@ -2006,6 +2007,7 @@ EXPLAIN (VERBOSE OFF, COSTS OFF) SELECT document FROM bson_aggregation_pipeline(
                      Join Filter: (documents_4116.object_id OPERATOR(documentdb_core.=) documentdb_core.bson_get_value(collection.document, '_id'::text))
                      ->  Bitmap Heap Scan on documents_4115_411090 collection
                            Recheck Cond: (shard_key_value = '4115'::bigint)
+                           Filter: (document IS NOT NULL)
                            ->  Bitmap Index Scan on _id_
                                  Index Cond: (shard_key_value = '4115'::bigint)
                      ->  Materialize
@@ -2013,7 +2015,7 @@ EXPLAIN (VERBOSE OFF, COSTS OFF) SELECT document FROM bson_aggregation_pipeline(
                                  Recheck Cond: (shard_key_value = '4116'::bigint)
                                  ->  Bitmap Index Scan on _id_
                                        Index Cond: (shard_key_value = '4116'::bigint)
-(17 rows)
+(18 rows)
 
 EXPLAIN (VERBOSE OFF, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('pipelineDB', '{ "aggregate": "agg_pipeline_optimizations", "pipeline": [ { "$merge": "agg_pipeline_optimizations" } ] }');
                                                                         QUERY PLAN                                                                        
@@ -2028,6 +2030,7 @@ EXPLAIN (VERBOSE OFF, COSTS OFF) SELECT document FROM bson_aggregation_pipeline(
                      Join Filter: (documents_4115.object_id OPERATOR(documentdb_core.=) documentdb_core.bson_get_value(collection.document, '_id'::text))
                      ->  Bitmap Heap Scan on documents_4115_411090 collection
                            Recheck Cond: (shard_key_value = '4115'::bigint)
+                           Filter: (document IS NOT NULL)
                            ->  Bitmap Index Scan on _id_
                                  Index Cond: (shard_key_value = '4115'::bigint)
                      ->  Materialize
@@ -2035,7 +2038,7 @@ EXPLAIN (VERBOSE OFF, COSTS OFF) SELECT document FROM bson_aggregation_pipeline(
                                  Recheck Cond: (shard_key_value = '4115'::bigint)
                                  ->  Bitmap Index Scan on _id_
                                        Index Cond: (shard_key_value = '4115'::bigint)
-(17 rows)
+(18 rows)
 
 -- Shard the collection now
 SELECT documentdb_api.shard_collection('pipelineDB', 'agg_pipeline_optimizations', '{ "_id": "hashed" }', false);

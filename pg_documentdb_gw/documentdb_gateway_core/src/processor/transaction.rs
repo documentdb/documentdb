@@ -68,6 +68,25 @@ pub async fn handle(
 
         connection_context.transaction = Some((lsid, request_transaction_info.transaction_number));
     }
+
+    // A commitTransaction/abortTransaction with no resolvable transaction number
+    // never entered the block above, so there is no transaction to act on. The
+    // documented semantics require reporting NoSuchTransaction rather than
+    // silently succeeding (commit) or failing internally (abort). The idempotent
+    // "commit an already-committed transaction" retry carries a transaction
+    // number and returns early above, so it is unaffected.
+    if connection_context.transaction.is_none()
+        && matches!(
+            request_context.request_type(),
+            RequestType::CommitTransaction | RequestType::AbortTransaction
+        )
+    {
+        return Err(DocumentDBError::documentdb_error(
+            ErrorCode::NoSuchTransaction,
+            "No transaction is active for this session".to_owned(),
+        ));
+    }
+
     Ok(())
 }
 
@@ -82,16 +101,26 @@ pub async fn process_commit(context: &ConnectionContext, activity_id: &str) -> R
             .await
             .map_err(|e| map_transaction_error(e, is_replica_cluster, activity_id))?;
     }
+    // Reaching here without a transaction means `handle` swallowed the
+    // already-committed case (an idempotent commit retry) to leave the context
+    // transaction unset; that retry must still report success. A commit with no
+    // resolvable transaction is rejected earlier in `handle` with
+    // NoSuchTransaction, so it never reaches this no-op.
     Ok(Response::ok())
 }
 
 pub async fn process_abort(context: &ConnectionContext, activity_id: &str) -> Result<Response> {
-    let (lsid, _) = context
-        .transaction
-        .as_ref()
-        .ok_or(DocumentDBError::internal_error(
-            "Transaction information was not populated for abort.".to_owned(),
-        ))?;
+    let Some((lsid, _)) = context.transaction.as_ref() else {
+        // An abortTransaction that arrives without an active transaction context
+        // (for example a session that never began a transaction, so no
+        // transaction number resolves) leaves the context transaction unset.
+        // Surface the documented NoSuchTransaction error instead of an internal
+        // error.
+        return Err(DocumentDBError::documentdb_error(
+            ErrorCode::NoSuchTransaction,
+            "No transaction is active for this session".to_owned(),
+        ));
+    };
 
     let caller = context.auth_state.principal()?;
     let store = context.service_context.transaction_store();

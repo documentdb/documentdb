@@ -26,6 +26,7 @@ SELECT documentdb_api.db_stats('diagnostic_db');
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('diagnostic_db', '{ "aggregate": "diag_coll1", "pipeline": [ { "$collStats": { "storageStats": {} }}]}');
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('diagnostic_db', '{ "aggregate": "diag_coll2", "pipeline": [ { "$collStats": { "storageStats": {} }}]}');
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('diagnostic_db', '{ "aggregate": "diag_coll3", "pipeline": [ { "$collStats": { "storageStats": {} }}]}');
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('diagnostic_db', '{ "aggregate": "diag_coll1", "pipeline": [ { "$collStats": { "storageStats": { "scale": 0.5 } }}]}');
 
 -- index_stats should work
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('diagnostic_db', '{ "aggregate": "diag_coll1", "pipeline": [ { "$indexStats": { }}, { "$project": { "accesses.since": 0 }}]}');
