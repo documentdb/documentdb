@@ -56,6 +56,17 @@ ShouldEnableBtreeBsonSelectivityFromStats(void)
 
 
 /*
+ * IsBtreeBsonSelectivityFromStatsEnabled exposes the effective enabled state of
+ * btree-based bson selectivity.
+ */
+bool
+IsBtreeBsonSelectivityFromStatsEnabled(void)
+{
+	return ShouldEnableBtreeBsonSelectivityFromStats();
+}
+
+
+/*
  * bson_operator_selectivity returns the selectivity of a BSON operator
  * on a relation. It calls into PG selectivity functions if the operator is a well known btree operator.
  */

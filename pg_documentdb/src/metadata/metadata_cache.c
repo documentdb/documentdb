@@ -23,6 +23,7 @@
 #include "lib/stringinfo.h"
 #include "nodes/makefuncs.h"
 #include "parser/parse_func.h"
+#include "parser/parse_oper.h"
 #include "parser/parse_type.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
@@ -66,6 +67,9 @@ static Oid GetInternalBinaryOperatorId(Oid *operatorId, Oid leftTypeOid,
 									   Oid rightTypeOid);
 static Oid GetCoreBinaryOperatorId(Oid *operatorId, Oid leftTypeOid, char *operatorName,
 								   Oid rightTypeOid);
+static Oid GetCoreBinaryOperatorIdMissingOk(Oid *operatorId, Oid leftTypeOid,
+											char *operatorName,
+											Oid rightTypeOid);
 static Oid GetBinaryOperatorFunctionIdWithSchemaMaybeMissing(Oid *operatorFuncId,
 															 char *operatorName,
 															 Oid leftTypeOid, Oid
@@ -419,6 +423,15 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* OID of the less than '<=' operator for bson */
 	Oid BsonLessThanEqualOperatorId;
+
+	/* OIDs of the native-stats btree operators (*=, *<, *<=, *>, *>=): cross-type
+	 * bson OP bsonquery members of bson_btree_ops used only during cost
+	 * estimation (see RemapObjectIdBtreeQualsForStats). */
+	Oid BsonNativeStatsBtreeEqualOperatorId;
+	Oid BsonNativeStatsBtreeGreaterThanOperatorId;
+	Oid BsonNativeStatsBtreeGreaterThanEqualOperatorId;
+	Oid BsonNativeStatsBtreeLessThanOperatorId;
+	Oid BsonNativeStatsBtreeLessThanEqualOperatorId;
 
 	/* OID of the $eq function for bson query */
 	Oid BsonEqualMatchRuntimeFunctionId;
@@ -6993,6 +7006,56 @@ BsonLessThanOperatorId(void)
 
 
 /*
+ * Accessors for the native-stats btree operators (*=, *<, *<=, *>, *>=):
+ * cross-type bson OP bsonquery members of bson_btree_ops that carry the builtin
+ * scalar selectivity estimators as RESTRICT.
+ */
+Oid
+BsonNativeStatsBtreeEqualOperatorId(void)
+{
+	return GetCoreBinaryOperatorIdMissingOk(
+		&Cache.BsonNativeStatsBtreeEqualOperatorId,
+		BsonTypeId(), "*=", BsonQueryTypeId());
+}
+
+
+Oid
+BsonNativeStatsBtreeGreaterThanOperatorId(void)
+{
+	return GetCoreBinaryOperatorIdMissingOk(
+		&Cache.BsonNativeStatsBtreeGreaterThanOperatorId,
+		BsonTypeId(), "*>", BsonQueryTypeId());
+}
+
+
+Oid
+BsonNativeStatsBtreeGreaterThanEqualOperatorId(void)
+{
+	return GetCoreBinaryOperatorIdMissingOk(
+		&Cache.BsonNativeStatsBtreeGreaterThanEqualOperatorId,
+		BsonTypeId(), "*>=", BsonQueryTypeId());
+}
+
+
+Oid
+BsonNativeStatsBtreeLessThanOperatorId(void)
+{
+	return GetCoreBinaryOperatorIdMissingOk(
+		&Cache.BsonNativeStatsBtreeLessThanOperatorId,
+		BsonTypeId(), "*<", BsonQueryTypeId());
+}
+
+
+Oid
+BsonNativeStatsBtreeLessThanEqualOperatorId(void)
+{
+	return GetCoreBinaryOperatorIdMissingOk(
+		&Cache.BsonNativeStatsBtreeLessThanEqualOperatorId,
+		BsonTypeId(), "*<=", BsonQueryTypeId());
+}
+
+
+/*
  * OID of the operator class for BSON Text operations with {ExtensionObjectPrefix}_rum
  */
 Oid
@@ -7313,6 +7376,29 @@ GetCoreBinaryOperatorId(Oid *operatorId, Oid leftTypeOid, char *operatorName,
 
 		*operatorId =
 			OpernameGetOprid(operatorNameList, leftTypeOid, rightTypeOid);
+	}
+
+	return *operatorId;
+}
+
+
+/*
+ * Gets an operator from the core schema, returning InvalidOid if it is not
+ * available in the installed extension version.
+ */
+static Oid
+GetCoreBinaryOperatorIdMissingOk(Oid *operatorId, Oid leftTypeOid,
+								 char *operatorName, Oid rightTypeOid)
+{
+	InitializeDocumentDBApiExtensionCache();
+
+	if (*operatorId == InvalidOid)
+	{
+		List *operatorNameList = list_make2(makeString(CoreSchemaName),
+											makeString(operatorName));
+		bool missingOk = true;
+		*operatorId = LookupOperName(NULL, operatorNameList, leftTypeOid,
+									 rightTypeOid, missingOk, -1);
 	}
 
 	return *operatorId;

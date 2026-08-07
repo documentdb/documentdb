@@ -27,6 +27,7 @@
 #include <statistics/statistics.h>
 
 #include "query/bson_dollar_selectivity.h"
+#include "planner/selectivity.h"
 #include "opclass/bson_gin_composite_scan.h"
 #include "opclass/bson_gin_index_mgmt.h"
 #include "aggregation/bson_query_common.h"
@@ -160,6 +161,23 @@ EnablePlannerCostSelectivityFromRelOptInfo(PlannerInfo *planner, RelOptInfo *rel
 	bool isPerCollectionStatsEnabled = false;
 	return EnablePlannerCostSelectivityFromRelOptInfoCore(planner, rel,
 														  &isPerCollectionStatsEnabled);
+}
+
+
+/*
+ * IsBtreeBsonSelectivityFromStatsEnabledForRelation returns whether btree
+ * selectivity can use statistics for the relation. This intentionally ignores
+ * the composite index planner GUC.
+ */
+bool
+IsBtreeBsonSelectivityFromStatsEnabledForRelation(PlannerInfo *planner,
+												  RelOptInfo *rel)
+{
+	bool isPerCollectionStatsEnabled = false;
+	EnablePlannerCostSelectivityFromRelOptInfoCore(planner, rel,
+												   &isPerCollectionStatsEnabled);
+	return isPerCollectionStatsEnabled ||
+		   IsBtreeBsonSelectivityFromStatsEnabled();
 }
 
 
