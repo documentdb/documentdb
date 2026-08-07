@@ -46,6 +46,22 @@ PG_FUNCTION_INFO_V1(bson_last_with_expr_transition);
 PG_FUNCTION_INFO_V1(bson_last_with_expr_combine);
 PG_FUNCTION_INFO_V1(bson_last_with_expr_final);
 
+/*
+ * Internal-state variants. These share the bsonaggvalue-state implementations
+ * above but are declared with an "internal" transition type, which lets the
+ * corresponding aggregates be parallel-safe: the pointer-bearing BsonAggValue
+ * state is transferred across a parallel worker boundary via the generic
+ * bson_agg_value_serialize / bson_agg_value_deserialize functions instead of a
+ * raw varlena copy. The transition/combine/final logic is identical.
+ */
+PG_FUNCTION_INFO_V1(bson_first_with_expr_transition_internal);
+PG_FUNCTION_INFO_V1(bson_first_with_expr_combine_internal);
+PG_FUNCTION_INFO_V1(bson_first_with_expr_final_internal);
+
+PG_FUNCTION_INFO_V1(bson_last_with_expr_transition_internal);
+PG_FUNCTION_INFO_V1(bson_last_with_expr_combine_internal);
+PG_FUNCTION_INFO_V1(bson_last_with_expr_final_internal);
+
 /* --------------------------------------------------------- */
 /* Helper implementations */
 /* --------------------------------------------------------- */
@@ -355,4 +371,54 @@ bson_last_with_expr_final(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_POINTER(PgbsonElementToPgbson(&finalValue));
+}
+
+
+/* =========================================================
+ * Internal-state (parallel-safe) wrappers
+ * =========================================================
+ * These delegate to the bsonaggvalue-state implementations above. The state is
+ * a BsonAggValue pointer in both cases; only the SQL-declared transition type
+ * differs ("internal" vs "bsonaggvalue"), which is what allows the aggregate to
+ * participate in parallel plans via serialize / deserialize.
+ */
+Datum
+bson_first_with_expr_transition_internal(PG_FUNCTION_ARGS)
+{
+	return bson_first_with_expr_transition(fcinfo);
+}
+
+
+Datum
+bson_first_with_expr_combine_internal(PG_FUNCTION_ARGS)
+{
+	return bson_first_with_expr_combine(fcinfo);
+}
+
+
+Datum
+bson_first_with_expr_final_internal(PG_FUNCTION_ARGS)
+{
+	return bson_first_with_expr_final(fcinfo);
+}
+
+
+Datum
+bson_last_with_expr_transition_internal(PG_FUNCTION_ARGS)
+{
+	return bson_last_with_expr_transition(fcinfo);
+}
+
+
+Datum
+bson_last_with_expr_combine_internal(PG_FUNCTION_ARGS)
+{
+	return bson_last_with_expr_combine(fcinfo);
+}
+
+
+Datum
+bson_last_with_expr_final_internal(PG_FUNCTION_ARGS)
+{
+	return bson_last_with_expr_final(fcinfo);
 }

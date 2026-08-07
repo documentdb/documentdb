@@ -153,6 +153,21 @@ PG_FUNCTION_INFO_V1(bson_max_with_expr_combine);
 PG_FUNCTION_INFO_V1(bson_min_with_expr_transition);
 PG_FUNCTION_INFO_V1(bson_min_with_expr_combine);
 PG_FUNCTION_INFO_V1(bson_min_max_with_expr_final);
+
+/*
+ * Internal-state variants of the $min/$max with-expr accumulators. These use an
+ * "internal" transition type together with serialize/deserialize functions so
+ * the pointer-bearing transition state is transferred across a parallel worker
+ * boundary through a self-contained byte buffer rather than a raw pointer copy.
+ */
+PG_FUNCTION_INFO_V1(bson_max_with_expr_transition_internal);
+PG_FUNCTION_INFO_V1(bson_max_with_expr_combine_internal);
+PG_FUNCTION_INFO_V1(bson_min_with_expr_transition_internal);
+PG_FUNCTION_INFO_V1(bson_min_with_expr_combine_internal);
+PG_FUNCTION_INFO_V1(bson_min_max_with_expr_final_internal);
+PG_FUNCTION_INFO_V1(bson_agg_value_serialize);
+PG_FUNCTION_INFO_V1(bson_agg_value_deserialize);
+
 PG_FUNCTION_INFO_V1(bson_sum_avg_with_expr_transition);
 PG_FUNCTION_INFO_V1(bson_sum_avg_with_expr_minvtransition);
 
@@ -2412,6 +2427,55 @@ bson_min_max_with_expr_final(PG_FUNCTION_ARGS)
 
 
 /*
+ * Internal-state SFUNC for $max with expr. Shares the transition logic with the
+ * bsonaggvalue variant; the only difference is the declared transition type
+ * ("internal") which lets the aggregate be parallel-safe via serialize /
+ * deserialize instead of a raw varlena copy.
+ */
+Datum
+bson_max_with_expr_transition_internal(PG_FUNCTION_ARGS)
+{
+	bool isMax = true;
+	return BsonMinMaxWithExprTransitionCore(fcinfo, isMax);
+}
+
+
+/* Internal-state SFUNC for $min with expr. */
+Datum
+bson_min_with_expr_transition_internal(PG_FUNCTION_ARGS)
+{
+	bool isMax = false;
+	return BsonMinMaxWithExprTransitionCore(fcinfo, isMax);
+}
+
+
+/* Internal-state COMBINEFUNC for $max with expr. */
+Datum
+bson_max_with_expr_combine_internal(PG_FUNCTION_ARGS)
+{
+	bool isMax = true;
+	return BsonMinMaxWithExprCombineCore(fcinfo, isMax);
+}
+
+
+/* Internal-state COMBINEFUNC for $min with expr. */
+Datum
+bson_min_with_expr_combine_internal(PG_FUNCTION_ARGS)
+{
+	bool isMax = false;
+	return BsonMinMaxWithExprCombineCore(fcinfo, isMax);
+}
+
+
+/* Internal-state FINALFUNC shared by $min/$max with expr. */
+Datum
+bson_min_max_with_expr_final_internal(PG_FUNCTION_ARGS)
+{
+	return bson_min_max_with_expr_final(fcinfo);
+}
+
+
+/*
  * Applies the "state transition" (SFUNC) for sum and average with inline
  * expression evaluation. Instead of receiving a pre-evaluated bson value,
  * this function takes the raw document and expression spec, evaluates the
@@ -2752,6 +2816,70 @@ bsonaggvalue_recv(PG_FUNCTION_ARGS)
 	bson_value_copy(&element.bsonValue, &state->value);
 	state->collationString = collationString != NULL ?
 							 pstrdup(collationString) : NULL;
+
+	PG_RETURN_POINTER(state);
+}
+
+
+/*
+ * bson_agg_value_serialize: generic SERIALFUNC for internal-state aggregates
+ * whose transition state is a BsonAggValue (the $min/$max and $first/$last
+ * with-expr accumulators). Flattens the pointer-bearing BsonAggValue transition
+ * state into a self-contained byte buffer so it can be moved across a parallel
+ * worker boundary. The encoding matches bsonaggvalue_send. Declared STRICT: a
+ * NULL transition state serializes to a NULL bytea, so this is never called
+ * with a NULL argument.
+ */
+Datum
+bson_agg_value_serialize(PG_FUNCTION_ARGS)
+{
+	BsonAggValue *state = (BsonAggValue *) PG_GETARG_POINTER(0);
+
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	AppendBsonAggValueToWriter(&writer, &state->value);
+	if (state->collationString != NULL)
+	{
+		PgbsonWriterAppendUtf8(&writer, "collation", strlen("collation"),
+							   state->collationString);
+	}
+
+	pgbson *serialized = PgbsonWriterGetPgbson(&writer);
+	PG_RETURN_BYTEA_P((bytea *) serialized);
+}
+
+
+/*
+ * bson_agg_value_deserialize: generic DESERIALFUNC matching
+ * bson_agg_value_serialize. Rebuilds the BsonAggValue transition state in the
+ * aggregate memory context from the buffer produced by the serialize function.
+ * Declared STRICT so it is never called with a NULL serialized argument.
+ */
+Datum
+bson_agg_value_deserialize(PG_FUNCTION_ARGS)
+{
+	MemoryContext aggregateContext;
+	if (!AggCheckCallContext(fcinfo, &aggregateContext))
+	{
+		ereport(ERROR, errmsg(
+					"aggregate function bson_agg_value_deserialize called in non-aggregate context"));
+	}
+
+	bytea *serialized = PG_GETARG_BYTEA_PP(0);
+	pgbson *bson = PgbsonInitFromBuffer(VARDATA_ANY(serialized),
+										VARSIZE_ANY_EXHDR(serialized));
+
+	pgbsonelement element;
+	const char *collationString =
+		PgbsonToSinglePgbsonElementWithCollation(bson, &element);
+
+	MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
+	BsonAggValue *state = (BsonAggValue *) palloc0(sizeof(BsonAggValue));
+	SET_VARSIZE(state, sizeof(BsonAggValue));
+	bson_value_copy(&element.bsonValue, &state->value);
+	state->collationString = collationString != NULL ?
+							 pstrdup(collationString) : NULL;
+	MemoryContextSwitchTo(oldContext);
 
 	PG_RETURN_POINTER(state);
 }

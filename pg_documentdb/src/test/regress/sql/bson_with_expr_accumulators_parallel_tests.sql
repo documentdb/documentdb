@@ -1,0 +1,159 @@
+SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_api_internal,documentdb_core,pg_catalog;
+
+-- =============================================================================
+-- Regression: with-expr $min / $max / $first / $last accumulators under
+-- parallel aggregation.
+--
+-- These accumulators keep their running value in a transition state
+-- (BsonAggValue) that embeds raw pointers valid only in the process that built
+-- it. If the planner picks a parallel partial-aggregation plan, PostgreSQL
+-- transfers the partial state to the leader by copying its raw varlena bytes,
+-- so the leader dereferences dangling pointers and the backend crashes. A
+-- pointer-bearing value (e.g. a string) is required for the crash to manifest.
+--
+-- Two guards are validated here:
+--   1. The bsonaggvalue-state accumulators (bson*withexpr) are PARALLEL = UNSAFE,
+--      so the planner never generates a partial-aggregation plan for them and
+--      they complete correctly without crashing.
+--   2. The internal-state accumulators (bson*withexprinternal) carry the state
+--      as an "internal" pointer that is flattened via serialize / deserialize,
+--      so they can run in a parallel partial-aggregation plan safely.
+-- =============================================================================
+
+-- Backing table with a pointer-bearing string value (the crash-prone case),
+-- large enough for the planner to consider a parallel scan worthwhile.
+CREATE TABLE withexpr_par_data (document documentdb_core.bson);
+INSERT INTO withexpr_par_data
+    SELECT FORMAT('{ "s": "val_%s" }', lpad(i::text, 6, '0'))::documentdb_core.bson
+    FROM generate_series(1, 20000) i;
+ANALYZE withexpr_par_data;
+
+-- Force the planner to prefer a parallel sequential scan.
+SET parallel_setup_cost TO 0;
+SET parallel_tuple_cost TO 0;
+SET min_parallel_table_scan_size TO 0;
+SET max_parallel_workers_per_gather TO 4;
+SET enable_bitmapscan TO off;
+SET enable_indexscan TO off;
+SET enable_indexonlyscan TO off;
+
+-- The bsonaggvalue-state accumulators are parallel-restricted: the transition
+-- state embeds raw pointers, so it cannot be produced by a Partial Aggregate in
+-- a worker. The plan therefore runs the aggregate on the leader (no Partial
+-- Aggregate node) above a Gather over a Parallel Seq Scan -- the state never
+-- crosses a process boundary.
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT documentdb_api_internal.bsonmaxwithexpr(document, '{ "": "$s" }', '{}', NULL)
+FROM withexpr_par_data;
+
+-- ...and they still return the correct value.
+SELECT documentdb_api_internal.bsonmaxwithexpr(document, '{ "": "$s" }', '{}', NULL)
+FROM withexpr_par_data;
+SELECT documentdb_api_internal.bsonminwithexpr(document, '{ "": "$s" }', '{}', NULL)
+FROM withexpr_par_data;
+SELECT documentdb_api_internal.bsonfirstwithexpr(document, '{ "": "$s" }', '{}', NULL) IS NOT NULL AS ok
+FROM withexpr_par_data;
+SELECT documentdb_api_internal.bsonlastwithexpr(document, '{ "": "$s" }', '{}', NULL) IS NOT NULL AS ok
+FROM withexpr_par_data;
+
+-- The internal-state accumulators are parallel-safe: the plan is
+-- Finalize Aggregate -> Gather -> Partial Aggregate, which transfers the state
+-- via serialize / deserialize.
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT documentdb_api_internal.bsonmaxwithexprinternal(document, '{ "": "$s" }', '{}', NULL)
+FROM withexpr_par_data;
+
+-- Order-insensitive $max / $min are fully deterministic under parallel scans.
+SELECT documentdb_api_internal.bsonmaxwithexprinternal(document, '{ "": "$s" }', '{}', NULL)
+FROM withexpr_par_data;
+SELECT documentdb_api_internal.bsonminwithexprinternal(document, '{ "": "$s" }', '{}', NULL)
+FROM withexpr_par_data;
+
+-- Order-sensitive $first / $last complete without crashing under parallel
+-- scans; their value is order-dependent, so only completion is asserted.
+SELECT documentdb_api_internal.bsonfirstwithexprinternal(document, '{ "": "$s" }', '{}', NULL) IS NOT NULL AS ok
+FROM withexpr_par_data;
+SELECT documentdb_api_internal.bsonlastwithexprinternal(document, '{ "": "$s" }', '{}', NULL) IS NOT NULL AS ok
+FROM withexpr_par_data;
+
+RESET parallel_setup_cost;
+RESET parallel_tuple_cost;
+RESET min_parallel_table_scan_size;
+RESET max_parallel_workers_per_gather;
+RESET enable_bitmapscan;
+RESET enable_indexscan;
+RESET enable_indexonlyscan;
+
+DROP TABLE withexpr_par_data;
+
+-- =============================================================================
+-- Pipeline integration + GUC flip.
+--
+-- Through $group, the accumulator OID selected depends on
+-- documentdb.enable_parallel_safe_with_expr_accumulators (default on): when on and
+-- the cluster is v117+ and the query can run against the shard base table,
+-- $min / $max / $first / $last resolve to the internal-state variants
+-- (bson*withexprinternal, PARALLEL = SAFE) and produce a Finalize / Gather /
+-- Partial plan (worker-side partial aggregation). When off, they fall back to
+-- the legacy bsonaggvalue-state variants (bson*withexpr, PARALLEL = RESTRICTED):
+-- the scan is still parallelized under a Gather, but the aggregate runs only on
+-- the leader (no Partial GroupAggregate node).
+-- =============================================================================
+
+SET documentdb.next_collection_id TO 27110000;
+SET documentdb.next_collection_index_id TO 27110000;
+
+SELECT COUNT(*) FROM (
+    SELECT documentdb_api.insert_one('db','par_grp_pipeline',
+        FORMAT('{ "_id": %s, "g": %s, "v": "val_%s" }', i, i % 3, lpad(i::text, 6, '0'))::documentdb_core.bson)
+    FROM generate_series(1, 5000) i) ins;
+
+-- Force the planner to prefer a parallel sequential scan on the base table.
+SET parallel_setup_cost TO 0;
+SET parallel_tuple_cost TO 0;
+SET min_parallel_table_scan_size TO 0;
+SET max_parallel_workers_per_gather TO 2;
+SET enable_bitmapscan TO off;
+SET enable_indexscan TO off;
+SET enable_indexonlyscan TO off;
+
+-- GUC on (default): internal variants under a parallel plan.
+SET documentdb.enable_parallel_safe_with_expr_accumulators TO on;
+
+-- EXPLAIN shows the bson*withexprinternal aggregates under Finalize / Gather /
+-- Partial GroupAggregate over a Parallel Seq Scan.
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "par_grp_pipeline", "pipeline": [ { "$group": { "_id": null, "mx": { "$max": "$v" }, "mn": { "$min": "$v" }, "fr": { "$first": "$v" }, "ls": { "$last": "$v" } } } ] }');
+
+-- The parallel plan runs without crashing. $max / $min are order-insensitive so
+-- their values are deterministic.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "par_grp_pipeline", "pipeline": [ { "$group": { "_id": null, "mx": { "$max": "$v" }, "mn": { "$min": "$v" } } } ] }');
+
+-- Running the four-accumulator group (including the order-sensitive $first /
+-- $last) under the parallel plan completes cleanly on repeated executions.
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "par_grp_pipeline", "pipeline": [ { "$group": { "_id": null, "mx": { "$max": "$v" }, "mn": { "$min": "$v" }, "fr": { "$first": "$v" }, "ls": { "$last": "$v" } } } ] }')) t;
+SELECT COUNT(*) FROM (SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "par_grp_pipeline", "pipeline": [ { "$group": { "_id": null, "mx": { "$max": "$v" }, "mn": { "$min": "$v" }, "fr": { "$first": "$v" }, "ls": { "$last": "$v" } } } ] }')) t;
+
+-- GUC off: fall back to the legacy parallel-restricted variants.
+SET documentdb.enable_parallel_safe_with_expr_accumulators TO off;
+
+-- EXPLAIN now shows the bson*withexpr aggregates run entirely on the leader
+-- (no Partial GroupAggregate) above a Gather over a Parallel Seq Scan, because
+-- the legacy variants are PARALLEL = RESTRICTED: the scan is still parallelized,
+-- but the pointer-bearing state is aggregated only in the leader process.
+EXPLAIN (COSTS OFF, VERBOSE ON)
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "par_grp_pipeline", "pipeline": [ { "$group": { "_id": null, "mx": { "$max": "$v" }, "mn": { "$min": "$v" }, "fr": { "$first": "$v" }, "ls": { "$last": "$v" } } } ] }');
+
+-- Results are identical to the parallel path.
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "par_grp_pipeline", "pipeline": [ { "$group": { "_id": null, "mx": { "$max": "$v" }, "mn": { "$min": "$v" } } } ] }');
+
+RESET documentdb.enable_parallel_safe_with_expr_accumulators;
+RESET parallel_setup_cost;
+RESET parallel_tuple_cost;
+RESET min_parallel_table_scan_size;
+RESET max_parallel_workers_per_gather;
+RESET enable_bitmapscan;
+RESET enable_indexscan;
+RESET enable_indexonlyscan;
+
+SELECT documentdb_api.drop_collection('db','par_grp_pipeline') IS NOT NULL;

@@ -247,6 +247,7 @@ GenerateFirstPageQueryData(void)
 extern bool EnableNewMinMaxAccumulators;
 extern bool EnableNewWithExprAccumulators;
 extern bool EnableCollationWithNewGroupAccumulators;
+extern bool EnableParallelSafeWithExprAccumulators;
 
 inline static bool
 CanUseWithExprMinMaxAggregates(void)
@@ -265,6 +266,23 @@ CanUseWithExprAggregates(void)
 {
 	return EnableNewWithExprAccumulators &&
 		   IsClusterVersionAtleast(DocDB_V0, 111, 0);
+}
+
+
+/*
+ * Feature flag and version check for the parallel-safe internal-state variants
+ * of the with-expr $min/$max/$first/$last accumulators (introduced in v117).
+ *
+ * These are only selected when the query may run directly against the shard base
+ * table (allowShardBaseTable), where a parallel plan is possible and the legacy
+ * pointer-bearing transition state would be unsafe. When the flag is off (or the
+ * other conditions do not hold) callers fall back to the non-internal variants.
+ */
+inline static bool
+CanUseParallelSafeWithExprAccumulators(bool allowShardBaseTable)
+{
+	return EnableParallelSafeWithExprAccumulators && allowShardBaseTable &&
+		   IsClusterVersionAtleast(DocDB_V0, 117, 0);
 }
 
 
