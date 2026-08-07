@@ -51,6 +51,12 @@ if [ "$PGVERSION" == "" ]; then
     echo "Using default PostgreSQL version: $PGVERSION"
 fi
 
+#TODO(PG19) Enable PGRX builds for pg19.
+if [ "$PGVERSION" == "19" ]; then
+    echo "Skipping pgrx installation for PostgreSQL 19"
+    exit 0;
+fi
+
 source="${BASH_SOURCE[0]}"
 while [[ -h $source ]]; do
    scriptroot="$( cd -P "$( dirname "$source" )" && pwd )"
