@@ -502,7 +502,6 @@ SELECT documentdb_api.insert_one('db','sumavg_collation_test','{ "_id": 5, "grou
 
 SET documentdb_core.enableCollation TO on;
 SET documentdb.enableNewWithExprAccumulators TO on;
-SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 
 -- $sum counting matches: count docs where name case-insensitively equals "CHERRY"
 -- Legacy path errors; WithExpr path correctly applies collation (matchCount = 1 for group "A").
@@ -664,15 +663,13 @@ SET documentdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_numeric_order", "pipeline": [ { "$group": { "_id": "$cat", "avgScore": { "$avg": { "$cond": { "if": { "$gt": ["$val", "item2"] }, "then": 10, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "numericOrdering": true } }');
 
 -- =============================================================================
--- Test 26: Collation blocked when enableCollationWithNewGroupAccumulators is off
+-- Test 26: Collation blocked when the WithExpr accumulators are unavailable
 -- =============================================================================
 
 SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
-SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_collation_test", "pipeline": [ { "$group": { "_id": "$group", "matchCount": { "$sum": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": 1, "else": 0 } } } } }, { "$sort": { "_id": 1 } } ], "collation": { "locale": "en", "strength": 1 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
-SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 
 -- =============================================================================
 -- Test 27: enableCollation off + skipFailOnCollation on → collation ignored, binary comparison applies
@@ -688,7 +685,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_col
 
 -- Cleanup GUC settings
 RESET documentdb.skipFailOnCollation;
-SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SET documentdb_core.enableCollation TO off;
 SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;

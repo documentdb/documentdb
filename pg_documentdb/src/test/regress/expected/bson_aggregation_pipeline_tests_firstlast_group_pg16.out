@@ -306,7 +306,6 @@ SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 5, "g": "a
 -- 11. Basic collation with simple field reference (sanity: collation doesn't change order-based result)
 SET documentdb_core.enableCollation TO on;
 SET documentdb.enableNewWithExprAccumulators TO on;
-SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 -- With collation (case-insensitive strength 1)
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "firstName": { "$first": "$name" }, "lastName": { "$last": "$name" } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
                           document                           
@@ -400,7 +399,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collati
 -- 15. Collation with mixed types (string, number, null)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_collation_mixed', '{ "_id": 1, "g": "G", "val": "banana" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:138: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:137: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -449,7 +448,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_collation_mixed');
 -- With numericOrdering: "item10" > "item2" (numeric), without: "item10" < "item2" (lexical)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_numeric_order', '{ "_id": 1, "g": "N", "val": "item10" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:156: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:155: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -495,15 +494,14 @@ SELECT documentdb_api.drop_collection('db', 'fl_numeric_order');
 (1 row)
 
 -- =============================================================================
--- 17. GUC gating: enableCollationWithNewGroupAccumulators off → error
+-- 17. Without the WithExpr accumulators nothing can honor the collation, so the
+--     $group stage is rejected.
 -- =============================================================================
-SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$name" } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:178: ERROR:  collation is not supported in $group stage yet.
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:176: ERROR:  collation is not supported in $group stage yet.
 SET documentdb.enableNewWithExprAccumulators TO on;
-SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 -- =============================================================================
 -- 18. GUC gating: enableCollation off + skipFailOnCollation on → collation ignored, binary comparison
 -- =============================================================================
@@ -525,7 +523,6 @@ SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
-SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SELECT documentdb_api.drop_collection('db', 'fl_collation_test');
  drop_collection 
 -----------------
@@ -537,7 +534,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_collation_test');
 --     nested field, even though a later document has the field defined.
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_first_missing', '{ "_id": 1, "category": "electronics" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:207: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:203: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -568,7 +565,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_first_missing');
 --     (Flipped version of test 19.)
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_last_missing', '{ "_id": 1, "category": "electronics", "profile": { "email": "bob@test.com" } }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:220: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:216: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -887,7 +884,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- =============================================================================
 -- Insert test data: 10 rows across 4 groups
 SELECT documentdb_api.insert_one('db','fl_sortgroup_test','{ "_id": 1, "g": "X", "seq": 30, "val": "third" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:314: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:310: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1515,7 +1512,7 @@ RESET documentdb.enableOrderByIndexTerm;
 --     decomposition bails out (dotted paths) and Sort node remains.
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','fl_nested_sort','{ "_id": 1, "g": "A", "info": { "priority": 3 }, "val": "low-pri" }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:460: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:456: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1574,14 +1571,14 @@ SELECT documentdb_api.drop_collection('db', 'fl_nested_sort');
 (1 row)
 
 -- =============================================================================
--- 41. Collation with non-prefix sort {name} (group key $g): case-insensitive
---     sort affects $first result.  Sort node remains; collation applies inside
---     the explicit Sort.
+-- 41. Collation with non-prefix sort {name} (group key $g).
+--     A $sort before the $group makes $first use the sorted accumulator, which
+--     compares byte by byte and cannot honor the collation, so it is rejected.
 --     Binary comparison sorts uppercase before lowercase (e.g. "Banana" < "apple"),
 --     while case-insensitive collation (strength=1) sorts alphabetically ("apple" < "Banana").
 -- =============================================================================
 SELECT documentdb_api.insert_one('db','fl_collation_sortpush','{ "_id": 1, "g": "A", "name": "cherry", "seq": 2 }', NULL);
-psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:477: NOTICE:  creating collection
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:473: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -1612,40 +1609,14 @@ SELECT documentdb_api.insert_one('db','fl_collation_sortpush','{ "_id": 5, "g": 
 (1 row)
 
 SET documentdb.enableNewWithExprAccumulators TO on;
-SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 SET documentdb_core.enableCollation TO on;
--- 41a. With collation (case-insensitive): sort by name ascending, $first picks alphabetically first
+-- 41a. With collation: rejected. 41c shows the binary answer it would return.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": 1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
-                  document                   
----------------------------------------------
- { "_id" : "A", "firstName" : "Banana" }
- { "_id" : "B", "firstName" : "Elderberry" }
-(2 rows)
-
--- 41b. EXPLAIN: Sort node remains (non-prefix sort); collation-aware orderby applies in the Sort
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:483: ERROR:  collation is not supported with the $first accumulator in $group yet.
+-- 41b. EXPLAIN is rejected for the same reason.
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": 1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
-                                                                                                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                                                                                                    
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), 'firstName'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"name\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text))
-   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text))
-   ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), agg_stage_0.document
-         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)) USING <<<
-         ->  Subquery Scan on agg_stage_0
-               Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (documentdb_api_internal.bson_orderby_index(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-                     Sort Key: (documentdb_api_internal.bson_orderby_index(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) NULLS FIRST
-                     ->  Bitmap Heap Scan on documentdb_data.documents_25701012 collection
-                           Output: collection.document, documentdb_api_internal.bson_orderby_index(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
-                           Recheck Cond: (collection.shard_key_value = '25701012'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701012'::bigint)
-(16 rows)
-
--- 41c. Without collation (binary comparison): $first result differs from collated sort
---      Binary: "Banana"(0x42) < "apple"(0x61) vs case-insensitive: "apple" < "Banana"
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:486: ERROR:  collation is not supported with the $first accumulator in $group yet.
+-- 41c. Without a collation the same pipeline still works.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": 1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {} }');
                   document                   
 ---------------------------------------------
@@ -1653,37 +1624,12 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collati
  { "_id" : "B", "firstName" : "Elderberry" }
 (2 rows)
 
--- 41d. Collation with descending sort
+-- 41d. A descending sort is rejected as well.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": -1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
-                document                 
------------------------------------------
- { "_id" : "A", "firstName" : "cherry" }
- { "_id" : "B", "firstName" : "date" }
-(2 rows)
-
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:492: ERROR:  collation is not supported with the $first accumulator in $group yet.
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": -1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
-                                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                                    
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), 'firstName'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"name\" : { \"$numberInt\" : \"-1\" } }"}'::bson[]), '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text))
-   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text))
-   ->  Sort
-         Output: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), agg_stage_0.document
-         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)) USING <<<
-         ->  Subquery Scan on agg_stage_0
-               Output: documentdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (documentdb_api_internal.bson_orderby_index_reverse(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-                     Sort Key: (documentdb_api_internal.bson_orderby_index_reverse(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) DESC NULLS LAST
-                     ->  Bitmap Heap Scan on documentdb_data.documents_25701012 collection
-                           Output: collection.document, documentdb_api_internal.bson_orderby_index_reverse(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
-                           Recheck Cond: (collection.shard_key_value = '25701012'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701012'::bigint)
-(16 rows)
-
+psql:sql/bson_aggregation_pipeline_tests_firstlast_group.sql:493: ERROR:  collation is not supported with the $first accumulator in $group yet.
 SET documentdb_core.enableCollation TO off;
-SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SELECT documentdb_api.drop_collection('db', 'fl_collation_sortpush');
  drop_collection 
 -----------------

@@ -21,7 +21,6 @@ SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 7, "g": "B
 SELECT documentdb_api.shard_collection('db', 'fl_collation_test', '{ "_id": "hashed" }', false);
 
 SET documentdb_core.enableCollation TO on;
-SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 
 -- 1a. GUC ON: collation-sensitive $first/$last after sharding
 SET documentdb.enableNewWithExprAccumulators TO on;
@@ -45,14 +44,13 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collati
 
 ROLLBACK;
 
--- 1b. GUC OFF: collation with old accumulators → error
+-- 1b. Without the WithExpr accumulators there is nothing that can honor the
+--     collation, so the whole $group stage is rejected.
 SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
-SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$name" }, "l": { "$last": "$name" } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
 
-SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SET documentdb_core.enableCollation TO off;

@@ -6924,6 +6924,36 @@ IsDistributedShardContext(AggregationPipelineBuildContext *context)
 
 
 /*
+ * Errors out when a collation was requested but the accumulator lowers to an
+ * aggregate that compares byte by byte.
+ */
+static void
+RejectCollationForGroupAccumulator(const AggregationPipelineBuildContext *context,
+								   const char *accumulatorName)
+{
+	if (!IsCollationValid(context->collationString))
+	{
+		return;
+	}
+
+	ReportFeatureUsage(FEATURE_COLLATION_UNSUPPORTED_GROUP_ACCUMULATOR);
+
+	if (SkipFailOnCollation)
+	{
+		return;
+	}
+
+	ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					errmsg(
+						"collation is not supported with the %s accumulator in $group yet.",
+						accumulatorName),
+					errdetail_log(
+						"collation is not supported with the %s accumulator in $group yet.",
+						accumulatorName)));
+}
+
+
+/*
  * Simple helper method that has logic to insert a Group accumulator to a query.
  * This adds the group aggregate to the TargetEntry (for projection)
  * and also adds the necessary data to the bson_repath_and_build arguments.
@@ -7584,15 +7614,11 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 				const bson_value_t *accumulatorSortSpec)
 {
 	/*
-	 * Collation is only supported with the new WithExpr accumulators, not for
-	 * the grouping key itself. We check both helpers because their underlying
-	 * SQL aggregate functions were introduced in different schema versions:
-	 * min/max WithExpr in v110 and first/last WithExpr in v111. Either being
-	 * available is sufficient to allow collation in $group with accumulators.
+	 * Collation in $group needs the WithExpr aggregates. Accumulators that
+	 * still cannot honor it are rejected individually below.
 	 */
 	if (IsCollationApplicable(context->collationString) &&
-		!(EnableCollationWithNewGroupAccumulators &&
-		  (CanUseWithExprMinMaxAggregates() || CanUseWithExprAggregates())))
+		!(CanUseWithExprMinMaxAggregates() || CanUseWithExprAggregates()))
 	{
 		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						errmsg("collation is not supported in $group stage yet.")));
@@ -8128,6 +8154,8 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 			}
 			else
 			{
+				RejectCollationForGroupAccumulator(context, accumulatorElement.path);
+
 				repathArgs = AddSortedGroupAccumulator(query,
 													   &accumulatorElement.bsonValue,
 													   repathArgs,
@@ -8173,6 +8201,8 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 			}
 			else
 			{
+				RejectCollationForGroupAccumulator(context, accumulatorElement.path);
+
 				repathArgs = AddSortedGroupAccumulator(query,
 													   &accumulatorElement.bsonValue,
 													   repathArgs,
@@ -8187,6 +8217,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		else if (StringViewEqualsCString(&accumulatorName, "$firstN"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_FIRST_N);
+			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 			bson_value_t input = { 0 };
 			bson_value_t elementsToFetch = { 0 };
 			ParseInputForNGroupAccumulators(&accumulatorElement.bsonValue, &input,
@@ -8222,6 +8253,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		else if (StringViewEqualsCString(&accumulatorName, "$lastN"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_LAST_N);
+			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 			bson_value_t input = { 0 };
 			bson_value_t elementsToFetch = { 0 };
 			ParseInputForNGroupAccumulators(&accumulatorElement.bsonValue, &input,
@@ -8257,6 +8289,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		else if (StringViewEqualsCString(&accumulatorName, "$maxN"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_MAX_N);
+			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 			repathArgs = AddMaxMinNGroupAccumulator(query,
 													&accumulatorElement.bsonValue,
 													repathArgs,
@@ -8270,6 +8303,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		else if (StringViewEqualsCString(&accumulatorName, "$minN"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_MIN_N);
+			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 			repathArgs = AddMaxMinNGroupAccumulator(query,
 													&accumulatorElement.bsonValue,
 													repathArgs,
@@ -8283,6 +8317,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		else if (StringViewEqualsCString(&accumulatorName, "$addToSet"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_ADD_TO_SET);
+			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 			repathArgs = AddSimpleGroupAccumulator(query,
 												   &accumulatorElement.bsonValue,
 												   repathArgs,
@@ -8296,6 +8331,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		else if (StringViewEqualsCString(&accumulatorName, "$mergeObjects"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_MERGE_OBJECTS);
+			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 			if (context->sortSpec.value_type == BSON_TYPE_EOD)
 			{
 				repathArgs = AddSimpleGroupAccumulator(query,
@@ -8325,6 +8361,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		else if (StringViewEqualsCString(&accumulatorName, "$push"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_PUSH);
+			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 			char *fieldPath = "";
 			bool handleSingleValue = true;
 			repathArgs = AddArrayAggGroupAccumulator(query,
@@ -8341,6 +8378,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		else if (StringViewEqualsCString(&accumulatorName, "$stdDevSamp"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_STDDEV_SAMP);
+			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 			if (accumulatorElement.bsonValue.value_type == BSON_TYPE_ARRAY)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40237), errmsg(
@@ -8364,6 +8402,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		else if (StringViewEqualsCString(&accumulatorName, "$stdDevPop"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_STDDEV_POP);
+			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 			if (accumulatorElement.bsonValue.value_type == BSON_TYPE_ARRAY)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40237), errmsg(
@@ -8387,6 +8426,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		else if (StringViewEqualsCString(&accumulatorName, "$top"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_TOP);
+			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 			bson_value_t output = { 0 };
 			bson_value_t elementsToFetch = { 0 };
 			bson_value_t sortSpec = { 0 };
@@ -8407,6 +8447,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		else if (StringViewEqualsCString(&accumulatorName, "$bottom"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_BOTTOM);
+			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 			bson_value_t output = { 0 };
 			bson_value_t elementsToFetch = { 0 };
 			bson_value_t sortSpec = { 0 };
@@ -8427,6 +8468,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		else if (StringViewEqualsCString(&accumulatorName, "$topN"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_TOP_N);
+			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 
 			/* Parse accumulatorValue to pull output, n and sortBy*/
 			bson_value_t input = { 0 };
@@ -8451,6 +8493,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		else if (StringViewEqualsCString(&accumulatorName, "$bottomN"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_BOTTOM_N);
+			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 
 			/* Parse accumulatorValue to pull output, n and sortBy*/
 			bson_value_t input = { 0 };
@@ -8475,6 +8518,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		else if (StringViewEqualsCString(&accumulatorName, "$median"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_MEDIAN);
+			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 			repathArgs = AddPercentileMedianGroupAccumulator(query,
 															 &accumulatorElement.bsonValue,
 															 repathArgs,
@@ -8487,6 +8531,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		else if (StringViewEqualsCString(&accumulatorName, "$percentile"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_PERCENTILE);
+			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 			repathArgs = AddPercentileMedianGroupAccumulator(query,
 															 &accumulatorElement.bsonValue,
 															 repathArgs,

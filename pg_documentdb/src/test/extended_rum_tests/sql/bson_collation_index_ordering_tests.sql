@@ -2164,7 +2164,6 @@ $cmd$);
 -- "item2" compare equal with numericOrdering but are separated in binary index
 -- order, so omitting the Sort would split one logical group into two.
 SET documentdb.enableNewWithExprAccumulators TO on;
-SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 
 SELECT documentdb_api.insert_one(
   'ord_coll_ordered_db',
@@ -2219,7 +2218,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
          "collation": { "locale": "en", "numericOrdering": true } }')
 $cmd$);
 
-RESET documentdb.enableCollationWithNewGroupAccumulators;
 RESET documentdb.enableNewWithExprAccumulators;
 
 -- ============================================================

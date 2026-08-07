@@ -101,6 +101,16 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_co
 SET documentdb_core.enablecollation TO on;
 SELECT document FROM bson_aggregation_find('db', '{ "find": "feature_counter_col2", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "a": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1} }');
 SELECT document FROM bson_aggregation_find('db', '{ "find": "feature_counter_col2", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 10, "collation": { "locale": "fr_CA", "strength" : 3 } }');
+-- $group accumulator that cannot honor the collation. The WithExpr accumulators
+-- must be on to get past the stage check, and skipFailOnCollation lets the
+-- accumulator run so the counter is reported without the error.
+SET documentdb.enableNewMinMaxAccumulators TO on;
+SET documentdb.enableNewWithExprAccumulators TO on;
+SET documentdb.skipFailOnCollation TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": null, "a": { "$addToSet": "$a" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+RESET documentdb.skipFailOnCollation;
+RESET documentdb.enableNewMinMaxAccumulators;
+RESET documentdb.enableNewWithExprAccumulators;
 RESET documentdb_core.enablecollation;
 
 

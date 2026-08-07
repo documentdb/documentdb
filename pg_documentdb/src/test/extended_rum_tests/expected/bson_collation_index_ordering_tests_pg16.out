@@ -7393,7 +7393,6 @@ $cmd$);
 -- "item2" compare equal with numericOrdering but are separated in binary index
 -- order, so omitting the Sort would split one logical group into two.
 SET documentdb.enableNewWithExprAccumulators TO on;
-SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 SELECT documentdb_api.insert_one(
   'ord_coll_ordered_db',
   'ord_orderby_samefield',
@@ -7518,7 +7517,6 @@ $cmd$);
                            Heap Fetches: 7
 (20 rows)
 
-RESET documentdb.enableCollationWithNewGroupAccumulators;
 RESET documentdb.enableNewWithExprAccumulators;
 -- ============================================================
 -- Section 30: index-only scan under collation on collation-aware
@@ -7530,7 +7528,7 @@ RESET documentdb.enableNewWithExprAccumulators;
 -- distinct (byte-wise) string _id values including case variants so a
 -- strength-1 collation index treats "cat"/"Cat"/"CAT" as equal
 SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "cat", "country": "usa" }');
-psql:sql/bson_collation_index_ordering_tests.sql:2235: NOTICE:  creating collection
+psql:sql/bson_collation_index_ordering_tests.sql:2233: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -7891,7 +7889,7 @@ RESET documentdb.forceUseIndexIfAvailable;
 RESET documentdb.enableExtendedExplainPlans;
 RESET enable_seqscan;
 DROP SCHEMA collation_ordered_test_schema CASCADE;
-psql:sql/bson_collation_index_ordering_tests.sql:2316: NOTICE:  drop cascades to function collation_ordered_test_schema.gin_bson_index_term_to_bson(bytea)
+psql:sql/bson_collation_index_ordering_tests.sql:2314: NOTICE:  drop cascades to function collation_ordered_test_schema.gin_bson_index_term_to_bson(bytea)
 RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
 RESET documentdb.defaultUseCompositeOpClass;
 RESET documentdb_core.enableCollation;

@@ -212,7 +212,6 @@ RESET citus.enable_local_execution;
 -- =============================================================================
 SET documentdb_core.enableCollation TO on;
 SET documentdb.enableNewWithExprAccumulators TO on;
-SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 SELECT documentdb_api.insert_one('db','sumavg_collation_test','{ "_id": 1, "group": "A", "name": "cherry", "val": 10 }');
 NOTICE:  creating collection
                               insert_one                              
@@ -461,7 +460,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sumavg_num
 (1 row)
 
 RESET citus.enable_local_execution;
-SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SET documentdb_core.enableCollation TO off;
 SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;

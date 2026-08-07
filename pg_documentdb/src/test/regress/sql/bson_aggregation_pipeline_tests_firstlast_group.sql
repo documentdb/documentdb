@@ -91,7 +91,6 @@ SELECT documentdb_api.insert_one('db', 'fl_collation_test', '{ "_id": 5, "g": "a
 -- 11. Basic collation with simple field reference (sanity: collation doesn't change order-based result)
 SET documentdb_core.enableCollation TO on;
 SET documentdb.enableNewWithExprAccumulators TO on;
-SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 
 -- With collation (case-insensitive strength 1)
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "firstName": { "$first": "$name" }, "lastName": { "$last": "$name" } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
@@ -169,15 +168,13 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_numeric
 SELECT documentdb_api.drop_collection('db', 'fl_numeric_order');
 
 -- =============================================================================
--- 17. GUC gating: enableCollationWithNewGroupAccumulators off → error
+-- 17. Without the WithExpr accumulators nothing can honor the collation, so the
+--     $group stage is rejected.
 -- =============================================================================
-
-SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$name" } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
 SET documentdb.enableNewWithExprAccumulators TO on;
-SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 
 -- =============================================================================
 -- 18. GUC gating: enableCollation off + skipFailOnCollation on → collation ignored, binary comparison
@@ -196,7 +193,6 @@ SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
-SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 
 SELECT documentdb_api.drop_collection('db', 'fl_collation_test');
 
@@ -468,9 +464,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 SELECT documentdb_api.drop_collection('db', 'fl_nested_sort');
 
 -- =============================================================================
--- 41. Collation with non-prefix sort {name} (group key $g): case-insensitive
---     sort affects $first result.  Sort node remains; collation applies inside
---     the explicit Sort.
+-- 41. Collation with non-prefix sort {name} (group key $g).
+--     A $sort before the $group makes $first use the sorted accumulator, which
+--     compares byte by byte and cannot honor the collation, so it is rejected.
 --     Binary comparison sorts uppercase before lowercase (e.g. "Banana" < "apple"),
 --     while case-insensitive collation (strength=1) sorts alphabetically ("apple" < "Banana").
 -- =============================================================================
@@ -481,25 +477,22 @@ SELECT documentdb_api.insert_one('db','fl_collation_sortpush','{ "_id": 4, "g": 
 SELECT documentdb_api.insert_one('db','fl_collation_sortpush','{ "_id": 5, "g": "B", "name": "Elderberry", "seq": 1 }', NULL);
 
 SET documentdb.enableNewWithExprAccumulators TO on;
-SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 SET documentdb_core.enableCollation TO on;
 
--- 41a. With collation (case-insensitive): sort by name ascending, $first picks alphabetically first
+-- 41a. With collation: rejected. 41c shows the binary answer it would return.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": 1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
 
--- 41b. EXPLAIN: Sort node remains (non-prefix sort); collation-aware orderby applies in the Sort
+-- 41b. EXPLAIN is rejected for the same reason.
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": 1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
 
--- 41c. Without collation (binary comparison): $first result differs from collated sort
---      Binary: "Banana"(0x42) < "apple"(0x61) vs case-insensitive: "apple" < "Banana"
+-- 41c. Without a collation the same pipeline still works.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": 1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {} }');
 
--- 41d. Collation with descending sort
+-- 41d. A descending sort is rejected as well.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": -1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": -1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
 
 SET documentdb_core.enableCollation TO off;
-SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 
 SELECT documentdb_api.drop_collection('db', 'fl_collation_sortpush');
 

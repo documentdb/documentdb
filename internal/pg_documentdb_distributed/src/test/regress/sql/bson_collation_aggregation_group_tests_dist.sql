@@ -9,7 +9,6 @@ SET documentdb.next_collection_id TO 25700000;
 SET documentdb.next_collection_index_id TO 25700000;
 SET documentdb_core.enableCollation TO on;
 SET documentdb.enableNewWithExprAccumulators TO on;
-SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 SET documentdb.useLocalExecutionShardQueries TO off;
 SET citus.enable_local_execution TO off;
 
@@ -76,7 +75,7 @@ SELECT document FROM bson_aggregation_pipeline('db',
         { "$group": {
             "_id": { "category": "$category", "region": "$region" },
             "firstId": { "$min": "$_id" },
-            "values": { "$push": "$value" }
+            "values": { "$max": "$value" }
         } },
         { "$sort": { "firstId": 1 } }
     ], "collation": { "locale": "en", "strength": 1 } }');
@@ -145,16 +144,27 @@ SELECT document FROM bson_aggregation_pipeline('db',
         { "$group": {
             "_id": "$category",
             "firstId": { "$min": "$_id" },
-            "values": { "$push": "$value" }
+            "values": { "$max": "$value" }
         } },
         { "$sort": { "firstId": 1 } }
     ], "collation": { "locale": "en", "strength": 3 } }');
+ROLLBACK;
+
+-- $push cannot honor a collation, so it is rejected.
+BEGIN;
+SET local documentdb_core.enableCollation TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": {
+            "_id": { "category": "$category", "region": "$region" },
+            "values": { "$push": "$value" }
+        } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
 ROLLBACK;
 
 SELECT documentdb_api.drop_collection('db', 'group_collation_dist_test');
 
 RESET citus.enable_local_execution;
 RESET documentdb.useLocalExecutionShardQueries;
-RESET documentdb.enableCollationWithNewGroupAccumulators;
 RESET documentdb.enableNewWithExprAccumulators;
 RESET documentdb_core.enableCollation;

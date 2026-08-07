@@ -8,7 +8,6 @@ SET documentdb.next_collection_id TO 25700000;
 SET documentdb.next_collection_index_id TO 25700000;
 SET documentdb_core.enableCollation TO on;
 SET documentdb.enableNewWithExprAccumulators TO on;
-SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 
 SELECT documentdb_api.insert_one('db', 'group_collation_test',
     '{ "_id": 1, "category": "Cat", "region": "North", "value": 10 }');
@@ -49,7 +48,7 @@ SELECT document FROM bson_aggregation_pipeline('db',
         { "$group": {
             "_id": { "category": "$category", "region": "$region" },
             "firstId": { "$min": "$_id" },
-            "values": { "$push": "$value" }
+            "maxValue": { "$max": "$value" }
         } },
         { "$sort": { "firstId": 1 } }
     ], "collation": { "locale": "en", "strength": 1 } }');
@@ -58,7 +57,7 @@ SELECT document FROM bson_aggregation_pipeline('db',
         { "$group": {
             "_id": { "category": "$category", "region": "$region" },
             "firstId": { "$min": "$_id" },
-            "values": { "$push": "$value" }
+            "maxValue": { "$max": "$value" }
         } },
         { "$sort": { "firstId": 1 } }
     ], "collation": { "locale": "en", "strength": 1 } }');
@@ -122,10 +121,8 @@ SELECT document FROM bson_aggregation_pipeline('db',
         { "$sort": { "firstId": 1 } }
     ], "collation": { "locale": "en", "strength": 1 } }');
 
--- $addToSet: the group key is collation-aware but the accumulator's set
--- membership is still byte-wise, so the case variants are NOT deduped. This
--- pins the current behavior; see the strength 3 control below, which produces
--- the identical set.
+-- $addToSet compares values byte by byte, so it cannot honor the collation
+-- and now errors instead of returning a set that ignores it.
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "group_collation_test", "pipeline": [
         { "$group": {
@@ -134,9 +131,7 @@ SELECT document FROM bson_aggregation_pipeline('db',
         } }
     ], "collation": { "locale": "en", "strength": 1 } }');
 
--- The two rows below show where the collation is and is not applied: the _id
--- groups merge the case variants of "category", while the accumulated
--- "region" set keeps every spelling.
+-- A collation aware _id does not make the accumulator collation aware.
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "group_collation_test", "pipeline": [
         { "$group": {
@@ -147,15 +142,101 @@ SELECT document FROM bson_aggregation_pipeline('db',
         { "$sort": { "firstId": 1 } }
     ], "collation": { "locale": "en", "strength": 1 } }');
 
--- Case-sensitive control: strength 3 yields the same $addToSet result as
--- strength 1 above, confirming the accumulator ignores the collation.
+-- The remaining accumulators that cannot honor the collation.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$push": "$category" } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$maxN": { "input": "$category", "n": 2 } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$minN": { "input": "$category", "n": 2 } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$firstN": { "input": "$category", "n": 2 } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$lastN": { "input": "$category", "n": 2 } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$top": { "output": "$category", "sortBy": { "category": 1 } } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$bottom": { "output": "$category", "sortBy": { "category": 1 } } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$topN": { "output": "$category", "sortBy": { "category": 1 }, "n": 2 } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$bottomN": { "output": "$category", "sortBy": { "category": 1 }, "n": 2 } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$mergeObjects": "$$ROOT" } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$stdDevPop": "$value" } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$stdDevSamp": "$value" } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$median": { "input": "$value", "method": "approximate" } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$percentile": { "input": "$value", "p": [0.5], "method": "approximate" } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- $count and $sum: 1 only count rows, so the collation cannot change the
+-- result. They stay allowed.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "n": { "$count": {} }, "total": { "$sum": 1 } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- After a $sort, $first and $last use the sorted accumulator, which sorts the
+-- values itself byte by byte and cannot honor the collation.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$sort": { "_id": 1 } },
+        { "$group": { "_id": "$category", "acc": { "$first": "$category" } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$sort": { "_id": 1 } },
+        { "$group": { "_id": "$category", "acc": { "$last": "$category" } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+
+-- Without that $sort they keep working.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": "$category", "f": { "$first": "$value" }, "l": { "$last": "$value" } } },
+        { "$sort": { "_id": 1 } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+
+
+-- With no collation requested, nothing changes.
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "group_collation_test", "pipeline": [
         { "$group": {
             "_id": null,
-            "categories": { "$addToSet": "$category" }
+            "categories": { "$addToSet": "$category" },
+            "values": { "$push": "$value" }
         } }
-    ], "collation": { "locale": "en", "strength": 3 } }');
+    ] }');
 
 -- Case-sensitive control: strength 3 keeps all case variants separate.
 SELECT document FROM bson_aggregation_pipeline('db',
@@ -163,13 +244,21 @@ SELECT document FROM bson_aggregation_pipeline('db',
         { "$group": {
             "_id": "$category",
             "firstId": { "$min": "$_id" },
-            "values": { "$push": "$value" }
+            "maxValue": { "$max": "$value" }
         } },
         { "$sort": { "firstId": 1 } }
     ], "collation": { "locale": "en", "strength": 3 } }');
 
+-- skipFailOnCollation lets a caller keep the old behavior: no error, and the
+-- accumulator answers with a byte by byte comparison.
+SET documentdb.skipFailOnCollation TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$addToSet": "$category" } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+RESET documentdb.skipFailOnCollation;
+
 SELECT documentdb_api.drop_collection('db', 'group_collation_test');
 
-RESET documentdb.enableCollationWithNewGroupAccumulators;
 RESET documentdb.enableNewWithExprAccumulators;
 RESET documentdb_core.enableCollation;
