@@ -95,7 +95,6 @@ extern bool EnableOrderByIndexTerm;
 extern bool EnableGroupByCompoundIdIndexPushdown;
 extern bool EnableScalarAggregateIndexPushdown;
 extern bool EnableScalarAggregateAccumulatorPathCollection;
-extern bool EnableSortGroupStage;
 extern bool EnableProjectPushUpBeforeUnwindWithGroup;
 extern bool EnableSortPushToAccumulatorWithPrefix;
 extern bool EnableSampleScanFixOnSharded;
@@ -10507,8 +10506,7 @@ TryOptimizeAggregationPipelines(List *aggregationStages,
 
 			case Stage_Sort:
 			{
-				if (EnableSortGroupStage &&
-					IsPipelineStageFollowedByOtherStage(Stage_Sort, Stage_Group,
+				if (IsPipelineStageFollowedByOtherStage(Stage_Sort, Stage_Group,
 														currentIndex, stagesList))
 				{
 					/* If we have a sort followed by a group, create a combined stage that allows for

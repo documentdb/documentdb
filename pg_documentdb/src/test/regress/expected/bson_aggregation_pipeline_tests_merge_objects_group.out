@@ -247,9 +247,8 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "
 
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjectsGroupColl", "pipeline": [ { "$sort": { "category": 1 } }, { "$group": { "_id": "$year", "shouldFail": { "$mergeObjects": "$category" } } } ] }');
 ERROR:  $mergeObjects needs both inputs to be objects, but the provided input "X" has the type string
-/* enableSortGroupStage should not drop the user sort for order-sensitive
+/* The combined sort/group stage keeps the user sort for order-sensitive
  * $mergeObjects accumulators. */
-SET documentdb.enableSortGroupStage TO on;
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjectsGroupColl", "pipeline": [ { "$sort": { "category": 1 } }, { "$group": { "_id": "$year", "mergedStats": { "$mergeObjects": "$stats" } } } ] }');
                                                                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                                                                    
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -267,7 +266,6 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson
                            Output: collection.document, bson_orderby(collection.document, '{ "category" : { "$numberInt" : "1" } }'::documentdb_core.bson)
 (12 rows)
 
-RESET documentdb.enableSortGroupStage;
 select documentdb_api.drop_collection('db','mergeObjectsGroupColl');
  drop_collection 
 -----------------

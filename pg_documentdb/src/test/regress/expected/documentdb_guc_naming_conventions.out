@@ -108,7 +108,6 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.enableSchemaValidation'),
     ('documentdb.enableSkipCommentFieldOnUpsert'),
     ('documentdb.enableSkipDottedFieldIndexTerms'),
-    ('documentdb.enableSortGroupStage'),
     ('documentdb.enableSortPushToAccumulatorWithPrefix'),
     ('documentdb.enableStatementTimeout'),
     ('documentdb.enableStrictAddToSetModifierValidation'),
