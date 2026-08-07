@@ -39,6 +39,7 @@
 
 
 extern bool EnableMoveCollection;
+extern bool AddNodePortToNodeName;
 
 PG_FUNCTION_INFO_V1(command_get_shard_map);
 PG_FUNCTION_INFO_V1(command_list_shards);
@@ -80,6 +81,11 @@ typedef struct NodeInfo
 	 * the case it's in the middle of an addnode)
 	 */
 	bool isactive;
+
+	/*
+	 * The internal port of the node
+	 */
+	int nodePort;
 
 	/*
 	 * The formatted node name
@@ -1710,7 +1716,7 @@ GetShardMapNodes(void)
 {
 	/* First query pg_dist_node to get the set of nodes in the cluster */
 	const char *baseQuery = psprintf(
-		"WITH base AS (SELECT groupid, nodeid, noderole::text, nodecluster::text, isactive FROM pg_dist_node WHERE shouldhaveshards ORDER BY groupid, noderole)"
+		"WITH base AS (SELECT groupid, nodeid, noderole::text, nodecluster::text, isactive, nodeport::int4 FROM pg_dist_node WHERE shouldhaveshards ORDER BY groupid, noderole)"
 		" SELECT %s.BSON_ARRAY_AGG(%s.row_get_bson(base), 'nodes') FROM base",
 		ApiCatalogSchemaName, ApiCatalogSchemaName);
 
@@ -1793,9 +1799,14 @@ GetShardMapNodes(void)
 					nodeInfo->isactive = bson_iter_bool(&objectIter);
 					numFields++;
 				}
+				else if (strcmp(key, "nodeport") == 0)
+				{
+					nodeInfo->nodePort = bson_iter_int32(&objectIter);
+					numFields++;
+				}
 			}
 
-			if (numFields != 5)
+			if (numFields != 6)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 								errmsg(
@@ -1808,6 +1819,11 @@ GetShardMapNodes(void)
 
 			nodeInfo->mongoNodeName = psprintf("node_%s_%d", nodeInfo->nodeCluster,
 											   nodeInfo->nodeId);
+			if (AddNodePortToNodeName)
+			{
+				nodeInfo->mongoNodeName = psprintf("%s_%d", nodeInfo->mongoNodeName,
+												   nodeInfo->nodePort);
+			}
 			nodeInfo->mongoShardName = psprintf("shard_%d", nodeInfo->groupId);
 			groupMap = lappend(groupMap, nodeInfo);
 		}
