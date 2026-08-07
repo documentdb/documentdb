@@ -40,6 +40,10 @@ bool EnableMoveCollection = DEFAULT_ENABLE_MOVE_COLLECTION;
 bool EnableSkipUpgradeForUninitializedCluster =
 	DEFAULT_ENABLE_SKIP_UPGRADE_FOR_UNINITIALIZED_CLUSTER;
 
+/* SystemConfig */
+#define DEFAULT_ADD_NODE_PORT_TO_NODE_NAME false
+bool AddNodePortToNodeName = DEFAULT_ADD_NODE_PORT_TO_NODE_NAME;
+
 /* --------------------------------------------------------- */
 /* Top level exports */
 /* --------------------------------------------------------- */
@@ -85,5 +89,13 @@ InitDocumentDBDistributedConfigurations(const char *prefix)
 		gettext_noop(
 			"The cluster admin role."),
 		NULL, &ClusterAdminRole, DEFAULT_CLUSTER_ADMIN_ROLE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.add_node_port_to_node_name", prefix),
+		gettext_noop(
+			"Determines whether the node port is appended as a suffix to the "
+			"formatted node name."),
+		NULL, &AddNodePortToNodeName, DEFAULT_ADD_NODE_PORT_TO_NODE_NAME,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 }
