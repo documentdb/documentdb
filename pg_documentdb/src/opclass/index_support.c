@@ -3457,6 +3457,157 @@ ConsiderBtreeOrderByPushdown(PlannerInfo *root, IndexPath *indexPath)
 }
 
 
+/* Native-stats btree operator (*<, *<=, *=, *>=, *>) for a btree strategy. */
+static Oid
+NativeStatsBtreeOperatorForStrategy(int strategy)
+{
+	switch (strategy)
+	{
+		case BTLessStrategyNumber:
+		{
+			return BsonNativeStatsBtreeLessThanOperatorId();
+		}
+
+		case BTLessEqualStrategyNumber:
+		{
+			return BsonNativeStatsBtreeLessThanEqualOperatorId();
+		}
+
+		case BTEqualStrategyNumber:
+		{
+			return BsonNativeStatsBtreeEqualOperatorId();
+		}
+
+		case BTGreaterEqualStrategyNumber:
+		{
+			return BsonNativeStatsBtreeGreaterThanEqualOperatorId();
+		}
+
+		case BTGreaterStrategyNumber:
+		{
+			return BsonNativeStatsBtreeGreaterThanOperatorId();
+		}
+
+		default:
+		{
+			return InvalidOid;
+		}
+	}
+}
+
+
+/* Plain bson/bson btree operator for a btree strategy; inverts the swap above. */
+static Oid
+BsonComparisonBtreeOperatorForStrategy(int strategy)
+{
+	switch (strategy)
+	{
+		case BTLessStrategyNumber:
+		{
+			return BsonLessThanOperatorId();
+		}
+
+		case BTLessEqualStrategyNumber:
+		{
+			return BsonLessThanEqualOperatorId();
+		}
+
+		case BTEqualStrategyNumber:
+		{
+			return BsonEqualOperatorId();
+		}
+
+		case BTGreaterEqualStrategyNumber:
+		{
+			return BsonGreaterThanEqualOperatorId();
+		}
+
+		case BTGreaterStrategyNumber:
+		{
+			return BsonGreaterThanOperatorId();
+		}
+
+		default:
+		{
+			return InvalidOid;
+		}
+	}
+}
+
+
+/*
+ * Transiently rewrites the bson/bson btree range quals of an index path to their
+ * native-stats bson/bsonquery equivalents (toNativeStatsOperators = true) or back
+ * (false). The native-stats operators carry the builtin scalar selectivity
+ * estimators as RESTRICT, so clauselist_selectivity merges matching lower/upper
+ * bounds into a single range instead of multiplying them independently.
+ *
+ * The rewrite is reverted after costing, so the executed plan is unchanged. Only
+ * bson_btree_ops index columns are touched (skipping the shard_key_value qual),
+ * and the RHS Const type is flipped bson<->bsonquery (binary-identical) to keep
+ * the node well-formed.
+ */
+static bool
+RemapObjectIdBtreeQualsForStats(IndexPath *path, bool toNativeStatsOperators)
+{
+	IndexOptInfo *indexInfo = path->indexinfo;
+	Oid bsonBtreeOpFamily = BsonBtreeOpFamilyOid();
+	Oid targetRightType = toNativeStatsOperators ? BsonQueryTypeId() : BsonTypeId();
+	bool remappedAnyQual = false;
+	ListCell *clauseCell;
+
+	foreach(clauseCell, path->indexclauses)
+	{
+		IndexClause *iclause = lfirst_node(IndexClause, clauseCell);
+
+		/* Only remap quals on a bson_btree_ops index column. */
+		if (indexInfo->opfamily[iclause->indexcol] != bsonBtreeOpFamily)
+		{
+			continue;
+		}
+
+		ListCell *qualCell;
+
+		foreach(qualCell, iclause->indexquals)
+		{
+			RestrictInfo *rinfo = lfirst_node(RestrictInfo, qualCell);
+			if (!IsA(rinfo->clause, OpExpr))
+			{
+				continue;
+			}
+
+			OpExpr *opExpr = (OpExpr *) rinfo->clause;
+			if (list_length(opExpr->args) != 2)
+			{
+				continue;
+			}
+
+			/* Map the current operator's btree strategy to the target operator. */
+			int strategy = get_op_opfamily_strategy(opExpr->opno,
+													bsonBtreeOpFamily);
+			Oid mappedOperatorId = toNativeStatsOperators ?
+								   NativeStatsBtreeOperatorForStrategy(strategy) :
+								   BsonComparisonBtreeOperatorForStrategy(strategy);
+			if (!OidIsValid(mappedOperatorId))
+			{
+				continue;
+			}
+
+			opExpr->opno = mappedOperatorId;
+			remappedAnyQual = true;
+
+			Node *rhsArg = (Node *) lsecond(opExpr->args);
+			if (IsA(rhsArg, Const))
+			{
+				((Const *) rhsArg)->consttype = targetRightType;
+			}
+		}
+	}
+
+	return remappedAnyQual;
+}
+
+
 void
 documentdb_btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 						  Cost *indexStartupCost, Cost *indexTotalCost,
@@ -3494,8 +3645,29 @@ documentdb_btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 		}
 	}
 
+	/*
+	 * Swap in the native-stats operators when the relation has per-collection
+	 * statistics, or as a fallback when btree-stats selectivity is enabled (a
+	 * collection without RUM indexes has no registered stats but still has
+	 * object_id histograms).
+	 */
+	bool remappedForStatsSelectivity = false;
+	if (IsBtreeBsonSelectivityFromStatsEnabledForRelation(
+			root, path->indexinfo->rel))
+	{
+		bool toStatsOperators = true;
+		remappedForStatsSelectivity =
+			RemapObjectIdBtreeQualsForStats(path, toStatsOperators);
+	}
+
 	btcostestimate(root, path, loop_count, indexStartupCost, indexTotalCost,
 				   indexSelectivity, indexCorrelation, indexPages);
+
+	if (remappedForStatsSelectivity)
+	{
+		bool toStatsOperators = false;
+		RemapObjectIdBtreeQualsForStats(path, toStatsOperators);
+	}
 
 	if (convertedToIndexOnlyScan)
 	{

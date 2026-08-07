@@ -21,4 +21,6 @@ typedef bool (*ShouldEnableBtreeBsonSelectivityFromStatsFunc)(void);
 extern ShouldEnableBtreeBsonSelectivityFromStatsFunc
 	should_enable_btree_bson_selectivity_from_stats_hook;
 
+bool IsBtreeBsonSelectivityFromStatsEnabled(void);
+
 #endif
