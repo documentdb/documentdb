@@ -56,7 +56,11 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjTestColl1", "pipeline": [ { "$sort": { "category": 1 } }, { "$group": { "_id": "$year", "lastCategory": { "$mergeObjects": { "category": "$category" } } } } ] }');
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjTestColl1", "pipeline": [ { "$sort": { "category": 1 } }, { "$group": { "_id": "$year", "shouldFail": { "$mergeObjects": "$category" } } } ] }');
 
+SELECT documentdb_api.shard_collection('db', 'mergeObjTestColl2', '{ "_id": "hashed" }', false);
+SET citus.enable_local_execution TO OFF;
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjTestColl2", "pipeline": [ { "$sort": { "_id": 1 } }, { "$group": { "_id": null, "mergedObj": { "$mergeObjects": "$missing" } } } ] }');
+RESET citus.enable_local_execution;
+
 select documentdb_api.drop_collection('db','mergeObjTestColl1');
 select documentdb_api.drop_collection('db','mergeObjTestColl2');
 select documentdb_api.drop_collection('db','mergeObjSizeTest');
-
