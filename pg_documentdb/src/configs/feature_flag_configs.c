@@ -514,11 +514,6 @@ bool SkipFailOnCollation = DEFAULT_SKIP_FAIL_ON_COLLATION;
 bool EnableCollationWithNonUniqueOrderedIndexes =
 	DEFAULT_ENABLE_COLLATION_WITH_NON_UNIQUE_ORDERED_INDEXES;
 
-/* Added in v110, Pending stabilization, enable in v118 */
-#define DEFAULT_ENABLE_COLLATION_WITH_NEW_GROUP_ACCUMULATORS false
-bool EnableCollationWithNewGroupAccumulators =
-	DEFAULT_ENABLE_COLLATION_WITH_NEW_GROUP_ACCUMULATORS;
-
 /*
  * SECTION: Cluster administration & DDL feature flags
  */
@@ -719,14 +714,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Determines whether collation is supported for non-unique ordered/composite indexes."),
 		NULL, &EnableCollationWithNonUniqueOrderedIndexes,
 		DEFAULT_ENABLE_COLLATION_WITH_NON_UNIQUE_ORDERED_INDEXES,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableCollationWithNewGroupAccumulators", newGucPrefix),
-		gettext_noop(
-			"Determines whether collation is enabled with the new group accumulators."),
-		NULL, &EnableCollationWithNewGroupAccumulators,
-		DEFAULT_ENABLE_COLLATION_WITH_NEW_GROUP_ACCUMULATORS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

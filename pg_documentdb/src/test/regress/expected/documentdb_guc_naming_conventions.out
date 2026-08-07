@@ -36,7 +36,6 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.enableBackgroundWorkerInitJobs'),
     ('documentdb.enableBackgroundWorkerJobs'),
     ('documentdb.enableBypassDocumentValidation'),
-    ('documentdb.enableCollationWithNewGroupAccumulators'),
     ('documentdb.enableCollationWithNonUniqueOrderedIndexes'),
     ('documentdb.enableCollModUnique'),
     ('documentdb.enableCommutativeDeleteMany'),

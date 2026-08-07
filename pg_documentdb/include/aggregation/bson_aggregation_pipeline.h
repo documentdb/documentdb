@@ -246,7 +246,6 @@ GenerateFirstPageQueryData(void)
  */
 extern bool EnableNewMinMaxAccumulators;
 extern bool EnableNewWithExprAccumulators;
-extern bool EnableCollationWithNewGroupAccumulators;
 extern bool EnableParallelSafeWithExprAccumulators;
 
 inline static bool

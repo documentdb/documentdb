@@ -7386,7 +7386,6 @@ $cmd$);
 -- "item2" compare equal with numericOrdering but are separated in binary index
 -- order, so omitting the Sort would split one logical group into two.
 SET documentdb.enableNewWithExprAccumulators TO on;
-SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 SELECT documentdb_api.insert_one(
   'ord_coll_ordered_db',
   'ord_orderby_samefield',
@@ -7511,7 +7510,6 @@ $cmd$);
                            Heap Fetches: 7
 (20 rows)
 
-RESET documentdb.enableCollationWithNewGroupAccumulators;
 RESET documentdb.enableNewWithExprAccumulators;
 -- ============================================================
 -- Section 30: index-only scan under collation on collation-aware

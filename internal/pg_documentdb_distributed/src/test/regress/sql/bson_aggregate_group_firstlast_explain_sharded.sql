@@ -223,7 +223,6 @@ ROLLBACK;
 
 -- GUC ON + collation: should show bsonfirstwithexpr / bsonlastwithexpr with collation locale
 SET documentdb_core.enableCollation TO on;
-SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 SET documentdb.enableNewWithExprAccumulators TO on;
 BEGIN;
 set local citus.max_adaptive_executor_pool_size to 1;
@@ -237,7 +236,6 @@ $cmd$);
 ROLLBACK;
 
 SET documentdb.enableNewWithExprAccumulators TO off;
-SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SET documentdb_core.enableCollation TO off;
 
 -- ===== $sort + $group with $first =====

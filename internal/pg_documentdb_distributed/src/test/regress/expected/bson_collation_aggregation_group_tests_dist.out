@@ -7,7 +7,6 @@ SET documentdb.next_collection_id TO 25700000;
 SET documentdb.next_collection_index_id TO 25700000;
 SET documentdb_core.enableCollation TO on;
 SET documentdb.enableNewWithExprAccumulators TO on;
-SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 SET documentdb.useLocalExecutionShardQueries TO off;
 SET citus.enable_local_execution TO off;
 SELECT documentdb_api.insert_one('db', 'group_collation_dist_test',
@@ -144,14 +143,14 @@ SELECT document FROM bson_aggregation_pipeline('db',
         { "$group": {
             "_id": { "category": "$category", "region": "$region" },
             "firstId": { "$min": "$_id" },
-            "values": { "$push": "$value" }
+            "values": { "$max": "$value" }
         } },
         { "$sort": { "firstId": 1 } }
     ], "collation": { "locale": "en", "strength": 1 } }');
-                                                                                       document                                                                                       
+                                                            document                                                            
 ---------------------------------------------------------------------
- { "_id" : { "category" : "Cat", "region" : "North" }, "firstId" : { "$numberInt" : "1" }, "values" : [ { "$numberInt" : "10" }, { "$numberInt" : "20" }, { "$numberInt" : "30" } ] }
- { "_id" : { "category" : "Dog", "region" : "South" }, "firstId" : { "$numberInt" : "4" }, "values" : [ { "$numberInt" : "40" }, { "$numberInt" : "50" }, { "$numberInt" : "60" } ] }
+ { "_id" : { "category" : "Cat", "region" : "North" }, "firstId" : { "$numberInt" : "1" }, "values" : { "$numberInt" : "30" } }
+ { "_id" : { "category" : "Dog", "region" : "South" }, "firstId" : { "$numberInt" : "4" }, "values" : { "$numberInt" : "60" } }
 (2 rows)
 
 -- The command collation also applies to a computed string key.
@@ -238,20 +237,32 @@ SELECT document FROM bson_aggregation_pipeline('db',
         { "$group": {
             "_id": "$category",
             "firstId": { "$min": "$_id" },
-            "values": { "$push": "$value" }
+            "values": { "$max": "$value" }
         } },
         { "$sort": { "firstId": 1 } }
     ], "collation": { "locale": "en", "strength": 3 } }');
-                                           document                                            
+                                         document                                          
 ---------------------------------------------------------------------
- { "_id" : "Cat", "firstId" : { "$numberInt" : "1" }, "values" : [ { "$numberInt" : "10" } ] }
- { "_id" : "cat", "firstId" : { "$numberInt" : "2" }, "values" : [ { "$numberInt" : "20" } ] }
- { "_id" : "CAT", "firstId" : { "$numberInt" : "3" }, "values" : [ { "$numberInt" : "30" } ] }
- { "_id" : "Dog", "firstId" : { "$numberInt" : "4" }, "values" : [ { "$numberInt" : "40" } ] }
- { "_id" : "dog", "firstId" : { "$numberInt" : "5" }, "values" : [ { "$numberInt" : "50" } ] }
- { "_id" : "DOG", "firstId" : { "$numberInt" : "6" }, "values" : [ { "$numberInt" : "60" } ] }
+ { "_id" : "Cat", "firstId" : { "$numberInt" : "1" }, "values" : { "$numberInt" : "10" } }
+ { "_id" : "cat", "firstId" : { "$numberInt" : "2" }, "values" : { "$numberInt" : "20" } }
+ { "_id" : "CAT", "firstId" : { "$numberInt" : "3" }, "values" : { "$numberInt" : "30" } }
+ { "_id" : "Dog", "firstId" : { "$numberInt" : "4" }, "values" : { "$numberInt" : "40" } }
+ { "_id" : "dog", "firstId" : { "$numberInt" : "5" }, "values" : { "$numberInt" : "50" } }
+ { "_id" : "DOG", "firstId" : { "$numberInt" : "6" }, "values" : { "$numberInt" : "60" } }
 (6 rows)
 
+ROLLBACK;
+-- $push cannot honor a collation, so it is rejected.
+BEGIN;
+SET local documentdb_core.enableCollation TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": {
+            "_id": { "category": "$category", "region": "$region" },
+            "values": { "$push": "$value" }
+        } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+ERROR:  collation is not supported with the $push accumulator in $group yet.
 ROLLBACK;
 SELECT documentdb_api.drop_collection('db', 'group_collation_dist_test');
  drop_collection 
@@ -261,6 +272,5 @@ SELECT documentdb_api.drop_collection('db', 'group_collation_dist_test');
 
 RESET citus.enable_local_execution;
 RESET documentdb.useLocalExecutionShardQueries;
-RESET documentdb.enableCollationWithNewGroupAccumulators;
 RESET documentdb.enableNewWithExprAccumulators;
 RESET documentdb_core.enableCollation;
