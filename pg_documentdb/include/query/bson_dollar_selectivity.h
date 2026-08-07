@@ -30,6 +30,8 @@ double GetObjectIdOperatorSelectivity(PlannerInfo *planner, Oid funcId,
 
 bool EnablePlannerCostSelectivityFromRelOptInfo(PlannerInfo *planner, RelOptInfo *rel);
 bool EnablePlannerCostSelectivity(PlannerInfo *planner, List *args);
+bool IsBtreeBsonSelectivityFromStatsEnabledForRelation(PlannerInfo *planner,
+													   RelOptInfo *rel);
 
 void GetCorrelationFromStatistics(PlannerInfo *root, IndexPath *path,
 								  double *indexCorrelation);
