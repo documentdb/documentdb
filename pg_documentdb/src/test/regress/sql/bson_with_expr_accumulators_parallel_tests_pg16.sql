@@ -1,0 +1,1 @@
+\i sql/bson_with_expr_accumulators_parallel_tests.sql

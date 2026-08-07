@@ -296,6 +296,11 @@ bool EnableNewMinMaxAccumulators = DEFAULT_ENABLE_NEW_MIN_MAX_ACCUMULATORS;
 #define DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS true
 bool EnableNewWithExprAccumulators = DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS;
 
+/* Added in v117, enabled on v117, remove after v120 */
+#define DEFAULT_ENABLE_PARALLEL_SAFE_WITH_EXPR_ACCUMULATORS true
+bool EnableParallelSafeWithExprAccumulators =
+	DEFAULT_ENABLE_PARALLEL_SAFE_WITH_EXPR_ACCUMULATORS;
+
 /* Added on v115, enabled on v115, remove after v118 */
 #define DEFAULT_ENABLE_MIN_MAX_SKIP_NULL_VALUES true
 bool EnableMinMaxSkipNullValues = DEFAULT_ENABLE_MIN_MAX_SKIP_NULL_VALUES;
@@ -1427,6 +1432,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable new WithExpr aggregate optimizations for min, max, sum, avg, first, and last accumulators."),
 		NULL, &EnableNewWithExprAccumulators,
 		DEFAULT_ENABLE_NEW_WITH_EXPR_ACCUMULATORS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_parallel_safe_with_expr_accumulators", newGucPrefix),
+		gettext_noop(
+			"Whether to use the parallel-safe internal-state variants of the WithExpr min, max, first, and last accumulators when the query can run against the shard base table."),
+		NULL, &EnableParallelSafeWithExprAccumulators,
+		DEFAULT_ENABLE_PARALLEL_SAFE_WITH_EXPR_ACCUMULATORS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

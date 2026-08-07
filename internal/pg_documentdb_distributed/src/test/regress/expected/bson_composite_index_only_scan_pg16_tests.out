@@ -529,7 +529,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
                                                                                                                                                                                     run_explain_and_trim                                                                                                                                                                                     
 ---------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'c'::text, bsonmaxwithexpr(collection.document, '{ "" : "$_id" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), '{ "" : { "$numberInt" : "1" } }'::bson
+   Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'c'::text, bsonmaxwithexprinternal(collection.document, '{ "" : "$_id" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), '{ "" : { "$numberInt" : "1" } }'::bson
    ->  Limit (actual rows=4 loops=1)
          Output: collection.document
          ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=4 loops=1)
