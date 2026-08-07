@@ -7999,6 +7999,9 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 					repathArgs,
 					accumulatorText, parseState,
 					identifiers, origEntry->expr,
+					CanUseParallelSafeWithExprAccumulators(
+						context->allowShardBaseTable) ?
+					BsonMaxWithExprInternalAggregateFunctionOid() :
 					BsonMaxWithExprAggregateFunctionOid(),
 					context,
 					NULL);
@@ -8027,6 +8030,9 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 					repathArgs,
 					accumulatorText, parseState,
 					identifiers, origEntry->expr,
+					CanUseParallelSafeWithExprAccumulators(
+						context->allowShardBaseTable) ?
+					BsonMinWithExprInternalAggregateFunctionOid() :
 					BsonMinWithExprAggregateFunctionOid(),
 					context,
 					NULL);
@@ -8093,6 +8099,9 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 						repathArgs,
 						accumulatorText, parseState,
 						identifiers, origEntry->expr,
+						CanUseParallelSafeWithExprAccumulators(
+							context->allowShardBaseTable) ?
+						BsonFirstWithExprInternalAggregateFunctionOid() :
 						BsonFirstWithExprAggregateFunctionOid(),
 						context,
 						&accumulatorTle);
@@ -8142,6 +8151,9 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 						repathArgs,
 						accumulatorText, parseState,
 						identifiers, origEntry->expr,
+						CanUseParallelSafeWithExprAccumulators(
+							context->allowShardBaseTable) ?
+						BsonLastWithExprInternalAggregateFunctionOid() :
 						BsonLastWithExprAggregateFunctionOid(),
 						context,
 						NULL);

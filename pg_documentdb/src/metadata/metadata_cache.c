@@ -961,14 +961,26 @@ typedef struct DocumentDBApiOidCacheData
 	/* OID of the BSONMAXWITHEXPR aggregate function */
 	Oid ApiInternalBsonMaxWithExprAggregateFunctionOid;
 
+	/* OID of the BSONMAXWITHEXPRINTERNAL aggregate function */
+	Oid ApiInternalBsonMaxWithExprInternalAggregateFunctionOid;
+
 	/* OID of the BSONMINWITHEXPR aggregate function */
 	Oid ApiInternalBsonMinWithExprAggregateFunctionOid;
+
+	/* OID of the BSONMINWITHEXPRINTERNAL aggregate function */
+	Oid ApiInternalBsonMinWithExprInternalAggregateFunctionOid;
 
 	/* OID of the BSONFIRSTWITHEXPR aggregate function */
 	Oid ApiInternalBsonFirstWithExprAggregateFunctionOid;
 
+	/* OID of the BSONFIRSTWITHEXPRINTERNAL aggregate function */
+	Oid ApiInternalBsonFirstWithExprInternalAggregateFunctionOid;
+
 	/* OID of the BSONLASTWITHEXPR aggregate function */
 	Oid ApiInternalBsonLastWithExprAggregateFunctionOid;
+
+	/* OID of the BSONLASTWITHEXPRINTERNAL aggregate function */
+	Oid ApiInternalBsonLastWithExprInternalAggregateFunctionOid;
 
 	/* OID of the BSONSUMWITHEXPR aggregate function */
 	Oid ApiInternalBsonSumWithExprAggregateFunctionOid;
@@ -4551,6 +4563,15 @@ BsonMaxWithExprAggregateFunctionOid(void)
 
 
 Oid
+BsonMaxWithExprInternalAggregateFunctionOid(void)
+{
+	return GetAggregateFunctionByName(
+		&Cache.ApiInternalBsonMaxWithExprInternalAggregateFunctionOid,
+		DocumentDBApiInternalSchemaName, "bsonmaxwithexprinternal");
+}
+
+
+Oid
 BsonMinAggregateFunctionOid(void)
 {
 	return GetAggregateFunctionByName(&Cache.ApiCatalogBsonMinAggregateFunctionOid,
@@ -4568,6 +4589,15 @@ BsonMinWithExprAggregateFunctionOid(void)
 
 
 Oid
+BsonMinWithExprInternalAggregateFunctionOid(void)
+{
+	return GetAggregateFunctionByName(
+		&Cache.ApiInternalBsonMinWithExprInternalAggregateFunctionOid,
+		DocumentDBApiInternalSchemaName, "bsonminwithexprinternal");
+}
+
+
+Oid
 BsonFirstWithExprAggregateFunctionOid(void)
 {
 	return GetAggregateFunctionByName(
@@ -4577,11 +4607,29 @@ BsonFirstWithExprAggregateFunctionOid(void)
 
 
 Oid
+BsonFirstWithExprInternalAggregateFunctionOid(void)
+{
+	return GetAggregateFunctionByName(
+		&Cache.ApiInternalBsonFirstWithExprInternalAggregateFunctionOid,
+		DocumentDBApiInternalSchemaName, "bsonfirstwithexprinternal");
+}
+
+
+Oid
 BsonLastWithExprAggregateFunctionOid(void)
 {
 	return GetAggregateFunctionByName(
 		&Cache.ApiInternalBsonLastWithExprAggregateFunctionOid,
 		DocumentDBApiInternalSchemaName, "bsonlastwithexpr");
+}
+
+
+Oid
+BsonLastWithExprInternalAggregateFunctionOid(void)
+{
+	return GetAggregateFunctionByName(
+		&Cache.ApiInternalBsonLastWithExprInternalAggregateFunctionOid,
+		DocumentDBApiInternalSchemaName, "bsonlastwithexprinternal");
 }
 
 
