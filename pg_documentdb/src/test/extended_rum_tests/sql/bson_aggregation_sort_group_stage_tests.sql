@@ -16,24 +16,12 @@ set LOCAL enable_bitmapscan to off;
 set LOCAL enable_hashagg to off;
 ANALYZE documentdb_data.documents_1801;
 
--- 2. Without enableSortGroupStage
-SET LOCAL documentdb.enableSortGroupStage TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
-
--- 3. With enableSortGroupStage on
-SET LOCAL documentdb.enableSortGroupStage TO on;
+-- 2. Sort keys share the group prefix.
 SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
 
--- 4. Sort on v (different from group key g), without enableSortGroupStage
-SET LOCAL documentdb.enableSortGroupStage TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "v": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "v": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
-
--- 5. Sort on v, with enableSortGroupStage on
-SET LOCAL documentdb.enableSortGroupStage TO on;
+-- 3. Sort on v (different from group key g).
 SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "v": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "v": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');

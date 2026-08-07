@@ -420,10 +420,6 @@ bool EnableTailableCursorMaxAwaitTime = DEFAULT_ENABLE_TAILABLE_CURSOR_MAX_AWAIT
 #define DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG true
 bool FailOnNonEmptyGroupCountArg = DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG;
 
-/* Added in v112, enabled in v112, remove after v114 */
-#define DEFAULT_ENABLE_SORT_GROUP_STAGE true
-bool EnableSortGroupStage = DEFAULT_ENABLE_SORT_GROUP_STAGE;
-
 /* Added in v115, Pending stabilization, enable in v117.*/
 #define DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP false
 bool EnableProjectPushUpBeforeUnwindWithGroup =
@@ -1105,13 +1101,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to fail when $count accumulator in $group has non-empty arguments."),
 		NULL, &FailOnNonEmptyGroupCountArg,
 		DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableSortGroupStage", newGucPrefix),
-		gettext_noop(
-			"Whether to enable the $sortGroup stage."),
-		NULL, &EnableSortGroupStage, DEFAULT_ENABLE_SORT_GROUP_STAGE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

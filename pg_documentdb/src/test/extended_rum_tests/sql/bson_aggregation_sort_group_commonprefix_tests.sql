@@ -72,7 +72,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableSortGroupStage TO on;
 SET LOCAL documentdb.enableNewWithExprAccumulators TO on;
 -- Required by tests that use enableGroupByCompoundIdIndexPushdown (1.5, 1.10,
 -- 2.5, 2.10). Set once here since SET LOCAL persists for the transaction.

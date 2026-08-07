@@ -24,35 +24,7 @@ set LOCAL enable_seqscan to off;
 set LOCAL enable_bitmapscan to off;
 set LOCAL enable_hashagg to off;
 ANALYZE documentdb_data.documents_1801;
--- 2. Without enableSortGroupStage
-SET LOCAL documentdb.enableSortGroupStage TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
-                                        document                                         
------------------------------------------------------------------------------------------
- { "_id" : { "g" : "A" }, "firstVal" : "name_3", "total" : { "$numberInt" : "166833" } }
- { "_id" : { "g" : "B" }, "firstVal" : "name_1", "total" : { "$numberInt" : "167167" } }
- { "_id" : { "g" : "C" }, "firstVal" : "name_2", "total" : { "$numberInt" : "166500" } }
-(3 rows)
-
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
-                                                                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                    
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, bson_expression_get(bsonfirst(agg_stage_1.document, '{"{ \"g\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'total'::text, bsonsum(bson_expression_get(agg_stage_1.document, '{ "" : "$seq" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
-         Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_1
-               Output: bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
-               ->  Index Scan using g_1 on documentdb_data.documents_1801 collection
-                     Output: collection.document, bson_orderby(collection.document, '{ "g" : { "$numberInt" : "1" } }'::bson)
-                     Index Cond: (collection.document @<> '{ "g" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-                     Order By: (collection.document |-<> '{ "g" : { "$numberInt" : "1" } }'::bson)
-(12 rows)
-
--- 3. With enableSortGroupStage on
-SET LOCAL documentdb.enableSortGroupStage TO on;
+-- 2. Sort keys share the group prefix.
 SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
                                         document                                         
@@ -74,37 +46,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          Order By: (collection.document |-<> '{ "g" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
 
--- 4. Sort on v (different from group key g), without enableSortGroupStage
-SET LOCAL documentdb.enableSortGroupStage TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "v": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
-                                        document                                         
------------------------------------------------------------------------------------------
- { "_id" : { "g" : "A" }, "firstVal" : "name_3", "total" : { "$numberInt" : "166833" } }
- { "_id" : { "g" : "B" }, "firstVal" : "name_1", "total" : { "$numberInt" : "167167" } }
- { "_id" : { "g" : "C" }, "firstVal" : "name_2", "total" : { "$numberInt" : "166500" } }
-(3 rows)
-
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "v": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
-                                                                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                    
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
-   Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, bson_expression_get(bsonfirst(agg_stage_1.document, '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'total'::text, bsonsum(bson_expression_get(agg_stage_1.document, '{ "" : "$seq" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
-         Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_1
-               Output: bson_expression_get(agg_stage_1.document, '{ "" : { "g" : "$g" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
-               ->  Sort
-                     Output: collection.document, (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson))
-                     Sort Key: (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Index Scan using g_1 on documentdb_data.documents_1801 collection
-                           Output: collection.document, bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)
-                           Index Cond: (collection.document @<> '{ "g" : { "fullScan" : true } }'::bson)
-(14 rows)
-
--- 5. Sort on v, with enableSortGroupStage on
-SET LOCAL documentdb.enableSortGroupStage TO on;
+-- 3. Sort on v (different from group key g).
 SET LOCAL documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [ { "$sort": { "v": 1 } }, { "$group": { "_id": {"g" : "$g"}, "firstVal": { "$first": "$name" }, "total": { "$sum": "$seq" } } } ], "hint": "g_1" }');
                                         document                                         

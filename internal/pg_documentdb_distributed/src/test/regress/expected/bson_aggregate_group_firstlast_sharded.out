@@ -263,7 +263,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 106_1
+   ->  Distributed Subplan 121_1
          ->  WindowAgg
                Output: remote_scan.document, (documentdb_api_internal.bsonfirst(remote_scan."firstVal", '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[], '{ "" : "$v" }'::bson) OVER (?)), documentdb_api_internal.bsonlast(remote_scan."lastName", '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[], '{ "" : "$name" }'::bson) OVER (?), remote_scan."?partitionBy?", remote_scan.worker_column_5
                ->  WindowAgg
@@ -283,11 +283,11 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('firstVal'::text, "firstVal", 'lastName'::text, "lastName"), false) AS document FROM (SELECT intermediate_result.document, intermediate_result."firstVal", intermediate_result."lastName" FROM read_intermediate_result('106_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, "firstVal" documentdb_core.bson, "lastName" documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('firstVal'::text, "firstVal", 'lastName'::text, "lastName"), false) AS document FROM (SELECT intermediate_result.document, intermediate_result."firstVal", intermediate_result."lastName" FROM read_intermediate_result('121_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, "firstVal" documentdb_core.bson, "lastName" documentdb_core.bson)) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                Output: documentdb_api_internal.bson_dollar_merge_documents(intermediate_result.document, documentdb_core.bson_repath_and_build('firstVal'::text, intermediate_result."firstVal", 'lastName'::text, intermediate_result."lastName"), false)
-               Function Call: read_intermediate_result('106_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('121_1'::text, 'binary'::citus_copy_format)
 (27 rows)
 
 -- 3f. GUC ON: EXPLAIN $first/$last without sortBy → bsonfirstwithexpr / bsonlastwithexpr
@@ -296,7 +296,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 108_1
+   ->  Distributed Subplan 123_1
          ->  WindowAgg
                Output: remote_scan.document, (documentdb_api_internal.bsonfirstwithexpr(remote_scan."firstVal", '{ "" : "$v" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text) OVER (?)), documentdb_api_internal.bsonlastwithexpr(remote_scan."lastName", '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text) OVER (?), remote_scan."?partitionBy?"
                ->  WindowAgg
@@ -316,11 +316,11 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('firstVal'::text, "firstVal", 'lastName'::text, "lastName"), false) AS document FROM (SELECT intermediate_result.document, intermediate_result."firstVal", intermediate_result."lastName" FROM read_intermediate_result('108_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, "firstVal" documentdb_core.bson, "lastName" documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('firstVal'::text, "firstVal", 'lastName'::text, "lastName"), false) AS document FROM (SELECT intermediate_result.document, intermediate_result."firstVal", intermediate_result."lastName" FROM read_intermediate_result('123_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, "firstVal" documentdb_core.bson, "lastName" documentdb_core.bson)) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                Output: documentdb_api_internal.bson_dollar_merge_documents(intermediate_result.document, documentdb_core.bson_repath_and_build('firstVal'::text, intermediate_result."firstVal", 'lastName'::text, intermediate_result."lastName"), false)
-               Function Call: read_intermediate_result('108_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('123_1'::text, 'binary'::citus_copy_format)
 (27 rows)
 
 -- 3g. GUC OFF: EXPLAIN $first/$last with sortBy → bsonfirst / bsonlast (sorted path)
@@ -331,7 +331,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 110_1
+   ->  Distributed Subplan 125_1
          ->  WindowAgg
                Output: remote_scan.document, (documentdb_api_internal.bsonfirst(remote_scan."firstVal", '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[], '{ "" : "$v" }'::bson) OVER (?)), documentdb_api_internal.bsonlast(remote_scan."lastName", '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[], '{ "" : "$name" }'::bson) OVER (?), remote_scan."?partitionBy?", remote_scan.worker_column_5
                ->  WindowAgg
@@ -351,11 +351,11 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('firstVal'::text, "firstVal", 'lastName'::text, "lastName"), false) AS document FROM (SELECT intermediate_result.document, intermediate_result."firstVal", intermediate_result."lastName" FROM read_intermediate_result('110_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, "firstVal" documentdb_core.bson, "lastName" documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('firstVal'::text, "firstVal", 'lastName'::text, "lastName"), false) AS document FROM (SELECT intermediate_result.document, intermediate_result."firstVal", intermediate_result."lastName" FROM read_intermediate_result('125_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, "firstVal" documentdb_core.bson, "lastName" documentdb_core.bson)) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                Output: documentdb_api_internal.bson_dollar_merge_documents(intermediate_result.document, documentdb_core.bson_repath_and_build('firstVal'::text, intermediate_result."firstVal", 'lastName'::text, intermediate_result."lastName"), false)
-               Function Call: read_intermediate_result('110_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('125_1'::text, 'binary'::citus_copy_format)
 (27 rows)
 
 -- 3h. GUC OFF: EXPLAIN $first/$last without sortBy → bsonfirstonsorted / bsonlastonsorted
@@ -364,7 +364,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
-   ->  Distributed Subplan 112_1
+   ->  Distributed Subplan 127_1
          ->  WindowAgg
                Output: remote_scan.document, (documentdb_api_internal.bsonfirstonsorted(remote_scan."firstVal", '{ "" : "$v" }'::bson) OVER (?)), documentdb_api_internal.bsonlastonsorted(remote_scan."lastName", '{ "" : "$name" }'::bson) OVER (?), remote_scan."?partitionBy?"
                ->  WindowAgg
@@ -384,11 +384,11 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('firstVal'::text, "firstVal", 'lastName'::text, "lastName"), false) AS document FROM (SELECT intermediate_result.document, intermediate_result."firstVal", intermediate_result."lastName" FROM read_intermediate_result('112_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, "firstVal" documentdb_core.bson, "lastName" documentdb_core.bson)) agg_stage_0
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('firstVal'::text, "firstVal", 'lastName'::text, "lastName"), false) AS document FROM (SELECT intermediate_result.document, intermediate_result."firstVal", intermediate_result."lastName" FROM read_intermediate_result('127_1'::text, 'binary'::citus_copy_format) intermediate_result(document documentdb_core.bson, "firstVal" documentdb_core.bson, "lastName" documentdb_core.bson)) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Function Scan on pg_catalog.read_intermediate_result intermediate_result
                Output: documentdb_api_internal.bson_dollar_merge_documents(intermediate_result.document, documentdb_core.bson_repath_and_build('firstVal'::text, intermediate_result."firstVal", 'lastName'::text, intermediate_result."lastName"), false)
-               Function Call: read_intermediate_result('112_1'::text, 'binary'::citus_copy_format)
+               Function Call: read_intermediate_result('127_1'::text, 'binary'::citus_copy_format)
 (27 rows)
 
 SELECT documentdb_api.drop_collection('db', 'wfl_dist_test');
@@ -398,9 +398,9 @@ SELECT documentdb_api.drop_collection('db', 'wfl_dist_test');
 (1 row)
 
 -- =============================================================================
--- Test 4: Sharded $sort + $group with only $first and enableSortGroupStage.
--- When enableSortGroupStage is on, the Sort node should disappear and
--- $first should use aggregate-internal ORDER BY instead.
+-- Test 4: Sharded $sort + $group with only $first.
+-- The Sort node should disappear and $first should use aggregate-internal
+-- ORDER BY instead.
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_sortgroup_dist', '{ "_id": 1, "g": "X", "seq": 30, "val": "third" }');
 NOTICE:  creating collection
@@ -469,24 +469,7 @@ SELECT documentdb_api.shard_collection('db', 'fl_sortgroup_dist', '{ "_id": "has
  
 (1 row)
 
--- 4a. sortGroup OFF: Sort node should be present, data correctness
-SET documentdb.enableSortGroupStage TO off;
-set citus.propagate_set_commands to 'local';
-BEGIN;
-set local citus.max_adaptive_executor_pool_size to 1;
-set local citus.enable_local_execution to off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_dist", "pipeline": [ { "$sort": { "g": 1, "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
-                 document                 
----------------------------------------------------------------------
- { "_id" : "X", "firstVal" : "first" }
- { "_id" : "Z", "firstVal" : "low" }
- { "_id" : "W", "firstVal" : "only-low" }
- { "_id" : "Y", "firstVal" : "earliest" }
-(4 rows)
-
-ROLLBACK;
--- 4b. sortGroup ON: Sort node should disappear, orderby pushed to aggregate
-SET documentdb.enableSortGroupStage TO on;
+-- Sort node should disappear, with orderby pushed to aggregate.
 SET documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 set citus.propagate_set_commands to 'local';
 BEGIN;
@@ -502,7 +485,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgro
 (4 rows)
 
 ROLLBACK;
-RESET documentdb.enableSortGroupStage;
 RESET documentdb.enableSortPushToAccumulatorWithPrefix;
 SELECT documentdb_api.drop_collection('db', 'fl_sortgroup_dist');
  drop_collection 

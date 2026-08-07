@@ -1568,16 +1568,6 @@ SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregat
  { "_id" : "Seattle", "firstRent" : { "$numberInt" : "3500" } }
 (3 rows)
 
-set documentdb.enableSortGroupStage to off;
-SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "rent": 1} }, { "$group" : { "_id" : "$city", "firstRent" : { "$first" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
-                            document                            
-----------------------------------------------------------------
- { "_id" : "Chicago", "firstRent" : { "$numberInt" : "2000" } }
- { "_id" : "NYC", "firstRent" : { "$numberInt" : "2000" } }
- { "_id" : "Seattle", "firstRent" : { "$numberInt" : "3500" } }
-(3 rows)
-
-set documentdb.enableSortGroupStage to on;
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "rent": 1} }, { "$group" : { "_id" : "$city", "firstRent" : { "$first" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
                             document                            
 ----------------------------------------------------------------
@@ -1605,16 +1595,6 @@ SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregat
  { "_id" : "Seattle", "lastRent" : { "$numberInt" : "5000" } }
 (3 rows)
 
-set documentdb.enableSortGroupStage to off;
-SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "rent": 1} }, { "$group" : { "_id" : "$city", "lastRent" : { "$last" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
-                           document                            
----------------------------------------------------------------
- { "_id" : "Chicago", "lastRent" : { "$numberInt" : "2700" } }
- { "_id" : "NYC", "lastRent" : { "$numberInt" : "3500" } }
- { "_id" : "Seattle", "lastRent" : { "$numberInt" : "5000" } }
-(3 rows)
-
-set documentdb.enableSortGroupStage to on;
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "rent": 1} }, { "$group" : { "_id" : "$city", "lastRent" : { "$last" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
                            document                            
 ---------------------------------------------------------------
@@ -2225,44 +2205,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -- because this path is lowered as bson_expression_get(bsonfirst/bsonlast(document,
 -- sortArrayConst), ...) instead of the single-path accumulator shape
 -- handled by the index only scan coverage walker today.
-set documentdb.enableSortGroupStage to off;
-SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "rent": 1} }, { "$group" : { "_id" : "$city", "firstRent" : { "$first" : "$rent" } } }]}') $$, p_ignore_heap_fetches => true);
-                                                                                                                                                                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstRent'::text, documentdb_api_internal.bson_expression_get(bsonfirst(agg_stage_1.document, '{"{ \"city\" : { \"$numberInt\" : \"1\" } }","{ \"rent\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort (actual rows=20 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
-         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         Sort Method: quicksort  Memory: xxxkB
-         ->  Subquery Scan on agg_stage_1 (actual rows=20 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
-               ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-                     Output: collection.document, bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "rent" : { "$numberInt" : "1" } }'::bson)
-                     Index Cond: ((collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "rent" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-                     Order By: ((collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson) AND (collection.document |-<> '{ "rent" : { "$numberInt" : "1" } }'::bson))
-(13 rows)
-
-SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "rent": 1} }, { "$group" : { "_id" : "$city", "lastRent" : { "$last" : "$rent" } } }]}') $$, p_ignore_heap_fetches => true);
-                                                                                                                                                                                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                                                                                                                                                                                               
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'lastRent'::text, documentdb_api_internal.bson_expression_get(bsonlast(agg_stage_1.document, '{"{ \"city\" : { \"$numberInt\" : \"1\" } }","{ \"rent\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort (actual rows=20 loops=1)
-         Output: (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
-         Sort Key: (documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         Sort Method: quicksort  Memory: xxxkB
-         ->  Subquery Scan on agg_stage_1 (actual rows=20 loops=1)
-               Output: documentdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
-               ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-                     Output: collection.document, bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "rent" : { "$numberInt" : "1" } }'::bson)
-                     Index Cond: ((collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "rent" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-                     Order By: ((collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson) AND (collection.document |-<> '{ "rent" : { "$numberInt" : "1" } }'::bson))
-(13 rows)
-
-set documentdb.enableSortGroupStage to on;
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "rent": 1} }, { "$group" : { "_id" : "$city", "firstRent" : { "$first" : "$rent" } } }]}') $$, p_ignore_heap_fetches => true);
                                                                                                                                                                                                                                                                                                                                                run_explain_and_trim                                                                                                                                                                                                                                                                                                                                                
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
