@@ -100,7 +100,7 @@ static MaxAlignedVarlena * AllocateBsonNumericAggState(void);
 static void CheckAggregateIntermediateResultSize(uint32_t size);
 static void CreateObjectAggTreeNodes(BsonObjectAggState *currentState,
 									 pgbson *currentValue);
-static void ValidateMergeObjectsInput(pgbson *input);
+static bool ValidateMergeObjectsInput(pgbson *input);
 static Datum ParseAndReturnMergeObjectsTree(BsonObjectAggState *state);
 static Datum bson_maxminn_transition(PG_FUNCTION_ARGS, bool isMaxN);
 static void BsonArrayAggFinalCore(BsonArrayAggState *state,
@@ -402,7 +402,7 @@ bson_distinct_array_agg_final(PG_FUNCTION_ARGS)
  * Both have the same implementation but differ in validations made inside the caller method.
  */
 inline static Datum
-AggregateObjectsCore(PG_FUNCTION_ARGS)
+AggregateObjectsCore(PG_FUNCTION_ARGS, bool mergeObjectsInputIsNullOrMissing)
 {
 	BsonObjectAggState *currentState;
 	MaxAlignedVarlena *bytes;
@@ -434,7 +434,11 @@ AggregateObjectsCore(PG_FUNCTION_ARGS)
 	}
 
 	pgbson *currentValue = PG_GETARG_MAYBE_NULL_PGBSON(1);
-	if (currentValue != NULL)
+	if (mergeObjectsInputIsNullOrMissing)
+	{
+		currentState->addEmptyPath = true;
+	}
+	else if (currentValue != NULL)
 	{
 		CheckAggregateIntermediateResultSize(currentState->currentSizeWritten +
 											 PgbsonGetBsonSize(currentValue));
@@ -457,7 +461,8 @@ AggregateObjectsCore(PG_FUNCTION_ARGS)
 Datum
 bson_object_agg_transition(PG_FUNCTION_ARGS)
 {
-	return AggregateObjectsCore(fcinfo);
+	bool mergeObjectsInputIsNullOrMissing = false;
+	return AggregateObjectsCore(fcinfo, mergeObjectsInputIsNullOrMissing);
 }
 
 
@@ -468,8 +473,8 @@ Datum
 bson_merge_objects_transition_on_sorted(PG_FUNCTION_ARGS)
 {
 	pgbson *input = PG_GETARG_MAYBE_NULL_PGBSON(1);
-	ValidateMergeObjectsInput(input);
-	return AggregateObjectsCore(fcinfo);
+	bool mergeObjectsInputIsNullOrMissing = ValidateMergeObjectsInput(input);
+	return AggregateObjectsCore(fcinfo, mergeObjectsInputIsNullOrMissing);
 }
 
 
@@ -545,7 +550,12 @@ bson_merge_objects_final(PG_FUNCTION_ARGS)
 			pgbson *evaluatedDoc = PgbsonWriterGetPgbson(&writer);
 
 			/* We need to validate the result here since we sorted the original documents first. */
-			ValidateMergeObjectsInput(evaluatedDoc);
+			bool inputIsNullOrMissing = ValidateMergeObjectsInput(evaluatedDoc);
+			if (inputIsNullOrMissing)
+			{
+				mergeObjectsState.addEmptyPath = true;
+				continue;
+			}
 
 			/* Feed the tree with the evaluated bson. */
 			CreateObjectAggTreeNodes(&mergeObjectsState,
@@ -1424,10 +1434,15 @@ CreateObjectAggTreeNodes(BsonObjectAggState *currentState, pgbson *currentValue)
 /*
  * Validates $mergeObject input. It must be a non-null document.
  */
-static void
+static bool
 ValidateMergeObjectsInput(pgbson *input)
 {
 	pgbsonelement singleBsonElement;
+
+	if (input != NULL && IsPgbsonEmptyDocument(input))
+	{
+		return true;
+	}
 
 	/*
 	 * The $mergeObjects accumulator expects a document in the form of
@@ -1457,6 +1472,8 @@ ValidateMergeObjectsInput(pgbson *input)
 					"$mergeObjects needs both inputs to be objects, but the provided input has the type %s",
 					BsonTypeName(singleBsonElement.bsonValue.value_type)));
 	}
+
+	return singleBsonElement.bsonValue.value_type == BSON_TYPE_NULL;
 }
 
 

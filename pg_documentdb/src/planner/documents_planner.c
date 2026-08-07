@@ -723,7 +723,7 @@ void
 DocumentDBPostParseAnalyzeHook(ParseState *pstate, Query *query,
 							   JumbleState *jstate)
 {
-	if (IsDocumentDBApiExtensionActive())
+	if (IsTransactionState() && IsDocumentDBApiExtensionActive())
 	{
 		ExtensionPostParseAnalyzeHookCore(pstate, query, jstate);
 	}
