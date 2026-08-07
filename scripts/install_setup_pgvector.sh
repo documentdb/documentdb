@@ -17,6 +17,12 @@ done
 scriptDir="$( cd -P "$( dirname "$source" )" && pwd )"
 echo "scriptDir: $scriptDir"
 
+#TODO(PG19) Enable this once Citus supports Postgres 19.
+if [ "${PGVERSION:-}" == "19" ]; then
+    echo "pgvector does not support Postgres 19 yet. Skipping pgvector Install."
+    exit 0
+fi
+
 . $scriptDir/utils.sh
 pgBinDir=$(GetPostgresPath $PGVERSION)
 PATH=$pgBinDir:$PATH;
