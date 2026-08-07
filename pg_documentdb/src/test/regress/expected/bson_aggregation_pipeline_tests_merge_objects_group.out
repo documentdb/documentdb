@@ -148,9 +148,15 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "
 SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjectsGroupColl2", "pipeline": [ { "$group": { "_id": "$group", "mergedObj": { "$mergeObjects": "$val" } } } ] }');
                         document                        
 --------------------------------------------------------
- { "_id" : { "$numberInt" : "1" }, "mergedObj" : null }
- { "_id" : { "$numberInt" : "2" }, "mergedObj" : null }
+ { "_id" : { "$numberInt" : "1" }, "mergedObj" : {  } }
+ { "_id" : { "$numberInt" : "2" }, "mergedObj" : {  } }
 (2 rows)
+
+SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjectsGroupColl2", "pipeline": [ { "$sort": { "_id": 1 } }, { "$group": { "_id": null, "mergedObj": { "$mergeObjects": "$missing" } } } ] }');
+     document     
+------------------
+ { "_id" : null, "mergedObj" : {  } }
+(1 row)
 
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "mergeObjectsGroupColl2", "pipeline": [ { "$group": { "_id": "$group", "mergedObj": { "$mergeObjects": "$obj" } } } ] }');
                                                                                                                                                                                                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                                                                                                                                                                                              

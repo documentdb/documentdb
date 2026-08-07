@@ -3431,20 +3431,20 @@ ERROR:  an incomplete date/time string has been found, with certain required ele
 -- valid leap year Feb 29 (2000 is divisible by 400) should succeed
 select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "2000-02-29", "format": "%Y-%m-%d" } } }');
                        bson_dollar_project                       
------------------------------------------------------------------
+---------------------------------------------------------------------
  { "result" : { "$date" : { "$numberLong" : "951811200000" } } }
 (1 row)
 
 -- invalid calendar date with onError should return the onError value instead of throwing
 select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "1900-02-29", "format": "%Y-%m-%d", "onError": "error handled" } } }');
       bson_dollar_project       
---------------------------------
+---------------------------------------------------------------------
  { "result" : "error handled" }
 (1 row)
 
 select * from bson_dollar_project('{}','{"result": {"$dateFromString": {"dateString": "2021-04-31", "format": "%Y-%m-%d", "onError": "error handled" } } }');
       bson_dollar_project       
---------------------------------
+---------------------------------------------------------------------
  { "result" : "error handled" }
 (1 row)
 
