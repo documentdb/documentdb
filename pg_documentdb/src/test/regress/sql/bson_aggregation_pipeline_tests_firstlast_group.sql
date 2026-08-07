@@ -296,17 +296,15 @@ SET documentdb.enableNewWithExprAccumulators TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$setWindowFields": { "partitionBy": "$g", "output": { "f": { "$first": { "$add": ["$v", "$$bonus"] } } } } }], "cursor": {}, "let": { "bonus": 100 } }');
 
 -- =============================================================================
--- 28. enableSortGroupStage must keep the user $sort for order-sensitive
---     $first/$last accumulators
+-- 28. The combined sort/group stage keeps the user $sort for order-sensitive
+--     $first/$last accumulators.
 -- =============================================================================
-SET documentdb.enableSortGroupStage TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$sort": { "v": 1 } }, { "$group": { "_id": "$g", "f": { "$first": "$v" }, "l": { "$last": "$v" } } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
-RESET documentdb.enableSortGroupStage;
 
 -- =============================================================================
 -- 29. $sort + $group with only $first operator.
---     When enableSortGroupStage and enableSortPushToAccumulatorWithPrefix are
---     on AND the group keys form a non-dotted prefix of the sort keys, the
+--     When enableSortPushToAccumulatorWithPrefix is on and the group keys form
+--     a non-dotted prefix of the sort keys, the
 --     explicit Sort node is dropped and any suffix sort keys are pushed into
 --     the accumulator's ORDER BY.  When the sort spec is not a prefix of the
 --     group keys, the Sort node is preserved.
@@ -324,35 +322,26 @@ SELECT documentdb_api.insert_one('db','fl_sortgroup_test','{ "_id": 8, "g": "Z",
 SELECT documentdb_api.insert_one('db','fl_sortgroup_test','{ "_id": 9, "g": "W", "seq": 100, "val": "only-high" }', NULL);
 SELECT documentdb_api.insert_one('db','fl_sortgroup_test','{ "_id": 10, "g": "W", "seq": 1, "val": "only-low" }', NULL);
 
--- With sortGroup OFF: Sort node should be present in the plan
-SET documentdb.enableSortGroupStage TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": 1, "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": 1, "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
-
--- With sortGroup ON: Sort node for {g,seq} should disappear, and orderby pushed to aggregate
-SET documentdb.enableSortGroupStage TO on;
+-- The Sort node for {g,seq} should disappear, with orderby pushed to aggregate.
 SET documentdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": 1, "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": 1, "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
 
 -- =============================================================================
 -- 30. Negative tests: $sort + $group with only $first where sort should NOT
---     be pushed into the aggregate ORDER BY despite enableSortGroupStage=on.
+--     be pushed into the aggregate ORDER BY.
 --     IsSortSpecCompatibleForPushToAccumulatorOperator rejects $meta and $natural.
 -- =============================================================================
 
 -- 30a. $meta in sort spec → sort not pushed to accumulator (Sort node present)
-SET documentdb.enableSortGroupStage TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "score": { "$meta": "textScore" } } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
 
 -- 30b. $natural in sort spec → sort not pushed to accumulator (Sort node present)
-SET documentdb.enableSortGroupStage TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "$natural": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
 
 -- 30c. Mix of $first and $sum with non-prefix sort {seq} (group key is $g).
 --      Sort spec is not a prefix of the group keys, so the Sort node is
 --      preserved; $first cannot use the prefix-push path here.
-SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" }, "total": { "$sum": "$seq" } } } ] }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" }, "total": { "$sum": "$seq" } } } ] }');
 
@@ -361,7 +350,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 --     31b/31c use sort {g, seq} (prefix-eligible, suffix {seq} pushed into
 --     accumulator's ORDER BY).
 -- =============================================================================
-SET documentdb.enableSortGroupStage TO on;
 -- 31a. Single descending: non-prefix sort, Sort node remains; $first picks the row with the highest seq (100 for W, 50 for Y, etc.)
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": -1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": -1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
@@ -377,7 +365,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- 32. Multiple $first accumulators with non-prefix sort {seq}.
 --     Sort spec is not a prefix of group key $g; Sort node remains.
 -- =============================================================================
-SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" }, "firstSeq": { "$first": "$seq" } } } ] }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" }, "firstSeq": { "$first": "$seq" } } } ] }');
 
@@ -385,14 +372,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- 33. $first with expression input under non-prefix sort {seq}.
 --     Sort node remains; expression evaluation happens after the sort.
 -- =============================================================================
-SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstDoubled": { "$first": { "$multiply": ["$seq", 2] } } } } ] }');
 
 -- =============================================================================
 -- 34. Pipeline continuation: $sort + $group $first + subsequent $sort.
 --     Non-prefix sort {seq} on the inner stage; Sort node remains there.
 -- =============================================================================
-SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
 
@@ -400,15 +385,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- 35. $first + all order-insensitive accumulators combined.
 --     Non-prefix sort {seq}; Sort node remains.
 -- =============================================================================
-SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" }, "total": { "$sum": "$seq" }, "average": { "$avg": "$seq" }, "minSeq": { "$min": "$seq" }, "maxSeq": { "$max": "$seq" }, "cnt": { "$count": {} } } } ] }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" }, "total": { "$sum": "$seq" }, "average": { "$avg": "$seq" }, "minSeq": { "$min": "$seq" }, "maxSeq": { "$max": "$seq" }, "cnt": { "$count": {} } } } ] }');
 
 -- =============================================================================
 -- 36. Accumulators that block optimization (Sort node must remain)
 -- =============================================================================
-SET documentdb.enableSortGroupStage TO on;
-
 -- 36a. $push only → sort NOT pushed
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "vals": { "$push": "$val" } } } ] }');
 
@@ -424,7 +406,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 -- =============================================================================
 -- 37. Edge case: $group with only _id, no accumulators → sort dropped entirely
 -- =============================================================================
-SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g" } } ] }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g" } } ] }');
 
@@ -437,7 +418,6 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 --     Sort spec {seq} is not a prefix of group key $g, so Sort node remains;
 --     this exercises the legacy BsonFirstOnSortedAggregate path.
 -- =============================================================================
-SET documentdb.enableSortGroupStage TO on;
 SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
@@ -451,32 +431,23 @@ SET documentdb.enableNewWithExprAccumulators TO on;
 --     the explicit Sort instead of aggorder.
 -- =============================================================================
 
--- 39a. enableOrderByIndexTerm ON, enableSortGroupStage OFF: bson_orderby_index in Sort node
-SET documentdb.enableOrderByIndexTerm TO on;
-SET documentdb.enableSortGroupStage TO off;
-EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
-
--- 39b. enableOrderByIndexTerm ON, enableSortGroupStage ON, non-prefix sort:
+-- 39a. enableOrderByIndexTerm ON, non-prefix sort:
 --      bson_orderby_index stays in the Sort node (no prefix-push)
 SET documentdb.enableOrderByIndexTerm TO on;
-SET documentdb.enableSortGroupStage TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
 
--- 39c. enableOrderByIndexTerm ON, descending non-prefix sort: bson_orderby_index_reverse in Sort node
+-- 39b. enableOrderByIndexTerm ON, descending non-prefix sort: bson_orderby_index_reverse in Sort node
 SET documentdb.enableOrderByIndexTerm TO on;
-SET documentdb.enableSortGroupStage TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": -1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
 
--- 39d. Execution: enableOrderByIndexTerm ON, enableSortGroupStage ON, prefix-eligible ascending
+-- 39c. Execution: enableOrderByIndexTerm ON, prefix-eligible ascending
 --      Sort {g, seq} matches the group prefix, so suffix {seq} is pushed into aggorder.
---      Output must match enableOrderByIndexTerm OFF (test 29 ON result)
+--      Output must match enableOrderByIndexTerm OFF.
 SET documentdb.enableOrderByIndexTerm TO on;
-SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": 1, "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
 
--- 39e. Execution: enableOrderByIndexTerm ON, enableSortGroupStage ON, non-prefix descending
+-- 39d. Execution: enableOrderByIndexTerm ON, non-prefix descending
 SET documentdb.enableOrderByIndexTerm TO on;
-SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": -1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
 
 RESET documentdb.enableOrderByIndexTerm;
@@ -491,7 +462,6 @@ SELECT documentdb_api.insert_one('db','fl_nested_sort','{ "_id": 2, "g": "A", "i
 SELECT documentdb_api.insert_one('db','fl_nested_sort','{ "_id": 3, "g": "B", "info": { "priority": 5 }, "val": "b-low" }', NULL);
 SELECT documentdb_api.insert_one('db','fl_nested_sort','{ "_id": 4, "g": "B", "info": { "priority": 2 }, "val": "b-high" }', NULL);
 
-SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_nested_sort", "pipeline": [ { "$sort": { "info.priority": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_nested_sort", "pipeline": [ { "$sort": { "info.priority": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
 
@@ -510,7 +480,6 @@ SELECT documentdb_api.insert_one('db','fl_collation_sortpush','{ "_id": 3, "g": 
 SELECT documentdb_api.insert_one('db','fl_collation_sortpush','{ "_id": 4, "g": "B", "name": "date", "seq": 2 }', NULL);
 SELECT documentdb_api.insert_one('db','fl_collation_sortpush','{ "_id": 5, "g": "B", "name": "Elderberry", "seq": 1 }', NULL);
 
-SET documentdb.enableSortGroupStage TO on;
 SET documentdb.enableNewWithExprAccumulators TO on;
 SET documentdb.enableCollationWithNewGroupAccumulators TO on;
 SET documentdb_core.enableCollation TO on;
@@ -535,7 +504,6 @@ SET documentdb.enableCollationWithNewGroupAccumulators TO off;
 SELECT documentdb_api.drop_collection('db', 'fl_collation_sortpush');
 
 RESET documentdb.enableSortPushToAccumulatorWithPrefix;
-RESET documentdb.enableSortGroupStage;
 SELECT documentdb_api.drop_collection('db', 'fl_sortgroup_test');
 
 -- Cleanup original test collection

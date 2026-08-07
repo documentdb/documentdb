@@ -152,8 +152,8 @@ SET documentdb.enableNewMinMaxAccumulators TO off;
 SET documentdb.enableNewWithExprAccumulators TO off;
 
 -- =============================================================================
--- Test: enableSortGroupStage drops dead outer $sort for order-insensitive
---       $group accumulators on sharded collections while preserving results
+-- Test: The combined sort/group stage drops a dead outer $sort for
+--       order-insensitive $group accumulators on sharded collections.
 -- =============================================================================
 
 SELECT documentdb_api.insert_one('db','sortgroup_shard_test','{ "_id": 1, "g": "A", "seq": 30, "v": 10, "bonus": 2 }');
@@ -165,19 +165,7 @@ SELECT documentdb_api.shard_collection('db', 'sortgroup_shard_test', '{ "_id": "
 
 SET citus.enable_local_execution TO off;
 
--- With sortGroup disabled, the user $sort on seq should remain in the plan.
-SET documentdb.enableSortGroupStage TO off;
-SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_shard_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "total": { "$sum": "$v" }, "adjustedAverage": { "$avg": { "$add": ["$v", "$bonus"] } }, "lo": { "$min": "$v" }, "hi": { "$max": "$v" }, "count": { "$count": {} } } }, { "$sort": { "_id": 1 } } ] }');
-SELECT COUNT(*) AS worker_seq_sort_count
-FROM documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
-EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_shard_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "total": { "$sum": "$v" }, "adjustedAverage": { "$avg": { "$add": ["$v", "$bonus"] } }, "lo": { "$min": "$v" }, "hi": { "$max": "$v" }, "count": { "$count": {} } } }, { "$sort": { "_id": 1 } } ] }')
-$cmd$) AS plan(query_plan)
-WHERE query_plan LIKE '%Sort Key:%'
-  AND query_plan LIKE '%{ "seq" : { "$numberInt" : "1" } }%';
-
--- With sortGroup enabled, the dead outer $sort on seq should disappear, but
--- the grouped results should stay identical.
-SET documentdb.enableSortGroupStage TO on;
+-- The dead outer $sort on seq should disappear.
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_shard_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "total": { "$sum": "$v" }, "adjustedAverage": { "$avg": { "$add": ["$v", "$bonus"] } }, "lo": { "$min": "$v" }, "hi": { "$max": "$v" }, "count": { "$count": {} } } }, { "$sort": { "_id": 1 } } ] }');
 SELECT COUNT(*) AS worker_seq_sort_count
 FROM documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
@@ -187,7 +175,6 @@ WHERE query_plan LIKE '%Sort Key:%'
   AND query_plan LIKE '%{ "seq" : { "$numberInt" : "1" } }%';
 
 -- $first/$last should NOT be optimized (sort must be preserved)
-SET documentdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "sortgroup_shard_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstV": { "$first": "$v" }, "lastV": { "$last": "$v" } } }, { "$sort": { "_id": 1 } } ] }');
 SELECT COUNT(*) AS worker_seq_sort_count
 FROM documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
@@ -196,7 +183,6 @@ $cmd$) AS plan(query_plan)
 WHERE query_plan LIKE '%Sort Key:%'
   AND query_plan LIKE '%{ "seq" : { "$numberInt" : "1" } }%';
 
-RESET documentdb.enableSortGroupStage;
 RESET citus.enable_local_execution;
 SELECT documentdb_api.drop_collection('db', 'sortgroup_shard_test');
 
