@@ -1111,6 +1111,13 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$n
 ERROR:  Unable to perform $mul on the existing ((NumberLong)9223372036854775807) value for the document with _id: 1
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberLong": "-9223372036854775807"} } }', '{ "": { "$mul": { "a.b": {"$numberInt": "2"} } } }', '{}', NULL, NULL, NULL);
 ERROR:  Unable to perform $mul on the existing ((NumberLong)-9223372036854775807) value for the document with _id: 1
+-- int64 min multiplied by -1 overflows int64: $mul must error, not raise a floating-point exception
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberLong": "-9223372036854775808"} } }', '{ "": { "$mul": { "a.b": {"$numberInt": "-1"} } } }', '{}', NULL, NULL, NULL);
+ERROR:  Unable to perform $mul on the existing ((NumberLong)-9223372036854775808) value for the document with _id: 1
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberLong": "-9223372036854775808"} } }', '{ "": { "$mul": { "a.b": {"$numberLong": "-1"} } } }', '{}', NULL, NULL, NULL);
+ERROR:  Unable to perform $mul on the existing ((NumberLong)-9223372036854775808) value for the document with _id: 1
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberInt": "-1"} } }', '{ "": { "$mul": { "a.b": {"$numberLong": "-9223372036854775808"} } } }', '{}', NULL, NULL, NULL);
+ERROR:  Unable to perform $mul on the existing ((NumberInt)-1) value for the document with _id: 1
 -- update scenario error tests: $mul
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": 2 } }', '{ "": { "$mul": { "a.b": "Hello" } } }', '{}', NULL, NULL, NULL);
 ERROR:  Multiplication operation failed due to a non-numeric argument: { a.b : "Hello" }

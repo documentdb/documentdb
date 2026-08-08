@@ -389,10 +389,11 @@ MultiplyWithFactorAndUpdate(bson_value_t *state, const bson_value_t *factor, boo
 			 BSON_TYPE_INT64)
 	{
 		/* any one operand is int64 and other is not or both are int64 */
-		int64_t product = BsonValueAsInt64(state) * BsonValueAsInt64(factor);
+		int64_t product;
 
-		/* Check product is not zero to remove Dividebyzero error and then check int64 overflow */
-		if (product != 0 && BsonValueAsInt64(state) != product / BsonValueAsInt64(factor))
+		/* Avoid a divide-based overflow check: INT64_MIN / -1 traps. */
+		if (__builtin_mul_overflow(BsonValueAsInt64(state), BsonValueAsInt64(factor),
+								   &product))
 		{
 			if (convertInt64OverflowToDouble)
 			{

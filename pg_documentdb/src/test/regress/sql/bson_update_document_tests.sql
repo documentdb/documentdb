@@ -337,6 +337,11 @@ SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$n
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberLong": "9223372036854775807"} } }', '{ "": { "$mul": { "a.b": {"$numberInt": "2"} } } }', '{}', NULL, NULL, NULL);
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberLong": "-9223372036854775807"} } }', '{ "": { "$mul": { "a.b": {"$numberInt": "2"} } } }', '{}', NULL, NULL, NULL);
 
+-- int64 min multiplied by -1 overflows int64: $mul must error, not raise a floating-point exception
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberLong": "-9223372036854775808"} } }', '{ "": { "$mul": { "a.b": {"$numberInt": "-1"} } } }', '{}', NULL, NULL, NULL);
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberLong": "-9223372036854775808"} } }', '{ "": { "$mul": { "a.b": {"$numberLong": "-1"} } } }', '{}', NULL, NULL, NULL);
+SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": {"$numberInt": "-1"} } }', '{ "": { "$mul": { "a.b": {"$numberLong": "-9223372036854775808"} } } }', '{}', NULL, NULL, NULL);
+
 -- update scenario error tests: $mul
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": 2 } }', '{ "": { "$mul": { "a.b": "Hello" } } }', '{}', NULL, NULL, NULL);
 SELECT documentdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": "Text" } }', '{ "": { "$mul": { "a.b": 2 } } }', '{}', NULL, NULL, NULL);
