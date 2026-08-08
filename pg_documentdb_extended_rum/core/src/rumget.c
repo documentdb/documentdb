@@ -1496,7 +1496,7 @@ IndexBuildTupleDynamic(TupleDesc tupleDescriptor,
 					(char *) tp + hoff,
 					data_size,
 					&tupmask,
-					(hasnull ? (bits8 *) tp + sizeof(IndexTupleData) : NULL));
+					(hasnull ? (uint8 *) tp + sizeof(IndexTupleData) : NULL));
 
 	/*
 	 * We do this because heap_fill_tuple wants to initialize a "tupmask"

@@ -741,7 +741,7 @@ entryPlaceToPage(RumBtree btree, Page page, OffsetNumber off,
 	if (doReplace)
 	{
 		Assert(!needsOverwrite);
-		if (!PageIndexTupleOverwrite(page, off, (Item) btree->entry, IndexTupleSize(
+		if (!PageIndexTupleOverwrite(page, off, RumPageItem(btree->entry), IndexTupleSize(
 										 btree->entry)))
 		{
 			elog(ERROR, "failed to replace index tuple in tree in \"%s\" offset %d",
@@ -750,7 +750,8 @@ entryPlaceToPage(RumBtree btree, Page page, OffsetNumber off,
 	}
 	else
 	{
-		placed = PageAddItem(page, (Item) btree->entry, IndexTupleSize(btree->entry), off,
+		placed = PageAddItem(page, RumPageItem(btree->entry), IndexTupleSize(
+								 btree->entry), off,
 							 needsOverwrite, false);
 		if (placed != off)
 		{
@@ -881,7 +882,7 @@ entrySplitPage(RumBtree btree, Buffer lbuf, Buffer rbuf,
 			lsize += MAXALIGN(IndexTupleSize(itup)) + sizeof(ItemIdData);
 		}
 
-		if ((writtenoffset = PageAddItem(page, (Item) itup, IndexTupleSize(itup),
+		if ((writtenoffset = PageAddItem(page, RumPageItem(itup), IndexTupleSize(itup),
 										 InvalidOffsetNumber,
 										 false, false)) == InvalidOffsetNumber)
 		{
@@ -929,7 +930,8 @@ rumEntryFillRoot(RumBtree btree, Buffer root, Buffer lbuf, Buffer rbuf,
 	IndexTuple itup;
 
 	itup = rumPageGetLinkItup(btree, lbuf, lpage);
-	if (PageAddItem(page, (Item) itup, IndexTupleSize(itup), InvalidOffsetNumber, false,
+	if (PageAddItem(page, RumPageItem(itup), IndexTupleSize(itup), InvalidOffsetNumber,
+					false,
 					false) == InvalidOffsetNumber)
 	{
 		elog(ERROR, "failed to add item to index root page");
@@ -937,7 +939,8 @@ rumEntryFillRoot(RumBtree btree, Buffer root, Buffer lbuf, Buffer rbuf,
 	pfree(itup);
 
 	itup = rumPageGetLinkItup(btree, rbuf, rpage);
-	if (PageAddItem(page, (Item) itup, IndexTupleSize(itup), InvalidOffsetNumber, false,
+	if (PageAddItem(page, RumPageItem(itup), IndexTupleSize(itup), InvalidOffsetNumber,
+					false,
 					false) == InvalidOffsetNumber)
 	{
 		elog(ERROR, "failed to add item to index root page");

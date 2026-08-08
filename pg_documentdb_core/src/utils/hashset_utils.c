@@ -40,7 +40,7 @@ static int PgbsonElementOrderedHashCompareFunc(const void *obj1, const void *obj
  * a hash and search based on the element path.
  */
 HTAB *
-CreatePgbsonElementHashSet()
+CreatePgbsonElementHashSet(void)
 {
 	HASHCTL hashInfo = CreateExtensionHashCTL(
 		sizeof(PgbsonElementHashEntry),
@@ -116,7 +116,7 @@ CreateStringViewHashMap(Size entrySize)
  * a hash and search based on the StringView.
  */
 HTAB *
-CreateStringViewHashSet()
+CreateStringViewHashSet(void)
 {
 	return CreateStringViewHashMap(sizeof(StringView));
 }
@@ -152,7 +152,7 @@ StringViewHashEntryCompareFunc(const void *obj1, const void *obj2, Size objsize)
  * a hash and search based on the bson_value_t.
  */
 HTAB *
-CreateBsonValueHashSet()
+CreateBsonValueHashSet(void)
 {
 	HASHCTL hashInfo = CreateExtensionHashCTL(
 		sizeof(bson_value_t),
@@ -258,7 +258,7 @@ CreateBsonValueWithCollationHashSet(int extraDataSize)
  * a hash and search based on the element path.
  */
 HTAB *
-CreatePgbsonElementOrderedHashSet()
+CreatePgbsonElementOrderedHashSet(void)
 {
 	HASHCTL hashInfo = CreateExtensionHashCTL(
 		sizeof(PgbsonElementHashEntryOrdered),

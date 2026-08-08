@@ -31,8 +31,11 @@
 #include "utils/backend_progress.h"
 #include "utils/datum.h"
 #include "commands/progress.h"
+#include "executor/instrument.h"
 #include "access/parallel.h"
 #include "access/tableam.h"
+#include "storage/condition_variable.h"
+#include "storage/proc.h"
 #include "tcop/tcopprot.h"
 #include "utils/backend_status.h"
 #include "access/table.h"
@@ -2453,7 +2456,11 @@ _rum_parallel_scan_and_build(RumBuildState *state,
 	indexInfo->ii_Concurrent = rumshared->isconcurrent;
 
 	scan = table_beginscan_parallel(heap,
-									ParallelTableScanFromRumBuildShared(rumshared));
+									ParallelTableScanFromRumBuildShared(rumshared)
+#if PG_VERSION_NUM >= 190000
+									, SO_NONE
+#endif
+									);
 
 	reltuples = table_index_build_scan(heap, index, indexInfo, true, progress,
 									   rumBuildCallbackParallel, state, scan);

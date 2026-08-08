@@ -131,9 +131,9 @@ rumFilterDeadTidsInPostingList(RumVacuumState *gvs, OffsetNumber attnum, Pointer
 				 nAliveItems = 0;
 	RumItem item;
 	ItemPointerData prevIptr;
-	Pointer dst = NULL,
-			prev,
-			ptr = src;
+	char *dst = NULL,
+		 *prev,
+		 *ptr = (char *) src;
 
 	*newSize = 0;
 	ItemPointerSetMin(&item.iptr);
@@ -152,12 +152,12 @@ rumFilterDeadTidsInPostingList(RumVacuumState *gvs, OffsetNumber attnum, Pointer
 			gvs->result->tuples_removed += 1;
 			if (!dst)
 			{
-				dst = (Pointer) palloc(size);
+				dst = (char *) palloc(size);
 				*cleaned = dst;
 				if (i != 0)
 				{
-					memcpy(dst, src, prev - src);
-					dst += prev - src;
+					memcpy(dst, src, prev - (char *) src);
+					dst += prev - (char *) src;
 				}
 			}
 		}
@@ -176,7 +176,7 @@ rumFilterDeadTidsInPostingList(RumVacuumState *gvs, OffsetNumber attnum, Pointer
 
 	if (i != nAliveItems)
 	{
-		*newSize = dst - *cleaned;
+		*newSize = dst - (char *) *cleaned;
 	}
 	return nAliveItems;
 }
@@ -1679,7 +1679,7 @@ rumVacuumEntryPage(RumVacuumState *gvs, Buffer buffer, BlockNumber *roots,
 					MAXALIGN(oldTupleSize))
 				{
 					/* overwrite the existing tuple in place instead of deleting and readding it */
-					if (!PageIndexTupleOverwrite(tmppage, entryOffset, (Item) itup,
+					if (!PageIndexTupleOverwrite(tmppage, entryOffset, RumPageItem(itup),
 												 newTupleSize))
 					{
 						ereport(ERROR,
@@ -1695,7 +1695,7 @@ rumVacuumEntryPage(RumVacuumState *gvs, Buffer buffer, BlockNumber *roots,
 				{
 					PageIndexTupleDelete(tmppage, entryOffset);
 
-					if (PageAddItem(tmppage, (Item) itup, newTupleSize,
+					if (PageAddItem(tmppage, RumPageItem(itup), newTupleSize,
 									entryOffset, false, false) != entryOffset)
 					{
 						ereport(ERROR,

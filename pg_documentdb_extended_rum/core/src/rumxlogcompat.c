@@ -115,7 +115,7 @@ RumLogReusePage(Relation index, Buffer buf)
 }
 
 
-#if PG_VERSION_NUM >= 190000
+#if PG_VERSION_NUM >= 200000
 #error "rumxlogcompat.c is not expected to be compiled for PG 19 or later"
 #endif
 

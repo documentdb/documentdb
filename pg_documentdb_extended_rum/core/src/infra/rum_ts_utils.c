@@ -1797,9 +1797,11 @@ get_docrep_addinfo(bool *check, QueryRepresentation *qr,
 
 		if (!addInfoIsNull[keyN])
 		{
-			dimt = count_pos(VARDATA_ANY(addInfo[keyN]),
-							 VARSIZE_ANY_EXHDR(addInfo[keyN]));
-			ptrt = (char *) VARDATA_ANY(addInfo[keyN]);
+			bytea *positions = DatumGetByteaPP(addInfo[keyN]);
+
+			dimt = count_pos(VARDATA_ANY(positions),
+							 VARSIZE_ANY_EXHDR(positions));
+			ptrt = (char *) VARDATA_ANY(positions);
 		}
 		else
 		{
@@ -2513,8 +2515,8 @@ documentdb_extended_rum_tsvector_config(PG_FUNCTION_ARGS)
 PGDLLEXPORT Datum
 documentdb_extended_rum_ts_join_pos(PG_FUNCTION_ARGS)
 {
-	Datum addInfo1 = PG_GETARG_DATUM(0);
-	Datum addInfo2 = PG_GETARG_DATUM(1);
+	bytea *addInfo1 = PG_GETARG_BYTEA_PP(0);
+	bytea *addInfo2 = PG_GETARG_BYTEA_PP(1);
 	char *in1 = VARDATA_ANY(addInfo1),
 		 *in2 = VARDATA_ANY(addInfo2);
 	bytea *result;

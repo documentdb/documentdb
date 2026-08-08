@@ -26,6 +26,12 @@
 
 #include "rumsort.h"
 
+#if PG_VERSION_NUM >= 190000
+#define RumPageItem(item) ((const void *) (item))
+#else
+#define RumPageItem(item) ((Item) (item))
+#endif
+
 /* RUM distance strategies */
 #define RUM_DISTANCE 20
 #define RUM_LEFT_DISTANCE 21
@@ -441,7 +447,7 @@ typedef struct
 
 #define RumDataPageFreeSpacePre(page, ptr) \
 	(RumDataPageSize \
-	 - ((ptr) - RumDataPageGetData(page)))
+	 - ((char *) (ptr) - RumDataPageGetData(page)))
 
 #define RumPageGetIndexes(page) \
 	((RumDataLeafItemIndex *) (RumDataPageGetData(page) + RumDataPageSize))
@@ -689,9 +695,9 @@ extern int rumCompareItemPointers(const ItemPointerData *a, const ItemPointerDat
 extern int compareRumItem(RumState *state, const AttrNumber attno,
 						  const RumItem *a, const RumItem *b);
 extern void convertIndexToKey(RumDataLeafItemIndex *src, RumItem *dst);
-extern Pointer rumPlaceToDataPageLeaf(Pointer ptr, OffsetNumber attnum,
-									  RumItem *item, ItemPointer prev,
-									  RumState *rumstate);
+extern char * rumPlaceToDataPageLeaf(char *ptr, OffsetNumber attnum,
+									 RumItem *item, ItemPointer prev,
+									 RumState *rumstate);
 extern Size rumCheckPlaceToDataPageLeaf(OffsetNumber attnum,
 										RumItem *item, ItemPointer prev,
 										RumState *rumstate, Size size);
@@ -1350,11 +1356,12 @@ rumDataPageLeafReadWithBlockNumberIncr(Pointer ptr, OffsetNumber attnum, RumItem
 									   uint64 *blockNumberIncrPtr)
 {
 	Form_pg_attribute attr;
+	char *dataPtr = (char *) ptr;
 
 	if (rumstate->useAlternativeOrder)
 	{
-		memcpy(&item->iptr, ptr, sizeof(ItemPointerData));
-		ptr += sizeof(ItemPointerData);
+		memcpy(&item->iptr, dataPtr, sizeof(ItemPointerData));
+		dataPtr += sizeof(ItemPointerData);
 
 		if (item->iptr.ip_posid & ALT_ADD_INFO_NULL_FLAG)
 		{
@@ -1368,8 +1375,8 @@ rumDataPageLeafReadWithBlockNumberIncr(Pointer ptr, OffsetNumber attnum, RumItem
 	}
 	else
 	{
-		ptr = rumDataPageLeafReadItemPointerWithBlockNumberIncr(ptr, item,
-																blockNumberIncrPtr);
+		dataPtr = rumDataPageLeafReadItemPointerWithBlockNumberIncr(dataPtr, item,
+																	blockNumberIncrPtr);
 	}
 
 	Assert(item->iptr.ip_posid != InvalidOffsetNumber);
@@ -1394,20 +1401,20 @@ rumDataPageLeafReadWithBlockNumberIncr(Pointer ptr, OffsetNumber attnum, RumItem
 			{
 				case sizeof(char):
 				{
-					item->addInfo = Int8GetDatum(*ptr);
+					item->addInfo = CharGetDatum(*dataPtr);
 					break;
 				}
 
 				case sizeof(int16):
 				{
-					memcpy(&u.i16, ptr, sizeof(int16));
+					memcpy(&u.i16, dataPtr, sizeof(int16));
 					item->addInfo = Int16GetDatum(u.i16);
 					break;
 				}
 
 				case sizeof(int32):
 				{
-					memcpy(&u.i32, ptr, sizeof(int32));
+					memcpy(&u.i32, dataPtr, sizeof(int32));
 					item->addInfo = Int32GetDatum(u.i32);
 					break;
 				}
@@ -1415,7 +1422,7 @@ rumDataPageLeafReadWithBlockNumberIncr(Pointer ptr, OffsetNumber attnum, RumItem
 #if SIZEOF_DATUM == 8
 				case sizeof(Datum):
 				{
-					memcpy(&item->addInfo, ptr, sizeof(Datum));
+					memcpy(&item->addInfo, dataPtr, sizeof(Datum));
 					break;
 				}
 
@@ -1429,16 +1436,16 @@ rumDataPageLeafReadWithBlockNumberIncr(Pointer ptr, OffsetNumber attnum, RumItem
 		{
 			Datum addInfo;
 
-			ptr = (Pointer) att_align_pointer(ptr, attr->attalign, attr->attlen,
-											  ptr);
-			addInfo = fetch_att(ptr, attr->attbyval, attr->attlen);
+			dataPtr = (char *) att_align_pointer(dataPtr, attr->attalign, attr->attlen,
+												 dataPtr);
+			addInfo = fetch_att(dataPtr, attr->attbyval, attr->attlen);
 			item->addInfo = copyAddInfo ?
 							datumCopy(addInfo, attr->attbyval, attr->attlen) : addInfo;
 		}
 
-		ptr = (Pointer) att_addlength_pointer(ptr, attr->attlen, ptr);
+		dataPtr = (char *) att_addlength_pointer(dataPtr, attr->attlen, dataPtr);
 	}
-	return ptr;
+	return dataPtr;
 }
 
 
@@ -1545,11 +1552,12 @@ rumDataPageLeafRead(Pointer ptr, OffsetNumber attnum, RumItem *item,
 					bool copyAddInfo, RumState *rumstate)
 {
 	Form_pg_attribute attr;
+	char *dataPtr = (char *) ptr;
 
 	if (rumstate->useAlternativeOrder)
 	{
-		memcpy(&item->iptr, ptr, sizeof(ItemPointerData));
-		ptr += sizeof(ItemPointerData);
+		memcpy(&item->iptr, dataPtr, sizeof(ItemPointerData));
+		dataPtr += sizeof(ItemPointerData);
 
 		if (item->iptr.ip_posid & ALT_ADD_INFO_NULL_FLAG)
 		{
@@ -1563,7 +1571,7 @@ rumDataPageLeafRead(Pointer ptr, OffsetNumber attnum, RumItem *item,
 	}
 	else
 	{
-		ptr = rumDataPageLeafReadItemPointerNew(ptr, item);
+		dataPtr = rumDataPageLeafReadItemPointerNew(dataPtr, item);
 	}
 
 	Assert(item->iptr.ip_posid != InvalidOffsetNumber);
@@ -1588,20 +1596,20 @@ rumDataPageLeafRead(Pointer ptr, OffsetNumber attnum, RumItem *item,
 			{
 				case sizeof(char):
 				{
-					item->addInfo = Int8GetDatum(*ptr);
+					item->addInfo = CharGetDatum(*dataPtr);
 					break;
 				}
 
 				case sizeof(int16):
 				{
-					memcpy(&u.i16, ptr, sizeof(int16));
+					memcpy(&u.i16, dataPtr, sizeof(int16));
 					item->addInfo = Int16GetDatum(u.i16);
 					break;
 				}
 
 				case sizeof(int32):
 				{
-					memcpy(&u.i32, ptr, sizeof(int32));
+					memcpy(&u.i32, dataPtr, sizeof(int32));
 					item->addInfo = Int32GetDatum(u.i32);
 					break;
 				}
@@ -1609,7 +1617,7 @@ rumDataPageLeafRead(Pointer ptr, OffsetNumber attnum, RumItem *item,
 #if SIZEOF_DATUM == 8
 				case sizeof(Datum):
 				{
-					memcpy(&item->addInfo, ptr, sizeof(Datum));
+					memcpy(&item->addInfo, dataPtr, sizeof(Datum));
 					break;
 				}
 
@@ -1623,16 +1631,16 @@ rumDataPageLeafRead(Pointer ptr, OffsetNumber attnum, RumItem *item,
 		{
 			Datum addInfo;
 
-			ptr = (Pointer) att_align_pointer(ptr, attr->attalign, attr->attlen,
-											  ptr);
-			addInfo = fetch_att(ptr, attr->attbyval, attr->attlen);
+			dataPtr = (char *) att_align_pointer(dataPtr, attr->attalign, attr->attlen,
+												 dataPtr);
+			addInfo = fetch_att(dataPtr, attr->attbyval, attr->attlen);
 			item->addInfo = copyAddInfo ?
 							datumCopy(addInfo, attr->attbyval, attr->attlen) : addInfo;
 		}
 
-		ptr = (Pointer) att_addlength_pointer(ptr, attr->attlen, ptr);
+		dataPtr = (char *) att_addlength_pointer(dataPtr, attr->attlen, dataPtr);
 	}
-	return ptr;
+	return dataPtr;
 }
 
 
@@ -1646,11 +1654,12 @@ rumDataPageLeafReadPointer(Pointer ptr, OffsetNumber attnum, RumItem *item,
 						   RumState *rumstate)
 {
 	Form_pg_attribute attr;
+	char *dataPtr = (char *) ptr;
 
 	if (rumstate->useAlternativeOrder)
 	{
-		memcpy(&item->iptr, ptr, sizeof(ItemPointerData));
-		ptr += sizeof(ItemPointerData);
+		memcpy(&item->iptr, dataPtr, sizeof(ItemPointerData));
+		dataPtr += sizeof(ItemPointerData);
 
 		if (item->iptr.ip_posid & ALT_ADD_INFO_NULL_FLAG)
 		{
@@ -1664,8 +1673,8 @@ rumDataPageLeafReadPointer(Pointer ptr, OffsetNumber attnum, RumItem *item,
 	}
 	else
 	{
-		ptr = rumDataPageLeafReadItemPointer(ptr, &item->iptr,
-											 &item->addInfoIsNull);
+		dataPtr = rumDataPageLeafReadItemPointer(dataPtr, &item->iptr,
+												 &item->addInfoIsNull);
 	}
 
 	Assert(item->iptr.ip_posid != InvalidOffsetNumber);
@@ -1678,13 +1687,13 @@ rumDataPageLeafReadPointer(Pointer ptr, OffsetNumber attnum, RumItem *item,
 
 		if (!attr->attbyval)
 		{
-			ptr = (Pointer) att_align_pointer(ptr, attr->attalign, attr->attlen,
-											  ptr);
+			dataPtr = (char *) att_align_pointer(dataPtr, attr->attalign, attr->attlen,
+												 dataPtr);
 		}
 
-		ptr = (Pointer) att_addlength_pointer(ptr, attr->attlen, ptr);
+		dataPtr = (char *) att_addlength_pointer(dataPtr, attr->attlen, dataPtr);
 	}
-	return ptr;
+	return dataPtr;
 }
 
 

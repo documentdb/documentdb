@@ -20,6 +20,8 @@
 #include "postmaster/autovacuum.h"
 #include "storage/indexfsm.h"
 #include "storage/lmgr.h"
+#include "storage/lwlock.h"
+#include "storage/lwlocknames.h"
 #include "storage/predicate.h"
 #include "utils/backend_progress.h"
 #include "storage/ipc.h"

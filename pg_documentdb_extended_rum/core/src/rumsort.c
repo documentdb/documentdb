@@ -19,6 +19,7 @@
 #include "miscadmin.h"
 #include "rumsort.h"
 
+#include "access/htup_details.h"
 #include "commands/tablespace.h"
 #include "executor/executor.h"
 #include "utils/logtape.h"
