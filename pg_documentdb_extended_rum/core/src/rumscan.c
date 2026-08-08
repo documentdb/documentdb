@@ -20,7 +20,9 @@
 #include <commands/explain_state.h>
 #include <commands/explain_format.h>
 #endif
+#include "storage/condition_variable.h"
 #include "storage/spin.h"
+#include "utils/wait_event.h"
 #include "pg_documentdb_rum.h"
 #include "pg_documentdb_rum_dedup.h"
 

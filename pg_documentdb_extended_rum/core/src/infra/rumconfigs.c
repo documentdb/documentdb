@@ -12,6 +12,9 @@
  */
 
 #include "postgres.h"
+
+#include <limits.h>
+
 #include "utils/guc.h"
 #include "access/reloptions.h"
 

@@ -12,6 +12,7 @@
 #include <unicode/ures.h>
 #include <unicode/uloc.h>
 #include <unicode/ucnv.h>
+#include <unicode/ucol.h>
 #include <unicode/ustring.h>
 #include "mb/pg_wchar.h"
 #include <utils/hsearch.h>
@@ -835,14 +836,14 @@ CheckIfValidLocale(const char *locale)
 /*
  *  Throws error for unsupported locales.
  */
-inline static void
-pg_attribute_noreturn()
-ThrowInvalidLocaleError(const char * locale)
+pg_noreturn static inline void
+ThrowInvalidLocaleError(const char *locale)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
 						"unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: \"%s\", strength: 1 }.",
 						locale)));
 }
+
 
 /*
  *  Checks the input type of the parameters of the collation spec document against the expected types.

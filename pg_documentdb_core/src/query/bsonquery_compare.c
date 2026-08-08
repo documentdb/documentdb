@@ -146,8 +146,7 @@ bsonquery_lte(PG_FUNCTION_ARGS)
 }
 
 
-inline static void
-pg_attribute_noreturn()
+pg_noreturn static inline void
 ThrowUnexpectedFieldError(bool leftNext, bool rightNext)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR), errmsg(
@@ -155,6 +154,7 @@ ThrowUnexpectedFieldError(bool leftNext, bool rightNext)
 						leftNext ? "left" :
 						"right")));
 }
+
 
 inline static void
 CheckCollationType(const bson_value_t *bsonValue)

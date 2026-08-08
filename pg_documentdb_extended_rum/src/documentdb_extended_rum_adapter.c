@@ -13,6 +13,8 @@
  */
 
 #include "postgres.h"
+
+#include "access/htup_details.h"
 #include <miscadmin.h>
 #include "pg_documentdb_rum.h"
 #include <catalog/pg_am.h>

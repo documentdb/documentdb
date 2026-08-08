@@ -38,7 +38,15 @@ typedef struct RumPageGetEntriesContext
 	Page page;
 } RumPageGetEntriesContext;
 
+#if PG_VERSION_NUM >= 190000
+typedef JsonbInState RumJsonbBuildState;
+#else
+typedef JsonbParseState *RumJsonbBuildState;
+#endif
+
 static Jsonb * GetResultJsonB(int count, char **keys, JsonbValue *values);
+static JsonbValue * RumPushJsonbValue(RumJsonbBuildState *state,
+									  JsonbIteratorToken token, JsonbValue *value);
 static Page get_page_from_raw(bytea *raw_page);
 static Jsonb * RumPrintEntryToJsonB(RumPageGetEntriesContext *context, uint64 counter);
 static Jsonb * RumPrintDataPageLineToJsonB(Page page, uint64 counter);
@@ -313,10 +321,10 @@ static Jsonb *
 GetResultJsonB(int count, char **keys, JsonbValue *values)
 {
 	int i = 0;
-	JsonbParseState *state = NULL;
+	RumJsonbBuildState state = { 0 };
 	JsonbValue *res;
 
-	(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
+	(void) RumPushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
 
 	for (i = 0; i < count; i++)
 	{
@@ -324,13 +332,26 @@ GetResultJsonB(int count, char **keys, JsonbValue *values)
 		key.type = jbvString;
 		key.val.string.val = keys[i];
 		key.val.string.len = strlen(keys[i]);
-		(void) pushJsonbValue(&state, WJB_KEY, &key);
-		(void) pushJsonbValue(&state, WJB_VALUE, &values[i]);
+		(void) RumPushJsonbValue(&state, WJB_KEY, &key);
+		(void) RumPushJsonbValue(&state, WJB_VALUE, &values[i]);
 	}
 
-	res = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+	res = RumPushJsonbValue(&state, WJB_END_OBJECT, NULL);
 
 	return JsonbValueToJsonb(res);
+}
+
+
+static JsonbValue *
+RumPushJsonbValue(RumJsonbBuildState *state, JsonbIteratorToken token,
+				  JsonbValue *value)
+{
+#if PG_VERSION_NUM >= 190000
+	pushJsonbValue(state, token, value);
+	return state->result;
+#else
+	return pushJsonbValue(state, token, value);
+#endif
 }
 
 

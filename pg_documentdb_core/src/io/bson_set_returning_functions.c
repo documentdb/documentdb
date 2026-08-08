@@ -9,6 +9,7 @@
  */
 
 #include "io/bson_set_returning_functions.h"
+#include "utils/tuplestore.h"
 #include "utils/type_cache.h"
 
 /*

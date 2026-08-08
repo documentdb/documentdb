@@ -767,7 +767,7 @@ PgbsonWriterInit(pgbson_writer *writer)
  * Note: Should be destroyed after usage with PgbsonHeapWriterFree()
  */
 pgbson_heap_writer *
-PgbsonHeapWriterInit()
+PgbsonHeapWriterInit(void)
 {
 	pgbson_heap_writer *writer = palloc0(sizeof(pgbson_heap_writer));
 	writer->innerBsonRef = bson_new();

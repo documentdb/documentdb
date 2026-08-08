@@ -15,6 +15,7 @@
 #include <postgres.h>
 #include <fmgr.h>
 #include <utils/builtins.h>
+#include <utils/tuplestore.h>
 #include <lib/stringinfo.h>
 
 #define PRIVATE_PGBSON_H

@@ -1395,7 +1395,7 @@ initialize_rumoptions(void)
 bytea *
 documentdb_rumoptions(Datum reloptions, bool validate)
 {
-#if PG_VERSION_NUM >= 180000
+#if PG_VERSION_NUM >= 180000 && PG_VERSION_NUM < 190000
 	static const int offsetIfDefault = -1;
 	static const relopt_parse_elt tab[] = {
 		{ "attach", RELOPT_TYPE_STRING, offsetof(RumOptions, attachColumn),

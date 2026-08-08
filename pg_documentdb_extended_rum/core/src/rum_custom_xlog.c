@@ -68,8 +68,8 @@ extended_rumRedoInsertEntry(Buffer buffer, bool isLeaf, BlockNumber rightblkno,
 
 	itup = &data->tuple;
 
-	if (PageAddItem(page, (Item) itup, IndexTupleSize(itup), offset, false, false) ==
-		InvalidOffsetNumber)
+	if (PageAddItem(page, RumPageItem(itup), IndexTupleSize(itup), offset, false,
+					false) == InvalidOffsetNumber)
 	{
 		ereport(ERROR, errmsg("failed to add item to index page"));
 	}
