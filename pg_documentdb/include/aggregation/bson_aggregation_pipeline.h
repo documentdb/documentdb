@@ -281,7 +281,9 @@ inline static bool
 CanUseParallelSafeWithExprAccumulators(bool allowShardBaseTable)
 {
 	return EnableParallelSafeWithExprAccumulators && allowShardBaseTable &&
-		   IsClusterVersionAtleast(DocDB_V0, 117, 0);
+		   (IsClusterVersionAtleast(DocDB_V0, 117, 0) ||
+			IsClusterVersionAtLeastPatch(DocDB_V0, 115, 2) ||
+			IsClusterVersionAtLeastPatch(DocDB_V0, 116, 1));
 }
 
 
