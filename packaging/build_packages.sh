@@ -13,7 +13,7 @@ function show_help {
     echo "  This script builds extension packages (DEB/RPM) using Docker."
     echo ""
     echo "Mandatory Arguments:"
-    echo "  --os                 OS to build packages for. Possible values: [deb11, deb12, ubuntu22.04, ubuntu24.04, rhel8, rhel9]"
+    echo "  --os                 OS to build packages for. Possible values: [deb11, deb12, ubuntu22.04, ubuntu24.04, rhel8, rhel9, alpine]"
     echo "  --pg                 PG version to build packages for. Possible values: [15, 16, 17, 18]"
     echo ""
     echo "Optional Arguments:"
@@ -46,8 +46,12 @@ while [[ $# -gt 0 ]]; do
                     OS=$1
                     PACKAGE_TYPE="rpm"
                     ;;
+                alpine*)
+                    OS=$1
+                    PACKAGE_TYPE="apk"
+                    ;;
                 *)
-                    echo "Invalid --os value. Allowed values are [deb11, deb12, ubuntu22.04, ubuntu24.04, rhel8, rhel9]"
+                    echo "Invalid --os value. Allowed values are [deb11, deb12, ubuntu22.04, ubuntu24.04, rhel8, rhel9, alpine]"
                     exit 1
                     ;;
             esac
@@ -150,6 +154,9 @@ elif [[ "$PACKAGE_TYPE" == "rpm" ]]; then
             exit 1
             ;;
     esac
+elif [[ "$PACKAGE_TYPE" == "apk" ]]; then
+    DOCKERFILE="${script_dir}/packaging/apk/Dockerfile-alpine"
+    DOCKER_IMAGE="alpine:3.21"
 fi
 
 TAG=documentdb-build-packages-$OS-pg$PG:latest
@@ -176,6 +183,14 @@ elif [[ "$PACKAGE_TYPE" == "rpm" ]]; then
         --build-arg POSTGRES_VERSION="$PG" \
         --build-arg DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" "$script_dir"
     # Run the Docker container to build the packages
+    docker run --rm --env OS="$OS" --env POSTGRES_VERSION="$PG" --env DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" -v "$abs_output_dir:/output" "$TAG"
+elif [[ "$PACKAGE_TYPE" == "apk" ]]; then
+    # Alpine build uses postgres:alpine based image
+    docker build -t "$TAG" -f "$DOCKERFILE" \
+        --build-arg BASE_IMAGE="$DOCKER_IMAGE" \
+        --build-arg POSTGRES_VERSION="$PG" \
+        --build-arg DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" "$script_dir"
+    # Run the Docker container to extract the tarball
     docker run --rm --env OS="$OS" --env POSTGRES_VERSION="$PG" --env DOCUMENTDB_VERSION="$DOCUMENTDB_VERSION" -v "$abs_output_dir:/output" "$TAG"
 fi
 
@@ -224,6 +239,28 @@ if [[ $TEST_CLEAN_INSTALL == true ]]; then
             
         # Run the Docker container to test the packages
         docker run --rm --env POSTGRES_VERSION="$PG" documentdb-test-rpm-packages:latest
+
+    elif [[ "$PACKAGE_TYPE" == "apk" ]]; then
+        tarball_name=$(ls "$abs_output_dir" | grep -E "documentdb-${DOCUMENTDB_VERSION}-alpine-pg${PG}.tar.gz" | head -n 1)
+        
+        if [[ -z "$tarball_name" ]]; then
+            echo "Error: Could not find the built Alpine tarball in $abs_output_dir for testing."
+            exit 1
+        fi
+        package_rel_path="$OUTPUT_DIR/$tarball_name"
+
+        echo "Alpine package path passed into Docker build: $package_rel_path"
+
+        # Build the Docker image while showing the output to the console
+        docker build -t documentdb-test-alpine-packages:latest -f "${script_dir}/packaging/test_packages/alpine/Dockerfile-alpine-test" \
+            --build-arg BASE_IMAGE="alpine:3.21" \
+            --build-arg POSTGRES_VERSION="$PG" \
+            --build-arg TARBALL_PATH="$package_rel_path" "$script_dir"
+
+        # Run the Docker container to test the packages
+        docker run --rm --env POSTGRES_VERSION="$PG" documentdb-test-alpine-packages:latest
+            
+        echo "Alpine clean installation test successful!!"
     fi
 
     echo "Clean installation test successful!!"

@@ -1,0 +1,75 @@
+ARG BASE_IMAGE=alpine:3.21
+FROM ${BASE_IMAGE}
+
+ARG POSTGRES_VERSION=16
+ARG DOCUMENTDB_VERSION
+
+ENV POSTGRES_VERSION=${POSTGRES_VERSION}
+ENV DOCUMENTDB_VERSION=${DOCUMENTDB_VERSION}
+ENV USE_PGXS=1
+
+# Install PostgreSQL and build dependencies using Alpine's native packages
+# This ensures all paths are consistent with Alpine's package layout
+RUN apk add --no-cache \
+    build-base \
+    bash \
+    cmake \
+    git \
+    pkgconf \
+    postgresql${POSTGRES_VERSION} \
+    postgresql${POSTGRES_VERSION}-dev \
+    postgresql${POSTGRES_VERSION}-contrib \
+    libbson-dev \
+    libbson-static \
+    pcre2-dev \
+    curl \
+    linux-headers \
+    openssl-dev \
+    krb5-dev \
+    flex \
+    bison \
+    libxml2-dev
+
+# Set PG_CONFIG to point to the correct pg_config for this PG version
+ENV PG_CONFIG=/usr/bin/pg_config
+
+# Fix for bson.h issue
+# Check if bson.h is in /usr/include/libbson-1.0
+RUN if [ ! -f /usr/include/libbson-1.0/bson.h ] && [ -f /usr/include/libbson-1.0/bson/bson.h ]; then \
+        echo "Linking bson.h to /usr/include/libbson-1.0/bson.h"; \
+        ln -s /usr/include/libbson-1.0/bson/bson.h /usr/include/libbson-1.0/bson.h; \
+    fi
+
+WORKDIR /documentdb
+
+# Copy project files
+COPY . .
+
+# Setup environment for dependency installation
+ENV INSTALL_DEPENDENCIES_ROOT=/documentdb/build_deps
+RUN mkdir -p $INSTALL_DEPENDENCIES_ROOT
+ENV INSTALLDESTDIR=/usr
+ENV PKG_CONFIG_INSTALL_PATH=/usr/lib/pkgconfig
+# Ensure pkgconfig path exists
+RUN mkdir -p $PKG_CONFIG_INSTALL_PATH
+
+# Install Intel Decimal Math Library
+# This script builds it from source and installs it
+RUN bash scripts/install_setup_intel_decimal_math_lib.sh
+
+# Also ensure libbson is correctly detected
+# If pkg-config path is not standard, we might need to add it to PKG_CONFIG_PATH
+# Alpine usually uses /usr/lib/pkgconfig or /usr/share/pkgconfig
+
+# Build and Install DocumentDB
+# Using USE_PGXS=1 to compile against installed postgres
+# disabling llvm bitcode generation to avoid clang dependency issues
+RUN make clean && make -j$(nproc) install with_llvm=no
+
+# Create tarball of the installation
+RUN mkdir -p /src/build_output
+RUN make DESTDIR=/src/build_output install with_llvm=no
+RUN cd /src/build_output && tar -czvf /documentdb-${DOCUMENTDB_VERSION}-alpine-pg${POSTGRES_VERSION}.tar.gz .
+
+CMD cp /documentdb-*.tar.gz /output/
+
