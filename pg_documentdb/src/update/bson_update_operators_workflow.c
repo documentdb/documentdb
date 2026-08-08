@@ -2152,7 +2152,11 @@ IsNodeMatchForIteratorPath(const BsonPathNode *node,
 				int32_t arrayIndex = StringViewToPositiveInteger(&node->field);
 				if (arrayIndex < 0)
 				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+					/*
+					 * A dotted update path is trying to descend into an array
+					 * using a non-numeric key, which is not a viable path.
+					 */
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_PATHNOTVIABLE),
 									errmsg("Invalid array index path %.*s",
 										   node->field.length,
 										   node->field.string)));

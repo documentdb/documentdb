@@ -153,6 +153,14 @@ command_coll_stats_aggregation(PG_FUNCTION_ARGS)
 	Datum collectionName = PG_GETARG_DATUM(1);
 	pgbson *collStatsSpec = PG_GETARG_PGBSON(2);
 
+	/*
+	 * When $collStats runs inside a $lookup/$unionWith sub-pipeline it can be
+	 * pushed onto a shard, and its catalog lookup and worker-stats gather are
+	 * then nested distributed queries. Opt into nesting so they aren't rejected.
+	 * No-op on single node.
+	 */
+	AllowNestedDistributionInCurrentTransaction();
+
 	/* We either support count or storage stats currently */
 	bson_iter_t collStatsSpecIter;
 	PgbsonInitIterator(collStatsSpec, &collStatsSpecIter);
