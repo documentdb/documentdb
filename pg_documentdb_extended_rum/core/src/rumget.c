@@ -2193,7 +2193,7 @@ RumKillDataPageItems(RumScanOpaque so, XLogRecPtr cachedPageLsn, Buffer buffer,
 		return;
 	}
 
-	/* We have share lock on current buffer. Ensure contents unchanged */
+	/* Ensure contents are unchanged before setting hint bits. */
 	latestLsn = BufferGetLSNAtomic(buffer);
 	Assert(!XLogRecPtrIsInvalid(cachedPageLsn));
 	Assert(cachedPageLsn <= latestLsn);
@@ -2222,9 +2222,20 @@ RumKillDataPageItems(RumScanOpaque so, XLogRecPtr cachedPageLsn, Buffer buffer,
 		return;
 	}
 
+#if PG_VERSION_NUM >= 190000
+	if (!BufferBeginSetHintBits(buffer))
+	{
+		return;
+	}
+#endif
+
 	/* Note we don't generate WAL records and let checkpoint handle this.*/
 	RumDataPageEntryMarkDead(page);
+#if PG_VERSION_NUM >= 190000
+	BufferFinishSetHintBits(buffer, true, true);
+#else
 	MarkBufferDirtyHint(buffer, true);
+#endif
 }
 
 
@@ -2246,7 +2257,7 @@ RumKillEntryItems(RumScanOpaque so, RumOrderByScanData *scanData)
 		return;
 	}
 
-	/* We have share lock on current buffer. Ensure contents unchanged */
+	/* Ensure contents are unchanged before setting hint bits. */
 	latestLsn = BufferGetLSNAtomic(buffer);
 	cachedLsn = PageGetLSN(scanData->orderByEntryPageCopy);
 	Assert(!XLogRecPtrIsInvalid(cachedLsn));
@@ -2299,6 +2310,13 @@ RumKillEntryItems(RumScanOpaque so, RumOrderByScanData *scanData)
 		 */
 		if (!RumIndexEntryIsDead(curItem))
 		{
+#if PG_VERSION_NUM >= 190000
+			if (!killedsomething && !BufferBeginSetHintBits(buffer))
+			{
+				return;
+			}
+#endif
+
 			/* found the item/all posting list items */
 			RumIndexEntryMarkDead(curItem);
 			killedsomething = true;
@@ -2307,7 +2325,11 @@ RumKillEntryItems(RumScanOpaque so, RumOrderByScanData *scanData)
 
 	if (killedsomething)
 	{
+#if PG_VERSION_NUM >= 190000
+		BufferFinishSetHintBits(buffer, true, true);
+#else
 		MarkBufferDirtyHint(buffer, true);
+#endif
 	}
 }
 

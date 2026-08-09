@@ -11,7 +11,7 @@ export PG_CONFIG
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 
-pg_major_version := $(shell $(PG_CONFIG) --version | awk -F' ' '{ print $$2 }' | awk -F'.' '{ print $$1 }' | awk -F'r' '{ print $$1 }')
+pg_major_version := $(shell $(PG_CONFIG) --version | sed -E 's/^PostgreSQL ([0-9]+).*/\1/')
 
 EXTENSIONLOAD :=  --load-extension=tsm_system_rows --load-extension=pg_cron --load-extension=pageinspect --load-extension=vector --load-extension=postgis --load-extension=documentdb_core --load-extension=documentdb --load-extension=documentdb_extended_rum
 

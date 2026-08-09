@@ -36,6 +36,7 @@
 static void ParseInputExpressionAndPersistValue(AggregationExpressionData *expressionData,
 												const bson_value_t *expressionValue,
 												ParseAggregationExpressionContext *context);
+static pgbson * CopySerializedPgbson(char **bytes);
 
 
 /*
@@ -254,8 +255,7 @@ DeserializeOrderState(bytea *byteArray,
 			else
 			{
 				bytes++;
-				state->currentResult[i]->value = (pgbson *) (bytes);
-				bytes += VARSIZE(state->currentResult[i]->value);
+				state->currentResult[i]->value = CopySerializedPgbson(&bytes);
 			}
 
 			/* Extract each sortKey */
@@ -270,9 +270,7 @@ DeserializeOrderState(bytea *byteArray,
 				{
 					bytes++;
 					state->currentResult[i]->sortKeyValues[j] = PointerGetDatum(
-						(pgbson *) bytes);
-					bytes += VARSIZE(DatumGetPgBson(
-										 state->currentResult[i]->sortKeyValues[j]));
+						CopySerializedPgbson(&bytes));
 				}
 			}
 		}
@@ -294,9 +292,25 @@ DeserializeOrderState(bytea *byteArray,
 	{
 		/* skip nullity byte flag */
 		bytes++;
-		state->inputExpression = (pgbson *) bytes;
-		bytes += VARSIZE(state->inputExpression);
+		state->inputExpression = CopySerializedPgbson(&bytes);
 	}
+}
+
+
+static pgbson *
+CopySerializedPgbson(char **bytes)
+{
+	uint32 varlenaHeader;
+
+	/* Serialized values can follow one-byte flags, so their addresses may be unaligned. */
+	memcpy(&varlenaHeader, *bytes, sizeof(varlenaHeader));
+
+	Size bsonSize = VARSIZE(&varlenaHeader);
+	pgbson *bson = palloc(bsonSize);
+	memcpy(bson, *bytes, bsonSize);
+	*bytes += bsonSize;
+
+	return bson;
 }
 
 

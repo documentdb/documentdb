@@ -39,6 +39,9 @@ PG_CRON_PG19_VERSION=16618e69cb38f69abd6512b90e8c742010582e0e
 # This is commit 778dacf20c07caf904557a88705142631818d8cb
 PGVECTOR_VERSION=v0.8.1
 
+# This is commit 8ee86c96f0fd72390f890aa8a336fda6d3ab4c6c
+PGVECTOR_PG19_VERSION=v0.8.6
+
 #TODO(PG19): Move this to a stable version.
 POSTGIS_PG19_VERSION=3.7.0beta1
 POSTGIS_VERSION=3.6.0
@@ -102,7 +105,11 @@ function GetPgCronVersion()
 
 function GetPgVectorVersion()
 {
-  echo $PGVECTOR_VERSION
+  if [ "$PGVERSION" == "19" ]; then
+    echo $PGVECTOR_PG19_VERSION
+  else
+    echo $PGVECTOR_VERSION
+  fi
 }
 
 function GetIntelDecimalMathLibVersion()
