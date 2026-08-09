@@ -73,7 +73,7 @@ apply_extension_data_table_upgrade(PG_FUNCTION_ARGS)
  * Gets the collection Ids where view_definition is NULL
  */
 ArrayType *
-GetCollectionIds()
+GetCollectionIds(void)
 {
 	return GetCollectionIdsCore(NULL);
 }
@@ -102,7 +102,7 @@ GetCollectionIdsStartingFrom(uint64 startCollectionId)
  * to drop NOT NULL and DEFAULT constraints.
  */
 void
-AlterCreationTime()
+AlterCreationTime(void)
 {
 	bool readOnly = false;
 	bool isNull = false;

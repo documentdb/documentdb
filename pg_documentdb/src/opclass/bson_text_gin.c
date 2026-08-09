@@ -20,6 +20,7 @@
 #include <tsearch/ts_type.h>
 #include <tsearch/ts_cache.h>
 #include <catalog/namespace.h>
+#include <catalog/pg_type.h>
 #include <utils/array.h>
 #include <nodes/makefuncs.h>
 

@@ -6094,7 +6094,11 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 			List *mergePathKeys = list_copy_head(root->query_pathkeys,
 												 commonPresorted);
 			MergeAppendPath *mergePath = create_merge_append_path(
-				root, rel, childPaths, mergePathKeys, NULL);
+				root, rel, childPaths,
+#if PG_VERSION_NUM >= 190000
+				NIL,
+#endif
+				mergePathKeys, NULL);
 
 			/*
 			 * As above: drop the marked source path once the MergeAppend that
@@ -9224,7 +9228,7 @@ MatchIndexPathForText(IndexPath *indexPath, void *matchContext)
 
 pg_attribute_noreturn()
 static void
-ThrowNoTextIndexFound()
+ThrowNoTextIndexFound(void)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INDEXNOTFOUND),
 					errmsg("A text index is necessary to perform a $text query.")));

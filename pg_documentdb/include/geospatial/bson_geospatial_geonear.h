@@ -198,9 +198,8 @@ TargetListContainsGeonearOp(const List *targetList)
 }
 
 
-static inline void
-pg_attribute_noreturn()
-ThrowGeoNearNotAllowedInContextError()
+pg_noreturn static inline void
+ThrowGeoNearNotAllowedInContextError(void)
 {
 	ereport(ERROR, (
 				errcode(ERRCODE_DOCUMENTDB_LOCATION5626500),
@@ -208,17 +207,17 @@ ThrowGeoNearNotAllowedInContextError()
 					"Operators $geoNear, $near, and $nearSphere cannot be used in this particular context")));
 }
 
-static inline void
-pg_attribute_noreturn()
-ThrowGeoNearUnableToFindIndex()
+
+pg_noreturn static inline void
+ThrowGeoNearUnableToFindIndex(void)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_UNABLETOFINDINDEX),
 					errmsg("unable to find index for $geoNear query")));
 }
 
-static inline void
-pg_attribute_noreturn()
-ThrowNoGeoIndexesFound()
+
+pg_noreturn static inline void
+ThrowNoGeoIndexesFound(void)
 {
 	ereport(ERROR, (
 				errcode(ERRCODE_DOCUMENTDB_INDEXNOTFOUND),
@@ -226,9 +225,9 @@ ThrowNoGeoIndexesFound()
 					"The $geoNear operator needs either a 2d or 2dsphere index, but no such index exists")));
 }
 
-static inline void
-pg_attribute_noreturn()
-ThrowAmbigousIndexesFound(const char * indexType)
+
+pg_noreturn static inline void
+ThrowAmbigousIndexesFound(const char *indexType)
 {
 	ereport(ERROR, (
 				errcode(ERRCODE_DOCUMENTDB_INDEXNOTFOUND),
@@ -236,5 +235,6 @@ ThrowAmbigousIndexesFound(const char * indexType)
 					"Multiple %s indexes found; uncertain which index should be applied for the $geoNear operator",
 					indexType)));
 }
+
 
 #endif

@@ -258,7 +258,7 @@ void BuildTreeFromPgbson(BsonIntermediatePathNode *tree, pgbson *document,
  * Helper function to create the Root node of a Bson Path Tree.
  */
 inline static BsonIntermediatePathNode *
-MakeRootNode()
+MakeRootNode(void)
 {
 	return palloc0(sizeof(BsonIntermediatePathNode));
 }

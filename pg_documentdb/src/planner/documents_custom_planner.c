@@ -11,6 +11,7 @@
 #include <fmgr.h>
 #include <miscadmin.h>
 #include <funcapi.h>
+#include <catalog/pg_type.h>
 #include <utils/portal.h>
 #include <utils/varlena.h>
 #include <utils/rel.h>

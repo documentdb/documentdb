@@ -47,7 +47,7 @@ static bool DocumentDBDistributedExplain(pgbson_writer *writer, QueryDesc *query
 																PlanState *));
 
 void
-RegisterDistributedExplainStageHook()
+RegisterDistributedExplainStageHook(void)
 {
 	explain_stage_hook = DocumentDBDistributedExplain;
 }

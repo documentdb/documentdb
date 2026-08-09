@@ -12,6 +12,7 @@
 #include <miscadmin.h>
 #include <utils/array.h>
 #include <utils/builtins.h>
+#include <utils/sortsupport.h>
 #include <math.h>
 
 #include "io/bson_core.h"

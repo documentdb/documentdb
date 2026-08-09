@@ -13,6 +13,7 @@
 #include <fmgr.h>
 #include <funcapi.h>
 #include <utils/builtins.h>
+#include <utils/tuplestore.h>
 #include <catalog/namespace.h>
 #include <catalog/pg_am_d.h>
 
@@ -467,7 +468,7 @@ CurrentOpWorkerCore(void *specPointer)
  * later in the WriteOneActivityToDocument function
  */
 static List *
-WorkerGetBaseActivities()
+WorkerGetBaseActivities(void)
 {
 	/* Now that we're on the worker node, first get the query of operations */
 

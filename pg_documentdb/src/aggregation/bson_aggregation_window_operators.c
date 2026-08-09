@@ -1387,9 +1387,8 @@ IsPartitionByOnShardKey(const bson_value_t *partitionByValue,
 
 
 /* Helper method that throws the error for invalid frame options */
-static void
-pg_attribute_noreturn()
-ThrowInvalidFrameOptions()
+pg_noreturn static void
+ThrowInvalidFrameOptions(void)
 {
 	ereport(ERROR, (
 				errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
@@ -1399,9 +1398,8 @@ ThrowInvalidFrameOptions()
 
 
 /* Helper method that throws the error extra frame options */
-static void
-pg_attribute_noreturn()
-ThrowExtraInvalidFrameOptions(const char * str1, const char * str2)
+pg_noreturn static void
+ThrowExtraInvalidFrameOptions(const char *str1, const char *str2)
 {
 	ereport(ERROR, (
 				errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
@@ -1414,9 +1412,8 @@ ThrowExtraInvalidFrameOptions(const char * str1, const char * str2)
 }
 
 
-static void
-pg_attribute_noreturn()
-ThrowInvalidWindowValue(const char * windowType, const bson_value_t * value)
+pg_noreturn static void
+ThrowInvalidWindowValue(const char *windowType, const bson_value_t *value)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
 					errmsg(

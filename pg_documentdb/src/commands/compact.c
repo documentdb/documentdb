@@ -259,7 +259,7 @@ ValidateCompactAccess(MongoCollection *collection, CompactMode mode)
 	}
 	Form_pg_class classForm = (Form_pg_class) GETSTRUCT(tuple);
 
-	bits32 options = VACOPT_VACUUM;
+	uint32 options = VACOPT_VACUUM;
 	if (mode == COMPACT_MODE_FULL)
 	{
 		options |= VACOPT_FULL;

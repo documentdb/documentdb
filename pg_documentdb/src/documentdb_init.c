@@ -105,8 +105,13 @@ InstallDocumentDBApiPostgresHooks(void)
 	ExtensionPreviousPostParseAnalyzeHook = post_parse_analyze_hook;
 	post_parse_analyze_hook = DocumentDBPostParseAnalyzeHook;
 
+#if PG_VERSION_NUM >= 190000
+	ExtensionPreviousBuildSimpleRelHook = build_simple_rel_hook;
+	build_simple_rel_hook = ExtensionBuildSimpleRelHook;
+#else
 	ExtensionPreviousGetRelationInfoHook = get_relation_info_hook;
 	get_relation_info_hook = ExtensionGetRelationInfoHook;
+#endif
 
 	RegisterXactCallback(DocumentDBTransactionCallback, NULL);
 	RegisterSubXactCallback(DocumentDBSubTransactionCallback, NULL);
@@ -180,8 +185,13 @@ UninstallDocumentDBApiPostgresHooks(void)
 	post_parse_analyze_hook = ExtensionPreviousPostParseAnalyzeHook;
 	ExtensionPreviousPostParseAnalyzeHook = NULL;
 
+#if PG_VERSION_NUM >= 190000
+	build_simple_rel_hook = ExtensionPreviousBuildSimpleRelHook;
+	ExtensionPreviousBuildSimpleRelHook = NULL;
+#else
 	get_relation_info_hook = ExtensionPreviousGetRelationInfoHook;
 	ExtensionPreviousGetRelationInfoHook = NULL;
+#endif
 
 	UnregisterXactCallback(DocumentDBTransactionCallback, NULL);
 	UnregisterSubXactCallback(DocumentDBSubTransactionCallback, NULL);

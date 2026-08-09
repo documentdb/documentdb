@@ -875,21 +875,20 @@ StringView GetTimestampStringWithDefaultFormat(const bson_value_t *timeStampBson
 /* Helper inline method to throw error for expressions that take N number of args
  * but a different number was provided.
  */
-inline static void
-pg_attribute_noreturn()
-ThrowExpressionTakesExactlyNArgs(const char * expression, int requiredArgs, int numArgs)
+pg_noreturn inline static void
+ThrowExpressionTakesExactlyNArgs(const char *expression, int requiredArgs, int numArgs)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION16020), errmsg(
 						"The expression %s requires exactly %d arguments, but %d arguments were actually provided.",
 						expression, requiredArgs, numArgs)));
 }
 
+
 /* Helper inline method to throw error for expressions that take minimum N number of args and Maximum M
  * but a different number was provided.
  */
-inline static void
-pg_attribute_noreturn()
-ThrowExpressionNumOfArgsOutsideRange(const char * expression, int minRequiredArgs,
+pg_noreturn inline static void
+ThrowExpressionNumOfArgsOutsideRange(const char *expression, int minRequiredArgs,
 									 int maxRequiredArgs, int numArgs)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_RANGEARGUMENTEXPRESSIONARGSOUTOFRANGE),
@@ -897,6 +896,7 @@ ThrowExpressionNumOfArgsOutsideRange(const char * expression, int minRequiredArg
 						"The expression %s requires no fewer than %d arguments and no more than %d arguments, but %d arguments were actually provided.",
 						expression, minRequiredArgs, maxRequiredArgs, numArgs)));
 }
+
 
 /* Whether or not the expression result value is undefined */
 inline static bool

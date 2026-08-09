@@ -277,8 +277,7 @@ EnsureTypeCodeIsFinite(double value)
 }
 
 
-static inline void
-pg_attribute_noreturn()
+pg_noreturn static inline void
 ThrowInvalidRegexOptions(char c)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION51108), errmsg(
@@ -287,6 +286,7 @@ ThrowInvalidRegexOptions(char c)
 						"Invalid flag detected within the specified regex options %c",
 						c)));
 }
+
 
 /* --------------------------------------------------------- */
 /* Top level exports */

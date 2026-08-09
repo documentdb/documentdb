@@ -14,6 +14,7 @@
 #include <nodes/execnodes.h>
 #include <executor/executor.h>
 #include <funcapi.h>
+#include <utils/tuplestore.h>
 
 #include <storage/shmem.h>
 #include <access/slru.h>

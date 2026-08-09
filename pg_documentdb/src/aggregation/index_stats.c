@@ -10,6 +10,7 @@
 
 #include <postgres.h>
 #include <utils/builtins.h>
+#include <utils/tuplestore.h>
 #include <executor/spi.h>
 
 #include "metadata/collection.h"

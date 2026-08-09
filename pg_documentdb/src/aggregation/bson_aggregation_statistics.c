@@ -1324,7 +1324,7 @@ bson_std_dev_pop_samp_winfunc_invtransition(PG_FUNCTION_ARGS)
 /* --------------------------------------------------------- */
 
 static MaxAlignedVarlena *
-AllocateBsonCovarianceOrVarianceAggState()
+AllocateBsonCovarianceOrVarianceAggState(void)
 {
 	MaxAlignedVarlena *combinedStateBytes =
 		AllocateMaxAlignedVarlena(sizeof(BsonCovarianceAndVarianceAggState));
@@ -1334,7 +1334,7 @@ AllocateBsonCovarianceOrVarianceAggState()
 
 
 static MaxAlignedVarlena *
-AllocateBsonIntegralAndDerivativeAggState()
+AllocateBsonIntegralAndDerivativeAggState(void)
 {
 	MaxAlignedVarlena *combinedStateBytes =
 		AllocateMaxAlignedVarlena(sizeof(BsonIntegralAndDerivativeAggState));

@@ -411,7 +411,7 @@ RunUpgradeActions(ExtensionVersion installedVersion, ExtensionVersion lastUpgrad
  * then NULL is returned.
  */
 static char *
-GetClusterInitializedVersion()
+GetClusterInitializedVersion(void)
 {
 	StringInfo cmdStr = makeStringInfo();
 	appendStringInfo(cmdStr,
@@ -435,7 +435,7 @@ GetClusterInitializedVersion()
  * Creates all distributed objects required by the extension to run in the cluster.
  */
 static void
-DistributeCrudFunctions()
+DistributeCrudFunctions(void)
 {
 	/* TODO: when we move to OSS revisit change stream stuff. */
 	/* Table is distributed and co-located with the collections it is tracking */
@@ -526,7 +526,7 @@ CreateIndexBuildsTable(bool includeOptions, bool includeDropCommandType)
 
 
 static void
-AddMetadataCollectionOptionsColumn()
+AddMetadataCollectionOptionsColumn(void)
 {
 	bool readOnly = false;
 	bool isNull = false;
@@ -544,7 +544,7 @@ AddMetadataCollectionOptionsColumn()
  * Create validate_dbname trigger on the collections table.
  */
 static void
-CreateValidateDbNameTrigger()
+CreateValidateDbNameTrigger(void)
 {
 	bool isNull = false;
 	bool readOnly = false;
@@ -618,7 +618,7 @@ AddAttributeHandleIfExists(const char *addAttributeQuery)
  * TODO: Remove this after Cluster Version 1.23-0
  */
 static void
-AlterDefaultDatabaseObjects()
+AlterDefaultDatabaseObjects(void)
 {
 	StringInfo cmdStr = makeStringInfo();
 
@@ -664,7 +664,7 @@ AlterDefaultDatabaseObjects()
  * Adds bson column view_definition to the collections table.
  */
 static void
-AddCollectionsTableViewDefinition()
+AddCollectionsTableViewDefinition(void)
 {
 	bool isNull = false;
 	bool readOnly = false;
@@ -682,7 +682,7 @@ AddCollectionsTableViewDefinition()
  * Add schema validation columns to the collections table.
  */
 static void
-AddCollectionsTableValidationColumns()
+AddCollectionsTableValidationColumns(void)
 {
 	bool isNull = false;
 	bool readOnly = false;
@@ -703,7 +703,7 @@ AddCollectionsTableValidationColumns()
  * Creates trigger for updates or deletes in the cluster_data table from the catalog schema.
  */
 static void
-CreateExtensionVersionsTrigger()
+CreateExtensionVersionsTrigger(void)
 {
 	bool isNull = false;
 	bool readOnly = false;
@@ -767,7 +767,7 @@ CreateDistributedFunction(const char *functionName, const char *distributionArgN
  * Cleaning change_stream related constructs that were used for backward compatibility.
  */
 static void
-DropLegacyChangeStream()
+DropLegacyChangeStream(void)
 {
 	bool readOnly = false;
 	bool isNull = false;
@@ -810,7 +810,7 @@ DropLegacyChangeStream()
  * Invalidate the cluster version metadata cache for all active processes.
  */
 static void
-TriggerInvalidateClusterMetadata()
+TriggerInvalidateClusterMetadata(void)
 {
 	bool isNull = false;
 	bool readOnly = false;
@@ -902,7 +902,7 @@ GetInstalledVersion(ExtensionVersion *installedVersion)
  * SetPermissionsForReadOnlyRole - Set the right permissions for ApiReadOnlyRole
  */
 static void
-SetPermissionsForReadOnlyRole()
+SetPermissionsForReadOnlyRole(void)
 {
 	bool readOnly = false;
 	bool isNull = false;
@@ -943,7 +943,7 @@ SetPermissionsForReadOnlyRole()
  * SetPermissionsForReadWriteRole - Set the right permissions for ApiReadWriteRole
  */
 static void
-SetPermissionsForReadWriteRole()
+SetPermissionsForReadWriteRole(void)
 {
 	StringInfo cmdStr = makeStringInfo();
 	bool isNull = false;

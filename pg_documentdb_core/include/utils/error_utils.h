@@ -45,7 +45,7 @@ extern format_log_hook unredacted_log_emit_hook;
 /* Helper method that gets the error data from the current
  * memory context and flushes the error state. */
 static inline ErrorData *
-CopyErrorDataAndFlush()
+CopyErrorDataAndFlush(void)
 {
 	ErrorData *errorData = CopyErrorData();
 	FlushErrorState();

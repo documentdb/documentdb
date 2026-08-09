@@ -1412,7 +1412,7 @@ InitializeDocumentDBApiExtensionCache(void)
  * so that the lifetime of both are tight together.
  */
 void
-InvalidateCollectionsCache()
+InvalidateCollectionsCache(void)
 {
 	if (Cache.CollectionsTableId != InvalidOid)
 	{
@@ -3955,7 +3955,7 @@ BsonDollarLookupExpressionEvalMergeOid(void)
  * Returns the OID of the bson_dollar_inverse_match function.
  */
 Oid
-BsonDollarInverseMatchFunctionId()
+BsonDollarInverseMatchFunctionId(void)
 {
 	int nargs = 2;
 	Oid argTypes[2] = { DocumentDBCoreBsonTypeId(), DocumentDBCoreBsonTypeId() };
@@ -7770,7 +7770,7 @@ GetArrayTypeOid(Oid *arrayTypeId, Oid baseElementType)
  * a BsonQueryTypeid or BsonTypeId. TODO - Delete post v1.11.
  */
 Oid
-GetClusterBsonQueryTypeId()
+GetClusterBsonQueryTypeId(void)
 {
 	Oid typeId = BsonQueryTypeId();
 	if (typeId == InvalidOid)
@@ -7783,7 +7783,7 @@ GetClusterBsonQueryTypeId()
 
 
 Oid
-GetClusterBsonQueryArrayTypeId()
+GetClusterBsonQueryArrayTypeId(void)
 {
 	return GetArrayTypeOid(&Cache.BsonQueryArrayTypeOid, GetClusterBsonQueryTypeId());
 }
@@ -7793,7 +7793,7 @@ GetClusterBsonQueryArrayTypeId()
  * Returns the OID of the ApiInternalSchemaName.index_build_is_in_progress function.
  */
 Oid
-IndexBuildIsInProgressFunctionId()
+IndexBuildIsInProgressFunctionId(void)
 {
 	int nargs = 1;
 	Oid argTypes[1] = { INT4OID };

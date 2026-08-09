@@ -134,7 +134,7 @@ static void ForceExcludeNonIndexPaths(PlannerInfo *root, RelOptInfo *rel,
 									  Index rti, RangeTblEntry *rte);
 static List * AugmentBaseRestrictInfo(PlannerInfo *root, RelOptInfo *rel);
 static void ExtensionPostParseAnalyzeHookCore(ParseState *pstate, Query *query,
-											  JumbleState *jstate);
+											  const JumbleState *jstate);
 
 extern bool ForceDisableSeqScan;
 extern bool EnableExtendedExplainPlans;
@@ -160,7 +160,11 @@ planner_hook_type ExtensionPreviousPlannerHook = NULL;
 set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook = NULL;
 post_parse_analyze_hook_type ExtensionPreviousPostParseAnalyzeHook = NULL;
 explain_get_index_name_hook_type ExtensionPreviousIndexNameHook = NULL;
+#if PG_VERSION_NUM >= 190000
+build_simple_rel_hook_type ExtensionPreviousBuildSimpleRelHook = NULL;
+#else
 get_relation_info_hook_type ExtensionPreviousGetRelationInfoHook = NULL;
+#endif
 ExplainOneQuery_hook_type ExtensionPreviousExplainOneQueryHook = NULL;
 node_worker_stmt_rewrite_hook_type node_worker_stmt_rewrite_hook = NULL;
 
@@ -248,7 +252,11 @@ DocumentDBApiExplainOneQuery(Query *query, int cursorOptions, IntoClause *into,
  */
 PlannedStmt *
 DocumentDBApiPlanner(Query *parse, const char *queryString, int cursorOptions,
-					 ParamListInfo boundParams)
+					 ParamListInfo boundParams
+#if PG_VERSION_NUM >= 190000
+					 , ExplainState *es
+#endif
+					 )
 {
 	bool hasUnresolvedParams = false;
 	int queryFlags = 0;
@@ -314,12 +322,21 @@ DocumentDBApiPlanner(Query *parse, const char *queryString, int cursorOptions,
 
 	if (ExtensionPreviousPlannerHook != NULL)
 	{
+#if PG_VERSION_NUM >= 190000
+		plan = ExtensionPreviousPlannerHook(parse, queryString, cursorOptions,
+											boundParams, es);
+#else
 		plan = ExtensionPreviousPlannerHook(parse, queryString, cursorOptions,
 											boundParams);
+#endif
 	}
 	else
 	{
+#if PG_VERSION_NUM >= 190000
+		plan = standard_planner(parse, queryString, cursorOptions, boundParams, es);
+#else
 		plan = standard_planner(parse, queryString, cursorOptions, boundParams);
+#endif
 	}
 
 	if (hasUnresolvedParams)
@@ -721,7 +738,11 @@ ExtensionRelPathlistHook(PlannerInfo *root, RelOptInfo *rel, Index rti,
 
 void
 DocumentDBPostParseAnalyzeHook(ParseState *pstate, Query *query,
-							   JumbleState *jstate)
+#if PG_VERSION_NUM >= 190000
+							   const JumbleState *jstate)
+#else
+							   JumbleState * jstate)
+#endif
 {
 	if (IsTransactionState() && IsDocumentDBApiExtensionActive())
 	{
@@ -1001,12 +1022,28 @@ ExtensionGetRelationInfoHookCore(PlannerInfo *root, Oid relationObjectId,
 }
 
 
-/* Implementation for the get_relation_info hook. Calls our hook if the extension is active and then calls the previous info hook if any was defined before we registered ours. */
+/* Calls our relation hook if the extension is active, then continues the hook chain. */
 void
-ExtensionGetRelationInfoHook(PlannerInfo *root,
+#if PG_VERSION_NUM >= 190000
+ExtensionBuildSimpleRelHook(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
+{
+	if (IsDocumentDBApiExtensionActive())
+	{
+		ExtensionGetRelationInfoHookCore(root, rte->relid, rte->inh, rel);
+	}
+
+	if (ExtensionPreviousBuildSimpleRelHook != NULL)
+	{
+		ExtensionPreviousBuildSimpleRelHook(root, rel, rte);
+	}
+}
+
+
+#else
+ExtensionGetRelationInfoHook(PlannerInfo * root,
 							 Oid relationObjectId,
 							 bool inhparent,
-							 RelOptInfo *rel)
+							 RelOptInfo * rel)
 {
 	if (IsDocumentDBApiExtensionActive())
 	{
@@ -1018,6 +1055,7 @@ ExtensionGetRelationInfoHook(PlannerInfo *root,
 		ExtensionPreviousGetRelationInfoHook(root, relationObjectId, inhparent, rel);
 	}
 }
+#endif
 
 
 /*
@@ -2460,7 +2498,8 @@ CollationQueryTreeWalker(Node *node, void *context)
 
 
 static void
-ExtensionPostParseAnalyzeHookCore(ParseState *pstate, Query *query, JumbleState *jstate)
+ExtensionPostParseAnalyzeHookCore(ParseState *pstate, Query *query,
+								  const JumbleState *jstate)
 {
 	if (!EnableCollation)
 	{

@@ -16,6 +16,7 @@
 #include "fmgr.h"
 #include "miscadmin.h"
 
+#include "utils/hsearch.h"
 #include "utils/memutils.h"
 
 #include "infrastructure/documentdb_plan_cache.h"

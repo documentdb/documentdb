@@ -243,12 +243,14 @@ command_coll_stats_aggregation(PG_FUNCTION_ARGS)
 	PgbsonWriterInit(&writer);
 
 	/* Write the base info */
+	text *databaseNameText = DatumGetTextPP(databaseName);
+	text *collectionNameText = DatumGetTextPP(collectionName);
 	StringInfo namespaceString = makeStringInfo();
 	appendStringInfo(namespaceString, "%.*s.%.*s",
-					 (int) VARSIZE_ANY_EXHDR(databaseName),
-					 (char *) VARDATA_ANY(databaseName),
-					 (int) VARSIZE_ANY_EXHDR(collectionName),
-					 (char *) VARDATA_ANY(collectionName));
+					 (int) VARSIZE_ANY_EXHDR(databaseNameText),
+					 (char *) VARDATA_ANY(databaseNameText),
+					 (int) VARSIZE_ANY_EXHDR(collectionNameText),
+					 (char *) VARDATA_ANY(collectionNameText));
 	PgbsonWriterAppendUtf8(&writer, "ns", 2, namespaceString->data);
 
 	MongoCollection *collection =
@@ -344,12 +346,14 @@ CollStatsCoordinator(Datum databaseName, Datum collectionName, int scale)
 	}
 
 	StringInfo namespaceString = makeStringInfo();
+	text *databaseNameText = DatumGetTextPP(databaseName);
+	text *collectionNameText = DatumGetTextPP(collectionName);
 
 	appendStringInfo(namespaceString, "%.*s.%.*s",
-					 (int) VARSIZE_ANY_EXHDR(databaseName),
-					 (char *) VARDATA_ANY(databaseName),
-					 (int) VARSIZE_ANY_EXHDR(collectionName),
-					 (char *) VARDATA_ANY(collectionName));
+					 (int) VARSIZE_ANY_EXHDR(databaseNameText),
+					 (char *) VARDATA_ANY(databaseNameText),
+					 (int) VARSIZE_ANY_EXHDR(collectionNameText),
+					 (char *) VARDATA_ANY(collectionNameText));
 
 	CollStatsResult result = { 0 };
 	result.ns = namespaceString->data;

@@ -678,10 +678,15 @@ InitializeFileCursorShmem(void)
 
 	if (!found)
 	{
-		CursorStoreSharedState->sharedCursorStoreTrancheId = LWLockNewTrancheId();
 		CursorStoreSharedState->sharedCursorStoreTrancheName = "Cursor Store Tranche";
+#if PG_VERSION_NUM >= 190000
+		CursorStoreSharedState->sharedCursorStoreTrancheId = LWLockNewTrancheId(
+			CursorStoreSharedState->sharedCursorStoreTrancheName);
+#else
+		CursorStoreSharedState->sharedCursorStoreTrancheId = LWLockNewTrancheId();
 		LWLockRegisterTranche(CursorStoreSharedState->sharedCursorStoreTrancheId,
 							  CursorStoreSharedState->sharedCursorStoreTrancheName);
+#endif
 
 		LWLockInitialize(&CursorStoreSharedState->sharedCursorStoreLock,
 						 CursorStoreSharedState->sharedCursorStoreTrancheId);
