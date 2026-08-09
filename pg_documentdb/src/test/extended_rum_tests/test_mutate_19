@@ -1,0 +1,7 @@
+s/ rum_fillfactor_tests//
+s/ rum_collation_fillfactor_tests//
+/bson_composite_index_only_scan_rum_tests_pg16/d
+s/bson_composite_index_only_scan_multi_key_per_path_tests //
+/bson_aggregation_group_scalar_index_pushdown_tests_pg16/d
+/bson_aggregation_group_distinct_scan_tests_pg16/d
+/bson_aggregation_group_first_distinct_scan_tests_pg16/d

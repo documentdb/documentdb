@@ -29,6 +29,9 @@ POSTGIS_REF=$(GetPostgisVersion)
 . $scriptDir/utils.sh
 pgBinDir=$(GetPostgresPath $PGVERSION)
 
+LDFLAGS="$($pgBinDir/pg_config --ldflags) ${LDFLAGS:-}"
+export LDFLAGS
+
 POSTGIS_REPO=postgis-repo
 rm -rf $POSTGIS_REPO
 mkdir $POSTGIS_REPO

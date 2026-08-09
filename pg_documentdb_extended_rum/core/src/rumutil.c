@@ -306,6 +306,9 @@ initRumState(RumState *state, Relation index)
 				state->addAttrs[i] = NULL;
 			}
 		}
+#if PG_VERSION_NUM >= 190000
+		TupleDescFinalize(state->tupdesc[i]);
+#endif
 
 		/*
 		 * If the compare proc isn't specified in the opclass definition, look

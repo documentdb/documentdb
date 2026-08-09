@@ -1205,6 +1205,9 @@ rumNewScanKey(IndexScanDesc scan, ScanDirection scanDirection)
 							   attributeTypeModifier,
 							   numDimensions);
 		}
+#if PG_VERSION_NUM >= 190000
+		TupleDescFinalize(so->projectIndexTupleData->indexTupleDesc);
+#endif
 
 		scan->xs_itupdesc = so->projectIndexTupleData->indexTupleDesc;
 	}
