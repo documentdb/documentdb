@@ -637,7 +637,7 @@ GetShardIdsAndNamesForCollection(Oid relationOid, const char *tableName,
 
 
 const char *
-GetPidForIndexBuild()
+GetPidForIndexBuild(void)
 {
 	if (get_pid_for_index_build_hook != NULL)
 	{
@@ -733,7 +733,7 @@ GetOperationCancellationQuery(int64 shardId, StringView *opIdView, int *nargs,
 
 
 bool
-ShouldUseCompositeOpClassByDefault()
+ShouldUseCompositeOpClassByDefault(void)
 {
 	if (default_enable_composite_op_class_hook != NULL)
 	{
@@ -745,7 +745,7 @@ ShouldUseCompositeOpClassByDefault()
 
 
 bool
-ShouldEnablePlannerStatisticsNewCollections()
+ShouldEnablePlannerStatisticsNewCollections(void)
 {
 	if (default_enable_stats_creation_on_new_collections_hook != NULL)
 	{

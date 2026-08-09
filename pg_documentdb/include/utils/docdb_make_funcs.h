@@ -12,6 +12,7 @@
 #define DOCDB_MAKE_FUNCS_H
 
 #include <postgres.h>
+#include <catalog/pg_type.h>
 #include <nodes/parsenodes.h>
 #include <utils/builtins.h>
 #include <catalog/pg_collation.h>

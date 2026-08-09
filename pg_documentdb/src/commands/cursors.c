@@ -369,8 +369,8 @@ DrainSingleResultQuery(Query *query)
 	}
 
 	ParamListInfo paramListInfo = NULL;
-	PlannedStmt *queryPlan = pg_plan_query(query, NULL, cursorOptions,
-										   paramListInfo);
+	PlannedStmt *queryPlan = PgPlanQueryCompat(query, NULL, cursorOptions,
+											   paramListInfo);
 
 	pgbson_array_writer *arrayWriter = NULL;
 	int32_t batchSize = 0; /* unused in single-result mode */
@@ -442,8 +442,8 @@ DrainStreamingQuery(HTAB *cursorMap, Query *query, int batchSize,
 		paramListInfo->params[0].value = continuationParam;
 
 		Query *copiedQuery = copyObject(query);
-		PlannedStmt *queryPlan = pg_plan_query(copiedQuery, NULL, cursorOptions,
-											   paramListInfo);
+		PlannedStmt *queryPlan = PgPlanQueryCompat(copiedQuery, NULL, cursorOptions,
+												   paramListInfo);
 
 		char *sourceText = "";
 		if (EnableDebugQueryText)
@@ -548,7 +548,7 @@ PlanDynamicQueryAndDetermineCursorType(Query *query, bool *isDynamicStreamable)
 
 	/* Plan the query */
 	ParamListInfo paramList = NULL;
-	PlannedStmt *queryPlan = pg_plan_query(query, NULL, cursorOptions, paramList);
+	PlannedStmt *queryPlan = PgPlanQueryCompat(query, NULL, cursorOptions, paramList);
 
 	Plan *outerPlan = queryPlan->planTree;
 	*isDynamicStreamable = IsDynamicCustomScanPath(outerPlan);
@@ -718,7 +718,7 @@ PlanForcedPersistentQuery(Query *query, bool isHoldCursor)
 
 	/* Plan the query */
 	ParamListInfo paramList = NULL;
-	PlannedStmt *queryPlan = pg_plan_query(query, NULL, cursorOptions, paramList);
+	PlannedStmt *queryPlan = PgPlanQueryCompat(query, NULL, cursorOptions, paramList);
 
 	if (query->commandType == CMD_MERGE)
 	{
@@ -771,7 +771,7 @@ CreateAndDrainSingleBatchQuery(const char *cursorName, Query *query,
 
 	/* Plan the query */
 	ParamListInfo paramList = NULL;
-	PlannedStmt *queryPlan = pg_plan_query(query, NULL, cursorOptions, paramList);
+	PlannedStmt *queryPlan = PgPlanQueryCompat(query, NULL, cursorOptions, paramList);
 	bool isSingleResult = false;
 	PersistentTupleDestReceiver *receiver = CreatePersistentTupleDestReceiver(
 		arrayWriter,
@@ -979,7 +979,7 @@ CreateAndDrainPointReadQuery(const char *cursorName, Query *query,
 	if (queryPlan == NULL)
 	{
 		ereport(DEBUG1, (errmsg("Falling back to default postgres planner")));
-		queryPlan = pg_plan_query(query, NULL, cursorOptions, paramList);
+		queryPlan = PgPlanQueryCompat(query, NULL, cursorOptions, paramList);
 	}
 
 	int32_t batchSize = INT32_MAX;
@@ -1537,8 +1537,8 @@ PlanStreamingQuery(Query *query, Datum parameter, bool trackContinuation)
 	 * requirement goes away.
 	 */
 	Query *copiedQuery = copyObject(query);
-	PlannedStmt *queryPlan = pg_plan_query(copiedQuery, NULL, cursorOptions,
-										   paramListInfo);
+	PlannedStmt *queryPlan = PgPlanQueryCompat(copiedQuery, NULL, cursorOptions,
+											   paramListInfo);
 
 	Portal queryPortal = CreateNewPortal();
 	queryPortal->visible = false;
@@ -2361,7 +2361,7 @@ ExtendTailableContinuation(pgbson *continuationValue, int32_t batchSize)
  * per query page for streaming cursors.
  */
 HTAB *
-CreateCursorHashSet()
+CreateCursorHashSet(void)
 {
 	HASHCTL hashInfo = CreateExtensionHashCTL(
 		sizeof(CursorContinuationEntry),

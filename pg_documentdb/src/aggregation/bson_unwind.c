@@ -13,6 +13,7 @@
 #include <nodes/makefuncs.h>
 #include <nodes/supportnodes.h>
 #include <optimizer/pathnode.h>
+#include <utils/tuplestore.h>
 
 #include "aggregation/bson_project.h"
 #include "aggregation/bson_projection_tree.h"

@@ -18,6 +18,7 @@
 #include <nodes/tidbitmap.h>
 #include <access/htup_details.h>
 #include <access/heapam.h>
+#include <executor/instrument.h>
 #include <optimizer/pathnode.h>
 #include <optimizer/optimizer.h>
 #include <parser/parse_relation.h>
@@ -785,7 +786,11 @@ UpdateAndClassifyPath(Path *inputPath, PlannerInfo *root, RelOptInfo *rel,
 															   tidLowerBoundScan);
 				inputPath = (Path *) create_tidrangescan_path(root, rel, list_make1(
 																  rinfo),
-															  rel->lateral_relids);
+															  rel->lateral_relids
+#if PG_VERSION_NUM >= 190000
+															  , 0
+#endif
+															  );
 				*scanType = QueryScanType_TidRangeScan;
 			}
 
@@ -2555,7 +2560,11 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 														   tidLowerBoundScan);
 			Path *inputPath = (Path *) create_tidrangescan_path(root, rel, list_make1(
 																	rinfo),
-																rel->lateral_relids);
+																rel->lateral_relids
+#if PG_VERSION_NUM >= 190000
+																, 0
+#endif
+																);
 			return (Path *) CreateCustomScanPathForStreaming(root, rel, inputPath,
 															 inputContinuation,
 															 baseRelPathTarget);

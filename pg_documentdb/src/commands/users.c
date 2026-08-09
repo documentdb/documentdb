@@ -1374,7 +1374,7 @@ PrehashPassword(const char *password)
  * Verify that the calling user is native
  */
 static bool
-IsCallingUserExternal()
+IsCallingUserExternal(void)
 {
 	const char *currentUser = GetUserNameFromId(GetUserId(), true);
 	return IsUserExternal(currentUser);
@@ -2005,7 +2005,7 @@ BuildUserRoleEntryTable(Datum *userDatums, int userCount)
  * Creates a hash table that maps strings to HTAB pointers.
  */
 static HTAB *
-CreateUserEntryHashSet()
+CreateUserEntryHashSet(void)
 {
 	HASHCTL hashInfo = CreateExtensionHashCTL(
 		sizeof(UserRoleHashEntry),

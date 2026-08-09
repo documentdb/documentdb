@@ -510,7 +510,7 @@ ExpressionResultCreateFromElementWriter(pgbson_element_writer *writer,
  * a hash and search based on the element path.
  */
 inline static HTAB *
-CreateVariableEntryHashTable()
+CreateVariableEntryHashTable(void)
 {
 	HASHCTL hashInfo = CreateExtensionHashCTL(
 		sizeof(VariableData),

@@ -1146,7 +1146,7 @@ BuildSingleFunctionQuery(Oid queryFunctionOid, List *queryArgs, bool isMultiRow)
  * columns with all options from the options column as-is.
  */
 static bson_value_t
-WriteConditionForListCollectionOptions()
+WriteConditionForListCollectionOptions(void)
 {
 	pgbson_writer writer;
 	PgbsonWriterInit(&writer);

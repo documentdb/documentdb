@@ -295,9 +295,10 @@ CommandDeleteCore(PG_FUNCTION_ARGS, WriteMode writeMode, MemoryContext allocCont
 	{
 		BatchDeletionResult batchResult = { 0 };
 		batchResult.resultMemoryContext = allocContext;
+		text *collectionNameText = DatumGetTextPP(collectionNameDatum);
 		StringView collectionView = {
-			.length = VARSIZE_ANY_EXHDR(collectionNameDatum),
-			.string = VARDATA_ANY(collectionNameDatum)
+			.length = VARSIZE_ANY_EXHDR(collectionNameText),
+			.string = VARDATA_ANY(collectionNameText)
 		};
 
 		PostProcessDeleteBatchSpec(batchSpec);

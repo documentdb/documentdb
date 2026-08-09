@@ -247,10 +247,11 @@ DbStatsCoordinator(Datum databaseName, int32 scale)
 	}
 
 	StringInfo namespaceString = makeStringInfo();
+	text *databaseNameText = DatumGetTextPP(databaseName);
 
 	appendStringInfo(namespaceString, "%.*s",
-					 (int) VARSIZE_ANY_EXHDR(databaseName),
-					 (char *) VARDATA_ANY(databaseName));
+					 (int) VARSIZE_ANY_EXHDR(databaseNameText),
+					 (char *) VARDATA_ANY(databaseNameText));
 
 	DbStatsResult result = { 0 };
 	result.db = namespaceString->data;

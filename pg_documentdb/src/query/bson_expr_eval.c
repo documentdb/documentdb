@@ -12,6 +12,7 @@
 #include <postgres.h>
 #include <fmgr.h>
 #include <miscadmin.h>
+#include <catalog/pg_type.h>
 #include <utils/builtins.h>
 #include <nodes/execnodes.h>
 #include <executor/executor.h>

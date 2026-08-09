@@ -756,8 +756,7 @@ ReleasePartitionAwareState(PartitionAwareState *partitionState)
 }
 
 
-static inline void
-pg_attribute_noreturn()
+pg_noreturn static inline void
 ThorwLimitExceededError(int32 nDocumentsGenerated)
 {
 	ereport(ERROR, (
@@ -770,8 +769,8 @@ ThorwLimitExceededError(int32 nDocumentsGenerated)
 					nDocumentsGenerated, PEC_InternalQueryMaxAllowedDensifyDocs)));
 }
 
-static inline void
-pg_attribute_noreturn()
+
+pg_noreturn static inline void
 ThrowMemoryLimitExceededError(int meConsumed)
 {
 	ereport(ERROR, (
@@ -1740,7 +1739,7 @@ CheckEnoughRoomForNewDocuments(const bson_value_t *min, const bson_value_t *max,
  * Generates a SELECT NULL query;
  */
 static Query *
-GenerateSelectNullQuery()
+GenerateSelectNullQuery(void)
 {
 	Query *query = makeNode(Query);
 	query->commandType = CMD_SELECT;

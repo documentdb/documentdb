@@ -629,9 +629,8 @@ WriteCurrentNode(const BsonUpdateLeafNode *leaf, const bson_value_t *currentValu
 }
 
 
-inline static void
-pg_attribute_noreturn()
-ThrowDollarPathNotAllowedError(const BsonPathNode * node)
+pg_noreturn inline static void
+ThrowDollarPathNotAllowedError(const BsonPathNode *node)
 {
 	const char *relativePath = GetRelativePathFromNode(node);
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
@@ -2053,11 +2052,10 @@ HandleCurrentIteratorPosition(bson_iter_t *documentIterator,
 /*
  * Throws the error for having a positional path on a non-array field.
  */
-inline static void
-pg_attribute_noreturn()
-ThrowPositionalOnNonArrayPathError(const BsonPathNode * node,
-								   const StringView * fieldPath,
-								   const bson_value_t * currentValue)
+pg_noreturn inline static void
+ThrowPositionalOnNonArrayPathError(const BsonPathNode *node,
+								   const StringView *fieldPath,
+								   const bson_value_t *currentValue)
 {
 	const char *elementValue = BsonValueToJsonForLogging(currentValue);
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(

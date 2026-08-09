@@ -17,6 +17,7 @@
  */
 
 #include <postgres.h>
+#include <catalog/pg_type.h>
 #include <funcapi.h>
 
 
@@ -270,7 +271,8 @@ DeserializeOrderState(bytea *byteArray,
 					bytes++;
 					state->currentResult[i]->sortKeyValues[j] = PointerGetDatum(
 						(pgbson *) bytes);
-					bytes += VARSIZE(state->currentResult[i]->sortKeyValues[j]);
+					bytes += VARSIZE(DatumGetPgBson(
+										 state->currentResult[i]->sortKeyValues[j]));
 				}
 			}
 		}

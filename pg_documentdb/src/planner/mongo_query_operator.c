@@ -939,7 +939,7 @@ GetMongoIndexQueryOperatorFromNode(Node *expr, List **args)
  * to a valid bson_dollar_<op> function.
  */
 static Oid
-InvalidQueryOperatorFuncOid()
+InvalidQueryOperatorFuncOid(void)
 {
 	return InvalidOid;
 }

@@ -1642,7 +1642,7 @@ SubmitCreateIndexesRequest(Datum dbNameDatum,
  * GetIndexBuildJobOpId gets the IndexJobOpId for current job
  */
 static IndexJobOpId *
-GetIndexBuildJobOpId()
+GetIndexBuildJobOpId(void)
 {
 	const char *indexBuildJobIdQueryStr = TryGetIndexBuildJobOpIdQuery();
 	if (indexBuildJobIdQueryStr == NULL)

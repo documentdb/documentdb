@@ -17,6 +17,9 @@
 
 #include <optimizer/planner.h>
 #include <optimizer/paths.h>
+#if PG_VERSION_NUM >= 190000
+#include <optimizer/pathnode.h>
+#endif
 #include <commands/explain.h>
 #include <parser/analyze.h>
 #if PG_VERSION_NUM >= 180000
@@ -40,25 +43,41 @@ extern planner_hook_type ExtensionPreviousPlannerHook;
 extern set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook;
 extern post_parse_analyze_hook_type ExtensionPreviousPostParseAnalyzeHook;
 extern explain_get_index_name_hook_type ExtensionPreviousIndexNameHook;
+#if PG_VERSION_NUM >= 190000
+extern build_simple_rel_hook_type ExtensionPreviousBuildSimpleRelHook;
+#else
 extern get_relation_info_hook_type ExtensionPreviousGetRelationInfoHook;
+#endif
 extern ExplainOneQuery_hook_type ExtensionPreviousExplainOneQueryHook;
 extern bool SimulateRecoveryState;
 extern bool DocumentDBPGReadOnlyForDiskFull;
 
 
-PlannedStmt * DocumentDBApiPlanner(Query *parse, const char *queryString, int
-								   cursorOptions,
-								   ParamListInfo boundParams);
+#if PG_VERSION_NUM >= 190000
+PlannedStmt * DocumentDBApiPlanner(Query *parse, const char *queryString,
+								   int cursorOptions, ParamListInfo boundParams,
+								   ExplainState *es);
+#else
+PlannedStmt * DocumentDBApiPlanner(Query *parse, const char *queryString,
+								   int cursorOptions, ParamListInfo boundParams);
+#endif
 void DocumentDBApiExplainOneQuery(Query *query, int cursorOptions, IntoClause *into,
 								  ExplainState *es, const char *queryString,
 								  ParamListInfo params, QueryEnvironment *queryEnv);
 void ExtensionRelPathlistHook(PlannerInfo *root, RelOptInfo *rel, Index rti,
 							  RangeTblEntry *rte);
 
+#if PG_VERSION_NUM >= 190000
+void DocumentDBPostParseAnalyzeHook(ParseState *pstate, Query *query,
+									const JumbleState *jstate);
+void ExtensionBuildSimpleRelHook(PlannerInfo *root, RelOptInfo *rel,
+								 RangeTblEntry *rte);
+#else
 void DocumentDBPostParseAnalyzeHook(ParseState *pstate, Query *query,
 									JumbleState *jstate);
 void ExtensionGetRelationInfoHook(PlannerInfo *root, Oid relationObjectId,
 								  bool inhparent, RelOptInfo *rel);
+#endif
 bool IsDocumentDbCollectionBasedRTE(RangeTblEntry *rte);
 bool IsResolvableDocumentDbCollectionBasedRTE(RangeTblEntry *rte,
 											  ParamListInfo boundParams);

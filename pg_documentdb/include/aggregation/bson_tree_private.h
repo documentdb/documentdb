@@ -77,9 +77,8 @@ SetBasePathNodeData(BsonPathNode *childNode, NodeType finalNodeType,
 /*
  * Helper method that throws the Path collision error on intermediate node mismatch.
  */
-inline static void
-pg_attribute_noreturn()
-ThrowErrorOnIntermediateMismatch(BsonPathNode * node, const StringView * relativePath)
+pg_noreturn inline static void
+ThrowErrorOnIntermediateMismatch(BsonPathNode *node, const StringView *relativePath)
 {
 	int errorCode = ERRCODE_DOCUMENTDB_LOCATION31250;
 	StringInfo errorMessageStr = makeStringInfo();
@@ -100,5 +99,6 @@ ThrowErrorOnIntermediateMismatch(BsonPathNode * node, const StringView * relativ
 	ereport(ERROR, (errcode(errorCode),
 					errmsg("%s", errorMessageStr->data)));
 }
+
 
 #endif

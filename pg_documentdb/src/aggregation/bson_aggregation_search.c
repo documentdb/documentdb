@@ -68,7 +68,7 @@ typedef struct
 /* --------------------------------------------------------- */
 /* Forward declaration */
 /* --------------------------------------------------------- */
-static bool IsPgvectorIterativeScanAvailable();
+static bool IsPgvectorIterativeScanAvailable(void);
 
 static pgbson * SetIterativeScanToSearchParam(pgbson *searchParamPgbson);
 
@@ -473,7 +473,7 @@ HandleNativeVectorSearch(const bson_value_t *existingValue, Query *query,
  * The pgvector iterative scan is available from 0.8.0,
  */
 static bool
-IsPgvectorIterativeScanAvailable()
+IsPgvectorIterativeScanAvailable(void)
 {
 	/* array_to_sparsevec function is introduced in 0.8.0 */
 	/* so we can check the function is available or not to indicate the iterative scan is available */

@@ -1588,8 +1588,8 @@ RunInsertQuery(Query *insertQuery, ParamListInfo paramListInfo)
 	queryPortal->visible = false;
 	queryPortal->cursorOptions = cursorOptions;
 
-	PlannedStmt *queryPlan = pg_plan_query(insertQuery, NULL, cursorOptions,
-										   paramListInfo);
+	PlannedStmt *queryPlan = PgPlanQueryCompat(insertQuery, NULL, cursorOptions,
+											   paramListInfo);
 
 	/* Set the plan in the cursor for this iteration */
 	PortalDefineQuery(queryPortal, NULL, "",
@@ -1680,7 +1680,11 @@ CreateLocalShardInsertPlan(MongoCollection *collection, Oid shardOid,
 	stmt->canSetTag = true;
 	stmt->planTree = (Plan *) mt;
 	stmt->rtable = list_make2(relationRte, valuesRte);
+#if PG_VERSION_NUM >= 190000
+	stmt->resultRelationRelids = bms_make_singleton(relationRelId);
+#else
 	stmt->resultRelations = list_make1_int(relationRelId);
+#endif
 	stmt->relationOids = list_make1_oid(relationRte->relid);
 
 	return stmt;

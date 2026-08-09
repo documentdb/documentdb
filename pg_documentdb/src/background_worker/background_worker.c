@@ -205,7 +205,11 @@ DocumentDBBackgroundWorkerMain(Datum main_arg)
 	char *databaseName = BackgroundWorkerDatabaseName;
 
 	/* Establish signal handlers before unblocking signals. */
+#if PG_VERSION_NUM >= 190000
+	pqsignal(SIGINT, PG_SIG_IGN);
+#else
 	pqsignal(SIGINT, SIG_IGN);
+#endif
 	pqsignal(SIGTERM, background_worker_sigterm);
 	pqsignal(SIGHUP, background_worker_sighup);
 

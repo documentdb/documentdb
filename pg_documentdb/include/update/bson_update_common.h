@@ -185,9 +185,8 @@ pgbson * ProcessUpdateOperatorWithState(pgbson *sourceDoc,
  * Throws an error that the _id has been detected as changed in the process of updating the document.
  * Call it when UpdateType is OperatorUpdate and _id has changed.
  */
-inline static void
-pg_attribute_noreturn()
-ThrowIdPathModifiedErrorForOperatorUpdate()
+pg_noreturn inline static void
+ThrowIdPathModifiedErrorForOperatorUpdate(void)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_IMMUTABLEFIELD),
 					errmsg(
@@ -199,14 +198,14 @@ ThrowIdPathModifiedErrorForOperatorUpdate()
  * Throws an error that the path in the projection tree has a prior update requested that would conflict
  * with the update requested.
  */
-inline static void
-pg_attribute_noreturn()
-ThrowPathConflictError(const char * requestedPath, const char * existingPath)
+pg_noreturn inline static void
+ThrowPathConflictError(const char *requestedPath, const char *existingPath)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CONFLICTINGUPDATEOPERATORS),
 					errmsg(
 						"Modifying the path '%s' will result in a conflict occurring at '%s'",
 						requestedPath, existingPath)));
 }
+
 
 #endif

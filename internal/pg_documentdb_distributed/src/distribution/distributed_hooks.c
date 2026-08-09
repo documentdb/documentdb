@@ -727,7 +727,7 @@ TryGetCancelIndexBuildQueryCore(int32_t indexId, char cmdType)
 
 
 static bool
-ShouldScheduleIndexBuildsCore()
+ShouldScheduleIndexBuildsCore(void)
 {
 	return false;
 }

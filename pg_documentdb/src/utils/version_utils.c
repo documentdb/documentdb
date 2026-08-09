@@ -205,7 +205,7 @@ IsExtensionVersionAtleast(ExtensionVersion extVersion, MajorVersion majorVersion
  * Hook to invalidate the version cache.
  */
 void
-InvalidateVersionCache()
+InvalidateVersionCache(void)
 {
 	if (TrackedExtensionVersions != NULL)
 	{
@@ -406,7 +406,7 @@ RefreshInitializedVersion(void)
 
 
 static char *
-GetVersionRefreshQuery()
+GetVersionRefreshQuery(void)
 {
 	if (VersionRefreshQuery != NULL)
 	{

@@ -146,7 +146,8 @@ extern IsUserExternal_HookType
 /*
  * Method to get user info from external identity provider
  */
-typedef const pgbson *(*GetUserInfoFromExternalIdentityProvider_HookType)();
+typedef const pgbson *(*GetUserInfoFromExternalIdentityProvider_HookType)(const char
+																		  *userName);
 extern GetUserInfoFromExternalIdentityProvider_HookType
 	get_user_info_from_external_identity_provider_hook;
 
@@ -269,7 +270,7 @@ typedef char *(*TryGetCancelIndexBuildQuery_HookType)(int32_t indexId, char cmdT
 extern TryGetCancelIndexBuildQuery_HookType try_get_cancel_index_build_query_hook;
 
 
-typedef bool (*ShouldScheduleIndexBuilds_HookType)();
+typedef bool (*ShouldScheduleIndexBuilds_HookType)(void);
 extern ShouldScheduleIndexBuilds_HookType should_schedule_index_builds_hook;
 
 typedef List *(*GetShardIndexOids_HookType)(uint64_t collectionId, Oid indexOid, bool
@@ -290,7 +291,7 @@ extern GetOperationCancellationQuery_HookType get_operation_cancellation_query_h
 typedef bool (*DefaultEnableCompositeOpClass_HookType)(void);
 extern DefaultEnableCompositeOpClass_HookType default_enable_composite_op_class_hook;
 
-typedef bool (*DefaultEnableStatsCreationOnNewCollections_HookType)();
+typedef bool (*DefaultEnableStatsCreationOnNewCollections_HookType)(void);
 extern DefaultEnableStatsCreationOnNewCollections_HookType
 	default_enable_stats_creation_on_new_collections_hook;
 

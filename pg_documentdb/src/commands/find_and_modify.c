@@ -8,6 +8,7 @@
  *-------------------------------------------------------------------------
  */
 #include <postgres.h>
+#include <access/htup_details.h>
 #include <fmgr.h>
 #include <storage/lockdefs.h>
 #include <utils/builtins.h>

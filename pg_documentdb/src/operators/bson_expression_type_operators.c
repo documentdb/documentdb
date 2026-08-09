@@ -2220,8 +2220,7 @@ ConvertUUIDStringToPgUUID(const char *uuidString, bson_value_t *result)
 
 
 /* Throws an invalid conversion error with the sourceType and targetType in the error message. */
-static inline void
-pg_attribute_noreturn()
+pg_noreturn static inline void
 ThrowInvalidConversionError(bson_type_t sourceType, bson_type_t targetType)
 {
 	/* Only target type name can be "missing". */
@@ -2234,9 +2233,8 @@ ThrowInvalidConversionError(bson_type_t sourceType, bson_type_t targetType)
 
 
 /* Throws an overflow error with the value that was tried to be converted in the message. */
-static inline void
-pg_attribute_noreturn()
-ThrowOverflowTargetError(const bson_value_t * value)
+pg_noreturn static inline void
+ThrowOverflowTargetError(const bson_value_t *value)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CONVERSIONFAILURE),
 					errmsg(
@@ -2249,9 +2247,8 @@ ThrowOverflowTargetError(const bson_value_t * value)
 
 
 /* Throws an error for when an input string is not able to be parsed as a number. */
-static inline void
-pg_attribute_noreturn()
-ThrowFailedToParseNumberError(const char * value, const char * reason)
+pg_noreturn static inline void
+ThrowFailedToParseNumberError(const char *value, const char *reason)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_CONVERSIONFAILURE), errmsg(
 						"Unable to interpret number '%s' within $convert, as no onError value was specified: %s",
@@ -2260,9 +2257,8 @@ ThrowFailedToParseNumberError(const char * value, const char * reason)
 
 
 /* Throws an error when a formatted string is not successfully converted to a BinData. */
-static inline void
-pg_attribute_noreturn()
-ThrowFailedToParseBinDataError(const char * value, const char * reason)
+pg_noreturn static inline void
+ThrowFailedToParseBinDataError(const char *value, const char *reason)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE), errmsg(
 						"Unable to interpret BinData '%s' during $convert operation due to missing onError parameter: %s",
@@ -2271,8 +2267,7 @@ ThrowFailedToParseBinDataError(const char * value, const char * reason)
 
 
 /* Throws an error when a deprecated bson_subtype_t (2 or 3) are used. */
-static inline void
-pg_attribute_noreturn()
+pg_noreturn static inline void
 ThrowFailedToParseBinDataDeprecatedSubTypeError(int deprecatedSubType, int
 												supportedSubType)
 {

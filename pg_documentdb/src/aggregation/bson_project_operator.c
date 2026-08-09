@@ -315,9 +315,8 @@ CastAsProjectionIntermediateNode(const BsonIntermediatePathNode *toCast)
 }
 
 
-static inline void
-pg_attribute_noreturn()
-ThrowPositionalNotMatchedError()
+pg_noreturn static inline void
+ThrowPositionalNotMatchedError(void)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION51246),
 					errmsg(
@@ -326,9 +325,8 @@ ThrowPositionalNotMatchedError()
 }
 
 
-static inline void
-pg_attribute_noreturn()
-ThrowPositionalMismatchedMatchedError()
+pg_noreturn static inline void
+ThrowPositionalMismatchedMatchedError(void)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION51247),
 					errmsg(

@@ -1208,7 +1208,11 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 																   tidLowerBoundScan);
 					inputPath = (Path *) create_tidrangescan_path(root, rel, list_make1(
 																	  rinfo),
-																  rel->lateral_relids);
+																  rel->lateral_relids
+#if PG_VERSION_NUM >= 190000
+																  , 0
+#endif
+																  );
 				}
 			}
 
@@ -2103,7 +2107,11 @@ SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
 				table_beginscan_bm(bitmapScanState->ss.ss_currentRelation,
 								   bitmapScanState->ss.ps.state->es_snapshot,
 								   0,
-								   NULL);
+								   NULL
+#if PG_VERSION_NUM >= 190000
+								   , SO_NONE
+#endif
+								   );
 		}
 
 		bitmapScanState->ss.ss_currentScanDesc->st.rs_tbmiterator = tbmiterator;

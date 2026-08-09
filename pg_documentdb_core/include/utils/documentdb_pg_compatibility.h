@@ -11,6 +11,14 @@
 #ifndef DOCUMENTDB_PG_COMPATIBILITY_H
 #define DOCUMENTDB_PG_COMPATIBILITY_H
 
+#if PG_VERSION_NUM >= 190000
+#define PgPlanQueryCompat(query, queryString, cursorOptions, boundParams) \
+	pg_plan_query(query, queryString, cursorOptions, boundParams, NULL)
+#else
+#define PgPlanQueryCompat(query, queryString, cursorOptions, boundParams) \
+	pg_plan_query(query, queryString, cursorOptions, boundParams)
+#endif
+
 #if PG_VERSION_NUM >= 180000
 #define pg_attribute_noreturn() pg_noreturn
 #define char_uint8_compat uint8

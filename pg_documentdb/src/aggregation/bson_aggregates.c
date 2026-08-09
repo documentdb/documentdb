@@ -1329,7 +1329,7 @@ bson_add_to_set_final(PG_FUNCTION_ARGS)
 /* --------------------------------------------------------- */
 
 static MaxAlignedVarlena *
-AllocateBsonNumericAggState()
+AllocateBsonNumericAggState(void)
 {
 	MaxAlignedVarlena *combinedStateBytes =
 		AllocateMaxAlignedVarlena(sizeof(BsonNumericAggState));

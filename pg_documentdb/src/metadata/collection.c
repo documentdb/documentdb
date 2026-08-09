@@ -644,14 +644,16 @@ GetMongoCollectionByNameDatumCore(Datum databaseNameDatum, Datum collectionNameD
 	/* make sure hashes exist */
 	InitializeCollectionsHash();
 
-	int databaseNameLength = VARSIZE_ANY_EXHDR(databaseNameDatum);
+	text *databaseNameText = DatumGetTextPP(databaseNameDatum);
+	text *collectionNameText = DatumGetTextPP(collectionNameDatum);
+	int databaseNameLength = VARSIZE_ANY_EXHDR(databaseNameText);
 	if (databaseNameLength >= MAX_DATABASE_NAME_LENGTH)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE), errmsg(
 							"The provided database name exceeds the permitted length")));
 	}
 
-	int collectionNameLength = VARSIZE_ANY_EXHDR(collectionNameDatum);
+	int collectionNameLength = VARSIZE_ANY_EXHDR(collectionNameText);
 	if (collectionNameLength >= MAX_COLLECTION_NAME_LENGTH)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE), errmsg(
@@ -662,9 +664,9 @@ GetMongoCollectionByNameDatumCore(Datum databaseNameDatum, Datum collectionNameD
 	memset(&qualifiedName, 0, sizeof(qualifiedName));
 
 	/* copy text bytes directly, buffers are already 0-initialized above */
-	memcpy(qualifiedName.databaseName, VARDATA_ANY(databaseNameDatum),
+	memcpy(qualifiedName.databaseName, VARDATA_ANY(databaseNameText),
 		   databaseNameLength);
-	memcpy(qualifiedName.collectionName, VARDATA_ANY(collectionNameDatum),
+	memcpy(qualifiedName.collectionName, VARDATA_ANY(collectionNameText),
 		   collectionNameLength);
 
 	bool foundInCache = false;
@@ -825,14 +827,16 @@ GetTempMongoCollectionByNameDatum(Datum databaseNameDatum, Datum collectionNameD
 {
 	MongoCollection *collection = palloc0(sizeof(MongoCollection));
 
-	int databaseNameLength = VARSIZE_ANY_EXHDR(databaseNameDatum);
+	text *databaseNameText = DatumGetTextPP(databaseNameDatum);
+	text *collectionNameText = DatumGetTextPP(collectionNameDatum);
+	int databaseNameLength = VARSIZE_ANY_EXHDR(databaseNameText);
 	if (databaseNameLength >= MAX_DATABASE_NAME_LENGTH)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
 							"The provided database name exceeds the permitted length")));
 	}
 
-	int collectionNameLength = VARSIZE_ANY_EXHDR(collectionNameDatum);
+	int collectionNameLength = VARSIZE_ANY_EXHDR(collectionNameText);
 	if (collectionNameLength >= MAX_COLLECTION_NAME_LENGTH)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
@@ -840,9 +844,9 @@ GetTempMongoCollectionByNameDatum(Datum databaseNameDatum, Datum collectionNameD
 	}
 
 	/* copy text bytes directly, buffers are already 0-initialized above */
-	memcpy(collection->name.databaseName, VARDATA_ANY(databaseNameDatum),
+	memcpy(collection->name.databaseName, VARDATA_ANY(databaseNameText),
 		   databaseNameLength);
-	memcpy(collection->name.collectionName, VARDATA_ANY(collectionNameDatum),
+	memcpy(collection->name.collectionName, VARDATA_ANY(collectionNameText),
 		   collectionNameLength);
 
 	collection->shardKey = NULL;
@@ -924,8 +928,9 @@ GetMongoCollectionFromCatalogById(uint64 collectionId, Oid relationId,
 			ereport(ERROR, (errmsg("database_name should not be NULL in catalog")));
 		}
 
-		memcpy(collection->name.databaseName, VARDATA_ANY(databaseNameDatum),
-			   VARSIZE_ANY_EXHDR(databaseNameDatum));
+		text *databaseNameText = DatumGetTextPP(databaseNameDatum);
+		memcpy(collection->name.databaseName, VARDATA_ANY(databaseNameText),
+			   VARSIZE_ANY_EXHDR(databaseNameText));
 
 		Datum collectionNameDatum = heap_getattr(tuple, 2, tupleDescriptor, &isNull);
 		if (isNull)
@@ -933,8 +938,9 @@ GetMongoCollectionFromCatalogById(uint64 collectionId, Oid relationId,
 			ereport(ERROR, (errmsg("collection name must not be NULL")));
 		}
 
-		memcpy(collection->name.collectionName, VARDATA_ANY(collectionNameDatum),
-			   VARSIZE_ANY_EXHDR(collectionNameDatum));
+		text *collectionNameText = DatumGetTextPP(collectionNameDatum);
+		memcpy(collection->name.collectionName, VARDATA_ANY(collectionNameText),
+			   VARSIZE_ANY_EXHDR(collectionNameText));
 
 		/* Attribute 3 refers to the collection_id */
 		collection->collectionId = collectionId;
@@ -1092,10 +1098,12 @@ GetMongoCollectionFromCatalogByNameDatum(Datum databaseNameDatum,
 		collection->collectionId = Int64GetDatum(collectionIdDatum);
 
 		/* copy text bytes, buffers are already 0-initialized by memset above */
-		memcpy(collection->name.databaseName, VARDATA_ANY(databaseNameDatum),
-			   VARSIZE_ANY_EXHDR(databaseNameDatum));
-		memcpy(collection->name.collectionName, VARDATA_ANY(collectionNameDatum),
-			   VARSIZE_ANY_EXHDR(collectionNameDatum));
+		text *databaseNameText = DatumGetTextPP(databaseNameDatum);
+		text *collectionNameText = DatumGetTextPP(collectionNameDatum);
+		memcpy(collection->name.databaseName, VARDATA_ANY(databaseNameText),
+			   VARSIZE_ANY_EXHDR(databaseNameText));
+		memcpy(collection->name.collectionName, VARDATA_ANY(collectionNameText),
+			   VARSIZE_ANY_EXHDR(collectionNameText));
 
 		/* table name is: documents_<collection id> */
 		snprintf(collection->tableName, NAMEDATALEN, DOCUMENT_DATA_TABLE_NAME_FORMAT,
@@ -1283,8 +1291,9 @@ TryGetDBNameByDatum(Datum databaseNameDatum, char *dbNameInTable)
 			ereport(ERROR, (errmsg("database_name should not be NULL in catalog")));
 		}
 
-		memcpy(dbNameInTable, VARDATA_ANY(databaseNameDatumInt),
-			   VARSIZE_ANY_EXHDR(databaseNameDatumInt));
+		text *databaseNameText = DatumGetTextPP(databaseNameDatumInt);
+		memcpy(dbNameInTable, VARDATA_ANY(databaseNameText),
+			   VARSIZE_ANY_EXHDR(databaseNameText));
 		dbExists = true;
 	}
 
@@ -1314,9 +1323,10 @@ ValidateCollectionNameForUnauthorizedSystemNs(const char *collectionName,
 	{
 		if (strcmp(collectionName, NonWritableSystemCollectionNames[i]) == 0)
 		{
+			text *databaseNameText = DatumGetTextPP(databaseNameDatum);
 			StringView databaseView = {
-				.length = VARSIZE_ANY_EXHDR(databaseNameDatum),
-				.string = VARDATA_ANY(databaseNameDatum)
+				.length = VARSIZE_ANY_EXHDR(databaseNameText),
+				.string = VARDATA_ANY(databaseNameText)
 			};
 
 			/* Need to disallow user writes on NonWritableSystemCollectionNames */
@@ -1353,9 +1363,10 @@ ValidateCollectionNameForValidSystemNamespace(StringView *collectionView,
 
 		if (!found)
 		{
+			text *databaseNameText = DatumGetTextPP(databaseNameDatum);
 			StringView databaseView = {
-				.length = VARSIZE_ANY_EXHDR(databaseNameDatum),
-				.string = VARDATA_ANY(databaseNameDatum)
+				.length = VARSIZE_ANY_EXHDR(databaseNameText),
+				.string = VARDATA_ANY(databaseNameText)
 			};
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
 							errmsg("System namespace provided is invalid: %.*s.%.*s",
