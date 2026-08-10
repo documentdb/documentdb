@@ -1,0 +1,10 @@
+# Per-Dockerfile ignore: BuildKit reads <Dockerfile-name>.dockerignore from the
+# directory of the Dockerfile it builds, overriding any context-root ignore.
+# Trims the repo-root build context. .git is deliberately NOT excluded so
+# generate_extension_version.sh can stamp a real GIT_VERSION in-container.
+.github
+internal
+documentdb-local/functional-tests
+rfcs
+pg_documentdb_gw/target
+pg_documentdb_gw_host/target

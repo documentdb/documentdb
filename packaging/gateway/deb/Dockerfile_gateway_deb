@@ -10,14 +10,6 @@ RUN apt-get update; \
     apt-get install -y --no-install-recommends jq curl sudo git make wget build-essential openssl pkg-config libssl-dev ca-certificates lsb-release gnupg2; \
     rm -rf /var/lib/apt/lists/*
 
-RUN apt-get update; \
-    if [ "$BASE_IMAGE" != "rust:slim-trixie" ]; then \
-        apt-get install -y --no-install-recommends software-properties-common; \
-    else \
-        echo "Skipping software-properties-common for base ${BASE_IMAGE}"; \
-    fi; \
-    rm -rf /var/lib/apt/lists/*
-
 RUN useradd -ms /bin/bash documentdb -G sudo
 RUN mkdir -p /etc/sudoers.d && echo "%sudo ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/no-pass-ask
 
@@ -28,7 +20,6 @@ COPY . /home/documentdb/code
 
 RUN sudo chown -R documentdb:documentdb /home/documentdb/code
 RUN sudo chmod +x /home/documentdb/code/scripts/*.sh
-RUN /home/documentdb/code/scripts/install_llvm.sh
 
 WORKDIR /home/documentdb/code/pg_documentdb_gw
 

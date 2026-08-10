@@ -47,6 +47,9 @@ env:
 jobs:
   build-rpm-packages:
     runs-on: ${{ matrix.runner }}
+    # A hung step otherwise burns GitHub's 360-minute default before the
+    # runner is reclaimed; healthy runs finish well inside this budget.
+    timeout-minutes: 60
     name: RPM packages for ${{ matrix.os }}-${{ matrix.arch }}-pg${{ matrix.pg_version }}
     # Skip draft PRs; build on every non-PR event. The explicit event_name
     # test is redundant — GitHub coerces both an absent `draft` and `false`
