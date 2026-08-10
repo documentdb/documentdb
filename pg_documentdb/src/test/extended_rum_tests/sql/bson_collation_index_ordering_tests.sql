@@ -2230,12 +2230,12 @@ RESET documentdb.enableNewWithExprAccumulators;
 
 -- distinct (byte-wise) string _id values including case variants so a
 -- strength-1 collation index treats "cat"/"Cat"/"CAT" as equal
-SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "cat", "country": "usa" }');
-SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "Cat", "country": "USA" }');
-SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "CAT", "country": "Usa" }');
-SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "dog", "country": "brazil" }');
-SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "Dog", "country": "Brazil" }');
-SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "bird", "country": "mexico" }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "cat", "country": "usa", "seq": 1 }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "Cat", "country": "USA", "seq": 2 }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "CAT", "country": "Usa", "seq": 3 }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "dog", "country": "brazil", "seq": 4 }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "Dog", "country": "Brazil", "seq": 5 }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "bird", "country": "mexico", "seq": 6 }');
 
 -- collation-aware ordered index keyed on _id (strength 1 => case-insensitive)
 SELECT documentdb_api_internal.create_indexes_non_concurrently('ord_coll_ios_db', '{ "createIndexes": "ios_coll", "indexes": [ { "key": { "_id": 1 }, "storageEngine": { "enableOrderedIndex": true }, "collation": { "locale": "en", "strength": 1 }, "name": "ios_id_en_s1" }] }', true);
@@ -2301,6 +2301,25 @@ SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate"
 -- _id $in + collated country, projection on country + _id
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "usa", "_id": { "$in": ["cat", "dog"] } }, "projection": { "country": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
 SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "country": "usa", "_id": { "$in": ["cat", "dog"] } }, "projection": { "country": 1, "_id": 1 }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- Field-consuming aggregate targets also require the stored row values.
+SET documentdb.enableNewWithExprAccumulators TO on;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa" } }, { "$group": { "_id": null, "value": { "$first": "$country" } } } ], "hint": "ios_country_id_en_s1", "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa" } }, { "$group": { "_id": null, "value": { "$last": "$country" } } } ], "hint": "ios_country_id_en_s1", "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa" } }, { "$group": { "_id": "$country", "count": { "$sum": 1 } } } ], "hint": "ios_country_id_en_s1", "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+
+RESET documentdb.enableNewWithExprAccumulators;
+
+-- The index, rather than the query, determines whether values can be reconstructed.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ord_coll_ios_db', '{ "createIndexes": "ios_coll", "indexes": [ { "key": { "seq": 1, "country": 1 }, "storageEngine": { "enableOrderedIndex": true }, "collation": { "locale": "en", "strength": 1 }, "name": "ios_seq_country_en_s1" }, { "key": { "seq": 1, "country": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "ios_seq_country_simple" } ] }', true);
+VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_8129;
+
+-- A collation-free numeric predicate cannot safely project from a collated index.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "seq": { "$gte": 1 } }, "projection": { "country": 1, "_id": 0 }, "hint": "ios_seq_country_en_s1" }') $$, p_ignore_heap_fetches => true);
+
+-- A collated query can still project numeric-filtered values from a simple index.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "seq": { "$gte": 1 } }, "projection": { "country": 1, "_id": 0 }, "hint": "ios_seq_country_simple", "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
 
 RESET enable_bitmapscan;
 

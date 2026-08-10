@@ -1,3 +1,6 @@
+### documentdb v0.118-0 (Unreleased) ###
+* Prevent index-only scans on collated indexes for all field-consuming projection and aggregation targets, while preserving them for constant-only targets such as `$count`. *[Bugfix]*
+
 ### documentdb v0.117-0 (Unreleased) ###
 * Reject NaN `$bucketAuto` group values when `granularity` is specified instead of reporting an internal preferred-number-series error. *[Bugfix]*
 * Estimate `_id` btree range and prefix filters as a merged range instead of multiplying the lower/upper bounds as independent clauses, fixing large mid-range selectivity overestimates. Engages when per-collection planner statistics exist for the relation, or when `enableBsonSelectivityFromBtreeStats` is set, and the required operators are available in the installed schema. *[Bugfix/Perf]*
@@ -15,7 +18,7 @@
 * Prefer an equality `$elemMatch` owner when multiple predicates constrain the leading reduced-correlated composite-index path, retaining its same-element secondary bounds while runtime-rechecking competing owners. A default-off first-owner fallback for predicates without a leading equality is available through `documentdb.enable_composite_reduced_correlated_first_owner_fallback`. *[Bugfix/Perf]*
 * Make the `$max`, `$min`, `$maxN`, and `$minN` expressions collation-aware, and align `$maxN`/`$minN` equal-value selection with the documented tie semantics. *[Feature/Bugfix]*
 * Support collation with $group keys *[Feature|Bugfix]*
-* Prevent index-only scans for projected queries with collation so projections return each row's stored values instead of a collation-equivalent value shared by the index entry. *[Bugfix]*
+* Prevent index-only scans from reading field values from collated indexes, whose shared entries cannot reconstruct each row's stored values. *[Bugfix]*
 * Refactor Gateway telemetry and metrics to be provider neutral *[Refactor]*
 
 ### documentdb v0.116-0 (Unreleased) ###

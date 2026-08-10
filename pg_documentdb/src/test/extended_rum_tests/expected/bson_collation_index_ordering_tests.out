@@ -7504,11 +7504,10 @@ $cmd$);
                      innerScanLoops: 6 loops
                      scanType: ordered
                      scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 7)]
-                     ->  Index Only Scan using idx_orderby_samefield_en_num on documents_8127 collection (actual rows=7 loops=1)
+                     ->  Index Scan using idx_orderby_samefield_en_num on documents_8127 collection (actual rows=7 loops=1)
                            Index Cond: (document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
                            Order By: (document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
-                           Heap Fetches: 7
-(20 rows)
+(19 rows)
 
 RESET documentdb.enableNewWithExprAccumulators;
 -- ============================================================
@@ -7520,38 +7519,38 @@ RESET documentdb.enableNewWithExprAccumulators;
 -- ============================================================
 -- distinct (byte-wise) string _id values including case variants so a
 -- strength-1 collation index treats "cat"/"Cat"/"CAT" as equal
-SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "cat", "country": "usa" }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "cat", "country": "usa", "seq": 1 }');
 NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
-SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "Cat", "country": "USA" }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "Cat", "country": "USA", "seq": 2 }');
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
-SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "CAT", "country": "Usa" }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "CAT", "country": "Usa", "seq": 3 }');
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
-SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "dog", "country": "brazil" }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "dog", "country": "brazil", "seq": 4 }');
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
-SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "Dog", "country": "Brazil" }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "Dog", "country": "Brazil", "seq": 5 }');
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
-SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "bird", "country": "mexico" }');
+SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "bird", "country": "mexico", "seq": 6 }');
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -7644,10 +7643,10 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 (14 rows)
 
 SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "_id": "dog" }, "collation": { "locale": "en", "strength": 1 } }');
-                document                 
------------------------------------------
- { "_id" : "dog", "country" : "brazil" }
- { "_id" : "Dog", "country" : "Brazil" }
+                                document                                 
+-------------------------------------------------------------------------
+ { "_id" : "dog", "country" : "brazil", "seq" : { "$numberInt" : "4" } }
+ { "_id" : "Dog", "country" : "Brazil", "seq" : { "$numberInt" : "5" } }
 (2 rows)
 
 -- the index-only scan honors enable_indexonlyscan
@@ -7874,6 +7873,124 @@ SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_co
  { "_id" : "Cat", "country" : "USA" }
  { "_id" : "CAT", "country" : "Usa" }
 (3 rows)
+
+-- Field-consuming aggregate targets also require the stored row values.
+SET documentdb.enableNewWithExprAccumulators TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa" } }, { "$group": { "_id": null, "value": { "$first": "$country" } } } ], "hint": "ios_country_id_en_s1", "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual rows=1 loops=1)
+   Output: bson_repath_and_build('_id'::text, '{ "" : null, "collation" : "en-u-ks-level1" }'::bson, 'value'::text, documentdb_api_internal.bsonfirstwithexprinternal(document, '{ "" : "$country" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), ('{ "" : null, "collation" : "en-u-ks-level1" }'::bson)
+   Group Key: '{ "" : null, "collation" : "en-u-ks-level1" }'::bson
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+         Output: '{ "" : null, "collation" : "en-u-ks-level1" }'::bson, document
+         namespaceName: ord_coll_ios_db.ios_coll
+         indexName: ios_country_id_en_s1
+         indexKey: {"country": 1,"_id": 1}
+         indexCollation: en-u-ks-level1
+         isMultiKey: false
+         indexBounds: ["country": ["usa", "usa"], "_id": (MinKey, MaxKey)]
+         innerScanLoops: 1 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+         ->  Index Scan using ios_country_id_en_s1 on documentdb_data.documents_8129 collection (actual rows=3 loops=1)
+               Output: document
+               Index Cond: (collection.document @= '{ "country" : "usa", "collation" : "en-u-ks-level1" }'::bson)
+(17 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa" } }, { "$group": { "_id": null, "value": { "$last": "$country" } } } ], "hint": "ios_country_id_en_s1", "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+                                                                                                                                                                        run_explain_and_trim                                                                                                                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual rows=1 loops=1)
+   Output: bson_repath_and_build('_id'::text, '{ "" : null, "collation" : "en-u-ks-level1" }'::bson, 'value'::text, documentdb_api_internal.bsonlastwithexprinternal(document, '{ "" : "$country" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), ('{ "" : null, "collation" : "en-u-ks-level1" }'::bson)
+   Group Key: '{ "" : null, "collation" : "en-u-ks-level1" }'::bson
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+         Output: '{ "" : null, "collation" : "en-u-ks-level1" }'::bson, document
+         namespaceName: ord_coll_ios_db.ios_coll
+         indexName: ios_country_id_en_s1
+         indexKey: {"country": 1,"_id": 1}
+         indexCollation: en-u-ks-level1
+         isMultiKey: false
+         indexBounds: ["country": ["usa", "usa"], "_id": (MinKey, MaxKey)]
+         innerScanLoops: 1 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+         ->  Index Scan using ios_country_id_en_s1 on documentdb_data.documents_8129 collection (actual rows=3 loops=1)
+               Output: document
+               Index Cond: (collection.document @= '{ "country" : "usa", "collation" : "en-u-ks-level1" }'::bson)
+(17 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": "usa" } }, { "$group": { "_id": "$country", "count": { "$sum": 1 } } } ], "hint": "ios_country_id_en_s1", "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+                                                                                                                                                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                                                                                                                                                               
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual rows=1 loops=1)
+   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), 'count'::text, documentdb_api_internal.bsonsumwithexpr('{ }'::bson, '{ "" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text))
+   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), document
+         namespaceName: ord_coll_ios_db.ios_coll
+         indexName: ios_country_id_en_s1
+         indexKey: {"country": 1,"_id": 1}
+         indexCollation: en-u-ks-level1
+         isMultiKey: false
+         indexBounds: ["country": ["usa", "usa"], "_id": (MinKey, MaxKey)]
+         innerScanLoops: 1 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+         ->  Index Scan using ios_country_id_en_s1 on documentdb_data.documents_8129 collection (actual rows=3 loops=1)
+               Output: document
+               Index Cond: (collection.document @= '{ "country" : "usa", "collation" : "en-u-ks-level1" }'::bson)
+               Order By: (collection.document |-<> '{ "country" : { "$numberInt" : "1" } }'::bson)
+(18 rows)
+
+RESET documentdb.enableNewWithExprAccumulators;
+-- The index, rather than the query, determines whether values can be reconstructed.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ord_coll_ios_db', '{ "createIndexes": "ios_coll", "indexes": [ { "key": { "seq": 1, "country": 1 }, "storageEngine": { "enableOrderedIndex": true }, "collation": { "locale": "en", "strength": 1 }, "name": "ios_seq_country_en_s1" }, { "key": { "seq": 1, "country": 1 }, "storageEngine": { "enableOrderedIndex": true }, "name": "ios_seq_country_simple" } ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "5" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_8129;
+-- A collation-free numeric predicate cannot safely project from a collated index.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "seq": { "$gte": 1 } }, "projection": { "country": 1, "_id": 0 }, "hint": "ios_seq_country_en_s1" }') $$, p_ignore_heap_fetches => true);
+                                                                                                                                 run_explain_and_trim                                                                                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+   Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "country" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "seq" : { "$gte" : { "$numberInt" : "1" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   namespaceName: ord_coll_ios_db.ios_coll
+   indexName: ios_seq_country_en_s1
+   indexKey: {"seq": 1,"country": 1}
+   indexCollation: en-u-ks-level1
+   isMultiKey: false
+   indexBounds: ["seq": [1, Infinity], "country": (MinKey, MaxKey)]
+   innerScanLoops: 6 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+   ->  Index Scan using ios_seq_country_en_s1 on documentdb_data.documents_8129 collection (actual rows=6 loops=1)
+         Output: document
+         Index Cond: (collection.document @>= '{ "seq" : { "$numberInt" : "1" } }'::bson)
+(14 rows)
+
+-- A collated query can still project numeric-filtered values from a simple index.
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "seq": { "$gte": 1 } }, "projection": { "country": 1, "_id": 0 }, "hint": "ios_seq_country_simple", "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+                                                                                                                                             run_explain_and_trim                                                                                                                                             
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=6 loops=1)
+   Output: documentdb_api_internal.bson_dollar_project_find(document, '{ "country" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "seq" : { "$gte" : { "$numberInt" : "1" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
+   namespaceName: ord_coll_ios_db.ios_coll
+   indexName: ios_seq_country_simple
+   indexKey: {"seq": 1,"country": 1}
+   isMultiKey: false
+   indexBounds: ["seq": [1, Infinity], "country": (MinKey, MaxKey)]
+   innerScanLoops: 6 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 6)]
+   ->  Index Only Scan using ios_seq_country_simple on documentdb_data.documents_8129 collection (actual rows=6 loops=1)
+         Output: document
+         Index Cond: (collection.document @>= '{ "seq" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::bson)
+         Heap Fetches: xxx
+(14 rows)
 
 RESET enable_bitmapscan;
 RESET documentdb.max_non_ordered_term_scan_threshold;

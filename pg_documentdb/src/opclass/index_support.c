@@ -202,6 +202,7 @@ typedef struct FieldCoverageState
 	Index expectedRti;
 	IndexPath *indexPath;
 	bool hasUncoveredField;
+	bool indexHasCollation;
 
 	/* Multi-key state of indexPath, used to gate multi-key columns out of coverage. */
 	const IndexOnlyScanMultiKeyState *multiKeyState;
@@ -2662,6 +2663,19 @@ TryExtractFieldPathFromConst(Expr *expr)
 
 
 static inline bool
+IsCollatedIndexPath(const IndexPath *indexPath)
+{
+	const char *indexCollation = NULL;
+	uint32_t indexCollationLength = 0;
+	Get_Index_Collation_Option(
+		(BsonGinIndexOptionsBase *) indexPath->indexinfo->opclassoptions[0],
+		collation, indexCollation, indexCollationLength);
+
+	return IsCollationValid(indexCollation);
+}
+
+
+static inline bool
 IsFieldPathCoveredByIndex(const char *fieldPath, IndexPath *indexPath,
 						  const IndexOnlyScanMultiKeyState *multiKeyState)
 {
@@ -2709,9 +2723,13 @@ TryExtractSortPathFromConst(Expr *expr)
 
 
 static bool
-IsProjectionCoveredByIndex(Expr *expr, IndexPath *indexPath,
-						   const IndexOnlyScanMultiKeyState *multiKeyState)
+IsProjectionCoveredByIndex(Expr *expr, const FieldCoverageState *state)
 {
+	if (state->indexHasCollation)
+	{
+		return false;
+	}
+
 	pgbson *projectBson = TryExtractPgbsonFromConst(expr);
 	if (projectBson == NULL)
 	{
@@ -2761,7 +2779,8 @@ IsProjectionCoveredByIndex(Expr *expr, IndexPath *indexPath,
 
 		hasInclusion = true;
 
-		if (!IsFieldPathCoveredByIndex(fieldPath, indexPath, multiKeyState))
+		if (!IsFieldPathCoveredByIndex(fieldPath, state->indexPath,
+									   state->multiKeyState))
 		{
 			return false;
 		}
@@ -2774,8 +2793,8 @@ IsProjectionCoveredByIndex(Expr *expr, IndexPath *indexPath,
 		return false;
 	}
 
-	if (isIdProjectedByDefault && !IsFieldPathCoveredByIndex("_id", indexPath,
-															 multiKeyState))
+	if (isIdProjectedByDefault &&
+		!IsFieldPathCoveredByIndex("_id", state->indexPath, state->multiKeyState))
 	{
 		return false;
 	}
@@ -2829,24 +2848,6 @@ IsProjectFunctionOid(Oid oid)
 		   oid == BsonDollarProjectFindFunctionOid() ||
 		   oid == BsonDollarProjectFindWithLetFunctionOid() ||
 		   oid == BsonDollarProjectFindWithLetAndCollationFunctionOid();
-}
-
-
-inline static bool
-IsProjectWithCollationFunctionOid(Oid oid)
-{
-	return oid == BsonDollarProjectWithLetAndCollationFunctionOid() ||
-		   oid == BsonDollarProjectFindWithLetAndCollationFunctionOid();
-}
-
-
-static bool
-IsCollatedIndexPath(const IndexPath *indexPath)
-{
-	return indexPath->indexinfo->opclassoptions != NULL &&
-		   indexPath->indexinfo->opclassoptions[0] != NULL &&
-		   IsCollationPresentOnQueryOrIndex(NULL,
-											indexPath->indexinfo->opclassoptions[0]);
 }
 
 
@@ -2922,7 +2923,8 @@ CheckFieldCoverage(Node *node, void *context)
 
 		if (sawDocumentVar && fieldPath != NULL)
 		{
-			if (!IsFieldPathCoveredByIndex(fieldPath, state->indexPath,
+			if (state->indexHasCollation ||
+				!IsFieldPathCoveredByIndex(fieldPath, state->indexPath,
 										   state->multiKeyState))
 			{
 				/* Field path is not in this index so we can't do index-only. */
@@ -2980,19 +2982,8 @@ CheckFieldCoverage(Node *node, void *context)
 						  TrackIndexOnlyScanFindCandidate) &&
 						 IsProjectFunctionOid(funcExpr->funcid))
 				{
-					/*
-					 * Collation-equivalent values can share one index entry, so its
-					 * term cannot reconstruct each row's projected BSON value.
-					 */
-					if (IsProjectWithCollationFunctionOid(funcExpr->funcid) &&
-						IsCollatedIndexPath(state->indexPath))
-					{
-						state->hasUncoveredField = true;
-						return true;
-					}
-
 					bool isProjectionCoveredByIndex = IsProjectionCoveredByIndex(
-						secondArg, state->indexPath, state->multiKeyState);
+						secondArg, state);
 
 					if (isProjectionCoveredByIndex && !EnableIndexOnlyScanForFindProject)
 					{
@@ -3028,9 +3019,9 @@ CheckFieldCoverage(Node *node, void *context)
 					return true;
 				}
 
-				if (fieldPath == NULL || !IsFieldPathCoveredByIndex(fieldPath,
-																	state->indexPath,
-																	state->multiKeyState))
+				if (fieldPath == NULL || state->indexHasCollation ||
+					!IsFieldPathCoveredByIndex(fieldPath, state->indexPath,
+											   state->multiKeyState))
 				{
 					/* Path is not in this index so we can't do index-only. */
 					state->hasUncoveredField = true;
@@ -3072,6 +3063,7 @@ AreAllTargetsCoveredByIndex(PlannerInfo *root, IndexPath *indexPath,
 		.indexPath = indexPath,
 		.expectedRti = indexPath->path.parent->relid,
 		.root = root,
+		.indexHasCollation = IsCollatedIndexPath(indexPath),
 		.multiKeyState = multiKeyState
 	};
 
