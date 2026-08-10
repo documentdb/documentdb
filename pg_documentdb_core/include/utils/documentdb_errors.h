@@ -1215,4 +1215,6 @@ typedef int DocumentdbErrorEreportCode;
 
 #define ERRCODE_DOCUMENTDB_LOCATION15975 MAKE_SQLSTATE('M', '0', '0', 'F', 'G')
 
+#define ERRCODE_DOCUMENTDB_LOCATION40259 MAKE_SQLSTATE('M', '0', '0', 'F', 'H')
+
 #endif
