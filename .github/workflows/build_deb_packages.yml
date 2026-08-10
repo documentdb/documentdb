@@ -52,6 +52,9 @@ env:
 jobs:
   build-deb-packages:
     runs-on: ${{ matrix.runner }}
+    # A hung step otherwise burns GitHub's 360-minute default before the
+    # runner is reclaimed; healthy runs finish well inside this budget.
+    timeout-minutes: 60
     name: Debian ${{ matrix.os }}-${{ matrix.arch }}-pg${{ matrix.pg_version }}
     # Skip draft PRs; build on every non-PR event. The explicit event_name
     # test is redundant — GitHub coerces both an absent `draft` and `false`
@@ -130,7 +133,13 @@ jobs:
           # via test_packages/test-install-entrypoint.sh. That is intentionally
           # not run here: this workflow produces packages, and the regression
           # suite is owned by regress_tests.yml across PG 15-18.
-          ./packaging/build_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }}
+          #
+          # PR artifacts are never released, so skip the -dbgsym package
+          # there; full-matrix/release runs keep it for the debug-artifact
+          # collection in build_all_packages.yml.
+          NO_DBGSYM_FLAG=""
+          if [ "${{ github.event_name }}" = "pull_request" ]; then NO_DBGSYM_FLAG="--no-dbgsym"; fi
+          ./packaging/build_packages.sh --os ${{ matrix.os }} --pg ${{ matrix.pg_version }} --version ${{ env.DOCUMENTDB_VERSION }} $NO_DBGSYM_FLAG
 
       - name: Upload Debian Package as Artifact
         uses: actions/upload-artifact@v4

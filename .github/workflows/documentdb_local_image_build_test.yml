@@ -72,9 +72,12 @@ jobs:
 
       - name: Build Debian package
         run: |
+          # --no-dbgsym: the image build below explicitly filters the dbgsym
+          # package out, so don't spend build time producing it.
           ./packaging/build_packages.sh \
             --os deb13 \
             --pg ${{ matrix.pg_version }} \
+            --no-dbgsym \
             --output-dir downloaded-artifacts
           ls -la downloaded-artifacts/
 

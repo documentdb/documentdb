@@ -6,7 +6,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 ENV DOCUMENTDB_VERSION=${DOCUMENTDB_VERSION}
 
 RUN apt-get update; \
-    apt-get install -y --no-install-recommends software-properties-common jq curl sudo git make wget build-essential openssl pkg-config libssl-dev ca-certificates lsb-release gnupg2; \
+    apt-get install -y --no-install-recommends jq curl sudo git make wget build-essential openssl pkg-config libssl-dev ca-certificates lsb-release gnupg2; \
     rm -rf /var/lib/apt/lists/*
 
 RUN useradd -ms /bin/bash documentdb -G sudo
@@ -19,7 +19,6 @@ COPY . /home/documentdb/code
 
 RUN sudo chown -R documentdb:documentdb /home/documentdb/code
 RUN sudo chmod +x /home/documentdb/code/scripts/*.sh
-RUN /home/documentdb/code/scripts/install_llvm.sh
 
 # Install rustup (which includes rustc and cargo) in user directory
 ENV RUSTUP_HOME=/home/documentdb/.rustup
