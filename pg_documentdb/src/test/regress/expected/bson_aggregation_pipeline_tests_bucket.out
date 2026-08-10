@@ -169,6 +169,22 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "dollarBuck
  { "_id" : { "a" : { "$numberInt" : "5" } }, "count" : { "$numberInt" : "1" } }
 (2 rows)
 
+/* $bucketAuto granularity validation */
+SELECT documentdb_api.insert_one('db','dollarBucketAutoNaN', '{ "_id": 1, "value": { "$numberDouble": "NaN" } }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('db','dollarBucketAutoNaN', '{ "_id": 2, "value": { "$numberDouble": "NaN" } }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "dollarBucketAutoNaN", "pipeline": [ { "$bucketAuto": { "groupBy": "$value", "buckets": 2, "granularity": "R5" } } ] }');
+ERROR:  $bucketAuto can specify a 'granularity' with numeric boundaries only, but found a NaN
 /* negative cases, validations: */
 -- required fields
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "dollarBucket", "pipeline": [ { "$bucket": { "boundaries": [2020, 2021,2022,2023] } } ] }');

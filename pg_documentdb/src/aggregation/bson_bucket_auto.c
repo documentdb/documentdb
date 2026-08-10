@@ -845,6 +845,12 @@ ValidateValueIsNumberic(pgbson *value)
 							"$bucketAuto only allows specifying a 'granularity' with numeric boundaries, but encountered a value of type: %s",
 							BsonTypeName(current.value_type))));
 	}
+	if (IsBsonValueNaN(&current))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40259),
+						errmsg(
+							"$bucketAuto can specify a 'granularity' with numeric boundaries only, but found a NaN")));
+	}
 	double currentValueDouble = BsonValueAsDouble(&current);
 	if (currentValueDouble < 0)
 	{
