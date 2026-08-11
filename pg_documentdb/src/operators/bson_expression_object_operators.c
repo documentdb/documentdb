@@ -648,7 +648,7 @@ HandlePreParsedDollarSetFieldOrUnsetFieldCore(pgbson *doc, void *arguments,
 
 	if (evaluatedInputArg.value_type != BSON_TYPE_DOCUMENT)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_DOLLARSETFIELDREQUIRESOBJECT), errmsg(
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION4161105), errmsg(
 							"%s needs 'input' to evaluate as an Object type",
 							operatorName)));
 	}
