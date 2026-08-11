@@ -275,26 +275,116 @@ SELECT document FROM bson_aggregation_pipeline('db',
         { "$group": { "_id": null, "acc": { "$mergeObjects": "$$ROOT" } } }
     ], "collation": { "locale": "en", "strength": 1 } }');
 ERROR:  collation is not supported with the $mergeObjects accumulator in $group yet.
+-- These only do arithmetic, so the collation applies to the input expression.
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "group_collation_test", "pipeline": [
         { "$group": { "_id": null, "acc": { "$stdDevPop": "$value" } } }
     ], "collation": { "locale": "en", "strength": 1 } }');
-ERROR:  collation is not supported with the $stdDevPop accumulator in $group yet.
+                                document                                 
+-------------------------------------------------------------------------
+ { "_id" : null, "acc" : { "$numberDouble" : "17.078251276599331732" } }
+(1 row)
+
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "group_collation_test", "pipeline": [
         { "$group": { "_id": null, "acc": { "$stdDevSamp": "$value" } } }
     ], "collation": { "locale": "en", "strength": 1 } }');
-ERROR:  collation is not supported with the $stdDevSamp accumulator in $group yet.
+                                document                                
+------------------------------------------------------------------------
+ { "_id" : null, "acc" : { "$numberDouble" : "18.70828693386970798" } }
+(1 row)
+
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "group_collation_test", "pipeline": [
         { "$group": { "_id": null, "acc": { "$median": { "input": "$value", "method": "approximate" } } } }
     ], "collation": { "locale": "en", "strength": 1 } }');
-ERROR:  collation is not supported with the $median accumulator in $group yet.
+                        document                        
+--------------------------------------------------------
+ { "_id" : null, "acc" : { "$numberDouble" : "30.0" } }
+(1 row)
+
 SELECT document FROM bson_aggregation_pipeline('db',
     '{ "aggregate": "group_collation_test", "pipeline": [
         { "$group": { "_id": null, "acc": { "$percentile": { "input": "$value", "p": [0.5], "method": "approximate" } } } }
     ], "collation": { "locale": "en", "strength": 1 } }');
-ERROR:  collation is not supported with the $percentile accumulator in $group yet.
+                          document                          
+------------------------------------------------------------
+ { "_id" : null, "acc" : [ { "$numberDouble" : "30.0" } ] }
+(1 row)
+
+-- With the collation all six rows contribute 100; without it only two do.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$stdDevPop": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                       document                        
+-------------------------------------------------------
+ { "_id" : null, "acc" : { "$numberDouble" : "0.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$stdDevPop": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] } } } }
+    ] }');
+                                document                                 
+-------------------------------------------------------------------------
+ { "_id" : null, "acc" : { "$numberDouble" : "47.140452079103170036" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$stdDevSamp": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                       document                        
+-------------------------------------------------------
+ { "_id" : null, "acc" : { "$numberDouble" : "0.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$stdDevSamp": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] } } } }
+    ] }');
+                                document                                
+------------------------------------------------------------------------
+ { "_id" : null, "acc" : { "$numberDouble" : "51.63977794943222932" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$median": { "input": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] }, "method": "approximate" } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                        document                         
+---------------------------------------------------------
+ { "_id" : null, "acc" : { "$numberDouble" : "100.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$median": { "input": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] }, "method": "approximate" } } } }
+    ] }');
+                       document                        
+-------------------------------------------------------
+ { "_id" : null, "acc" : { "$numberDouble" : "0.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$percentile": { "input": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] }, "p": [ 0.5, 0.9 ], "method": "approximate" } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+                                          document                                          
+--------------------------------------------------------------------------------------------
+ { "_id" : null, "acc" : [ { "$numberDouble" : "100.0" }, { "$numberDouble" : "100.0" } ] }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$percentile": { "input": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] }, "p": [ 0.5, 0.9 ], "method": "approximate" } } } }
+    ] }');
+                                         document                                         
+------------------------------------------------------------------------------------------
+ { "_id" : null, "acc" : [ { "$numberDouble" : "0.0" }, { "$numberDouble" : "100.0" } ] }
+(1 row)
+
 -- $count and $sum: 1 only count rows, so the collation cannot change the
 -- result. They stay allowed.
 SELECT document FROM bson_aggregation_pipeline('db',
@@ -306,6 +396,29 @@ SELECT document FROM bson_aggregation_pipeline('db',
  { "_id" : null, "n" : { "$numberInt" : "6" }, "total" : { "$numberInt" : "6" } }
 (1 row)
 
+-- Legacy accumulator paths cannot evaluate collation-sensitive expressions.
+SET documentdb.enableNewWithExprAccumulators TO off;
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$avg": "$value" } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+ERROR:  collation is not supported with the $avg accumulator in $group yet.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$sum": "$value" } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+ERROR:  collation is not supported with the $sum accumulator in $group yet.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$first": "$value" } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+ERROR:  collation is not supported with the $first accumulator in $group yet.
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$last": "$value" } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+ERROR:  collation is not supported with the $last accumulator in $group yet.
+RESET documentdb.enableNewWithExprAccumulators;
 -- After a $sort, $first and $last use the sorted accumulator, which sorts the
 -- values itself byte by byte and cannot honor the collation.
 SELECT document FROM bson_aggregation_pipeline('db',

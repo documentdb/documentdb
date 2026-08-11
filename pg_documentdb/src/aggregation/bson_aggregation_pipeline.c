@@ -6954,6 +6954,57 @@ RejectCollationForGroupAccumulator(const AggregationPipelineBuildContext *contex
 
 
 /*
+ * Builds the bson_expression_get call for a group accumulator's input, using the
+ * collation-aware variant when a collation was requested.
+ */
+static FuncExpr *
+MakeGroupAccumulatorExpressionGet(Expr *documentExpr, Expr *exprConst,
+								  Expr *variableSpec, const char *collationString)
+{
+	Const *trueConst = makeConst(BOOLOID, -1, InvalidOid, 1, BoolGetDatum(true), false,
+								 true);
+
+	List *args;
+	Oid functionId;
+	if (IsCollationApplicable(collationString))
+	{
+		if (variableSpec == NULL)
+		{
+			variableSpec = (Expr *) MakeBsonConst(PgbsonInitEmpty());
+		}
+
+		args = list_make5(documentExpr, exprConst, trueConst, variableSpec,
+						  MakeTextConst(collationString, strlen(collationString)));
+		functionId = BsonExpressionGetWithLetAndCollationFunctionOid();
+	}
+	else if (variableSpec != NULL)
+	{
+		args = list_make4(documentExpr, exprConst, trueConst, variableSpec);
+		functionId = BsonExpressionGetWithLetFunctionOid();
+	}
+	else
+	{
+		args = list_make3(documentExpr, exprConst, trueConst);
+		functionId = BsonExpressionGetFunctionOid();
+	}
+
+	FuncExpr *expressionGetFunc = makeFuncExpr(functionId, BsonTypeId(), args,
+											   InvalidOid, InvalidOid,
+											   COERCE_EXPLICIT_CALL);
+
+	if (BsonTypeId() != DocumentDBCoreBsonTypeId())
+	{
+		expressionGetFunc = makeFuncExpr(
+			DocumentDBCoreBsonToBsonFunctionOId(), BsonTypeId(),
+			list_make1(expressionGetFunc), InvalidOid, InvalidOid,
+			COERCE_EXPLICIT_CALL);
+	}
+
+	return expressionGetFunc;
+}
+
+
+/*
  * Simple helper method that has logic to insert a Group accumulator to a query.
  * This adds the group aggregate to the TargetEntry (for projection)
  * and also adds the necessary data to the bson_repath_and_build arguments.
@@ -6963,7 +7014,7 @@ AddSimpleGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 						  List *repathArgs, Const *accumulatorText,
 						  ParseState *parseState, char *identifiers,
 						  Expr *documentExpr, Oid aggregateFunctionOid,
-						  Expr *variableSpec,
+						  Expr *variableSpec, const char *collationString,
 						  TargetEntry **createdAccumulatorEntry)
 {
 	Expr *constValue = (Expr *) MakeBsonConst(BsonValueToDocumentPgbson(
@@ -6971,33 +7022,10 @@ AddSimpleGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 
 	documentExpr = GetDocumentExprForGroupAccumulatorValue(accumulatorValue,
 														   documentExpr);
-	Const *trueConst = makeConst(BOOLOID, -1, InvalidOid, 1, BoolGetDatum(true), false,
-								 true);
-	List *groupArgs;
-	Oid functionId;
-	if (variableSpec != NULL)
-	{
-		groupArgs = list_make4(documentExpr, constValue, trueConst, variableSpec);
-		functionId = BsonExpressionGetWithLetFunctionOid();
-	}
-	else
-	{
-		groupArgs = list_make3(documentExpr, constValue, trueConst);
-		functionId = BsonExpressionGetFunctionOid();
-	}
 
-
-	FuncExpr *accumFunc = makeFuncExpr(
-		functionId, BsonTypeId(), groupArgs, InvalidOid,
-		InvalidOid, COERCE_EXPLICIT_CALL);
-
-	if (BsonTypeId() != DocumentDBCoreBsonTypeId())
-	{
-		accumFunc = makeFuncExpr(
-			DocumentDBCoreBsonToBsonFunctionOId(), BsonTypeId(), list_make1(accumFunc),
-			InvalidOid,
-			InvalidOid, COERCE_EXPLICIT_CALL);
-	}
+	FuncExpr *accumFunc = MakeGroupAccumulatorExpressionGet(documentExpr, constValue,
+															variableSpec,
+															collationString);
 
 	Aggref *aggref = CreateSingleArgAggregate(aggregateFunctionOid,
 											  (Expr *) accumFunc, parseState);
@@ -7092,11 +7120,15 @@ AddSumGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 		}
 		else
 		{
+			RejectCollationForGroupAccumulator(context, "$sum");
+
+			const char *collationStringIgnore = NULL;
 			return AddSimpleGroupAccumulator(query, accumulatorValue, repathArgs,
 											 accumulatorText, parseState,
 											 identifiers, documentExpr,
 											 BsonSumAggregateFunctionOid(),
 											 context->variableSpec,
+											 collationStringIgnore,
 											 NULL);
 		}
 	}
@@ -7503,9 +7535,11 @@ AddMaxMinNGroupAccumulator(Query *query, const bson_value_t *accumulatorValue,
 	ParseInputForNGroupAccumulators(accumulatorValue, &input, &elementsToFetch,
 									accumulatorName->string);
 
+	const char *collationStringIgnore = NULL;
 	return AddSimpleGroupAccumulator(query, accumulatorValue, repathArgs, accumulatorText,
 									 parseState, identifiers, documentExpr,
-									 aggregateFunctionOid, variableSpec, NULL);
+									 aggregateFunctionOid, variableSpec,
+									 collationStringIgnore, NULL);
 }
 
 
@@ -7517,7 +7551,8 @@ AddPercentileMedianGroupAccumulator(Query *query, const bson_value_t *accumulato
 									List *repathArgs, Const *accumulatorText,
 									ParseState *parseState, char *identifiers,
 									Expr *documentExpr, StringView *accumulatorName,
-									Expr *variableSpec, bool isMedianOp)
+									Expr *variableSpec, const char *collationString,
+									bool isMedianOp)
 {
 	bson_value_t input = { 0 };
 	bson_value_t p = { 0 };
@@ -7527,50 +7562,19 @@ AddPercentileMedianGroupAccumulator(Query *query, const bson_value_t *accumulato
 											 isMedianOp);
 
 	/* construct expression to get input and p */
-	List *inputFuncArgs;
-	List *pFuncArgs;
-	Oid bsonExpressionGetFunction;
-
 	Expr *inputConstValue = (Expr *) MakeBsonConst(BsonValueToDocumentPgbson(&input));
 	Const *accuracyConstValue = makeConst(INT4OID, -1, InvalidOid, sizeof(int32_t),
 										  Int32GetDatum(TdigestCompressionAccuracy),
 										  false, true);
 	Expr *pConstValue = (Expr *) MakeBsonConst(BsonValueToDocumentPgbson(&p));
-	Const *trueConst = makeConst(BOOLOID, -1, InvalidOid, 1, BoolGetDatum(true), false,
-								 true);
-	if (variableSpec != NULL)
-	{
-		bsonExpressionGetFunction = BsonExpressionGetWithLetFunctionOid();
-		inputFuncArgs = list_make4(documentExpr, inputConstValue, trueConst,
-								   variableSpec);
-		pFuncArgs = list_make4(documentExpr, pConstValue, trueConst, variableSpec);
-	}
-	else
-	{
-		bsonExpressionGetFunction = BsonExpressionGetFunctionOid();
-		inputFuncArgs = list_make3(documentExpr, inputConstValue, trueConst);
-		pFuncArgs = list_make3(documentExpr, pConstValue, trueConst);
-	}
 
-	FuncExpr *inputAccumFunc = makeFuncExpr(bsonExpressionGetFunction, BsonTypeId(),
-											inputFuncArgs, InvalidOid,
-											InvalidOid, COERCE_EXPLICIT_CALL);
-	FuncExpr *pAccumFunc = makeFuncExpr(bsonExpressionGetFunction, BsonTypeId(),
-										pFuncArgs, InvalidOid,
-										InvalidOid, COERCE_EXPLICIT_CALL);
-
-	if (BsonTypeId() != DocumentDBCoreBsonTypeId())
-	{
-		inputAccumFunc = makeFuncExpr(
-			DocumentDBCoreBsonToBsonFunctionOId(), BsonTypeId(), list_make1(
-				inputAccumFunc),
-			InvalidOid,
-			InvalidOid, COERCE_EXPLICIT_CALL);
-		pAccumFunc = makeFuncExpr(
-			DocumentDBCoreBsonToBsonFunctionOId(), BsonTypeId(), list_make1(pAccumFunc),
-			InvalidOid,
-			InvalidOid, COERCE_EXPLICIT_CALL);
-	}
+	FuncExpr *inputAccumFunc = MakeGroupAccumulatorExpressionGet(documentExpr,
+																 inputConstValue,
+																 variableSpec,
+																 collationString);
+	FuncExpr *pAccumFunc = MakeGroupAccumulatorExpressionGet(documentExpr, pConstValue,
+															 variableSpec,
+															 collationString);
 
 	Oid aggregateFunctionOid = isMedianOp ? BsonMedianAggregateFunctionOid() :
 							   BsonPercentileAggregateFunctionOid();
@@ -7975,6 +7979,8 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 										scalarAggPaths);
 		}
 
+		const char *collationStringIgnore = NULL;
+
 		if (StringViewEqualsCString(&accumulatorName, "$avg"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_AVG);
@@ -7992,6 +7998,8 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 			}
 			else
 			{
+				RejectCollationForGroupAccumulator(context, accumulatorElement.path);
+
 				repathArgs = AddSimpleGroupAccumulator(query,
 													   &accumulatorElement.bsonValue,
 													   repathArgs,
@@ -8000,6 +8008,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 													   origEntry->expr,
 													   BsonAvgAggregateFunctionOid(),
 													   context->variableSpec,
+													   collationStringIgnore,
 													   NULL);
 			}
 		}
@@ -8034,6 +8043,8 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 			}
 			else
 			{
+				RejectCollationForGroupAccumulator(context, accumulatorElement.path);
+
 				repathArgs = AddSimpleGroupAccumulator(query,
 													   &accumulatorElement.bsonValue,
 													   repathArgs,
@@ -8042,6 +8053,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 													   origEntry->expr,
 													   BsonMaxAggregateFunctionOid(),
 													   context->variableSpec,
+													   collationStringIgnore,
 													   NULL);
 			}
 		}
@@ -8065,6 +8077,8 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 			}
 			else
 			{
+				RejectCollationForGroupAccumulator(context, accumulatorElement.path);
+
 				repathArgs = AddSimpleGroupAccumulator(query,
 													   &accumulatorElement.bsonValue,
 													   repathArgs,
@@ -8073,6 +8087,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 													   origEntry->expr,
 													   BsonMinAggregateFunctionOid(),
 													   context->variableSpec,
+													   collationStringIgnore,
 													   NULL);
 			}
 		}
@@ -8134,6 +8149,9 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 				}
 				else
 				{
+					RejectCollationForGroupAccumulator(context,
+													   accumulatorElement.path);
+
 					repathArgs = AddSimpleGroupAccumulator(query,
 														   &accumulatorElement.bsonValue,
 														   repathArgs,
@@ -8142,6 +8160,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 														   origEntry->expr,
 														   BsonFirstOnSortedAggregateFunctionOid(),
 														   context->variableSpec,
+														   collationStringIgnore,
 														   &accumulatorTle);
 				}
 
@@ -8188,6 +8207,9 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 				}
 				else
 				{
+					RejectCollationForGroupAccumulator(context,
+													   accumulatorElement.path);
+
 					repathArgs = AddSimpleGroupAccumulator(query,
 														   &accumulatorElement.bsonValue,
 														   repathArgs,
@@ -8196,6 +8218,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 														   origEntry->expr,
 														   BsonLastOnSortedAggregateFunctionOid(),
 														   context->variableSpec,
+														   collationStringIgnore,
 														   NULL);
 				}
 			}
@@ -8326,6 +8349,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 												   origEntry->expr,
 												   BsonAddToSetAggregateFunctionOid(),
 												   context->variableSpec,
+												   collationStringIgnore,
 												   NULL);
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$mergeObjects"))
@@ -8342,6 +8366,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 													   origEntry->expr,
 													   BsonMergeObjectsOnSortedFunctionOid(),
 													   context->variableSpec,
+													   collationStringIgnore,
 													   NULL);
 			}
 			else
@@ -8378,7 +8403,6 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		else if (StringViewEqualsCString(&accumulatorName, "$stdDevSamp"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_STDDEV_SAMP);
-			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 			if (accumulatorElement.bsonValue.value_type == BSON_TYPE_ARRAY)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40237), errmsg(
@@ -8397,12 +8421,12 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 												   origEntry->expr,
 												   BsonStdDevSampAggregateFunctionOid(),
 												   context->variableSpec,
+												   context->collationString,
 												   NULL);
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$stdDevPop"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_STDDEV_POP);
-			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 			if (accumulatorElement.bsonValue.value_type == BSON_TYPE_ARRAY)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40237), errmsg(
@@ -8421,6 +8445,7 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 												   origEntry->expr,
 												   BsonStdDevPopAggregateFunctionOid(),
 												   context->variableSpec,
+												   context->collationString,
 												   NULL);
 		}
 		else if (StringViewEqualsCString(&accumulatorName, "$top"))
@@ -8518,20 +8543,6 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 		else if (StringViewEqualsCString(&accumulatorName, "$median"))
 		{
 			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_MEDIAN);
-			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
-			repathArgs = AddPercentileMedianGroupAccumulator(query,
-															 &accumulatorElement.bsonValue,
-															 repathArgs,
-															 accumulatorText, parseState,
-															 identifiers,
-															 origEntry->expr,
-															 &accumulatorName,
-															 context->variableSpec, true);
-		}
-		else if (StringViewEqualsCString(&accumulatorName, "$percentile"))
-		{
-			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_PERCENTILE);
-			RejectCollationForGroupAccumulator(context, accumulatorElement.path);
 			repathArgs = AddPercentileMedianGroupAccumulator(query,
 															 &accumulatorElement.bsonValue,
 															 repathArgs,
@@ -8540,6 +8551,21 @@ HandleGroupCore(const bson_value_t *existingValue, Query *query,
 															 origEntry->expr,
 															 &accumulatorName,
 															 context->variableSpec,
+															 context->collationString,
+															 true);
+		}
+		else if (StringViewEqualsCString(&accumulatorName, "$percentile"))
+		{
+			ReportFeatureUsage(FEATURE_AGGREGATE_GROUP_PERCENTILE);
+			repathArgs = AddPercentileMedianGroupAccumulator(query,
+															 &accumulatorElement.bsonValue,
+															 repathArgs,
+															 accumulatorText, parseState,
+															 identifiers,
+															 origEntry->expr,
+															 &accumulatorName,
+															 context->variableSpec,
+															 context->collationString,
 															 false);
 		}
 		else

@@ -162,6 +162,44 @@ SELECT document FROM bson_aggregation_pipeline('db',
     ], "collation": { "locale": "en", "strength": 1 } }');
 ROLLBACK;
 
+-- These only do arithmetic, so the collation applies to the input expression.
+-- With it all six rows contribute 100; without it only two do.
+BEGIN;
+SET local documentdb_core.enableCollation TO on;
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$stdDevPop": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$stdDevPop": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] } } } }
+    ] }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$stdDevSamp": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$stdDevSamp": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] } } } }
+    ] }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$median": { "input": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] }, "method": "approximate" } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$median": { "input": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] }, "method": "approximate" } } } }
+    ] }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$percentile": { "input": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] }, "p": [ 0.5, 0.9 ], "method": "approximate" } } } }
+    ], "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('db',
+    '{ "aggregate": "group_collation_dist_test", "pipeline": [
+        { "$group": { "_id": null, "acc": { "$percentile": { "input": { "$cond": [ { "$or": [ { "$eq": [ "$category", "cat" ] }, { "$eq": [ "$category", "dog" ] } ] }, 100, 0 ] }, "p": [ 0.5, 0.9 ], "method": "approximate" } } } }
+    ] }');
+ROLLBACK;
+
 SELECT documentdb_api.drop_collection('db', 'group_collation_dist_test');
 
 RESET citus.enable_local_execution;

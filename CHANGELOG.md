@@ -1,4 +1,5 @@
 ### documentdb v0.118-0 (Unreleased) ###
+* Support collation with the `$stdDevPop`, `$stdDevSamp`, `$median` and `$percentile` `$group` accumulators. They only do arithmetic, so the collation is applied when their input expression is evaluated. *[Feature]*
 * Prevent index-only scans on collated indexes for all field-consuming projection and aggregation targets, while preserving them for constant-only targets such as `$count`. *[Bugfix]*
 
 ### documentdb v0.117-0 (Unreleased) ###
