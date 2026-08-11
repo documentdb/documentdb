@@ -3,12 +3,23 @@ MODULE_big ?= pg_documentdb_extended_rum_core
 EXTVERSION = 1.0
 PGFILEDESC = "DocumentDB Extended RUM index access method core implementation"
 
+PG_CONFIG ?= pg_config
 OSS_SRC_DIR = ../../
 
 CORESRCDIR ?=src
 COREINCDIR ?=include
 
 SOURCES = $(wildcard $(CORESRCDIR)/*.c) $(wildcard $(CORESRCDIR)/roaring_bitmaps/*.c)
+
+OSS_POSTGRES_MAJOR_VERSION := $(firstword $(subst ., ,$(word 2,$(shell $(PG_CONFIG) --version))))
+
+ifeq ($(OSS_POSTGRES_MAJOR_VERSION),15)
+OSS_STRICT_CFLAGS =
+else ifeq ($(DISABLE_STRICT_CFLAGS),yes)
+OSS_STRICT_CFLAGS =
+else
+OSS_STRICT_CFLAGS = -Wstrict-prototypes -Wold-style-definition -Wpointer-arith
+endif
 
 ifneq ($(RUM_BUILD_ONLY_CORE_RMGR),yes)
 SOURCES += $(wildcard $(CORESRCDIR)/infra/*.c)
@@ -27,9 +38,9 @@ LDFLAGS_SL += $(filter -lm, $(LIBS))
 
 PG_CPPFLAGS = -I$(COREINCDIR)
 ifeq ($(CC),gcc)
-    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations -fno-lto $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB) -I$(COREINCDIR)
+    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror $(OSS_STRICT_CFLAGS) -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations -fno-lto $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB) -I$(COREINCDIR)
 else
-    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB) -I$(COREINCDIR)
+    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror $(OSS_STRICT_CFLAGS) -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations $(LIBBSON) $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB) -I$(COREINCDIR)
 endif
 
 ifeq ($(RUM_BUILT_IN_RMGR_MODE), yes)

@@ -1,6 +1,17 @@
 
 
+PG_CONFIG ?= pg_config
 LIBBSON := $(shell pkg-config --cflags libbson-static-1.0)
+
+OSS_POSTGRES_MAJOR_VERSION := $(firstword $(subst ., ,$(word 2,$(shell $(PG_CONFIG) --version))))
+
+ifeq ($(OSS_POSTGRES_MAJOR_VERSION),15)
+OSS_STRICT_CFLAGS =
+else ifeq ($(DISABLE_STRICT_CFLAGS),yes)
+OSS_STRICT_CFLAGS =
+else
+OSS_STRICT_CFLAGS = -Wstrict-prototypes -Wold-style-definition -Wpointer-arith
+endif
 
 DOCUMENTDB_CORE_DIR = $(OSS_SRC_DIR)/pg_documentdb_core
 DOCUMENTDB_DIR = $(OSS_SRC_DIR)/pg_documentdb
@@ -34,9 +45,9 @@ PG_LDFLAGS += -l:pg_documentdb_distributed.so -L $(DOCUMENTDB_DISTRIBUTED_DIR)
 endif
 
 ifeq ($(CC),gcc)
-    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations $(LIBBSON)
+    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror $(OSS_STRICT_CFLAGS) -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations $(LIBBSON)
 else
-    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations $(LIBBSON)
+    PG_CFLAGS = -std=gnu99 -Wall -Wextra -Werror $(OSS_STRICT_CFLAGS) -Wno-declaration-after-statement -Wno-unused-parameter -Wno-implicit-fallthrough -Wno-missing-variable-declarations $(LIBBSON)
 endif
 
 # Include the overrides if exists
