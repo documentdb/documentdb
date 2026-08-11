@@ -68,7 +68,7 @@ bool EnableBackgroundWorker = DEFAULT_ENABLE_BG_WORKER;
 #define DEFAULT_ENABLE_BG_WORKER_JOBS true
 bool EnableBackgroundWorkerJobs = DEFAULT_ENABLE_BG_WORKER_JOBS;
 
-/* Added in v111, pending stabilization */
+/* Added in v0.111, pending stabilization */
 #define DEFAULT_ENABLE_BG_WORKER_INIT_JOBS false
 bool EnableBackgroundWorkerInitJobs = DEFAULT_ENABLE_BG_WORKER_INIT_JOBS;
 

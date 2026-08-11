@@ -30,12 +30,12 @@ bool EnableShardRebalancer = DEFAULT_ENABLE_SHARD_REBALANCER;
 char *ClusterAdminRole = DEFAULT_CLUSTER_ADMIN_ROLE;
 
 /* FeatureFlag */
-/* Added in v114, enabled in v114, remove after v119 */
+/* Added in v0.114, enabled in v0.114, remove after v0.119 */
 #define DEFAULT_ENABLE_MOVE_COLLECTION true
 bool EnableMoveCollection = DEFAULT_ENABLE_MOVE_COLLECTION;
 
 /* FeatureFlag */
-/* Added in v116, Pending stabilization, enable in v118 */
+/* Added in v0.116, Pending stabilization, enable in v0.118 */
 #define DEFAULT_ENABLE_SKIP_UPGRADE_FOR_UNINITIALIZED_CLUSTER false
 bool EnableSkipUpgradeForUninitializedCluster =
 	DEFAULT_ENABLE_SKIP_UPGRADE_FOR_UNINITIALIZED_CLUSTER;
