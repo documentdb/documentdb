@@ -177,6 +177,7 @@ static void DeserializeDeleteWorkerSpecForUnsharded(const
 static pgbson * SerializeDeleteWorkerSpecForUnsharded(BatchDeletionSpec *batchSpec);
 static Datum CommandDeleteCore(PG_FUNCTION_ARGS, WriteMode writeMode,
 							   MemoryContext allocContext);
+static inline void ReportDeleteFeatureUsage(int batchSize);
 
 
 /*
@@ -518,6 +519,8 @@ PostProcessDeleteBatchSpec(BatchDeletionSpec *spec)
 							"Write batch size must fall within the range of 1 to %d, but %d operations were provided.",
 							MaxWriteBatchSize, deletionCount)));
 	}
+
+	ReportDeleteFeatureUsage(deletionCount);
 }
 
 
@@ -2117,4 +2120,30 @@ BuildResponseMessage(BatchDeletionResult *batchResult)
 	}
 
 	return PgbsonWriterGetPgbson(&resultWriter);
+}
+
+
+static inline void
+ReportDeleteFeatureUsage(int batchSize)
+{
+	if (batchSize == 1)
+	{
+		ReportFeatureUsage(FEATURE_COMMAND_DELETE_ONE);
+	}
+	else if (batchSize <= 100)
+	{
+		ReportFeatureUsage(FEATURE_COMMAND_DELETE_100);
+	}
+	else if (batchSize <= 500)
+	{
+		ReportFeatureUsage(FEATURE_COMMAND_DELETE_500);
+	}
+	else if (batchSize <= 1000)
+	{
+		ReportFeatureUsage(FEATURE_COMMAND_DELETE_1000);
+	}
+	else
+	{
+		ReportFeatureUsage(FEATURE_COMMAND_DELETE_EXTENDED);
+	}
 }

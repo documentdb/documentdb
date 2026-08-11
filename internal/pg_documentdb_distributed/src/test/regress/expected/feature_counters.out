@@ -872,9 +872,33 @@ CALL documentdb_api.delete_txn_proc('db', '{"delete":"writeFC", "deletes":[{"q":
 (1 row)
 
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
-                         get_feature_counter_pretty                         
+                                       get_feature_counter_pretty                                       
 ---------------------------------------------------------------------
- {"Feature_usage":[{"command_delete_proc" : 1}, {"query_operator_eq" : 1}]}
+ {"Feature_usage":[{"command_delete_one" : 1}, {"command_delete_proc" : 1}, {"query_operator_eq" : 1}]}
+(1 row)
+
+-- Test delete batch size feature counters.
+SELECT documentdb_api.delete(
+    'db',
+    FORMAT(
+        '{"delete":"missingDeleteBatchCounter","deletes":[%s]}',
+        (SELECT string_agg('{"q":{},"limit":0}', ',') FROM generate_series(1, batch_size))
+    )::documentdb_core.bson
+)
+FROM unnest(ARRAY[1, 2, 101, 501, 1001]) AS batch_size;
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(5 rows)
+
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+                                                                                  get_feature_counter_pretty                                                                                  
+---------------------------------------------------------------------
+ {"Feature_usage":[{"command_delete" : 5}, {"command_delete_100" : 1}, {"command_delete_1000" : 1}, {"command_delete_500" : 1}, {"command_delete_extended" : 1}, {"command_delete_one" : 1}]}
 (1 row)
 
 -- Test: Feature counter for list_databases command

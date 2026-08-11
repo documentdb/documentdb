@@ -304,8 +304,19 @@ SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 CALL documentdb_api.delete_txn_proc('db', '{"delete":"writeFC", "deletes":[{"q":{"_id":{"$eq":4}},"limit":0}]}');
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
--- Test: Feature counter for list_databases command
+-- Test delete batch size feature counters.
+SELECT documentdb_api.delete(
+    'db',
+    FORMAT(
+        '{"delete":"missingDeleteBatchCounter","deletes":[%s]}',
+        (SELECT string_agg('{"q":{},"limit":0}', ',') FROM generate_series(1, batch_size))
+    )::documentdb_core.bson
+)
+FROM unnest(ARRAY[1, 2, 101, 501, 1001]) AS batch_size;
 
+SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Test: Feature counter for list_databases command
 -- Reset feature counters
 SELECT documentdb_distributed_test_helpers.get_feature_counter_pretty(true);
 
