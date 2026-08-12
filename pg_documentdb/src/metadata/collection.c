@@ -119,6 +119,7 @@ PG_FUNCTION_INFO_V1(validate_dbname);
 PG_FUNCTION_INFO_V1(command_get_collection);
 PG_FUNCTION_INFO_V1(command_get_collection_or_view);
 PG_FUNCTION_INFO_V1(validate_collection_cache_entry);
+PG_FUNCTION_INFO_V1(validate_try_copy_collection_by_id);
 
 /* forward declarations */
 static void InitializeCollectionsHash(void);
@@ -141,6 +142,8 @@ static void UpdateCollectionOptions(MongoCollection *collection, const
 static void RemoveCollectionOptions(MongoCollection *collection, const
 									pgbson *removeSpec);
 static void ValidateSystemNamespace(const char *databaseName, const char *collectionName);
+static void CopyMongoCollectionInto(const MongoCollection *source, MongoCollection *dest,
+									bool copyByRefFields);
 
 
 /*
@@ -282,6 +285,38 @@ InvalidateCollectionByRelationId(Oid relationId)
 
 
 /*
+ * CopyMongoCollectionInto copies a collection into the specified destination.
+ * copyByRefFields determines if nested BSON fields need to be deep copied.
+ */
+static void
+CopyMongoCollectionInto(const MongoCollection *source, MongoCollection *dest,
+						bool copyByRefFields)
+{
+	*dest = *source;
+	if (copyByRefFields)
+	{
+		dest->shardKey = !dest->shardKey ? NULL :
+						 CopyPgbsonIntoMemoryContext(dest->shardKey,
+													 CurrentMemoryContext);
+		dest->viewDefinition = !dest->viewDefinition ? NULL :
+							   CopyPgbsonIntoMemoryContext(dest->viewDefinition,
+														   CurrentMemoryContext);
+
+		dest->schemaValidator.validator =
+			!dest->schemaValidator.validator ? NULL :
+			CopyPgbsonIntoMemoryContext(dest->schemaValidator.validator,
+										CurrentMemoryContext);
+	}
+	else
+	{
+		dest->shardKey = NULL;
+		dest->viewDefinition = NULL;
+		dest->schemaValidator.validator = NULL;
+	}
+}
+
+
+/*
  * CopyMongoCollection returns a copy of given MongoCollection.
  */
 MongoCollection *
@@ -289,30 +324,16 @@ CopyMongoCollection(const MongoCollection *collection)
 {
 	MongoCollection *copiedCollection = palloc0(sizeof(MongoCollection));
 
-	*copiedCollection = *collection;
-	copiedCollection->shardKey = !copiedCollection->shardKey ? NULL :
-								 CopyPgbsonIntoMemoryContext(copiedCollection->shardKey,
-															 CurrentMemoryContext);
-	copiedCollection->viewDefinition = !copiedCollection->viewDefinition ? NULL :
-									   CopyPgbsonIntoMemoryContext(
-		copiedCollection->viewDefinition,
-		CurrentMemoryContext);
-
-	copiedCollection->schemaValidator.validator =
-		!copiedCollection->schemaValidator.validator ? NULL :
-		CopyPgbsonIntoMemoryContext(
-			copiedCollection->schemaValidator.validator,
-			CurrentMemoryContext);
-
+	bool copyByRefFields = true;
+	CopyMongoCollectionInto(collection, copiedCollection, copyByRefFields);
 	return copiedCollection;
 }
 
 
-/*
- * GetMongoCollectionByColId() gets the MongoCollection metadata by collectionId.
- */
-MongoCollection *
-GetMongoCollectionByColId(uint64 collectionId, LOCKMODE lockMode)
+/* Copies collection metadata by ID and reports whether the collection exists. */
+bool
+TryCopyMongoCollectionByCollectionId(MongoCollection *collection, uint64 collectionId,
+									 LOCKMODE lockMode, bool copyByRefFields)
 {
 	/* make sure hashes exist */
 	InitializeCollectionsHash();
@@ -322,7 +343,7 @@ GetMongoCollectionByColId(uint64 collectionId, LOCKMODE lockMode)
 	if (!OidIsValid(documentsTableOid))
 	{
 		/* table was dropped */
-		return NULL;
+		return false;
 	}
 
 	bool foundInCache = false;
@@ -348,12 +369,14 @@ GetMongoCollectionByColId(uint64 collectionId, LOCKMODE lockMode)
 		}
 		else if (entryByRelId->isValid)
 		{
-			return CopyMongoCollection(&(entryByRelId->collection));
+			CopyMongoCollectionInto(&(entryByRelId->collection), collection,
+									copyByRefFields);
+			return true;
 		}
 	}
 
-	MongoCollection collection;
-	memset(&collection, 0, sizeof(collection));
+	MongoCollection catalogCollection;
+	memset(&catalogCollection, 0, sizeof(catalogCollection));
 
 	/*
 	 * Temporarily disable unimportant logs related to collection catalog lookup
@@ -366,7 +389,7 @@ GetMongoCollectionByColId(uint64 collectionId, LOCKMODE lockMode)
 	/* Read the collection metadata from ApiCatalogSchemaName.collections */
 	bool collectionExists =
 		GetMongoCollectionFromCatalogById(collectionId, documentsTableOid,
-										  &collection);
+										  &catalogCollection);
 
 	/* rollback the GUC change that we made for client_min_messages */
 	RollbackGUCChange(savedGUCLevel);
@@ -374,56 +397,80 @@ GetMongoCollectionByColId(uint64 collectionId, LOCKMODE lockMode)
 	if (!collectionExists)
 	{
 		/* no collection record with this id */
-		return NULL;
+		return false;
 	}
 
 	/* get the relation ID and lock the table */
-	if (collection.viewDefinition != NULL)
+	if (catalogCollection.viewDefinition != NULL)
 	{
 		/* Views not supported in this path */
-		return NULL;
+		return false;
 	}
 
-	collection.relationId = GetRelationIdForCollectionTableName(collection.tableName,
-																lockMode);
+	catalogCollection.relationId = GetRelationIdForCollectionTableName(
+		catalogCollection.tableName,
+		lockMode);
 
-	if (!OidIsValid(collection.relationId))
+	if (!OidIsValid(catalogCollection.relationId))
 	{
 		/* record exists, but table was dropped (maybe just after reading the record) */
-		return NULL;
+		return false;
 	}
 
 	/* if we experience OOM below, reset the cache to prevent corruption */
 	CollectionCacheIsValid = false;
 
 	/* copy the shard key BSON into the cache memory context */
-	if (collection.shardKey != NULL)
+	if (catalogCollection.shardKey != NULL)
 	{
-		collection.shardKey = CopyPgbsonIntoMemoryContext(collection.shardKey,
-														  CollectionsCacheContext);
+		catalogCollection.shardKey = CopyPgbsonIntoMemoryContext(
+			catalogCollection.shardKey,
+			CollectionsCacheContext);
 	}
 
-	collection.mongoDataCreationTimeVarAttrNumber =
-		GetMongoDataCreationTimeVarAttrNumber(collection.relationId);
+	catalogCollection.mongoDataCreationTimeVarAttrNumber =
+		GetMongoDataCreationTimeVarAttrNumber(catalogCollection.relationId);
 
-	if (collection.schemaValidator.validator != NULL)
+	if (catalogCollection.schemaValidator.validator != NULL)
 	{
-		collection.schemaValidator.validator =
-			CopyPgbsonIntoMemoryContext(collection.schemaValidator.validator,
+		catalogCollection.schemaValidator.validator =
+			CopyPgbsonIntoMemoryContext(catalogCollection.schemaValidator.validator,
 										CollectionsCacheContext);
 	}
 
 	/* add to relation ID -> collection hash */
-	entryByRelId = hash_search(RelationIdToCollectionHash, &(collection.relationId),
+	entryByRelId = hash_search(RelationIdToCollectionHash,
+							   &(catalogCollection.relationId),
 							   HASH_ENTER, &foundInCache);
 
-	entryByRelId->collection = collection;
+	entryByRelId->collection = catalogCollection;
 	entryByRelId->isValid = true;
 
 	/* no OOMs, keep the cache */
 	CollectionCacheIsValid = true;
 
-	return CopyMongoCollection(&(entryByRelId->collection));
+	memset(collection, 0, sizeof(*collection));
+	CopyMongoCollectionInto(&(entryByRelId->collection), collection, copyByRefFields);
+	return true;
+}
+
+
+/*
+ * GetMongoCollectionByColId() gets the MongoCollection metadata by collectionId.
+ */
+MongoCollection *
+GetMongoCollectionByColId(uint64 collectionId, LOCKMODE lockMode)
+{
+	MongoCollection *collection = palloc(sizeof(MongoCollection));
+	bool copyByRefFields = true;
+	if (TryCopyMongoCollectionByCollectionId(collection, collectionId, lockMode,
+											 copyByRefFields))
+	{
+		return collection;
+	}
+
+	pfree(collection);
+	return NULL;
 }
 
 
@@ -1541,6 +1588,109 @@ validate_collection_cache_entry(PG_FUNCTION_ARGS)
 								  sizeof(MongoCollection));
 
 	PG_RETURN_BOOL(comparisonResult == 0);
+}
+
+
+/*
+ * validate_try_copy_collection_by_id is a regression-test helper for
+ * TryCopyMongoCollectionByCollectionId. With copyByRefFields=true it checks the
+ * by-ref BSON fields are deep-copied into independently owned memory - a distinct
+ * pointer whose content stays valid and equal after the cache is invalidated and
+ * rebuilt - with copyByRefFields=false they are left NULL, and a missing collection
+ * id returns false. The caller passes a collection with a by-ref field set (e.g. a
+ * shard key) so these cases are observable.
+ */
+Datum
+validate_try_copy_collection_by_id(PG_FUNCTION_ARGS)
+{
+	Datum databaseNameDatum = PG_GETARG_DATUM(0);
+	Datum collectionNameDatum = PG_GETARG_DATUM(1);
+
+	/* Ground truth: the by-name lookup returns a private copy that survives cache
+	 * invalidation, so we can compare the by-id copies against it. */
+	MongoCollection *expected = GetMongoCollectionByNameDatum(databaseNameDatum,
+															  collectionNameDatum,
+															  AccessShareLock);
+	if (expected == NULL)
+	{
+		ereport(ERROR, (errmsg("collection does not exist")));
+	}
+
+	/* Case 1: copyByRefFields = true gives the caller an independently owned deep
+	 * copy of the by-ref BSON fields, not a pointer into the cache. */
+	InvalidateCollectionsCache();
+	MongoCollection deepCopy;
+	memset(&deepCopy, 0, sizeof(deepCopy));
+	bool copyByRefFields = true;
+	bool deepCopyExists =
+		TryCopyMongoCollectionByCollectionId(&deepCopy, expected->collectionId,
+											 AccessShareLock, copyByRefFields);
+
+	/* A second copy from the now-cached entry must allocate its own shardKey. If the
+	 * code handed out the cached pointer instead of deep-copying, both copies would
+	 * share it. */
+	MongoCollection deepCopy2;
+	memset(&deepCopy2, 0, sizeof(deepCopy2));
+	bool deepCopy2Exists =
+		TryCopyMongoCollectionByCollectionId(&deepCopy2, expected->collectionId,
+											 AccessShareLock, copyByRefFields);
+
+	bool ownsIndependentShardKey =
+		expected->shardKey != NULL &&
+		deepCopy.shardKey != NULL &&
+		deepCopy2.shardKey != NULL &&
+		deepCopy.shardKey != deepCopy2.shardKey &&
+		PgbsonEquals(deepCopy.shardKey, expected->shardKey);
+
+	/* Invalidate and rebuild the cache, which resets the cache memory context. The
+	 * deep copy must stay valid and equal; a shared cache pointer would now dangle. */
+	InvalidateCollectionsCache();
+	MongoCollection *rebuilt = GetMongoCollectionByColId(expected->collectionId,
+														 AccessShareLock);
+	bool shardKeySurvivesInvalidation =
+		rebuilt != NULL &&
+		expected->shardKey != NULL &&
+		deepCopy.shardKey != NULL &&
+		PgbsonEquals(deepCopy.shardKey, expected->shardKey);
+
+	bool deepCopyOk = deepCopyExists && deepCopy2Exists &&
+					  deepCopy.collectionId == expected->collectionId &&
+					  deepCopy.relationId == expected->relationId &&
+					  memcmp(&deepCopy.name, &expected->name,
+							 sizeof(MongoCollectionName)) == 0 &&
+					  (deepCopy.viewDefinition == NULL) == (expected->viewDefinition ==
+															NULL) &&
+					  (deepCopy.schemaValidator.validator == NULL) ==
+					  (expected->schemaValidator.validator == NULL) &&
+					  ownsIndependentShardKey &&
+					  shardKeySurvivesInvalidation;
+
+	/* Case 2: copyByRefFields = false copies scalar metadata but leaves the by-ref
+	 * BSON fields NULL. */
+	InvalidateCollectionsCache();
+	MongoCollection shallowCopy;
+	memset(&shallowCopy, 0, sizeof(shallowCopy));
+	copyByRefFields = false;
+	bool shallowCopyExists =
+		TryCopyMongoCollectionByCollectionId(&shallowCopy, expected->collectionId,
+											 AccessShareLock, copyByRefFields);
+
+	bool shallowCopyOk = shallowCopyExists &&
+						 shallowCopy.collectionId == expected->collectionId &&
+						 shallowCopy.relationId == expected->relationId &&
+						 shallowCopy.shardKey == NULL &&
+						 shallowCopy.viewDefinition == NULL &&
+						 shallowCopy.schemaValidator.validator == NULL;
+
+	/* Case 3: a non-existent collection id reports false. */
+	MongoCollection missingCopy;
+	memset(&missingCopy, 0, sizeof(missingCopy));
+	copyByRefFields = true;
+	bool missingExists =
+		TryCopyMongoCollectionByCollectionId(&missingCopy, UINT64_MAX,
+											 AccessShareLock, copyByRefFields);
+
+	PG_RETURN_BOOL(deepCopyOk && shallowCopyOk && !missingExists);
 }
 
 

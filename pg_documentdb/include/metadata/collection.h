@@ -223,6 +223,12 @@ bool IsDataTableCreatedWithinCurrentXact(const MongoCollection *collection);
 /* make a copy of given MongoCollection */
 MongoCollection * CopyMongoCollection(const MongoCollection *collection);
 
+
+/* Copies collection metadata by ID and reports whether the collection exists. */
+bool TryCopyMongoCollectionByCollectionId(MongoCollection *collection,
+										  uint64 collectionId, LOCKMODE lockMode,
+										  bool copyByRefFields);
+
 /* get Mongo collection metadata by collection id */
 MongoCollection * GetMongoCollectionByColId(uint64 collectionId, LOCKMODE lockMode);
 

@@ -22,3 +22,22 @@ SELECT documentdb_api.coll_mod('db', 'cache_test_collection','{"collMod": "cache
 SELECT options FROM documentdb_api_catalog.collections WHERE collection_name = 'cache_test_collection';
 
 SELECT cache_schema.validate_collection_cache('db', 'cache_test_collection');
+
+-- Coverage for TryCopyMongoCollectionByCollectionId caller-owned copy semantics.
+CREATE OR REPLACE FUNCTION cache_schema.validate_try_copy_collection_by_id(
+    p_database_name text,
+    p_collection_name text)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS 'pg_documentdb', $function$validate_try_copy_collection_by_id$function$;
+
+SELECT documentdb_api.create_collection('db', 'try_copy_test_collection');
+
+-- Give the collection a non-NULL shard key so the copyByRefFields distinction is observable.
+SELECT documentdb_api.shard_collection('db', 'try_copy_test_collection', '{ "_id": "hashed" }', false);
+
+-- Verifies caller-owned deep copy (copyByRefFields=true) keeps by-ref fields, shallow
+-- copy (copyByRefFields=false) nulls by-ref fields but keeps scalars, and a
+-- non-existent collection id returns false.
+SELECT cache_schema.validate_try_copy_collection_by_id('db', 'try_copy_test_collection');
