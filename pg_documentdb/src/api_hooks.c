@@ -105,6 +105,9 @@ FinalizeTtlMetrics_HookType
 UpdateExtendedIndexStats_HookType
 	update_extended_index_stats_hook = NULL;
 
+CanBuildNonBlockingUniqueIndex_HookType
+	can_build_non_blocking_unique_index_hook = NULL;
+
 GetEffectiveAggregateFunctionOid_HookType
 	get_effective_aggregate_function_oid_hook = NULL;
 
@@ -822,4 +825,16 @@ UpdateExtendedIndexStats(uint64 collectionId, int indexId,
 	{
 		update_extended_index_stats_hook(collectionId, indexId, pgIndexName, indexInfo);
 	}
+}
+
+
+bool
+CanBuildNonBlockingUniqueIndex(void)
+{
+	if (can_build_non_blocking_unique_index_hook != NULL)
+	{
+		return can_build_non_blocking_unique_index_hook();
+	}
+
+	return true;
 }

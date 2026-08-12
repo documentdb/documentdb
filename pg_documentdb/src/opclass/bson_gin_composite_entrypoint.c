@@ -54,6 +54,13 @@
 #define RUM_SEARCH_MODE_ORDERED 4
 #define RUM_SEARCH_MODE_ORDERED_REVERSE 5
 
+/*
+ * Ordered-any requests require ordered execution but leave the direction for
+ * the operator class to resolve from the query. RUM defaults to forward when
+ * the operator class has no directional preference.
+ */
+#define RUM_ORDERED_ANY_SCAN 6
+
 typedef enum RumIndexTransformOperation
 {
 	RumIndexTransform_IndexGenerateSkipBound = 1,
@@ -550,6 +557,11 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	ScanDirection scanDir = NoMovementScanDirection;
 	if (strategy == BSON_INDEX_STRATEGY_UNIQUE_EQUAL)
 	{
+		if (*searchMode == RUM_ORDERED_ANY_SCAN)
+		{
+			*searchMode = RUM_SEARCH_MODE_ORDERED;
+		}
+
 		/* Extract query for unique equal is basically an equality on term generation
 		 * The input is the original document being inserted.
 		 */
@@ -602,12 +614,15 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	{
 		metaInfo->dedupState = variableBounds.dedupState;
 	}
-	metaInfo->isOrderedScan = (*searchMode != GIN_SEARCH_MODE_DEFAULT);
+	metaInfo->isOrderedScan = (*searchMode == RUM_SEARCH_MODE_ORDERED ||
+							   *searchMode == RUM_SEARCH_MODE_ORDERED_REVERSE ||
+							   *searchMode == RUM_ORDERED_ANY_SCAN);
 	metaInfo->isBackwardScan = (*searchMode == RUM_SEARCH_MODE_ORDERED_REVERSE);
 
 	if (ScanDirectionIsForward(scanDir))
 	{
-		if (*searchMode == GIN_SEARCH_MODE_DEFAULT)
+		if (*searchMode == GIN_SEARCH_MODE_DEFAULT ||
+			*searchMode == RUM_ORDERED_ANY_SCAN)
 		{
 			/* Notify physical index on ordering */
 			*searchMode = RUM_SEARCH_MODE_ORDERED;
@@ -623,7 +638,8 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 	}
 	else if (ScanDirectionIsBackward(scanDir))
 	{
-		if (*searchMode == GIN_SEARCH_MODE_DEFAULT)
+		if (*searchMode == GIN_SEARCH_MODE_DEFAULT ||
+			*searchMode == RUM_ORDERED_ANY_SCAN)
 		{
 			/* Notify physical index on ordering */
 			*searchMode = RUM_SEARCH_MODE_ORDERED_REVERSE;
@@ -637,7 +653,12 @@ gin_bson_composite_path_extract_query(PG_FUNCTION_ARGS)
 		metaInfo->isOrderedScan = true;
 		metaInfo->isBackwardScan = true;
 	}
-
+	else if (*searchMode == RUM_ORDERED_ANY_SCAN)
+	{
+		*searchMode = RUM_SEARCH_MODE_ORDERED;
+		metaInfo->isOrderedScan = true;
+		metaInfo->isBackwardScan = false;
+	}
 
 	/* First thing to check: Optimization - if no arrays and there are bounds with 1 bound
 	 * add it to the global bounds
@@ -2251,8 +2272,7 @@ gin_bson_composite_path_consistent(PG_FUNCTION_ARGS)
 	/* If operators specifically required runtime recheck honor it */
 	*recheck = runData->metaInfo->requiresRuntimeRecheck;
 
-	if (runData->metaInfo->orderedScanEntryData != NULL ||
-		runData->metaInfo->isOrderedScan)
+	if (runData->metaInfo->orderedScanEntryData != NULL)
 	{
 		/* For ordered scans, we can also return early since the scan keys
 		 * are already guaranteed to be in order and satisfy the query

@@ -357,6 +357,13 @@ extern UpdateExtendedIndexStats_HookType update_extended_index_stats_hook;
 
 
 /*
+ * Hook that allows callers to decide whether or not to allow building a non-blocking unique index.
+ */
+typedef bool (*CanBuildNonBlockingUniqueIndex_HookType)(void);
+extern CanBuildNonBlockingUniqueIndex_HookType can_build_non_blocking_unique_index_hook;
+
+
+/*
  * Optional hook that, given an Aggref, may resolve it to a different aggregate
  * function oid that better represents the underlying aggregation for
  * planner-classification purposes (e.g. when the surface Aggref is a wrapper

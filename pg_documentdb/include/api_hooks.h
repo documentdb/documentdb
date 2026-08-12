@@ -97,6 +97,10 @@ Datum RunQueryWithSequentialModification(const char *query, int expectedSPIOK,
 bool IsShardTableForDocumentDbTable(const char *relName, const char *numEndPointer);
 
 
+/* Whether or not non-blocking unique index build is supported */
+bool CanBuildNonBlockingUniqueIndex(void);
+
+
 /* Section: Create Table Extension points */
 
 /*

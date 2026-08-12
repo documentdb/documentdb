@@ -25,6 +25,11 @@ SELECT documentdb_api.create_indexes_background('bg_unique_dist_db',
 -- Capture the index_id for verification
 SELECT max(index_id) AS test1_index_id FROM documentdb_api_catalog.documentdb_index_queue \gset
 
+-- A single active primary allows the distributed hook to retain the non-blocking path.
+SELECT index_cmd LIKE 'CREATE INDEX CONCURRENTLY%' AS uses_non_blocking_unique_index
+FROM documentdb_api_catalog.documentdb_index_queue
+WHERE index_id = :test1_index_id;
+
 -- Process the index build queue
 CALL documentdb_api_internal.build_index_concurrently(1);
 CALL documentdb_api_internal.build_index_background(1);

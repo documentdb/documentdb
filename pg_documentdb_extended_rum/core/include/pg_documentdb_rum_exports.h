@@ -36,6 +36,13 @@ typedef uint16 RumVacuumCycleId;
 #define RUM_SEARCH_MODE_ORDERED 4
 #define RUM_SEARCH_MODE_ORDERED_REVERSE 5
 
+/*
+ * Ordered-any requests require ordered execution but leave the direction for
+ * the operator class to resolve from the query. RUM defaults to forward when
+ * the operator class has no directional preference.
+ */
+#define RUM_ORDERED_ANY_SCAN 6
+
 
 /* RumConfig declaration */
 #define MAX_STRATEGIES (8)

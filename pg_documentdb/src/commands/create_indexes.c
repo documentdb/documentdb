@@ -5235,6 +5235,7 @@ CreatePostgresIndexCreationCmd(uint64 collectionId, IndexDef *indexDef, int inde
 
 		isBackgroundNonBlockingUnique = EnableNonBlockingUniqueIndexBuild &&
 										isBackgroundBuild &&
+										CanBuildNonBlockingUniqueIndex() &&
 										IsCompositePathIndex(indexDef);
 	}
 

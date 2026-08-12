@@ -556,7 +556,7 @@ freeScanKeys(RumScanOpaque so)
 
 static void
 initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch,
-			bool supportedOrderedIndexScans)
+			bool supportedOrderedIndexScans, bool useAnyOrderedScan)
 {
 	Datum *queryValues;
 	int32 nQueryValues = 0;
@@ -573,6 +573,11 @@ initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch,
 		setSearchMode = true;
 		searchMode = ScanDirectionIsBackward(so->orderScanDirection) ?
 					 RUM_SEARCH_MODE_ORDERED_REVERSE : RUM_SEARCH_MODE_ORDERED;
+	}
+	else if (useAnyOrderedScan)
+	{
+		setSearchMode = true;
+		searchMode = RUM_ORDERED_ANY_SCAN;
 	}
 
 	/*
@@ -602,6 +607,11 @@ initScanKey(RumScanOpaque so, ScanKey skey, bool *hasPartialMatch,
 									  PointerGetDatum(&extra_data),
 									  PointerGetDatum(&nullFlags),
 									  PointerGetDatum(&searchMode)));
+
+	if (searchMode == RUM_ORDERED_ANY_SCAN)
+	{
+		searchMode = RUM_SEARCH_MODE_ORDERED;
+	}
 
 	/*
 	 * If bogus searchMode is returned, treat as RUM_SEARCH_MODE_ALL; note in
@@ -944,6 +954,7 @@ rumNewScanKey(IndexScanDesc scan, ScanDirection scanDirection)
 	bool supportedOrderedIndexScans =
 		IsSupportedOrderedScan(scan, so->scanNumberOfKeys, &so->rumstate,
 							   &crossKeySummarizationSupported);
+	bool useAnyOrderedScan = false;
 	if (scan->numberOfOrderBys > 0 && supportedOrderedIndexScans)
 	{
 		for (i = 0; i < scan->numberOfOrderBys; i++)
@@ -991,16 +1002,12 @@ rumNewScanKey(IndexScanDesc scan, ScanDirection scanDirection)
 		scanDirection = ForwardScanDirection;
 	}
 
+	/* These scan modes need ordered extractQuery state before scan keys are built. */
 	if (ScanDirectionIsNoMovement(so->orderScanDirection))
 	{
-		/* Determine if there's other cases to do ordered scans */
-		if (RumForceOrderedIndexScan && supportedOrderedIndexScans)
+		if (scan->parallel_scan != NULL && supportedOrderedIndexScans)
 		{
-			so->orderScanDirection = scanDirection;
-		}
-		else if (scan->parallel_scan != NULL && supportedOrderedIndexScans)
-		{
-			so->orderScanDirection = scanDirection;
+			useAnyOrderedScan = true;
 		}
 		else if (scan->xs_want_itup)
 		{
@@ -1010,17 +1017,29 @@ rumNewScanKey(IndexScanDesc scan, ScanDirection scanDirection)
 									"Unexpected index only scan when ordered scan is not supported.")));
 			}
 
-			so->orderScanDirection = scanDirection;
+			useAnyOrderedScan = true;
+		}
+		else if (RumForceOrderedIndexScan && supportedOrderedIndexScans)
+		{
+			useAnyOrderedScan = true;
 		}
 	}
 
 	for (i = 0; i < so->scanNumberOfKeys; i++)
 	{
-		initScanKey(so, &scan->keyData[i], &hasPartialMatch, supportedOrderedIndexScans);
+		initScanKey(so, &scan->keyData[i], &hasPartialMatch, supportedOrderedIndexScans,
+					useAnyOrderedScan);
 		if (so->isVoidRes)
 		{
 			break;
 		}
+	}
+
+	if (useAnyOrderedScan && !so->isVoidRes &&
+		ScanDirectionIsNoMovement(so->orderScanDirection))
+	{
+		ereport(ERROR, (errmsg(
+							"ordered scan direction was not resolved by scan-key extraction")));
 	}
 
 	/*
@@ -1058,7 +1077,8 @@ rumNewScanKey(IndexScanDesc scan, ScanDirection scanDirection)
 		so->orderByKeyIndex = so->nkeys;
 		for (i = 0; i < scan->numberOfOrderBys; i++)
 		{
-			initScanKey(so, &scan->orderByData[i], NULL, supportedOrderedIndexScans);
+			initScanKey(so, &scan->orderByData[i], NULL, supportedOrderedIndexScans,
+						false);
 		}
 	}
 

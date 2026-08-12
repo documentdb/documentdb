@@ -105,3 +105,29 @@ SELECT document FROM bson_aggregation_find('rumget_db',
     '{ "find": "rumget_multikey", "filter": { "a": { "$gt": 9, "$lt": 15 } }, "hint": "a_1" }');
 
 RESET documentdb.enableIndexPathKeySummarization;
+
+-- Scenario 4.
+-- An ordered-any physical scan must retain regular query semantics when the
+-- operator itself does not require a particular scan direction.
+SELECT documentdb_api.insert_one('rumget_db', 'rumget_ordered_any_multikey',
+    '{ "_id": 1, "a": [5] }');
+SELECT documentdb_api.insert_one('rumget_db', 'rumget_ordered_any_multikey',
+    '{ "_id": 2, "a": [3, 7] }');
+SELECT documentdb_api.insert_one('rumget_db', 'rumget_ordered_any_multikey',
+    '{ "_id": 3, "a": [-1, -2] }');
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('rumget_db',
+    '{ "createIndexes": "rumget_ordered_any_multikey", "indexes": [ { "key": { "a": 1 }, "name": "a_1" } ] }', TRUE);
+SELECT documentdb_api.shard_collection('rumget_db', 'rumget_ordered_any_multikey',
+    '{ "_id": "hashed" }', false);
+
+SET documentdb_rum.forcerumorderedindexscan TO on;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('rumget_db',
+        '{ "find": "rumget_ordered_any_multikey", "filter": { "a": { "$gt": 4, "$lt": 6 } }, "hint": "a_1" }') $cmd$);
+
+SELECT document FROM bson_aggregation_find('rumget_db',
+    '{ "find": "rumget_ordered_any_multikey", "filter": { "a": { "$gt": 4, "$lt": 6 } }, "hint": "a_1" }');
+
+RESET documentdb_rum.forcerumorderedindexscan;

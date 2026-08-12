@@ -861,6 +861,24 @@ GetEffectiveAggregateFunctionOidCore(Aggref *aggref, Oid *aggregateFunctionOid)
 }
 
 
+static bool
+CanBuildNonBlockingUniqueIndexCore(void)
+{
+	bool isNull = false;
+	Datum result = ExtensionExecuteQueryViaSPI(
+		"SELECT COUNT(*)::int4 FROM pg_dist_node where nodecluster = 'default' AND noderole = 'primary' and isactive",
+		true, SPI_OK_SELECT, &isNull);
+
+	if (isNull)
+	{
+		return false;
+	}
+
+	/* Multi-node clusters currently cannot build unique non-blocking indexes */
+	return DatumGetInt32(result) <= 1;
+}
+
+
 /*
  * Register hook overrides for DocumentDB.
  */
@@ -908,6 +926,8 @@ InitializeDocumentDBDistributedHooks(void)
 	get_operation_cancellation_query_hook = GetDistributedOperationCancellationQuery;
 
 	get_effective_aggregate_function_oid_hook = GetEffectiveAggregateFunctionOidCore;
+
+	can_build_non_blocking_unique_index_hook = CanBuildNonBlockingUniqueIndexCore;
 
 	RegisterDistributedExplainStageHook();
 
