@@ -64,6 +64,415 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('exprdb',
         '{ "aggregate": "exprcoll", "pipeline":[ { "$match": { "$expr": { "$gte": [ "$a", 10 ] } } }, { "$lookup": { "from": "exprcollright", "as": "res", "localField": "a", "foreignField": "a" } } ] }') $cmd$);
 
+SHOW documentdb.force_nested_lookup_pipeline_after_join;
+SET documentdb.force_nested_lookup_pipeline_after_join TO on;
+
+-- nested lookup should enrich only documents matched by the parent equality join
+SELECT documentdb_api.insert_one(
+    'exprdb',
+    'lookup_orders',
+    '{ "_id": 1, "itemCode": 42 }'
+);
+
+SELECT COUNT(documentdb_api.insert_one(
+    'exprdb',
+    'lookup_items',
+    bson_build_document(
+        '_id'::text, i,
+        'code'::text, i,
+        'supplierCode'::text, i
+    )
+))
+FROM generate_series(1, 1000) i;
+
+SELECT COUNT(documentdb_api.insert_one(
+    'exprdb',
+    'lookup_suppliers',
+    bson_build_document(
+        '_id'::text, i,
+        'code'::text, i
+    )
+))
+FROM generate_series(1, 1000) i;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'exprdb',
+    '{
+      "createIndexes": "lookup_items",
+      "indexes": [
+        {
+          "key": { "code": 1 },
+          "name": "lookup_items_code_1",
+          "enableOrderedIndex": true
+        }
+      ]
+    }',
+    TRUE
+);
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'exprdb',
+    '{
+      "createIndexes": "lookup_suppliers",
+      "indexes": [
+        {
+          "key": { "code": 1 },
+          "name": "lookup_suppliers_code_1",
+          "enableOrderedIndex": true
+        }
+      ]
+    }',
+    TRUE
+);
+
+SELECT document
+FROM bson_aggregation_pipeline(
+    'exprdb',
+    $pipeline$
+    {
+      "aggregate": "lookup_orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "lookup_items",
+            "localField": "itemCode",
+            "foreignField": "code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "lookup_suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "supplier"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+
+SET documentdb.forceDisableSeqScan TO on;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (
+        COSTS OFF,
+        ANALYZE ON,
+        SUMMARY OFF,
+        TIMING OFF,
+        BUFFERS OFF
+    )
+    SELECT document
+    FROM bson_aggregation_pipeline(
+        'exprdb',
+        $pipeline$
+        {
+          "aggregate": "lookup_orders",
+          "pipeline": [
+            { "$match": { "_id": 1 } },
+            {
+              "$lookup": {
+                "from": "lookup_items",
+                "localField": "itemCode",
+                "foreignField": "code",
+                "pipeline": [
+                  {
+                    "$lookup": {
+                      "from": "lookup_suppliers",
+                      "localField": "supplierCode",
+                      "foreignField": "code",
+                      "as": "supplier"
+                    }
+                  }
+                ],
+                "as": "items"
+              }
+            }
+          ]
+        }
+        $pipeline$
+    )
+$cmd$);
+
+RESET documentdb.forceDisableSeqScan;
+
+-- The force setting keeps the nested lookup post-join even when a later stage
+-- also consumes the enriched document.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (
+        COSTS OFF,
+        ANALYZE ON,
+        SUMMARY OFF,
+        TIMING OFF,
+        BUFFERS OFF
+    )
+    SELECT document
+    FROM bson_aggregation_pipeline(
+        'exprdb',
+        $pipeline$
+        {
+          "aggregate": "lookup_orders",
+          "pipeline": [
+            { "$match": { "_id": 1 } },
+            {
+              "$lookup": {
+                "from": "lookup_items",
+                "localField": "itemCode",
+                "foreignField": "code",
+                "pipeline": [
+                  { "$match": { "code": 42 } },
+                  {
+                    "$lookup": {
+                      "from": "lookup_suppliers",
+                      "localField": "supplierCode",
+                      "foreignField": "code",
+                      "as": "supplier"
+                    }
+                  },
+                  { "$match": { "supplier.code": 42 } }
+                ],
+                "as": "items"
+              }
+            }
+          ]
+        }
+        $pipeline$
+    )
+$cmd$);
+
+RESET documentdb.force_nested_lookup_pipeline_after_join;
+
+-- Flag off: the inline policy preserves the matched document at the dotted
+-- output path.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'exprdb',
+    $pipeline$
+    {
+      "aggregate": "lookup_orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "lookup_items",
+            "localField": "itemCode",
+            "foreignField": "code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "lookup_suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "supplier"
+                }
+              }
+            ],
+            "as": "nested.items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+
+-- PRE-EXISTING LIMITATION:
+-- A foreign _id lookup with a non-empty pipeline already uses the post-join
+-- transport while the GUC is off, so a dotted output path silently loses the
+-- matched item.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'exprdb',
+    $pipeline$
+    {
+      "aggregate": "lookup_orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "lookup_items",
+            "localField": "itemCode",
+            "foreignField": "_id",
+            "pipeline": [
+              { "$match": { "code": 42 } },
+              {
+                "$lookup": {
+                  "from": "lookup_suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "supplier"
+                }
+              }
+            ],
+            "as": "nested.items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+
+SET documentdb.force_nested_lookup_pipeline_after_join TO on;
+
+-- SHOULD SUCCEED BUT SILENTLY RETURNS THE WRONG RESULT:
+-- The matching item is dropped and the dotted output path contains an empty
+-- array when the post-join transport uses the user path as its temporary key.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'exprdb',
+    $pipeline$
+    {
+      "aggregate": "lookup_orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "lookup_items",
+            "localField": "itemCode",
+            "foreignField": "code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "lookup_suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "supplier"
+                }
+              }
+            ],
+            "as": "nested.items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+
+RESET documentdb.force_nested_lookup_pipeline_after_join;
+
+-- A dotted output path on a nested lookup with its own non-inline suffix is
+-- also a pre-existing post-join transport limitation.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'exprdb',
+    $pipeline$
+    {
+      "aggregate": "lookup_orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "lookup_items",
+            "localField": "itemCode",
+            "foreignField": "code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "lookup_suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "pipeline": [
+                    { "$sort": { "_id": 1 } },
+                    { "$limit": 1 }
+                  ],
+                  "as": "nested.suppliers"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+
+-- Flag-off/flag-on coverage for the combined lookup-unwind path with a dotted
+-- parent output path.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'exprdb',
+    $pipeline$
+    {
+      "aggregate": "lookup_orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "lookup_items",
+            "localField": "itemCode",
+            "foreignField": "code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "lookup_suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "supplier"
+                }
+              }
+            ],
+            "as": "nested.items"
+          }
+        },
+        {
+          "$unwind": {
+            "path": "$nested.items",
+            "preserveNullAndEmptyArrays": true
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+
+SET documentdb.force_nested_lookup_pipeline_after_join TO on;
+
+-- SHOULD SUCCEED BUT SILENTLY RETURNS THE WRONG RESULT:
+-- The dotted parent output path is lost when lookup and unwind are combined,
+-- so the matched document is missing from the flag-on result.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'exprdb',
+    $pipeline$
+    {
+      "aggregate": "lookup_orders",
+      "pipeline": [
+        { "$match": { "_id": 1 } },
+        {
+          "$lookup": {
+            "from": "lookup_items",
+            "localField": "itemCode",
+            "foreignField": "code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "lookup_suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "supplier"
+                }
+              }
+            ],
+            "as": "nested.items"
+          }
+        },
+        {
+          "$unwind": {
+            "path": "$nested.items",
+            "preserveNullAndEmptyArrays": true
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+
+RESET documentdb.force_nested_lookup_pipeline_after_join;
+
 -- lookup with let
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('exprdb',

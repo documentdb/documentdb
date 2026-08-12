@@ -9,6 +9,7 @@ test: multinode/dynamic_cursor_remote_unsharded_tests
 test: multinode/reservoir_sample_unsharded
 test: multinode/reservoir_sample_heap_skip
 test: multinode/move_collection_local_execution
+test: multinode/nested_lookup_post_join_tests
 test: multinode/bson_composite_rct_planner_pruning_tests
 test: multinode/bson_collation_group_decomposed
 test: multinode/collstats_nested_distribution

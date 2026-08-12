@@ -1,8 +1,9 @@
+\i sql/bson_expr_index_pushdown_tests.sql
 SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_core;
 SET documentdb.next_collection_id TO 200;
 SET documentdb.next_collection_index_id TO 200;
 SELECT COUNT(documentdb_api.insert_one('exprdb', 'exprcoll', bson_build_document('_id'::text, i, 'a'::text, i, 'b'::text, i))) FROM generate_series(1, 1000) i;
-NOTICE:  creating collection
+psql:sql/bson_expr_index_pushdown_tests.sql:6: NOTICE:  creating collection
  count 
 -------
   1000
@@ -252,7 +253,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 
 -- now try with $lookup
 SELECT COUNT(documentdb_api.insert_one('exprdb', 'exprcollright', bson_build_document('_id'::text, i, 'a'::text, i, 'b'::text, i))) FROM generate_series(1, 1000) i;
-NOTICE:  creating collection
+psql:sql/bson_expr_index_pushdown_tests.sql:59: NOTICE:  creating collection
  count 
 -------
   1000
@@ -309,7 +310,7 @@ SELECT documentdb_api.insert_one(
     'lookup_orders',
     '{ "_id": 1, "itemCode": 42 }'
 );
-NOTICE:  creating collection
+psql:sql/bson_expr_index_pushdown_tests.sql:75: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -325,7 +326,7 @@ SELECT COUNT(documentdb_api.insert_one(
     )
 ))
 FROM generate_series(1, 1000) i;
-NOTICE:  creating collection
+psql:sql/bson_expr_index_pushdown_tests.sql:86: NOTICE:  creating collection
  count 
 -------
   1000
@@ -340,7 +341,7 @@ SELECT COUNT(documentdb_api.insert_one(
     )
 ))
 FROM generate_series(1, 1000) i;
-NOTICE:  creating collection
+psql:sql/bson_expr_index_pushdown_tests.sql:96: NOTICE:  creating collection
  count 
 -------
   1000
@@ -480,7 +481,7 @@ $cmd$);
                            Heap Blocks: exact=1
                            ->  Bitmap Index Scan on lookup_items_code_1 (actual rows=1 loops=1)
                                  Index Cond: (document @*= documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "code" : "itemCode" }'::bson))
-   SubPlan 1
+   SubPlan expr_1
      ->  Aggregate (actual rows=1 loops=1)
            ->  Nested Loop (actual rows=1 loops=1)
                  ->  Function Scan on bson_lookup_unwind lookup_subpipeline_substage_0 (actual rows=1 loops=1)
@@ -561,7 +562,7 @@ $cmd$);
                      ->  Index Scan using lookup_items_code_1 on documents_204 collection_0_1 (actual rows=1 loops=1)
                            Index Cond: ((document @= '{ "code" : { "$numberInt" : "42" } }'::bson) AND (document @*= documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "code" : "itemCode" }'::bson)))
                            Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "code" : "itemCode" }'::bson), 'code'::text)
-   SubPlan 1
+   SubPlan expr_1
      ->  Aggregate (actual rows=1 loops=1)
            ->  Nested Loop (actual rows=1 loops=1)
                  ->  Function Scan on bson_lookup_unwind lookup_subpipeline_substage_0 (actual rows=1 loops=1)
@@ -1001,22 +1002,22 @@ SELECT documentdb_api.insert_one('exprdb', 'exprcoll', '{ "_id": "array", "a": [
 -- cannot push down any of these
 set documentdb.forceDisableSeqScan to on;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$eq": [ "$a", 10 ] } } }');
-ERROR:  Could not find any valid index to push down for query
+psql:sql/bson_expr_index_pushdown_tests.sql:520: ERROR:  Could not find any valid index to push down for query
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$eq": [ 10, "$a" ] } } }');
-ERROR:  Could not find any valid index to push down for query
+psql:sql/bson_expr_index_pushdown_tests.sql:521: ERROR:  Could not find any valid index to push down for query
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$gt": [ "$a", 10 ] } } }');
-ERROR:  Could not find any valid index to push down for query
+psql:sql/bson_expr_index_pushdown_tests.sql:523: ERROR:  Could not find any valid index to push down for query
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$gt": [ 10, "$a" ] } } }');
-ERROR:  Could not find any valid index to push down for query
+psql:sql/bson_expr_index_pushdown_tests.sql:524: ERROR:  Could not find any valid index to push down for query
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$gte": [ "$a", 10 ] } } }');
-ERROR:  Could not find any valid index to push down for query
+psql:sql/bson_expr_index_pushdown_tests.sql:526: ERROR:  Could not find any valid index to push down for query
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$gte": [ 10, "$a" ] } } }');
-ERROR:  Could not find any valid index to push down for query
+psql:sql/bson_expr_index_pushdown_tests.sql:527: ERROR:  Could not find any valid index to push down for query
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$lt": [ "$a", 10 ] } } }');
-ERROR:  Could not find any valid index to push down for query
+psql:sql/bson_expr_index_pushdown_tests.sql:529: ERROR:  Could not find any valid index to push down for query
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$lt": [ 10, "$a" ] } } }');
-ERROR:  Could not find any valid index to push down for query
+psql:sql/bson_expr_index_pushdown_tests.sql:530: ERROR:  Could not find any valid index to push down for query
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$lte": [ "$a", 10 ] } } }');
-ERROR:  Could not find any valid index to push down for query
+psql:sql/bson_expr_index_pushdown_tests.sql:532: ERROR:  Could not find any valid index to push down for query
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$lte": [ 10, "$a" ] } } }');
-ERROR:  Could not find any valid index to push down for query
+psql:sql/bson_expr_index_pushdown_tests.sql:533: ERROR:  Could not find any valid index to push down for query

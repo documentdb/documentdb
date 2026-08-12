@@ -1,0 +1,506 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal,public;
+SET citus.next_shard_id TO 257400000;
+SET documentdb.next_collection_id TO 25740000;
+SET documentdb.next_collection_index_id TO 25740000;
+CREATE OR REPLACE PROCEDURE documentdb_distributed_test_helpers.place_routed_shard_on_node(
+        p_database_name text,
+        p_collection_name text,
+        p_node_number integer)
+AS $$
+DECLARE
+    v_collection_id bigint;
+    collection_relid oid;
+    physical_shard_count integer;
+    selected_shard_id bigint;
+    current_node_name text;
+    current_node_port integer;
+    current_group_id integer;
+    target_node_name text;
+    target_node_port integer;
+BEGIN
+    SELECT collection_id
+    FROM documentdb_api_catalog.collections
+    WHERE database_name = p_database_name AND
+          collection_name = p_collection_name AND
+          shard_key IS NULL
+    INTO STRICT v_collection_id;
+
+    collection_relid :=
+        format('documentdb_data.documents_%s', v_collection_id)::regclass;
+
+    SELECT COUNT(*)
+    FROM pg_dist_shard
+    WHERE logicalrelid = collection_relid
+    INTO STRICT physical_shard_count;
+
+    IF physical_shard_count = 1 THEN
+        SELECT shardid
+        FROM pg_dist_shard
+        WHERE logicalrelid = collection_relid
+        INTO STRICT selected_shard_id;
+    ELSE
+        selected_shard_id :=
+            get_shard_id_for_distribution_column(collection_relid, v_collection_id);
+    END IF;
+
+    SELECT node.nodename, node.nodeport, node.groupid
+    FROM pg_dist_shard_placement placement
+    JOIN pg_dist_node node
+      ON placement.nodename = node.nodename AND
+         placement.nodeport = node.nodeport
+    WHERE placement.shardid = selected_shard_id AND
+          node.noderole = 'primary'
+    INTO STRICT current_node_name, current_node_port, current_group_id;
+
+    IF current_group_id = p_node_number THEN
+        RETURN;
+    END IF;
+
+    IF physical_shard_count = 1 THEN
+        COMMIT;
+
+        PERFORM documentdb_api_distributed.move_collection(
+            documentdb_core.bson_build_document(
+                'moveCollection'::text,
+                format('%s.%s', p_database_name, p_collection_name),
+                'toShard'::text,
+                format('shard_%s', p_node_number)
+            )
+        );
+        RETURN;
+    END IF;
+
+    SELECT nodename, nodeport
+    FROM pg_dist_node
+    WHERE groupid = p_node_number AND
+          noderole = 'primary' AND
+          isactive
+    INTO STRICT target_node_name, target_node_port;
+
+    COMMIT;
+
+    PERFORM citus_move_shard_placement(
+        selected_shard_id,
+        current_node_name,
+        current_node_port,
+        target_node_name,
+        target_node_port,
+        'block_writes'
+    );
+END;
+$$ LANGUAGE plpgsql;
+SELECT groupid AS coordinator_group
+FROM pg_dist_node
+WHERE nodeport = current_setting('port')::integer AND
+      noderole = 'primary'
+\gset
+SELECT groupid AS worker_group
+FROM pg_dist_node
+WHERE groupid <> :coordinator_group AND
+      noderole = 'primary' AND
+      isactive
+ORDER BY groupid
+LIMIT 1
+\gset
+SELECT :coordinator_group AS coordinator_group,
+       :worker_group AS worker_group;
+ coordinator_group | worker_group 
+---------------------------------------------------------------------
+                 0 |            1
+(1 row)
+
+SELECT citus_set_node_property(nodename, nodeport, 'shouldhaveshards', true)
+FROM pg_dist_node
+WHERE groupid IN (:coordinator_group, :worker_group) AND
+      noderole = 'primary';
+ citus_set_node_property 
+---------------------------------------------------------------------
+ 
+ 
+(2 rows)
+
+SET documentdb.enableNativeColocation TO off;
+SHOW documentdb.enableNativeColocation;
+ documentdb.enableNativeColocation 
+---------------------------------------------------------------------
+ off
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'lookup_nodes_legacy',
+    'orders',
+    '{ "_id": 1, "itemCode": "item-1" }'
+);
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'lookup_nodes_legacy',
+    'items',
+    '{ "_id": 11, "code": "item-1", "supplierCode": "supplier-1" }'
+);
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'lookup_nodes_legacy',
+    'suppliers',
+    '{ "_id": 21, "code": "supplier-1" }'
+);
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+CALL documentdb_distributed_test_helpers.place_routed_shard_on_node(
+    'lookup_nodes_legacy',
+    'orders',
+    :coordinator_group
+);
+CALL documentdb_distributed_test_helpers.place_routed_shard_on_node(
+    'lookup_nodes_legacy',
+    'items',
+    :coordinator_group
+);
+CALL documentdb_distributed_test_helpers.place_routed_shard_on_node(
+    'lookup_nodes_legacy',
+    'suppliers',
+    :worker_group
+);
+SELECT 'legacy-multi-shard-cross-node' AS exercised_topology;
+      exercised_topology       
+---------------------------------------------------------------------
+ legacy-multi-shard-cross-node
+(1 row)
+
+-- The collections remain logically unsharded. For the legacy multi-shard
+-- layout, the routed supplier shard is placed on a different node from
+-- orders/items.
+SELECT collection.collection_name,
+       collection.shard_key IS NULL AS logically_unsharded,
+       (
+           SELECT COUNT(*)
+           FROM pg_dist_shard
+           WHERE logicalrelid =
+                 format(
+                     'documentdb_data.documents_%s',
+                     collection.collection_id
+                 )::regclass
+       ) AS physical_shard_count,
+       node.groupid AS selected_shard_group
+FROM documentdb_api_catalog.collections collection
+JOIN pg_dist_shard_placement placement
+  ON placement.shardid = get_shard_id_for_distribution_column(
+      format(
+          'documentdb_data.documents_%s',
+          collection.collection_id
+      )::regclass,
+      collection.collection_id
+  )
+JOIN pg_dist_node node
+  ON placement.nodename = node.nodename AND
+     placement.nodeport = node.nodeport
+WHERE collection.database_name = 'lookup_nodes_legacy' AND
+      collection.collection_name IN ('orders', 'items', 'suppliers') AND
+      node.noderole = 'primary'
+ORDER BY collection.collection_name;
+ collection_name | logically_unsharded | physical_shard_count | selected_shard_group 
+---------------------------------------------------------------------
+ items           | t                   |                    8 |                    0
+ orders          | t                   |                    8 |                    0
+ suppliers       | t                   |                    8 |                    1
+(3 rows)
+
+-- Flag-off establishes the inline result for the same cross-node routing.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_nodes_legacy',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCode",
+            "foreignField": "code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "supplier"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                  document                                                                                                                   
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCode" : "item-1", "items" : [ { "_id" : { "$numberInt" : "11" }, "code" : "item-1", "supplierCode" : "supplier-1", "supplier" : [ { "_id" : { "$numberInt" : "21" }, "code" : "supplier-1" } ] } ] }
+(1 row)
+
+SET documentdb.force_nested_lookup_pipeline_after_join TO on;
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_nodes_legacy',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCode",
+            "foreignField": "code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "supplier"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                  document                                                                                                                   
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCode" : "item-1", "items" : [ { "_id" : { "$numberInt" : "11" }, "code" : "item-1", "supplierCode" : "supplier-1", "supplier" : [ { "_id" : { "$numberInt" : "21" }, "code" : "supplier-1" } ] } ] }
+(1 row)
+
+RESET documentdb.force_nested_lookup_pipeline_after_join;
+SELECT documentdb_api.drop_collection('lookup_nodes_legacy', 'orders');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('lookup_nodes_legacy', 'items');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('lookup_nodes_legacy', 'suppliers');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SET documentdb.enableNativeColocation TO on;
+SHOW documentdb.enableNativeColocation;
+ documentdb.enableNativeColocation 
+---------------------------------------------------------------------
+ on
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'lookup_nodes_single',
+    'orders',
+    '{ "_id": 1, "itemCode": "item-1" }'
+);
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'lookup_nodes_single',
+    'items',
+    '{ "_id": 11, "code": "item-1", "supplierCode": "supplier-1" }'
+);
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one(
+    'lookup_nodes_single',
+    'suppliers',
+    '{ "_id": 21, "code": "supplier-1" }'
+);
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+CALL documentdb_distributed_test_helpers.place_routed_shard_on_node(
+    'lookup_nodes_single',
+    'orders',
+    :coordinator_group
+);
+CALL documentdb_distributed_test_helpers.place_routed_shard_on_node(
+    'lookup_nodes_single',
+    'items',
+    :coordinator_group
+);
+CALL documentdb_distributed_test_helpers.place_routed_shard_on_node(
+    'lookup_nodes_single',
+    'suppliers',
+    :worker_group
+);
+SELECT 'single-shard-cross-node' AS exercised_topology;
+   exercised_topology    
+---------------------------------------------------------------------
+ single-shard-cross-node
+(1 row)
+
+SELECT collection.collection_name,
+       collection.shard_key IS NULL AS logically_unsharded,
+       (
+           SELECT COUNT(*)
+           FROM pg_dist_shard
+           WHERE logicalrelid =
+                 format(
+                     'documentdb_data.documents_%s',
+                     collection.collection_id
+                 )::regclass
+       ) AS physical_shard_count,
+       node.groupid AS selected_shard_group
+FROM documentdb_api_catalog.collections collection
+JOIN pg_dist_shard_placement placement
+  ON placement.shardid = get_shard_id_for_distribution_column(
+      format(
+          'documentdb_data.documents_%s',
+          collection.collection_id
+      )::regclass,
+      collection.collection_id
+  )
+JOIN pg_dist_node node
+  ON placement.nodename = node.nodename AND
+     placement.nodeport = node.nodeport
+WHERE collection.database_name = 'lookup_nodes_single' AND
+      collection.collection_name IN ('orders', 'items', 'suppliers') AND
+      node.noderole = 'primary'
+ORDER BY collection.collection_name;
+ collection_name | logically_unsharded | physical_shard_count | selected_shard_group 
+---------------------------------------------------------------------
+ items           | t                   |                    1 |                    0
+ orders          | t                   |                    1 |                    0
+ suppliers       | t                   |                    1 |                    1
+(3 rows)
+
+-- Flag-off control: the inline policy supports the one-shard cross-node
+-- placement.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_nodes_single',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCode",
+            "foreignField": "code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "supplier"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+                                                                                                                  document                                                                                                                   
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "itemCode" : "item-1", "items" : [ { "_id" : { "$numberInt" : "11" }, "code" : "item-1", "supplierCode" : "supplier-1", "supplier" : [ { "_id" : { "$numberInt" : "21" }, "code" : "supplier-1" } ] } ] }
+(1 row)
+
+SET documentdb.force_nested_lookup_pipeline_after_join TO on;
+-- The forced one-shard cross-node post-join shape produces the correlated CTE
+-- error because there is no placement fallback.
+SELECT document
+FROM bson_aggregation_pipeline(
+    'lookup_nodes_single',
+    $pipeline$
+    {
+      "aggregate": "orders",
+      "pipeline": [
+        {
+          "$lookup": {
+            "from": "items",
+            "localField": "itemCode",
+            "foreignField": "code",
+            "pipeline": [
+              {
+                "$lookup": {
+                  "from": "suppliers",
+                  "localField": "supplierCode",
+                  "foreignField": "code",
+                  "as": "supplier"
+                }
+              }
+            ],
+            "as": "items"
+          }
+        }
+      ]
+    }
+    $pipeline$
+);
+ERROR:  CTEs that refer to other subqueries are not supported in multi-shard queries
+RESET documentdb.force_nested_lookup_pipeline_after_join;
+RESET documentdb.enableNativeColocation;
+SELECT documentdb_api.drop_collection('lookup_nodes_single', 'orders');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('lookup_nodes_single', 'items');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('lookup_nodes_single', 'suppliers');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT citus_set_node_property(nodename, nodeport, 'shouldhaveshards', false)
+FROM pg_dist_node
+WHERE groupid = :coordinator_group AND
+      noderole = 'primary';
+ citus_set_node_property 
+---------------------------------------------------------------------
+ 
+(1 row)
+

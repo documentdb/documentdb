@@ -40,7 +40,7 @@ for validationFile in $(ls $check_directory/expected/*.out); do
     # check if the base file is in the schedule
     findResult=$(grep $fileNameBase *schedule || true)
     if [ "$findResult" == "" ]; then
-        if [[ "$fileNameBase" =~ "pg15" ]] || [[ "$fileNameBase" =~ "pg16" ]] || [[ "$fileNameBase" =~ "pg17" ]] || [[ "$fileNameBase" =~ "pg18" ]]; then
+        if [[ "$fileNameBase" =~ "pg15" ]] || [[ "$fileNameBase" =~ "pg16" ]] || [[ "$fileNameBase" =~ "pg17" ]] || [[ "$fileNameBase" =~ "pg18" ]] || [[ "$fileNameBase" =~ "pg19" ]]; then
             echo "Skipping duplicate check for $fileNameBase"
         else
             echo "Test file '$validationFile' with name '$fileNameBase' is not in the schedule, please add it to the schedule";

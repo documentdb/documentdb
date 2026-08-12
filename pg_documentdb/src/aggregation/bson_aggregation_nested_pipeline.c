@@ -55,6 +55,7 @@
 
 const int MaximumLookupPipelineDepth = 20;
 extern bool EnableOperatorVariablesInLookup;
+extern bool ForceNestedLookupPipelineAfterJoin;
 
 /*
  * Struct having parsed view of the
@@ -2928,6 +2929,11 @@ CanInlineLookupStageLookup(const bson_value_t *lookupStage,
 						   const StringView *lookupPath,
 						   bool hasLet)
 {
+	if (ForceNestedLookupPipelineAfterJoin)
+	{
+		return false;
+	}
+
 	if (hasLet)
 	{
 		return false;

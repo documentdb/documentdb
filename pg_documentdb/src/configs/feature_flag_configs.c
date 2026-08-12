@@ -497,6 +497,15 @@ bool EnableSkipCommentFieldOnUpsert = DEFAULT_ENABLE_SKIP_COMMENT_FIELD_ON_UPSER
 bool EnableExistentialNullArrayMatch = DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MATCH;
 
 /*
+ * SECTION: Lookup feature flags
+ */
+
+/* Added in v0.118, Pending stabilization, enable in v0.121 */
+#define DEFAULT_FORCE_NESTED_LOOKUP_PIPELINE_AFTER_JOIN false
+bool ForceNestedLookupPipelineAfterJoin =
+	DEFAULT_FORCE_NESTED_LOOKUP_PIPELINE_AFTER_JOIN;
+
+/*
  * SECTION: Let support feature flags
  */
 
@@ -729,6 +738,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Determines whether collation is supported for non-unique ordered/composite indexes."),
 		NULL, &EnableCollationWithNonUniqueOrderedIndexes,
 		DEFAULT_ENABLE_COLLATION_WITH_NON_UNIQUE_ORDERED_INDEXES,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.force_nested_lookup_pipeline_after_join", newGucPrefix),
+		gettext_noop(
+			"Whether nested lookup stages are forced to run after the parent equality join. Unsupported query shapes may fail when this setting is enabled."),
+		NULL, &ForceNestedLookupPipelineAfterJoin,
+		DEFAULT_FORCE_NESTED_LOOKUP_PIPELINE_AFTER_JOIN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
