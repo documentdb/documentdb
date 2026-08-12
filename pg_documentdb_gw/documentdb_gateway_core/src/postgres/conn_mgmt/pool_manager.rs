@@ -145,16 +145,35 @@ impl PoolManager {
     ) -> Result<Arc<ConnectionPool>> {
         let settings = PgPoolSettings::from_configuration(dynamic_configuration);
 
-        match self.user_data_pools.get(&(username.to_owned(), settings)) {
-            None => Err(DocumentDBError::internal_error(
-                "Connection pool missing for user.".to_owned(),
-            )),
-            Some(pool_ref) => {
-                let pool = Arc::clone(pool_ref.value());
-                pool.touch();
-                Ok(pool)
-            }
+        if let Some(pool_ref) = self.user_data_pools.get(&(username.to_owned(), settings)) {
+            let pool = Arc::clone(pool_ref.value());
+            pool.touch();
+            return Ok(pool);
         }
+
+        // The `settings` half of the key is derived from the live configuration and
+        // can shift out from under an already-authenticated connection: notably
+        // `max_connections` is re-read from a Postgres GUC on every dynamic-config
+        // refresh and silently defaults to 25 on a bad read (see
+        // `PgConfiguration::max_connections`). When it changes, the user's pool is
+        // still healthy but filed under a key that will never be recomputed, and a
+        // hard miss here permanently breaks every request for that user until they
+        // reconnect. Fall back to the existing pool for this username instead;
+        // `allocate_data_pool` re-files it under the current key on the next auth.
+        let fallback = self
+            .user_data_pools
+            .iter()
+            .find(|entry| entry.key().0 == username)
+            .map(|entry| Arc::clone(entry.value()));
+
+        if let Some(pool) = fallback {
+            pool.touch();
+            return Ok(pool);
+        }
+
+        Err(DocumentDBError::internal_error(
+            "Connection pool missing for user.".to_owned(),
+        ))
     }
 
     /// # Errors
@@ -678,6 +697,50 @@ mod tests {
         assert_eq!(
             dynamic_configuration.max_conn() * 2,
             user_pool.status().status().max_size
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_data_pool_falls_back_to_existing_pool_on_settings_change() {
+        // We still need an async context to create the connection pool (see
+        // ConnectionPool::new_with_user), but the test itself doesn't need to be async.
+        yield_now().await;
+
+        let dynamic_configuration = MaxConnectionConfig {
+            max_conn: 100.into(),
+        };
+        let pool_manager = test_pool_manager();
+
+        pool_manager
+            .allocate_data_pool("user", "password", &dynamic_configuration)
+            .unwrap();
+
+        let original_pool = pool_manager
+            .get_data_pool("user", &dynamic_configuration)
+            .unwrap();
+
+        // Simulate a dynamic-config refresh that flips `max_connections` (e.g. a bad
+        // GUC read silently defaulting to 25). This changes the `PgPoolSettings` half
+        // of the pool key so the exact-key lookup misses, but the user's pool is
+        // still healthy and must be reused instead of hard-erroring.
+        dynamic_configuration.set_max_conn(25);
+
+        let fallback_pool = pool_manager
+            .get_data_pool("user", &dynamic_configuration)
+            .expect(
+                "get_data_pool must fall back to the existing user pool on a settings-key miss",
+            );
+
+        assert!(
+            Arc::ptr_eq(&original_pool, &fallback_pool),
+            "settings-key miss must reuse the same warm pool for the user"
+        );
+
+        // No new pool was created by the fallback path.
+        assert_eq!(
+            3,
+            pool_manager.report_pool_stats().len(),
+            "2 system pools + 1 user pool; fallback must not allocate a new pool"
         );
     }
 
