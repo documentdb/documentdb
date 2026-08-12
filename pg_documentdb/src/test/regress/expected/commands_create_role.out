@@ -82,6 +82,22 @@ ERROR:  The 'createRole' field must not be left empty.
 -- Test createRole with invalid inherited role, should fail
 SELECT documentdb_api.create_role('{"createRole":"invalidInheritRole", "roles":["nonexistent_role"], "privileges":[], "$db":"admin"}');
 ERROR:  Creating custom roles that inherit from 'nonexistent_role' is not supported.
+-- An inherited role name that exceeds the identifier limit is reported as missing
+SELECT documentdb_api.create_role('{"createRole":"longInheritRole", "roles":["1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk"], "privileges":[], "$db":"admin"}');
+ERROR:  Role '1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk' not found.
+SELECT rolname FROM pg_roles WHERE rolname = 'longInheritRole';
+ rolname 
+---------
+(0 rows)
+
+-- An empty inherited role name is also reported as missing
+SELECT documentdb_api.create_role('{"createRole":"emptyInheritRole", "roles":[""], "privileges":[], "$db":"admin"}');
+ERROR:  Role '' not found.
+SELECT rolname FROM pg_roles WHERE rolname = 'emptyInheritRole';
+ rolname 
+---------
+(0 rows)
+
 -- Test createRole with invalid roles array type, should fail
 SELECT documentdb_api.create_role('{"createRole":"invalidRolesType", "roles":"not_an_array", "privileges":[], "$db":"admin"}');
 ERROR:  Expected 'array' type for 'roles' parameter but found 'string' type
@@ -170,20 +186,13 @@ SELECT rolname FROM pg_roles WHERE rolname = 'abcdefghijklmnopqrstuvwxyzabcdefgh
  abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk
 (1 row)
 
--- Test role name exceeding maximum length (64 characters), will be truncated to 63 characters
+-- Test role name exceeding maximum length (64 characters), which is rejected
 SELECT documentdb_api.create_role('{"createRole":"1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
-NOTICE:  identifier "1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk" will be truncated to "1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij"
-NOTICE:  identifier "1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk" will be truncated to "1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij"
-            create_role            
------------------------------------
- { "ok" : { "$numberInt" : "1" } }
-(1 row)
-
+ERROR:  The role name is too long. Try a role name shorter than 64 characters.
 SELECT rolname FROM pg_roles WHERE rolname = '1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij';
-                             rolname                             
------------------------------------------------------------------
- 1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij
-(1 row)
+ rolname 
+---------
+(0 rows)
 
 -- Test createRole when feature is disabled
 SET documentdb.enableRoleCrud TO OFF;
@@ -278,70 +287,47 @@ SELECT rolname FROM pg_roles WHERE rolname = 'ignoredFieldsRole';
  ignoredFieldsRole
 (1 row)
 
--- Test createRole with valid privileges (find action)
+-- A well-formed privilege on a resource parses, but this build stores no
+-- resource privileges, so the role is reported as unsupported and not created.
+-- Test createRole with a privilege naming a resource (find action)
 SELECT documentdb_api.create_role('{"createRole":"privRoleFind", "roles":[], "privileges":[{"resource":{"db":"testdb","collection":"testcol"},"actions":["find"]}], "$db":"admin"}');
-            create_role            
------------------------------------
- { "ok" : { "$numberInt" : "1" } }
-(1 row)
-
+ERROR:  Privileges on a collection are currently unsupported.
 SELECT rolname FROM pg_roles WHERE rolname = 'privRoleFind';
-   rolname    
---------------
- privRoleFind
-(1 row)
+ rolname 
+---------
+(0 rows)
 
--- Test createRole with valid privileges (insert action)
+-- Test createRole with a privilege naming a resource (insert action)
 SELECT documentdb_api.create_role('{"createRole":"privRoleInsert", "roles":[], "privileges":[{"resource":{"db":"testdb","collection":"testcol"},"actions":["insert"]}], "$db":"admin"}');
-            create_role            
------------------------------------
- { "ok" : { "$numberInt" : "1" } }
-(1 row)
-
+ERROR:  Privileges on a collection are currently unsupported.
 SELECT rolname FROM pg_roles WHERE rolname = 'privRoleInsert';
-    rolname     
-----------------
- privRoleInsert
-(1 row)
+ rolname 
+---------
+(0 rows)
 
--- Test createRole with valid privileges (update action)
+-- Test createRole with a privilege naming a resource (update action)
 SELECT documentdb_api.create_role('{"createRole":"privRoleUpdate", "roles":[], "privileges":[{"resource":{"db":"testdb","collection":"testcol"},"actions":["update"]}], "$db":"admin"}');
-            create_role            
------------------------------------
- { "ok" : { "$numberInt" : "1" } }
-(1 row)
-
+ERROR:  Privileges on a collection are currently unsupported.
 SELECT rolname FROM pg_roles WHERE rolname = 'privRoleUpdate';
-    rolname     
-----------------
- privRoleUpdate
-(1 row)
+ rolname 
+---------
+(0 rows)
 
--- Test createRole with valid privileges (remove action)
+-- Test createRole with a privilege naming a resource (remove action)
 SELECT documentdb_api.create_role('{"createRole":"privRoleRemove", "roles":[], "privileges":[{"resource":{"db":"testdb","collection":"testcol"},"actions":["remove"]}], "$db":"admin"}');
-            create_role            
------------------------------------
- { "ok" : { "$numberInt" : "1" } }
-(1 row)
-
+ERROR:  Privileges on a collection are currently unsupported.
 SELECT rolname FROM pg_roles WHERE rolname = 'privRoleRemove';
-    rolname     
-----------------
- privRoleRemove
-(1 row)
+ rolname 
+---------
+(0 rows)
 
--- Test createRole with both roles and privileges
+-- Test createRole with both roles and a privilege naming a resource
 SELECT documentdb_api.create_role('{"createRole":"privRoleBoth", "roles":["documentdb_readonly_role"], "privileges":[{"resource":{"db":"testdb","collection":"testcol"},"actions":["find", "insert", "update", "remove"]}], "$db":"admin"}');
-            create_role            
------------------------------------
- { "ok" : { "$numberInt" : "1" } }
-(1 row)
-
+ERROR:  Privileges on a collection are currently unsupported.
 SELECT rolname FROM pg_roles WHERE rolname = 'privRoleBoth';
-   rolname    
---------------
- privRoleBoth
-(1 row)
+ rolname 
+---------
+(0 rows)
 
 -- Test error cases for privileges
 -- Test privileges with invalid type (not an array), should fail
@@ -420,17 +406,27 @@ ERROR:  Role name 'test_block_user' is reserved and can't be used as a custom ro
 RESET documentdb.blockedRolePrefixList;
 -- Clean up privilege test roles
 DROP ROLE IF EXISTS "privRoleFind";
+NOTICE:  role "privRoleFind" does not exist, skipping
 DROP ROLE IF EXISTS "privRoleInsert";
+NOTICE:  role "privRoleInsert" does not exist, skipping
 DROP ROLE IF EXISTS "privRoleUpdate";
+NOTICE:  role "privRoleUpdate" does not exist, skipping
 DROP ROLE IF EXISTS "privRoleRemove";
+NOTICE:  role "privRoleRemove" does not exist, skipping
 DROP ROLE IF EXISTS "privRoleBoth";
+NOTICE:  role "privRoleBoth" does not exist, skipping
 -- Clean up test roles
 DROP ROLE IF EXISTS "customReadRole";
+DROP ROLE IF EXISTS "longInheritRole";
+NOTICE:  role "longInheritRole" does not exist, skipping
+DROP ROLE IF EXISTS "emptyInheritRole";
+NOTICE:  role "emptyInheritRole" does not exist, skipping
 DROP ROLE IF EXISTS "customAdminRole";
 DROP ROLE IF EXISTS "multiInheritRole";
 DROP ROLE IF EXISTS "emptyRolesRole";
 DROP ROLE IF EXISTS "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk";
 DROP ROLE IF EXISTS "1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij";
+NOTICE:  role "1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij" does not exist, skipping
 DROP ROLE IF EXISTS "role_with_underscores";
 DROP ROLE IF EXISTS "role-with-dashes";
 DROP ROLE IF EXISTS "role123numbers";

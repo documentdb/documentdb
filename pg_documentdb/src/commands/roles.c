@@ -8,6 +8,7 @@
  *-------------------------------------------------------------------------
  */
 #include "postgres.h"
+#include "miscadmin.h"
 #include "access/transam.h"
 #include "utils/documentdb_errors.h"
 #include "utils/query_utils.h"
@@ -23,6 +24,8 @@
 #include "utils/array.h"
 #include "utils/hashset_utils.h"
 #include "utils/role_utils.h"
+#include "metadata/collection.h"
+#include "rbac_hooks.h"
 
 /*
  * IS_INHERITABLE_ROLE checks if a role is allowed to be inherited by custom roles.
@@ -37,31 +40,10 @@ extern bool EnableRoleCrud;
 /* GUC that controls whether the DB admin check is enabled */
 extern bool EnableRolesAdminDBCheck;
 
-/* Supported privilege actions for collection-level custom role */
-static const char *const SupportedActions[] = {
-	"find",
-	"insert",
-	"update",
-	"remove"
-};
-static const int NumSupportedActions = sizeof(SupportedActions) /
-									   sizeof(SupportedActions[0]);
-
 PG_FUNCTION_INFO_V1(command_create_role);
 PG_FUNCTION_INFO_V1(command_drop_role);
 PG_FUNCTION_INFO_V1(command_roles_info);
 PG_FUNCTION_INFO_V1(command_update_role);
-
-/*
- * Represents a single collection privilege entry.
- * Contains the database name, collection name, and a hash set of action strings.
- */
-typedef struct CustomPrivilege
-{
-	StringView dbName;
-	StringView collectionName;
-	HTAB *actions;
-} CustomPrivilege;
 
 /*
  * Struct to hold createRole parameters
@@ -70,7 +52,7 @@ typedef struct
 {
 	const char *roleName;
 	HTAB *parentRoles;
-	List *customPrivileges;
+	List *collectionPrivileges;
 } CreateRoleSpec;
 
 /*
@@ -109,7 +91,7 @@ static void ParsePrivilegesArray(bson_iter_t *privilegesIter,
 								 CreateRoleSpec *createRoleSpec);
 static void ParseResourceDocument(bson_iter_t *privilegeDocIter, StringView *dbName,
 								  StringView *collectionName);
-static HTAB * ParseActionsArray(bson_iter_t *privilegeDocIter);
+static CustomPrivilegeAction ParseActionsArray(bson_iter_t *privilegeDocIter);
 static void ParseDropRoleSpec(pgbson *dropRoleBson, DropRoleSpec *dropRoleSpec);
 static void ParseRolesInfoSpec(pgbson *rolesInfoBson, RolesInfoSpec *rolesInfoSpec);
 static void ParseRoleDefinition(bson_iter_t *iter, RolesInfoSpec *rolesInfoSpec);
@@ -136,8 +118,7 @@ static void CollectInheritedRolesRecursive(const char *roleName,
 static List * LookupAllInheritedRoles(const char *roleName, HTAB *roleInheritanceTable);
 static void GrantRoleInheritance(const char *parentRole, const char *targetRole);
 static void ValidateAndGrantInheritedRoles(const CreateRoleSpec *createRoleSpec);
-static HTAB * CreateParentRolesHashSet(void);
-static bool IsActionSupported(const char *action);
+static CustomPrivilegeAction GetPrivilegeAction(const char *action);
 static void WriteRoles(List *parentRoles, pgbson_array_writer *rolesArrayWriter,
 					   HTAB *roleInheritanceTable, const char *childRoleName);
 
@@ -241,8 +222,8 @@ create_role(pgbson *createRoleBson)
 
 	CreateRoleSpec createRoleSpec = {
 		.roleName = NULL,
-		.parentRoles = CreateParentRolesHashSet(),
-		.customPrivileges = NIL
+		.parentRoles = CreateStringViewHashSet(),
+		.collectionPrivileges = NIL
 	};
 	ParseCreateRoleSpec(createRoleBson, &createRoleSpec);
 
@@ -258,16 +239,15 @@ create_role(pgbson *createRoleBson)
 	/* Validate and grant inherited roles to the new role */
 	ValidateAndGrantInheritedRoles(&createRoleSpec);
 
+	if (createRoleSpec.collectionPrivileges != NIL)
+	{
+		GrantCollectionPrivilegesToRole(createRoleSpec.roleName,
+										createRoleSpec.collectionPrivileges);
+	}
+
 	/* Cleanup */
 	hash_destroy(createRoleSpec.parentRoles);
-
-	ListCell *cell;
-	foreach(cell, createRoleSpec.customPrivileges)
-	{
-		CustomPrivilege *privilege = (CustomPrivilege *) lfirst(cell);
-		hash_destroy(privilege->actions);
-	}
-	list_free_deep(createRoleSpec.customPrivileges);
+	list_free_deep(createRoleSpec.collectionPrivileges);
 
 	pgbson_writer finalWriter;
 	PgbsonWriterInit(&finalWriter);
@@ -302,6 +282,20 @@ ParseCreateRoleSpec(pgbson *createRoleBson, CreateRoleSpec *createRoleSpec)
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 								errmsg(
 									"The 'createRole' field must not be left empty.")));
+			}
+
+			/*
+			 * A name at or beyond the identifier limit would not survive
+			 * intact, so the role would not carry the name that was asked
+			 * for. Reject it here rather than creating a role under a
+			 * different name than the one the command named.
+			 */
+			if (strLength >= NAMEDATALEN)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg(
+									"The role name is too long. Try a role name shorter than %d characters.",
+									NAMEDATALEN)));
 			}
 
 			if (ContainsReservedPgRoleNamePrefix(createRoleSpec->roleName) ||
@@ -413,11 +407,21 @@ ParseRolesArray(bson_iter_t *rolesIter, CreateRoleSpec *createRoleSpec)
 		const char *inheritedBuiltInRole = bson_iter_utf8(&rolesArrayIter,
 														  &roleNameLength);
 
-		if (roleNameLength > 0 && roleNameLength < NAMEDATALEN)
+		if (roleNameLength == 0 || roleNameLength >= NAMEDATALEN)
 		{
-			hash_search(createRoleSpec->parentRoles, inheritedBuiltInRole, HASH_ENTER,
-						NULL);
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_ROLENOTFOUND),
+							errmsg("Role '%s' not found.",
+								   inheritedBuiltInRole)));
 		}
+
+		/*
+		 * The key references the name in place rather than copying it. The
+		 * command document outlives this hash, so the referenced bytes stay
+		 * valid for as long as the set is used.
+		 */
+		StringView inheritedRoleView =
+			CreateStringViewFromStringWithLength(inheritedBuiltInRole, roleNameLength);
+		hash_search(createRoleSpec->parentRoles, &inheritedRoleView, HASH_ENTER, NULL);
 	}
 }
 
@@ -452,7 +456,7 @@ ParsePrivilegesArray(bson_iter_t *privilegesIter, CreateRoleSpec *createRoleSpec
 
 		StringView dbName = { 0 };
 		StringView collectionName = { 0 };
-		HTAB *actions = NULL;
+		CustomPrivilegeAction actions = CustomPrivilegeAction_None;
 		bool resourceFound = false;
 		bool actionsFound = false;
 
@@ -493,20 +497,22 @@ ParsePrivilegesArray(bson_iter_t *privilegesIter, CreateRoleSpec *createRoleSpec
 								"'actions' is required in privilege.")));
 		}
 
-		if (dbName.string == NULL || collectionName.string == NULL || actions == NULL)
+		if (dbName.string == NULL || collectionName.string == NULL ||
+			actions == CustomPrivilegeAction_None)
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 							errmsg(
-								"Internal error: privilege parsing produced NULL values for dbName, collectionName, or actions.")));
+								"Internal error: privilege parsing produced an invalid resource or actions.")));
 		}
 
-		CustomPrivilege *customPrivilege = palloc(sizeof(CustomPrivilege));
-		customPrivilege->dbName = dbName;
-		customPrivilege->collectionName = collectionName;
-		customPrivilege->actions = actions;
+		CustomCollectionPrivilege *collectionPrivilege = palloc(
+			sizeof(CustomCollectionPrivilege));
+		collectionPrivilege->databaseName = dbName;
+		collectionPrivilege->collectionName = collectionName;
+		collectionPrivilege->actions = actions;
 
-		createRoleSpec->customPrivileges = lappend(
-			createRoleSpec->customPrivileges, customPrivilege);
+		createRoleSpec->collectionPrivileges = lappend(
+			createRoleSpec->collectionPrivileges, collectionPrivilege);
 	}
 }
 
@@ -596,14 +602,22 @@ ParseResourceDocument(bson_iter_t *privilegeDocIter,
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 						errmsg("'collection' is required in resource.")));
 	}
+
+	/*
+	 * Privileges may target collections created later, so validate only the
+	 * namespace syntax here.
+	 */
+	ValidateDatabaseCollection(StringViewGetTextDatum(dbName),
+							   StringViewGetTextDatum(collectionName));
 }
 
 
 /*
  * ParseActionsArray parses the "actions" field from a privilege entry.
- * Returns a hash set of action strings for automatic deduplication.
+ * Returns a bitmask of CustomPrivilegeAction, so repeating an action is
+ * inherently tolerated: setting a bit twice is the same as setting it once.
  */
-static HTAB *
+static CustomPrivilegeAction
 ParseActionsArray(bson_iter_t *privilegeDocIter)
 {
 	if (bson_iter_type(privilegeDocIter) != BSON_TYPE_ARRAY)
@@ -612,45 +626,24 @@ ParseActionsArray(bson_iter_t *privilegeDocIter)
 						errmsg("'actions' must be an array.")));
 	}
 
-	/* Create a hash set for deduplication */
-	HASHCTL hashCtl;
-	MemSet(&hashCtl, 0, sizeof(hashCtl));
-	hashCtl.keysize = NAMEDATALEN;
-	hashCtl.entrysize = NAMEDATALEN;
-	HTAB *actions = hash_create("ActionsSet", 8, &hashCtl, HASH_ELEM | HASH_STRINGS);
-
 	bson_iter_t actionsIter;
 	bson_iter_recurse(privilegeDocIter, &actionsIter);
 
+	CustomPrivilegeAction actions = CustomPrivilegeAction_None;
 	while (bson_iter_next(&actionsIter))
 	{
 		if (bson_iter_type(&actionsIter) != BSON_TYPE_UTF8)
 		{
-			hash_destroy(actions);
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 							errmsg("Each action must be a string.")));
 		}
 
-		uint32_t actionLength = 0;
-		const char *action = bson_iter_utf8(&actionsIter, &actionLength);
-
-		if (actionLength > 0 && actionLength < NAMEDATALEN)
-		{
-			if (!IsActionSupported(action))
-			{
-				hash_destroy(actions);
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-								errmsg("Unsupported action '%s'.",
-									   action)));
-			}
-
-			hash_search(actions, action, HASH_ENTER, NULL);
-		}
+		const char *action = bson_iter_utf8(&actionsIter, NULL);
+		actions |= GetPrivilegeAction(action);
 	}
 
-	if (hash_get_num_entries(actions) == 0)
+	if (actions == CustomPrivilegeAction_None)
 	{
-		hash_destroy(actions);
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 						errmsg("At least one valid action must be specified.")));
 	}
@@ -716,6 +709,13 @@ drop_role(pgbson *dropRoleBson)
 	DropRoleSpec dropRoleSpec = { NULL };
 	ParseDropRoleSpec(dropRoleBson, &dropRoleSpec);
 
+	/*
+	 * Stored privileges are matched by resolving the role name, so they must
+	 * be removed while the role still resolves. Both statements run in this
+	 * transaction, so the cleanup and the drop commit or roll back together.
+	 */
+	RemoveCollectionPrivileges(dropRoleSpec.roleName);
+
 	StringInfo dropUserInfo = makeStringInfo();
 	appendStringInfo(dropUserInfo, "DROP ROLE %s;", quote_identifier(
 						 dropRoleSpec.roleName));
@@ -755,6 +755,17 @@ ParseDropRoleSpec(pgbson *dropRoleBson, DropRoleSpec *dropRoleSpec)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 								errmsg("'dropRole' cannot be empty.")));
+			}
+
+			/*
+			 * PostgreSQL truncates identifiers to NAMEDATALEN - 1 bytes.
+			 * Reject longer names before DROP ROLE can target an existing
+			 * role with the same prefix.
+			 */
+			if (strLength >= NAMEDATALEN)
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_ROLENOTFOUND),
+								errmsg("Role '%s' not found.", roleNameValue)));
 			}
 
 			if (ContainsReservedPgRoleNamePrefix(roleNameValue) ||
@@ -1212,9 +1223,13 @@ CollectInheritedRolesRecursive(const char *internalRoleName, HTAB *roleInheritan
 	{
 		char *parentName = (char *) lfirst(cell);
 
-		/* Insert into resultSet; skip if already present */
+		/*
+		 * Insert into resultSet; skip if already present. The key references
+		 * the name owned by the inheritance table, which outlives this set.
+		 */
 		bool alreadyExists = false;
-		hash_search(resultSet, parentName, HASH_ENTER, &alreadyExists);
+		StringView parentNameView = CreateStringViewFromString(parentName);
+		hash_search(resultSet, &parentNameView, HASH_ENTER, &alreadyExists);
 		if (alreadyExists)
 		{
 			continue;
@@ -1236,23 +1251,18 @@ CollectInheritedRolesRecursive(const char *internalRoleName, HTAB *roleInheritan
 static List *
 LookupAllInheritedRoles(const char *internalRoleName, HTAB *roleInheritanceTable)
 {
-	HASHCTL resultCtl;
-	MemSet(&resultCtl, 0, sizeof(resultCtl));
-	resultCtl.keysize = NAMEDATALEN;
-	resultCtl.entrysize = NAMEDATALEN;
-	HTAB *resultSet = hash_create("InheritedRolesSet", 32, &resultCtl,
-								  HASH_ELEM | HASH_STRINGS);
+	HTAB *resultSet = CreateStringViewHashSet();
 
 	CollectInheritedRolesRecursive(internalRoleName, roleInheritanceTable, resultSet);
 
 	/* Convert hash set to list */
 	List *result = NIL;
 	HASH_SEQ_STATUS status;
-	char *entry;
+	StringView *entry;
 	hash_seq_init(&status, resultSet);
 	while ((entry = hash_seq_search(&status)) != NULL)
 	{
-		result = lappend(result, pstrdup(entry));
+		result = lappend(result, CreateStringFromStringView(entry));
 	}
 
 	hash_destroy(resultSet);
@@ -1716,25 +1726,12 @@ FreeRoleInheritanceTable(HTAB *roleInheritanceTable)
 static void
 ValidateAndGrantInheritedRoles(const CreateRoleSpec *createRoleSpec)
 {
-	HASH_SEQ_STATUS status;
-	char *entry;
-	bool hasReadWrite = false;
-	bool hasClusterAdmin = false;
-
-	hash_seq_init(&status, createRoleSpec->parentRoles);
-	while ((entry = hash_seq_search(&status)) != NULL)
-	{
-		const char *roleName = entry;
-
-		if (strcmp(roleName, "readWriteAnyDatabase") == 0)
-		{
-			hasReadWrite = true;
-		}
-		else if (strcmp(roleName, "clusterAdmin") == 0)
-		{
-			hasClusterAdmin = true;
-		}
-	}
+	StringView readWriteRoleView = CreateStringViewFromString("readWriteAnyDatabase");
+	StringView clusterAdminRoleView = CreateStringViewFromString("clusterAdmin");
+	bool hasReadWrite = hash_search(createRoleSpec->parentRoles, &readWriteRoleView,
+									HASH_FIND, NULL) != NULL;
+	bool hasClusterAdmin = hash_search(createRoleSpec->parentRoles,
+									   &clusterAdminRoleView, HASH_FIND, NULL) != NULL;
 
 	if (hasReadWrite != hasClusterAdmin)
 	{
@@ -1756,10 +1753,12 @@ ValidateAndGrantInheritedRoles(const CreateRoleSpec *createRoleSpec)
 		GrantRoleInheritance(ApiAdminRoleV2, createRoleSpec->roleName);
 	}
 
+	HASH_SEQ_STATUS status;
+	StringView *entry;
 	hash_seq_init(&status, createRoleSpec->parentRoles);
 	while ((entry = hash_seq_search(&status)) != NULL)
 	{
-		const char *nativeRoleName = entry;
+		const char *nativeRoleName = CreateStringFromStringView(entry);
 		const char *internalRoleName = GetInternalRoleName(nativeRoleName);
 
 		/*
@@ -1775,23 +1774,6 @@ ValidateAndGrantInheritedRoles(const CreateRoleSpec *createRoleSpec)
 
 		GrantRoleInheritance(internalRoleName, createRoleSpec->roleName);
 	}
-}
-
-
-/*
- * CreateParentRolesHashSet creates a hash set for storing parent role names.
- */
-static HTAB *
-CreateParentRolesHashSet(void)
-{
-	HASHCTL hashCtl;
-	memset(&hashCtl, 0, sizeof(hashCtl));
-	hashCtl.keysize = NAMEDATALEN;
-	hashCtl.entrysize = NAMEDATALEN;  /* Key-only hash set */
-	hashCtl.hcxt = CurrentMemoryContext;
-
-	return hash_create("ParentRolesSet", 16, &hashCtl,
-					   HASH_ELEM | HASH_STRINGS | HASH_CONTEXT);
 }
 
 
@@ -1879,17 +1861,29 @@ GrantRoleInheritance(const char *parentRole, const char *targetRole)
 
 
 /*
- * Check if an action string is in the SupportedActions list.
+ * Maps a documented action name onto its CustomPrivilegeAction bit.
+ * An action the API does not support is rejected here.
  */
-static bool
-IsActionSupported(const char *action)
+static CustomPrivilegeAction
+GetPrivilegeAction(const char *action)
 {
-	for (int i = 0; i < NumSupportedActions; i++)
+	if (strcmp(action, "find") == 0)
 	{
-		if (strcmp(action, SupportedActions[i]) == 0)
-		{
-			return true;
-		}
+		return CustomPrivilegeAction_Find;
 	}
-	return false;
+	else if (strcmp(action, "insert") == 0)
+	{
+		return CustomPrivilegeAction_Insert;
+	}
+	else if (strcmp(action, "update") == 0)
+	{
+		return CustomPrivilegeAction_Update;
+	}
+	else if (strcmp(action, "remove") == 0)
+	{
+		return CustomPrivilegeAction_Remove;
+	}
+
+	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+					errmsg("Unsupported action '%s'.", action)));
 }

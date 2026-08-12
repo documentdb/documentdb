@@ -36,6 +36,7 @@
 #include "index_am/index_am_utils.h"
 #include "metadata/index.h"
 #include "commands/retryable_writes.h"
+#include "rbac_hooks.h"
 
 extern bool EnableNativeColocation;
 extern int ShardingMaxChunks;
@@ -1682,6 +1683,16 @@ ShardCollectionCore(ShardCollectionArgs *args)
 
 
 	ExtensionExecuteQueryViaSPI(queryInfo->data, readOnly, SPI_OK_UTILITY, &isNull);
+
+	/*
+	 * The data table was rebuilt above, and relation privileges are not carried
+	 * over by CREATE TABLE ... (LIKE ...), so the baseline grants applied when
+	 * the collection was created are gone. Reapply them to the replacement
+	 * table. The retry table is not rebuilt here and keeps its own grants.
+	 */
+	bool includeRetryTable = false;
+	GrantCollectionPrivilegesToBaselineRoles(collection->collectionId,
+											 includeRetryTable);
 
 	bool isPrepareUniqueArrayNull = true;
 	Datum prepareUniqueNamesArray = (Datum) 0;

@@ -54,6 +54,14 @@ SELECT documentdb_api.create_role('{"createRole":"", "roles":["readAnyDatabase"]
 -- Test createRole with invalid inherited role, should fail
 SELECT documentdb_api.create_role('{"createRole":"invalidInheritRole", "roles":["nonexistent_role"], "privileges":[], "$db":"admin"}');
 
+-- An inherited role name that exceeds the identifier limit is reported as missing
+SELECT documentdb_api.create_role('{"createRole":"longInheritRole", "roles":["1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk"], "privileges":[], "$db":"admin"}');
+SELECT rolname FROM pg_roles WHERE rolname = 'longInheritRole';
+
+-- An empty inherited role name is also reported as missing
+SELECT documentdb_api.create_role('{"createRole":"emptyInheritRole", "roles":[""], "privileges":[], "$db":"admin"}');
+SELECT rolname FROM pg_roles WHERE rolname = 'emptyInheritRole';
+
 -- Test createRole with invalid roles array type, should fail
 SELECT documentdb_api.create_role('{"createRole":"invalidRolesType", "roles":"not_an_array", "privileges":[], "$db":"admin"}');
 
@@ -121,7 +129,7 @@ ORDER BY r2.rolname;
 SELECT documentdb_api.create_role('{"createRole":"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname = 'abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk';
 
--- Test role name exceeding maximum length (64 characters), will be truncated to 63 characters
+-- Test role name exceeding maximum length (64 characters), which is rejected
 SELECT documentdb_api.create_role('{"createRole":"1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk", "roles":["readAnyDatabase"], "privileges":[], "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname = '1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij';
 
@@ -155,23 +163,25 @@ SELECT rolname FROM pg_roles WHERE rolname IN ('CaseSensitiveRole', 'casesensiti
 SELECT documentdb_api.create_role('{"createRole":"ignoredFieldsRole", "roles":["readAnyDatabase"], "privileges":[], "lsid":"session123", "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname = 'ignoredFieldsRole';
 
--- Test createRole with valid privileges (find action)
+-- A well-formed privilege on a resource parses, but this build stores no
+-- resource privileges, so the role is reported as unsupported and not created.
+-- Test createRole with a privilege naming a resource (find action)
 SELECT documentdb_api.create_role('{"createRole":"privRoleFind", "roles":[], "privileges":[{"resource":{"db":"testdb","collection":"testcol"},"actions":["find"]}], "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname = 'privRoleFind';
 
--- Test createRole with valid privileges (insert action)
+-- Test createRole with a privilege naming a resource (insert action)
 SELECT documentdb_api.create_role('{"createRole":"privRoleInsert", "roles":[], "privileges":[{"resource":{"db":"testdb","collection":"testcol"},"actions":["insert"]}], "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname = 'privRoleInsert';
 
--- Test createRole with valid privileges (update action)
+-- Test createRole with a privilege naming a resource (update action)
 SELECT documentdb_api.create_role('{"createRole":"privRoleUpdate", "roles":[], "privileges":[{"resource":{"db":"testdb","collection":"testcol"},"actions":["update"]}], "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname = 'privRoleUpdate';
 
--- Test createRole with valid privileges (remove action)
+-- Test createRole with a privilege naming a resource (remove action)
 SELECT documentdb_api.create_role('{"createRole":"privRoleRemove", "roles":[], "privileges":[{"resource":{"db":"testdb","collection":"testcol"},"actions":["remove"]}], "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname = 'privRoleRemove';
 
--- Test createRole with both roles and privileges
+-- Test createRole with both roles and a privilege naming a resource
 SELECT documentdb_api.create_role('{"createRole":"privRoleBoth", "roles":["documentdb_readonly_role"], "privileges":[{"resource":{"db":"testdb","collection":"testcol"},"actions":["find", "insert", "update", "remove"]}], "$db":"admin"}');
 SELECT rolname FROM pg_roles WHERE rolname = 'privRoleBoth';
 
@@ -259,6 +269,8 @@ DROP ROLE IF EXISTS "privRoleBoth";
 
 -- Clean up test roles
 DROP ROLE IF EXISTS "customReadRole";
+DROP ROLE IF EXISTS "longInheritRole";
+DROP ROLE IF EXISTS "emptyInheritRole";
 DROP ROLE IF EXISTS "customAdminRole";
 DROP ROLE IF EXISTS "multiInheritRole";
 DROP ROLE IF EXISTS "emptyRolesRole";

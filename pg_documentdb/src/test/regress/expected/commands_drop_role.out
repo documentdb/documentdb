@@ -97,6 +97,18 @@ ERROR:  'dropRole' cannot be empty.
 -- Test dropRole with non-existent role, should fail
 SELECT documentdb_api.drop_role('{"dropRole":"nonExistentRole", "$db":"admin"}');
 ERROR:  role "nonExistentRole" does not exist
+-- An overlength name must not be truncated into an existing role
+CREATE ROLE "1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij";
+SELECT documentdb_api.drop_role('{"dropRole":"1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk", "$db":"admin"}');
+ERROR:  Role '1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk' not found.
+SELECT rolname FROM pg_roles
+WHERE rolname = '1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij';
+                             rolname                             
+-----------------------------------------------------------------
+ 1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij
+(1 row)
+
+DROP ROLE "1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij";
 -- Test dropRole with invalid JSON, should fail
 SELECT documentdb_api.drop_role('{"dropRole":"invalidJson"');
 ERROR:  invalid input syntax JSON for BSON: Code: '1', Message 'Incomplete JSON' at character 33

@@ -43,6 +43,13 @@ SELECT documentdb_api.drop_role('{"dropRole":"", "$db":"admin"}');
 -- Test dropRole with non-existent role, should fail
 SELECT documentdb_api.drop_role('{"dropRole":"nonExistentRole", "$db":"admin"}');
 
+-- An overlength name must not be truncated into an existing role
+CREATE ROLE "1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij";
+SELECT documentdb_api.drop_role('{"dropRole":"1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk", "$db":"admin"}');
+SELECT rolname FROM pg_roles
+WHERE rolname = '1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij';
+DROP ROLE "1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij";
+
 -- Test dropRole with invalid JSON, should fail
 SELECT documentdb_api.drop_role('{"dropRole":"invalidJson"');
 

@@ -22,7 +22,6 @@
 
 /* Section: General Extension points */
 
-
 /*
  * Returns true if the current Postgres server is a Query Coordinator
  * that also owns the metadata management of schema (DDL).
