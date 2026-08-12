@@ -29,6 +29,10 @@ bool EnableSchemaValidation =
 bool EnableBypassDocumentValidation =
 	DEFAULT_ENABLE_BYPASSDOCUMENTVALIDATION;
 
+/* Added on v0.117, enabled in v0.117, remove after v0.120 */
+#define DEFAULT_ENABLE_NULL_COLLECTION_VALIDATION true
+bool EnableNullCollectionValidation = DEFAULT_ENABLE_NULL_COLLECTION_VALIDATION;
+
 /*
  * SECTION: Authentication & Authorization user flags
  */
@@ -690,6 +694,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableBypassDocumentValidation,
 		DEFAULT_ENABLE_BYPASSDOCUMENTVALIDATION,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_null_collection_validation", newGucPrefix),
+		gettext_noop(
+			"Whether to reject namespace strings containing embedded null characters."),
+		NULL,
+		&EnableNullCollectionValidation,
+		DEFAULT_ENABLE_NULL_COLLECTION_VALIDATION,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

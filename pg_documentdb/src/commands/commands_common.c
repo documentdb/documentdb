@@ -34,6 +34,7 @@ extern bool ThrowDeadlockOnCrud;
 extern bool EnableBackendStatementTimeout;
 extern int MaxCustomCommandTimeout;
 extern bool RumFailOnLostPath;
+extern bool EnableNullCollectionValidation;
 
 /*
  *  This is a list of command options that are not currently supported.
@@ -99,6 +100,27 @@ static int NumberOfIgnoredFields = sizeof(IgnoredCommonSpecFields) /
 static int CompareStringsCaseInsensitive(const void *a, const void *b);
 static pgbson * RewriteDocumentAddObjectIdCore(const bson_value_t *docValue,
 											   bson_value_t *objectIdToWrite);
+
+/*
+ * Rejects an embedded null in a namespace when validation is enabled.
+ * length is the BSON string length in bytes; a null anywhere within those
+ * bytes is illegal, including when additional bytes follow it.
+ */
+void
+ValidateNamespaceStringForEmbeddedNull(const char *value, uint32_t length)
+{
+	if (!EnableNullCollectionValidation || length == 0)
+	{
+		return;
+	}
+
+	if (memchr(value, '\0', length) != NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
+						errmsg("namespaces cannot have embedded null characters")));
+	}
+}
+
 
 /*
  * FindShardKeyValueForDocumentId queries the collection for the shard key value that

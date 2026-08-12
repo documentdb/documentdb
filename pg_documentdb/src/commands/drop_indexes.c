@@ -590,6 +590,8 @@ ParseDropIndexesArg(pgbson *arg, Datum *databaseNameDatum)
 			EnsureTopLevelFieldType("dropIndexes.dropIndexes", &argIter, BSON_TYPE_UTF8);
 
 			const bson_value_t *dropIndexesVal = bson_iter_value(&argIter);
+			ValidateNamespaceStringForEmbeddedNull(dropIndexesVal->value.v_utf8.str,
+												   dropIndexesVal->value.v_utf8.len);
 			dropIndexesArg.collectionName = pstrdup(dropIndexesVal->value.v_utf8.str);
 		}
 		else if (strcmp(argKey, "index") == 0)

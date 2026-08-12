@@ -145,6 +145,20 @@ GenerateListCollectionsQuery(text *databaseDatum, pgbson *listCollectionsSpec,
 				EnsureTopLevelFieldType("filter", &listCollectionsIter,
 										BSON_TYPE_DOCUMENT);
 				filter = *value;
+
+				bson_iter_t filterIter;
+				BsonValueInitIterator(&filter, &filterIter);
+				while (bson_iter_next(&filterIter))
+				{
+					if (strcmp(bson_iter_key(&filterIter), "name") == 0 &&
+						BSON_ITER_HOLDS_UTF8(&filterIter))
+					{
+						const bson_value_t *nameValue = bson_iter_value(&filterIter);
+						ValidateNamespaceStringForEmbeddedNull(
+							nameValue->value.v_utf8.str,
+							nameValue->value.v_utf8.len);
+					}
+				}
 			}
 		}
 		else if (StringViewEqualsCString(&keyView, "cursor"))
@@ -239,6 +253,8 @@ GenerateListIndexesQuery(text *databaseDatum, pgbson *listIndexesSpec,
 			EnsureTopLevelFieldType("listIndexes", &listIndexesIter, BSON_TYPE_UTF8);
 			collectionName.string = bson_iter_utf8(&listIndexesIter,
 												   &collectionName.length);
+			ValidateNamespaceStringForEmbeddedNull(collectionName.string,
+												   collectionName.length);
 		}
 		else if (StringViewEqualsCString(&keyView, "cursor"))
 		{

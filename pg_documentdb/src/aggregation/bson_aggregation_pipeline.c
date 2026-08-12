@@ -1699,6 +1699,8 @@ ParseAggregationQueryAndLookupCollection(text *database, pgbson *aggregationSpec
 										BSON_TYPE_UTF8);
 				collectionName.string = bson_iter_utf8(&aggregationIterator,
 													   &collectionName.length);
+				ValidateNamespaceStringForEmbeddedNull(collectionName.string,
+													   collectionName.length);
 			}
 		}
 		else if (StringViewEqualsCString(&keyView, "pipeline"))
@@ -2133,6 +2135,8 @@ ParseFindQuery(pgbson *findSpec, QueryData *queryData,
 					EnsureTopLevelFieldType("find", &findIterator, BSON_TYPE_UTF8);
 					collectionName.string = bson_iter_utf8(&findIterator,
 														   &collectionName.length);
+					ValidateNamespaceStringForEmbeddedNull(collectionName.string,
+														   collectionName.length);
 					continue;
 				}
 				else if (StringViewEqualsCString(&keyView, "filter"))
@@ -2750,6 +2754,8 @@ GenerateCountQuery(text *databaseDatum, pgbson *countSpec, bool setStatementTime
 			EnsureTopLevelFieldType("count", &countIterator, BSON_TYPE_UTF8);
 			collectionName.string = bson_iter_utf8(&countIterator,
 												   &collectionName.length);
+			ValidateNamespaceStringForEmbeddedNull(collectionName.string,
+												   collectionName.length);
 		}
 		else if (StringViewEqualsCString(&keyView, "query"))
 		{
@@ -2980,6 +2986,8 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 			hasDistinct = true;
 			EnsureTopLevelFieldType("distinct", &distinctIter, BSON_TYPE_UTF8);
 			collectionName.string = bson_iter_utf8(&distinctIter, &collectionName.length);
+			ValidateNamespaceStringForEmbeddedNull(collectionName.string,
+												   collectionName.length);
 		}
 		else if (StringViewEqualsCString(&keyView, "query"))
 		{

@@ -376,6 +376,9 @@ ParseCompactCommandSpec(pgbson *compactSpec, CompactArgs *args)
 		if (strcmp(element.path, "compact") == 0)
 		{
 			EnsureTopLevelFieldType("compact", &specIter, BSON_TYPE_UTF8);
+			ValidateNamespaceStringForEmbeddedNull(
+				element.bsonValue.value.v_utf8.str,
+				element.bsonValue.value.v_utf8.len);
 			args->collectionName = pstrdup(element.bsonValue.value.v_utf8.str);
 		}
 		else if (strcmp(element.path, "$db") == 0)

@@ -646,6 +646,10 @@ HandleMerge(const bson_value_t *existingValue, Query *query,
 	MergeArgs mergeArgs;
 	memset(&mergeArgs, 0, sizeof(mergeArgs));
 	ParseMergeStage(existingValue, context->namespaceName, &mergeArgs);
+	ValidateNamespaceStringForEmbeddedNull(mergeArgs.targetDB.string,
+										   mergeArgs.targetDB.length);
+	ValidateNamespaceStringForEmbeddedNull(mergeArgs.targetCollection.string,
+										   mergeArgs.targetCollection.length);
 
 	/* Look for target collection details */
 	Datum databaseNameDatum = StringViewGetTextDatum(&mergeArgs.targetDB);
@@ -1961,6 +1965,10 @@ HandleOut(const bson_value_t *existingValue, Query *query,
 
 	memset(&outArgs, 0, sizeof(outArgs));
 	ParseOutStage(existingValue, context->namespaceName, &outArgs);
+	ValidateNamespaceStringForEmbeddedNull(outArgs.targetDB.string,
+										   outArgs.targetDB.length);
+	ValidateNamespaceStringForEmbeddedNull(outArgs.targetCollection.string,
+										   outArgs.targetCollection.length);
 	ValidatePreOutputStages(query, "$out");
 
 	MongoCollection *targetCollection =

@@ -260,7 +260,11 @@ ParseFindAndModifyMessage(pgbson *message, Datum *databaseNameDatum)
 									   BsonIterTypeName(&messageIter))));
 			}
 
-			spec.collectionName = bson_iter_dup_utf8(&messageIter, NULL);
+			uint32_t collectionNameLength = 0;
+			spec.collectionName = bson_iter_dup_utf8(&messageIter,
+													 &collectionNameLength);
+			ValidateNamespaceStringForEmbeddedNull(spec.collectionName,
+												   collectionNameLength);
 			if (strlen(spec.collectionName) == 0)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),

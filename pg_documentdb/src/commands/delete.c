@@ -358,7 +358,10 @@ BuildBatchDeletionSpec(bson_iter_t *deleteCommandIter, pgbsonsequence *deleteDoc
 									   BsonIterTypeName(deleteCommandIter))));
 			}
 
-			collectionName = bson_iter_utf8(deleteCommandIter, NULL);
+			uint32_t collectionNameLength = 0;
+			collectionName = bson_iter_utf8(deleteCommandIter, &collectionNameLength);
+			ValidateNamespaceStringForEmbeddedNull(collectionName,
+												   collectionNameLength);
 		}
 		else if (strcmp(field, "deletes") == 0)
 		{

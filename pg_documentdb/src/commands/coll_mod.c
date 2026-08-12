@@ -403,7 +403,11 @@ ParseSpecSetCollModOptions(const pgbson *collModSpec,
 		if (strcmp(key, "collMod") == 0)
 		{
 			EnsureTopLevelFieldType("collMod.collMod", &iter, BSON_TYPE_UTF8);
-			collModOptions->collectionName = bson_iter_utf8(&iter, NULL);
+			uint32_t collectionNameLength = 0;
+			collModOptions->collectionName = bson_iter_utf8(&iter,
+															&collectionNameLength);
+			ValidateNamespaceStringForEmbeddedNull(collModOptions->collectionName,
+												   collectionNameLength);
 		}
 		else if (strcmp(key, "index") == 0)
 		{

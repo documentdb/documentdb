@@ -869,6 +869,8 @@ ParseInverseMatchSpec(const bson_value_t *spec, InverseMatchArgs *args)
 									BSON_TYPE_UTF8);
 			args->fromCollection.string = bson_iter_utf8(&docIter,
 														 &args->fromCollection.length);
+			ValidateNamespaceStringForEmbeddedNull(args->fromCollection.string,
+												   args->fromCollection.length);
 		}
 		else if (strcmp(key, "pipeline") == 0)
 		{
@@ -1012,6 +1014,9 @@ ParseUnionWith(const bson_value_t *existingValue, StringView *collectionFrom,
 							"The $unionWith stage requires its specification to be either an object or a string, but instead encountered %s",
 							BsonTypeName(existingValue->value_type))));
 	}
+
+	ValidateNamespaceStringForEmbeddedNull(collectionFrom->string,
+										   collectionFrom->length);
 }
 
 
@@ -1787,6 +1792,8 @@ ParseLookupStage(const bson_value_t *existingValue, LookupArgs *args)
 				.length = value->value.v_utf8.len,
 				.string = value->value.v_utf8.str
 			};
+			ValidateNamespaceStringForEmbeddedNull(args->from.string,
+												   args->from.length);
 		}
 		else if (strcmp(key, "let") == 0)
 		{
@@ -3123,6 +3130,8 @@ ParseGraphLookupStage(const bson_value_t *existingValue, GraphLookupArgs *args)
 				.length = value->value.v_utf8.len,
 				.string = value->value.v_utf8.str
 			};
+			ValidateNamespaceStringForEmbeddedNull(args->fromCollection.string,
+												   args->fromCollection.length);
 			fromSpecified = true;
 		}
 		else if (strcmp(key, "maxDepth") == 0)

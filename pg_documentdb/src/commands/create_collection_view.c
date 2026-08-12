@@ -319,14 +319,9 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 			EnsureTopLevelFieldType("create.create", &createIter, BSON_TYPE_UTF8);
 
 			uint32_t strLength = 0;
-			spec->name = pstrdup(bson_iter_utf8(&createIter, &strLength));
-
-			if (strlen(spec->name) != (size_t) strLength)
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
-								errmsg(
-									"Namespaces are not allowed to contain any embedded null characters")));
-			}
+			const char *name = bson_iter_utf8(&createIter, &strLength);
+			ValidateNamespaceStringForEmbeddedNull(name, strLength);
+			spec->name = pstrdup(name);
 		}
 		else if (strcmp(key, "viewOn") == 0)
 		{
@@ -334,17 +329,13 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 														 BSON_TYPE_UTF8))
 			{
 				uint32_t strLength = 0;
-				spec->viewOn = pstrdup(bson_iter_utf8(&createIter, &strLength));
+				const char *viewOn = bson_iter_utf8(&createIter, &strLength);
+				ValidateNamespaceStringForEmbeddedNull(viewOn, strLength);
+				spec->viewOn = pstrdup(viewOn);
 				if (strlen(spec->viewOn) == 0)
 				{
 					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 									errmsg("The 'viewOn' field must not be empty")));
-				}
-				else if (strlen(spec->viewOn) != (size_t) strLength)
-				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INVALIDNAMESPACE),
-									errmsg(
-										"Namespaces are not allowed to contain any embedded null characters")));
 				}
 			}
 		}

@@ -309,7 +309,10 @@ BuildBatchInsertionSpec(bson_iter_t *insertCommandIter, pgbsonsequence *insertDo
 									   BsonIterTypeName(insertCommandIter))));
 			}
 
-			collectionName = bson_iter_utf8(insertCommandIter, NULL);
+			uint32_t collectionNameLength = 0;
+			collectionName = bson_iter_utf8(insertCommandIter, &collectionNameLength);
+			ValidateNamespaceStringForEmbeddedNull(collectionName,
+												   collectionNameLength);
 		}
 		else if (strcmp(field, "documents") == 0)
 		{

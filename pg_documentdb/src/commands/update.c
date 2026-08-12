@@ -813,7 +813,10 @@ BuildBatchUpdateSpec(bson_iter_t *updateCommandIter, pgbsonsequence *updateDocs,
 									   BsonIterTypeName(updateCommandIter))));
 			}
 
-			collectionName = bson_iter_utf8(updateCommandIter, NULL);
+			uint32_t collectionNameLength = 0;
+			collectionName = bson_iter_utf8(updateCommandIter, &collectionNameLength);
+			ValidateNamespaceStringForEmbeddedNull(collectionName,
+												   collectionNameLength);
 		}
 		else if (strcmp(field, "updates") == 0)
 		{

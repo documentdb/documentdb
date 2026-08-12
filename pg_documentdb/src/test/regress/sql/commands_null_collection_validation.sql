@@ -1,0 +1,118 @@
+SET search_path TO documentdb_api, documentdb_api_v2, documentdb_core, documentdb_api_catalog;
+SET documentdb.next_collection_id TO 2700;
+SET documentdb.next_collection_index_id TO 2700;
+
+SELECT documentdb_api.insert_one(
+    'null_collection_validation', 'source', '{"_id":1,"a":1}');
+
+SELECT documentdb_api.insert(
+    'null_collection_validation',
+    '{"insert":"source\u0000suffix","documents":[{"_id":2}]}');
+SELECT documentdb_api.update(
+    'null_collection_validation',
+    '{"update":"source\u0000suffix","updates":[{"q":{"_id":1},"u":{"$set":{"a":2}}}]}');
+SELECT documentdb_api.delete(
+    'null_collection_validation',
+    '{"delete":"source\u0000suffix","deletes":[{"q":{},"limit":0}]}');
+SELECT documentdb_api.find_and_modify(
+    'null_collection_validation',
+    '{"findAndModify":"source\u0000suffix","query":{"_id":1},"update":{"$set":{"a":2}}}');
+
+SELECT cursorpage FROM documentdb_api.find_cursor_first_page(
+    'null_collection_validation',
+    '{"find":"source\u0000suffix","filter":{}}');
+SELECT * FROM aggregate_cursor_first_page(
+    'null_collection_validation',
+    '{"aggregate":"source\u0000suffix","pipeline":[],"cursor":{}}',
+    4294967294);
+SELECT document FROM documentdb_api.count_query(
+    'null_collection_validation',
+    '{"count":"source\u0000suffix","query":{}}');
+SELECT document FROM documentdb_api.distinct_query(
+    'null_collection_validation',
+    '{"distinct":"source\u0000suffix","key":"a","query":{}}');
+
+SELECT cursorpage FROM documentdb_api.list_collections_cursor_first_page(
+    'null_collection_validation',
+    '{"listCollections":1,"filter":{"name":"source\u0000suffix"}}');
+
+SELECT cursorpage FROM documentdb_api.list_collections_cursor_first_page(
+    'null_collection_validation',
+    '{"listCollections":1,"filter":{"name":"source\u0000suffix", "name":"source\u0000suffix"}}');
+
+SELECT cursorpage FROM documentdb_api.list_collections_cursor_first_page(
+    'null_collection_validation',
+    '{"listCollections":1,"filter":{"name":"source\u0000suffix", "name":"test"}}');   
+
+SELECT cursorpage FROM documentdb_api.list_collections_cursor_first_page(
+    'null_collection_validation',
+    '{"listCollections":1,"filter":{"name":"test", "name":"source\u0000suffix"}}');     
+
+SELECT cursorpage FROM documentdb_api.list_indexes_cursor_first_page(
+    'null_collection_validation',
+    '{"listIndexes":"source\u0000suffix"}');
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently(
+    'null_collection_validation',
+    '{"createIndexes":"source\u0000suffix","indexes":[{"key":{"a":1},"name":"a_1"}]}',
+    true);
+CALL documentdb_api.drop_indexes(
+    'null_collection_validation',
+    '{"dropIndexes":"source\u0000suffix","index":"a_1"}');
+SELECT documentdb_api_v2.validate(
+    'null_collection_validation',
+    '{"validate":"source\u0000suffix","full":true}');
+SELECT documentdb_api.compact(
+    '{"compact":"source\u0000suffix","$db":"null_collection_validation"}');
+SELECT documentdb_api.coll_mod(
+    'null_collection_validation',
+    'source',
+    '{"collMod":"source\u0000suffix","enableStats":true}');
+SELECT documentdb_api.create_collection_view(
+    'null_collection_validation',
+    '{"create":"target\u0000suffix"}');
+SELECT documentdb_api.create_collection_view(
+    'null_collection_validation',
+    '{"create":"target_view","viewOn":"source\u0000suffix","pipeline":[]}');
+
+SELECT * FROM aggregate_cursor_first_page(
+    'null_collection_validation',
+    '{"aggregate":"source","pipeline":[{"$out":"target\u0000suffix"}],"cursor":{}}',
+    4294967294);
+SELECT * FROM aggregate_cursor_first_page(
+    'null_collection_validation',
+    '{"aggregate":"source","pipeline":[{"$out":{"db":"target\u0000suffix","coll":"target"}}],"cursor":{}}',
+    4294967294);
+SELECT * FROM aggregate_cursor_first_page(
+    'null_collection_validation',
+    '{"aggregate":"source","pipeline":[{"$merge":{"into":"target\u0000suffix"}}],"cursor":{}}',
+    4294967294);
+SELECT * FROM aggregate_cursor_first_page(
+    'null_collection_validation',
+    '{"aggregate":"source","pipeline":[{"$merge":{"into":{"db":"target\u0000suffix","coll":"target"}}}],"cursor":{}}',
+    4294967294);
+
+SELECT * FROM aggregate_cursor_first_page(
+    'null_collection_validation',
+    '{"aggregate":"source","pipeline":[{"$lookup":{"from":"target\u0000suffix","localField":"a","foreignField":"a","as":"joined"}}],"cursor":{}}',
+    4294967294);
+SELECT * FROM aggregate_cursor_first_page(
+    'null_collection_validation',
+    '{"aggregate":"source","pipeline":[{"$unionWith":"target\u0000suffix"}],"cursor":{}}',
+    4294967294);
+SELECT * FROM aggregate_cursor_first_page(
+    'null_collection_validation',
+    '{"aggregate":"source","pipeline":[{"$unionWith":{"coll":"target\u0000suffix","pipeline":[]}}],"cursor":{}}',
+    4294967294);
+COPY (SELECT cursorpage IS NOT NULL FROM aggregate_cursor_first_page(
+    'null_collection_validation',
+    '{"aggregate":"source","pipeline":[{"$unionWith":{"pipeline":[{"$documents":[{"_id":2}]}]}}],"cursor":{}}',
+    4294967294)) TO STDOUT;
+SELECT * FROM aggregate_cursor_first_page(
+    'null_collection_validation',
+    '{"aggregate":"source","pipeline":[{"$graphLookup":{"from":"target\u0000suffix","startWith":"$a","connectFromField":"a","connectToField":"a","as":"joined"}}],"cursor":{}}',
+    4294967294);
+SELECT * FROM aggregate_cursor_first_page(
+    'null_collection_validation',
+    '{"aggregate":"source","pipeline":[{"$inverseMatch":{"path":"a","from":"target\u0000suffix","pipeline":[]}}],"cursor":{}}',
+    4294967294);
