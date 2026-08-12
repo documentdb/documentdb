@@ -11,3 +11,4 @@ test: multinode/move_collection_local_execution
 test: multinode/bson_composite_rct_planner_pruning_tests
 test: multinode/bson_collation_group_decomposed
 test: multinode/collstats_nested_distribution
+test: multinode/commands_update_remote!PG16_OR_LOWER!

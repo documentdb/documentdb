@@ -40,6 +40,14 @@ else
     sed -i -e "s/!PG18_OR_HIGHER!//g" $targetFile
 fi
 
+# !PG16_OR_LOWER!: run the test only on pg<=16; drop the whole schedule line on pg>=17.
+# Used for tests that depend on behavior only present in the citus build used for pg15/16.
+if (( $pg_version >= 17 )); then
+    sed -i -e "/!PG16_OR_LOWER!/d" $targetFile
+else
+    sed -i -e "s/!PG16_OR_LOWER!//g" $targetFile
+fi
+
 
 function ProcessMutateFile()
 {

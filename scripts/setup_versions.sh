@@ -25,7 +25,7 @@ POSTGRES_16_REF="REL_16_10"
 POSTGRES_15_REF="REL_15_14"
 
 # This contains the fix for supporting extended stats on expressions.
-CITUS_12_VERSION=ea7e5fc860b0693e19fb172f55c8b4303803c4cd
+CITUS_12_VERSION=cf0e6c359c07a0273e3946fadaed170e77fa5eea
 CITUS_14_VERSION=fe25f68a96c2d76bffce246b4ce0306f765332b4
 
 # This is commit 6a065fd8dfb280680304991aa30d7f72787fdb04
@@ -75,7 +75,7 @@ function GetCitusVersion()
     echo $CITUS_14_VERSION
   elif [ "$PGVERSION" == "17" ]; then
     echo $CITUS_14_VERSION
-  # allow the caller to specify the version as 12 or v12.1 or v12.1.6
+  # allow the caller to specify the version as 12 or v12.1 or v12.1.6 or v12.1.14
   elif [ "$citusVersion" == "12" ] || [ "$citusVersion" == "v12.1" ] || [ "$citusVersion" == "$CITUS_12_VERSION" ]; then
     echo $CITUS_12_VERSION
   else

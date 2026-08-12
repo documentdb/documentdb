@@ -505,6 +505,67 @@ select count(*) from documentdb_api.collection('db', 'updateme') where document 
 (1 row)
 
 rollback;
+-- $in on an UNSHARDED collection must return a clean result on this single-node
+-- (non-distributed) deployment, whether the $in has values or is empty. Insert
+-- one row, then run updateMany and deleteMany with a filled $in (number, string,
+-- mixed) and an empty $in; each should return a clean result.
+begin;
+-- insert a row
+select 1 from documentdb_api.insert_one('db', 'updateme', '{"a":5, "_id":52, "c":"abc"}');
+ ?column? 
+----------
+        1
+(1 row)
+
+-- updateMany, non-empty $in that matches: number
+select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":5, "b":{"$in":[5]}},"u":{"$set":{"u1":1}},"multi":true}]}');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+-- updateMany, non-empty $in that matches: string
+select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":5, "c":{"$in":["abc"]}},"u":{"$set":{"u2":1}},"multi":true}]}');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+-- updateMany, non-empty $in that matches: mixed types (number and string)
+select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":5, "b":{"$in":[5,"foo"]}},"u":{"$set":{"u3":1}},"multi":true}]}');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+-- updateMany, empty $in matches nothing and is a clean no-op
+select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":5, "c":{"$in":[]}},"u":{"$set":{"u4":1}},"multi":true}]}');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" } }",t)
+(1 row)
+
+-- deleteMany, empty $in matches nothing, still routes
+select documentdb_api.delete('db', '{"delete":"updateme", "deletes":[{"q":{"a":5, "c":{"$in":[]}},"limit":0}]}');
+                                         delete                                         
+----------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+-- deleteMany, non-empty $in removes the inserted row
+select documentdb_api.delete('db', '{"delete":"updateme", "deletes":[{"q":{"a":5, "c":{"$in":["abc"]}},"limit":0}]}');
+                                         delete                                         
+----------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select count(*) from documentdb_api.collection('db', 'updateme') where document @@ '{"a":5}';
+ count 
+-------
+     1
+(1 row)
+
+rollback;
 -- shard the collection
 select documentdb_api.shard_collection('db', 'updateme', '{"a":"hashed"}', false);
  shard_collection 
@@ -574,6 +635,69 @@ select document from documentdb_api.collection('db', 'updateme') where document 
 (1 row)
 
 select count(*) from documentdb_api.collection('db', 'updateme') where document @@ '{"b":0}';
+ count 
+-------
+     1
+(1 row)
+
+rollback;
+-- $in with a shard key filter must route to the shard for updateMany,
+-- whether the $in has values or is empty. Before the fix an empty $in became a
+-- plain false, which dropped the shard key filter and made the write hit zero
+-- shards (a shard-routing error). Insert one row, then run updateMany and
+-- deleteMany with a filled $in (number, string, mixed) and an empty $in; each
+-- should route to the shard and return a clean result.
+begin;
+-- insert a row on shard a=5
+select 1 from documentdb_api.insert_one('db', 'updateme', '{"a":5, "_id":50, "c":"abc"}');
+ ?column? 
+----------
+        1
+(1 row)
+
+-- updateMany, non-empty $in that matches: number
+select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":5, "b":{"$in":[5]}},"u":{"$set":{"u1":1}},"multi":true}]}');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+-- updateMany, non-empty $in that matches: string
+select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":5, "c":{"$in":["abc"]}},"u":{"$set":{"u2":1}},"multi":true}]}');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+-- updateMany, non-empty $in that matches: mixed types (number and string)
+select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":5, "b":{"$in":[5,"foo"]}},"u":{"$set":{"u3":1}},"multi":true}]}');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""1"" }, ""n"" : { ""$numberInt"" : ""1"" } }",t)
+(1 row)
+
+-- updateMany, empty $in matches nothing (the routing regression case)
+select documentdb_api.update('db', '{"update":"updateme", "updates":[{"q":{"a":5, "c":{"$in":[]}},"u":{"$set":{"u4":1}},"multi":true}]}');
+                                                               update                                                               
+------------------------------------------------------------------------------------------------------------------------------------
+ ("{ ""ok"" : { ""$numberDouble"" : ""1.0"" }, ""nModified"" : { ""$numberInt"" : ""0"" }, ""n"" : { ""$numberInt"" : ""0"" } }",t)
+(1 row)
+
+-- deleteMany, empty $in matches nothing, still routes
+select documentdb_api.delete('db', '{"delete":"updateme", "deletes":[{"q":{"a":5, "c":{"$in":[]}},"limit":0}]}');
+                                         delete                                         
+----------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+-- deleteMany, non-empty $in removes the inserted row
+select documentdb_api.delete('db', '{"delete":"updateme", "deletes":[{"q":{"a":5, "c":{"$in":["abc"]}},"limit":0}]}');
+                                         delete                                         
+----------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+select count(*) from documentdb_api.collection('db', 'updateme') where document @@ '{"a":5}';
  count 
 -------
      1
