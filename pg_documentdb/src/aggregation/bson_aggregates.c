@@ -1478,7 +1478,7 @@ ValidateMergeObjectsInput(pgbson *input)
 		singleBsonElement.bsonValue.value_type != BSON_TYPE_NULL)
 	{
 		ereport(ERROR,
-				errcode(ERRCODE_DOCUMENTDB_DOLLARMERGEOBJECTSINVALIDTYPE),
+				errcode(ERRCODE_DOCUMENTDB_LOCATION5911200),
 				errmsg(
 					"$mergeObjects needs both inputs to be objects, but the provided input %s has the type %s",
 					BsonValueToJsonForLogging(&singleBsonElement.bsonValue),

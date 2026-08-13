@@ -1005,7 +1005,7 @@ BsonValidateAndExtractTextQuery(const bson_value_t *queryValue,
 
 	if (searchValue->value_type != BSON_TYPE_UTF8)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
 						errmsg(
 							"The $search was given a value of the wrong type; a string was expected, but instead a %s was provided.",
 							BsonTypeName(searchValue->value_type))));
@@ -1014,7 +1014,7 @@ BsonValidateAndExtractTextQuery(const bson_value_t *queryValue,
 	if (languageValue.value_type != BSON_TYPE_EOD &&
 		languageValue.value_type != BSON_TYPE_UTF8)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
 						errmsg(
 							"Expected 'string' type for $language but found '%s' type",
 							BsonTypeName(languageValue.value_type))));
@@ -1023,7 +1023,7 @@ BsonValidateAndExtractTextQuery(const bson_value_t *queryValue,
 	if (caseSensitive->value_type != BSON_TYPE_EOD &&
 		caseSensitive->value_type != BSON_TYPE_BOOL)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
 						errmsg(
 							"Expected 'bool' type for $caseSensitive but found '%s' type",
 							BsonTypeName(caseSensitive->value_type))));
@@ -1032,7 +1032,7 @@ BsonValidateAndExtractTextQuery(const bson_value_t *queryValue,
 	if (diacriticSensitive->value_type != BSON_TYPE_EOD &&
 		diacriticSensitive->value_type != BSON_TYPE_BOOL)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
 						errmsg(
 							"Expected 'bool' type for $diacriticSensitivebut found '%s' type",
 							BsonTypeName(diacriticSensitive->value_type))));

@@ -3421,7 +3421,7 @@ CreateExprForBitwiseQueryOperators(bson_iter_t *operatorDocIterator,
 
 		default:
 		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 							errmsg(
 								"%s takes an Array, a number, or a BinData but received: %s: \\%s\\",
 								path,
@@ -4686,7 +4686,7 @@ SortAndWriteInt32BsonTypeArray(const bson_value_t *bsonArray, pgbson_writer *wri
 			{
 				case BSON_TYPE_DOUBLE:
 				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 									errmsg(
 										"Expected value of integer type: %s: %s", opName,
 										BsonValueToJsonForLogging(element)),
@@ -4700,7 +4700,7 @@ SortAndWriteInt32BsonTypeArray(const bson_value_t *bsonArray, pgbson_writer *wri
 				case BSON_TYPE_DECIMAL128:
 				case BSON_TYPE_INT64:
 				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 									errmsg(
 										"Expected an integer but got '%s' type for element %s.0",
 										BsonTypeName(element->value_type),
@@ -4713,7 +4713,7 @@ SortAndWriteInt32BsonTypeArray(const bson_value_t *bsonArray, pgbson_writer *wri
 
 				default:
 				{
-					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 									errmsg(
 										"bit positions must be an integer but got: %d: \\%s\\",
 										arrayLength, BsonValueToJsonForLogging(element)),
@@ -4733,7 +4733,7 @@ SortAndWriteInt32BsonTypeArray(const bson_value_t *bsonArray, pgbson_writer *wri
 
 		if (elementValue < 0)
 		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE), errmsg(
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
 								"bit positions must be >= 0 but got: %d: \\%s\\",
 								arrayLength, BsonValueToJsonForLogging(element))));
 		}

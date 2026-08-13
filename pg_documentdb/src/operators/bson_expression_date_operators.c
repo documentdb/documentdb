@@ -5114,7 +5114,7 @@ ValidateInputForDollarDateAddSubtract(char *opName, bool isDateAdd,
 
 	if (unit->value_type != BSON_TYPE_UTF8)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION5166404), errmsg(
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION5439013), errmsg(
 							"%s expects string defining the time unit",
 							opName),
 						errdetail_log("%s expects string defining the time unit",
@@ -5884,7 +5884,7 @@ ValidateInputArgumentForDateDiff(bson_value_t *startDate, bson_value_t *endDate,
 	*dateUnitEnum = GetDateUnitFromString(unit->value.v_utf8.str);
 	if (*dateUnitEnum == DateUnit_Invalid)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION5439014), errmsg(
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE), errmsg(
 							"The 'unit' parameter in $dateDiff has an unrecognized time unit value: %s",
 							unit->value.v_utf8.str),
 						errdetail_log(

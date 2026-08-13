@@ -482,7 +482,7 @@ ParseGeonearRequest(const pgbson *geoNearQuery)
 
 			if (index == 0)
 			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 								errmsg(
 									"A geo near query requires the $geometry to be specified.")));
 			}
@@ -490,7 +490,7 @@ ParseGeonearRequest(const pgbson *geoNearQuery)
 			if (index == 1)
 			{
 				ereport(ERROR, (
-							errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH),
+							errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 							errmsg("Invalid parameter detected in geo near query: %s",
 								   (request->isGeoJsonPoint ? "coordinates" : lastkey)),
 							errdetail_log(
