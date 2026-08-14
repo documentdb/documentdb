@@ -103,11 +103,19 @@ ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 # ----------- Final Gateway Image -----------
 FROM runtime-base AS final
 ARG POSTGRES_VERSION
+ARG DOCUMENTDB_VERSION=unknown
+ARG GIT_COMMIT=unknown
+ARG BUILD_DATE=""
+ARG IMAGE_SOURCE="https://github.com/documentdb/documentdb"
 
 # Identity labels so tooling can discover the container by label alone, without
 # relying on its name/port or inspecting logs/env (which hold credentials).
 LABEL org.opencontainers.image.title="DocumentDB Local" \
-      com.documentdb.documentdb.local="true"
+      com.documentdb.documentdb.local="true" \
+      org.opencontainers.image.version="${DOCUMENTDB_VERSION}" \
+      org.opencontainers.image.revision="${GIT_COMMIT}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.source="${IMAGE_SOURCE}"
 
 ENV LANGUAGE=en_US.UTF-8 \
     TERM=xterm-256color
@@ -179,4 +187,16 @@ WORKDIR /home/documentdb/gateway/scripts
 # banner (printed by the entrypoint) for the `-v` guidance users must follow
 # to persist.
 VOLUME ["/data"]
+
+RUN v="$(dpkg-query -W -f='${Version}' "postgresql-${POSTGRES_VERSION}-documentdb")" \
+        && [ -n "$v" ] \
+        || { echo "ERROR: cannot resolve the installed postgresql-${POSTGRES_VERSION}-documentdb version; /version.txt would misreport this build" >&2; exit 1; }; \
+    if [ "${DOCUMENTDB_VERSION}" != "unknown" ] \
+        && [ "$(printf '%s' "${DOCUMENTDB_VERSION}" | tr - .)" != "$(printf '%s' "$v" | tr - .)" ]; then \
+        echo "ERROR: DOCUMENTDB_VERSION build arg '${DOCUMENTDB_VERSION}' does not match the installed package version '$v'" >&2; exit 1; \
+    fi; \
+    printf '%s (commit %s, built %s, postgresql %s)\n' \
+        "$v" "${GIT_COMMIT}" "${BUILD_DATE:-unknown}" "${POSTGRES_VERSION}" \
+    | sudo tee /version.txt >/dev/null
+
 ENTRYPOINT ["/bin/bash", "-c", "/home/documentdb/gateway/scripts/emulator_entrypoint.sh \"$@\"", "--"]
