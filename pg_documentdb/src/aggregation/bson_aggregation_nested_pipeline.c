@@ -54,7 +54,6 @@
 #define NESTED_PIPELINE_VAR_FLAG 0x0F000000
 
 const int MaximumLookupPipelineDepth = 20;
-extern bool EnableOperatorVariablesInLookup;
 extern bool ForceNestedLookupPipelineAfterJoin;
 
 /*
@@ -4202,7 +4201,7 @@ ValidateVariableIsDefined(AggregationExpressionData *parsedExpression,
 	const bson_value_t parsedVarName = parsedExpression->value;
 	const char *nameWithoutPrefix = parsedVarName.value.v_utf8.str + 2;
 
-	if (EnableOperatorVariablesInLookup && operatorVariables)
+	if (operatorVariables)
 	{
 		/* Get the actual variable name and verify if it's an operator variable alias*/
 		StringView variableName =

@@ -207,23 +207,6 @@ SELECT document FROM bson_aggregation_pipeline('iosfp_db', '{ "aggregate": "iosf
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('iosfp_db', '{ "aggregate": "iosfp_coll", "pipeline": [ { "$match": { "country": { "$gte": "Brazil" } } }, { "$count": "n" } ] }')$$, p_ignore_heap_fetches => true);
 
 -- ===========================================================================
--- SECTION F: GUC interaction (enableIndexOnlyScanForCoveredAggregateTargets)
--- ===========================================================================
-
--- The GUC `enableIndexOnlyScanForCoveredAggregateTargets` only gates IOS for queries
--- that have aggregates. Find queries with projection should NOT be affected.
-
-SET documentdb.enableIndexOnlyScanForCoveredAggregateTargets TO off;
-
--- F1: find with projection (no aggregates) -> IOS still allowed
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "filter": { "country": { "$gte": "Brazil" } }, "projection": { "country": 1, "_id": 0 } }')$$, p_ignore_heap_fetches => true);
-
--- F2: aggregation with $project that references document var via $group -> IOS gated off
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($sql$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('iosfp_db', '{ "aggregate": "iosfp_coll", "pipeline": [ { "$match": { "country": { "$gte": "Brazil" } } }, { "$group": { "_id": "$country", "first": { "$first": "$$ROOT" } } } ] }')$sql$, p_ignore_heap_fetches => true);
-
-RESET documentdb.enableIndexOnlyScanForCoveredAggregateTargets;
-
--- ===========================================================================
 -- SECTION G: hint preservation
 -- ===========================================================================
 

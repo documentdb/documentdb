@@ -418,33 +418,20 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 (5 rows)
 
 set enable_indexonlyscan to on;
--- turning off enableIndexOnlyScanForCoveredAggregateTargets should keep count IOS enabled,
--- but disable the new covered aggregate-target IOS path
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
-SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
-                                            run_explain_and_trim                                            
-------------------------------------------------------------------------------------------------------------
- Aggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('count'::text, documentdb_api_internal.bsoncount(1))
-   ->  Index Only Scan using country_1 on documentdb_data.documents_9101 collection (actual rows=7 loops=1)
-         Output: collection.document
-         Index Cond: (collection.document @< '{ "country" : "Mexico" }'::bson)
-         Heap Fetches: xxx
-(6 rows)
-
+-- covered aggregate-target queries use index only scans unconditionally
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$gte": "Mexico"}} }, { "$group" : { "_id" : "$country", "n" : { "$sum" : 1 } } }]}') $$, p_ignore_heap_fetches => true);
                                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                               
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=3 loops=1)
    Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'n'::text, bsonsum('{ "" : { "$numberInt" : "1" } }'::bson)), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   ->  Index Scan using country_1 on documentdb_data.documents_9101 collection (actual rows=9 loops=1)
+   ->  Index Only Scan using country_1 on documentdb_data.documents_9101 collection (actual rows=9 loops=1)
          Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$country" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
          Index Cond: (collection.document @>= '{ "country" : "Mexico" }'::bson)
          Order By: (collection.document |-<> '{ "country" : { "$numberInt" : "1" } }'::bson)
-(7 rows)
+         Heap Fetches: xxx
+(8 rows)
 
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
 -- index only scan with a truncated scan key should work fine
 SELECT FORMAT('{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "%s"}} }, { "$count": "count" }]}', repeat('a', 5000))::bson large_scan_key \gset
 PREPARE large_prepare_query AS
@@ -821,31 +808,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          Heap Fetches: xxx
 (6 rows)
 
--- turning off enableIndexOnlyScanForRangeMatch should keep hinted count IOS enabled
--- when standard quals are used, but disable the new fullScan range-match IOS path
-set documentdb.enableIndexOnlyScanForRangeMatch to off;
-SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$match" : {"city": {"$eq": "Seattle"}, "rent": {"$gt": 4000} }}, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
-                                                                   run_explain_and_trim                                                                    
------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('count'::text, documentdb_api_internal.bsoncount(1))
-   ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=4 loops=1)
-         Output: collection.document
-         Index Cond: ((collection.document @= '{ "city" : "Seattle" }'::bson) AND (collection.document @> '{ "rent" : { "$numberInt" : "4000" } }'::bson))
-         Heap Fetches: xxx
-(6 rows)
-
-SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
-                                           run_explain_and_trim                                           
-----------------------------------------------------------------------------------------------------------
- Aggregate (actual rows=1 loops=1)
-   Output: bson_repath_and_build('count'::text, documentdb_api_internal.bsoncount(1))
-   ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: collection.shard_key_value, collection.object_id, collection.document
-         Index Cond: (collection.document @<> '{ "city" : { "fullScan" : true } }'::bson)
-(5 rows)
-
-set documentdb.enableIndexOnlyScanForRangeMatch to on;
 -- hint + $match + covered sort + $count: should use IOS
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$match" : {"city": {"$gte": "A"}} }, { "$sort": {"city": 1, "rent": 1} }, { "$count": "total" }]}') $$, p_ignore_heap_fetches => true);
                                                                                     run_explain_and_trim                                                                                    
@@ -1387,21 +1349,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
 (7 rows)
 
--- representative explain pair for the covered-target IOS GUC
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
-SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : "$city", "totalRent" : { "$sum" : "$rent" } } }]}') $$, p_ignore_heap_fetches => true);
-                                                                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                                                                          
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate (actual rows=3 loops=1)
-   Output: bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'totalRent'::text, bsonsum(documentdb_api_internal.bson_expression_get(document, '{ "" : "$rent" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: documentdb_api_internal.bson_expression_get(collection.document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   ->  Index Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
-         Output: documentdb_api_internal.bson_expression_get(document, '{ "" : "$city" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
-         Index Cond: (collection.document @<> '{ "city" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-         Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
-(7 rows)
-
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
+-- representative explain for covered aggregate-target index only scans
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : "$city", "totalRent" : { "$sum" : "$rent" } } }]}') $$, p_ignore_heap_fetches => true);
                                                                                                                                                                                                                                                                           run_explain_and_trim                                                                                                                                                                                                                                                                          
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -1415,18 +1363,8 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          Heap Fetches: xxx
 (8 rows)
 
--- CORRECTNESS TESTS (verify actual values with the covered-target IOS GUC off and then on)
+-- CORRECTNESS TESTS
 -- $count correctness
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
-SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : "$city", "cnt" : { "$count" : {} } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
-                       document                        
--------------------------------------------------------
- { "_id" : "Chicago", "cnt" : { "$numberInt" : "4" } }
- { "_id" : "NYC", "cnt" : { "$numberInt" : "9" } }
- { "_id" : "Seattle", "cnt" : { "$numberInt" : "7" } }
-(3 rows)
-
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : "$city", "cnt" : { "$count" : {} } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
                        document                        
 -------------------------------------------------------
@@ -1436,16 +1374,6 @@ SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregat
 (3 rows)
 
 -- $sum correctness
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
-SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : "$city", "totalRent" : { "$sum" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
-                            document                             
------------------------------------------------------------------
- { "_id" : "Chicago", "totalRent" : { "$numberInt" : "9400" } }
- { "_id" : "NYC", "totalRent" : { "$numberInt" : "25200" } }
- { "_id" : "Seattle", "totalRent" : { "$numberInt" : "29700" } }
-(3 rows)
-
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : "$city", "totalRent" : { "$sum" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
                             document                             
 -----------------------------------------------------------------
@@ -1455,16 +1383,6 @@ SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregat
 (3 rows)
 
 -- $avg correctness
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
-SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : "$city", "avgRent" : { "$avg" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
-                                    document                                     
----------------------------------------------------------------------------------
- { "_id" : "Chicago", "avgRent" : { "$numberDouble" : "2350.0" } }
- { "_id" : "NYC", "avgRent" : { "$numberDouble" : "2800.0" } }
- { "_id" : "Seattle", "avgRent" : { "$numberDouble" : "4242.857142857143117" } }
-(3 rows)
-
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : "$city", "avgRent" : { "$avg" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
                                     document                                     
 ---------------------------------------------------------------------------------
@@ -1474,16 +1392,6 @@ SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregat
 (3 rows)
 
 -- $min correctness
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
-SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : "$city", "minRent" : { "$min" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
-                           document                           
---------------------------------------------------------------
- { "_id" : "Chicago", "minRent" : { "$numberInt" : "2000" } }
- { "_id" : "NYC", "minRent" : { "$numberInt" : "2000" } }
- { "_id" : "Seattle", "minRent" : { "$numberInt" : "3500" } }
-(3 rows)
-
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : "$city", "minRent" : { "$min" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
                            document                           
 --------------------------------------------------------------
@@ -1493,16 +1401,6 @@ SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregat
 (3 rows)
 
 -- $max correctness
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
-SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : "$city", "maxRent" : { "$max" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
-                           document                           
---------------------------------------------------------------
- { "_id" : "Chicago", "maxRent" : { "$numberInt" : "2700" } }
- { "_id" : "NYC", "maxRent" : { "$numberInt" : "3500" } }
- { "_id" : "Seattle", "maxRent" : { "$numberInt" : "5000" } }
-(3 rows)
-
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : "$city", "maxRent" : { "$max" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
                            document                           
 --------------------------------------------------------------
@@ -1512,16 +1410,6 @@ SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregat
 (3 rows)
 
 -- $first correctness on the IOS path (no explicit sort; relies on ordered index traversal)
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
-SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : "$city", "firstRent" : { "$first" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
-                            document                            
-----------------------------------------------------------------
- { "_id" : "Chicago", "firstRent" : { "$numberInt" : "2000" } }
- { "_id" : "NYC", "firstRent" : { "$numberInt" : "2000" } }
- { "_id" : "Seattle", "firstRent" : { "$numberInt" : "3500" } }
-(3 rows)
-
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : "$city", "firstRent" : { "$first" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
                             document                            
 ----------------------------------------------------------------
@@ -1531,16 +1419,6 @@ SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregat
 (3 rows)
 
 -- $last correctness on the IOS path (no explicit sort; relies on ordered index traversal)
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
-SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : "$city", "lastRent" : { "$last" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
-                           document                            
----------------------------------------------------------------
- { "_id" : "Chicago", "lastRent" : { "$numberInt" : "2700" } }
- { "_id" : "NYC", "lastRent" : { "$numberInt" : "3500" } }
- { "_id" : "Seattle", "lastRent" : { "$numberInt" : "5000" } }
-(3 rows)
-
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : "$city", "lastRent" : { "$last" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
                            document                            
 ---------------------------------------------------------------
@@ -1550,24 +1428,6 @@ SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregat
 (3 rows)
 
 -- sorted $first correctness (use explicit sort so the selected value is deterministic)
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
-SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "rent": 1} }, { "$group" : { "_id" : "$city", "firstRent" : { "$first" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
-                            document                            
-----------------------------------------------------------------
- { "_id" : "Chicago", "firstRent" : { "$numberInt" : "2000" } }
- { "_id" : "NYC", "firstRent" : { "$numberInt" : "2000" } }
- { "_id" : "Seattle", "firstRent" : { "$numberInt" : "3500" } }
-(3 rows)
-
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
-SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "rent": 1} }, { "$group" : { "_id" : "$city", "firstRent" : { "$first" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
-                            document                            
-----------------------------------------------------------------
- { "_id" : "Chicago", "firstRent" : { "$numberInt" : "2000" } }
- { "_id" : "NYC", "firstRent" : { "$numberInt" : "2000" } }
- { "_id" : "Seattle", "firstRent" : { "$numberInt" : "3500" } }
-(3 rows)
-
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "rent": 1} }, { "$group" : { "_id" : "$city", "firstRent" : { "$first" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
                             document                            
 ----------------------------------------------------------------
@@ -1577,24 +1437,6 @@ SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregat
 (3 rows)
 
 -- sorted $last correctness (use explicit sort so the selected value is deterministic)
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
-SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "rent": 1} }, { "$group" : { "_id" : "$city", "lastRent" : { "$last" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
-                           document                            
----------------------------------------------------------------
- { "_id" : "Chicago", "lastRent" : { "$numberInt" : "2700" } }
- { "_id" : "NYC", "lastRent" : { "$numberInt" : "3500" } }
- { "_id" : "Seattle", "lastRent" : { "$numberInt" : "5000" } }
-(3 rows)
-
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
-SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "rent": 1} }, { "$group" : { "_id" : "$city", "lastRent" : { "$last" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
-                           document                            
----------------------------------------------------------------
- { "_id" : "Chicago", "lastRent" : { "$numberInt" : "2700" } }
- { "_id" : "NYC", "lastRent" : { "$numberInt" : "3500" } }
- { "_id" : "Seattle", "lastRent" : { "$numberInt" : "5000" } }
-(3 rows)
-
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$sort": {"city": 1, "rent": 1} }, { "$group" : { "_id" : "$city", "lastRent" : { "$last" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
                            document                            
 ---------------------------------------------------------------
@@ -1604,16 +1446,6 @@ SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregat
 (3 rows)
 
 -- mixed accumulators correctness
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
-SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : "$city", "totalRent" : { "$sum" : "$rent" }, "cnt" : { "$count" : {} }, "minRent" : { "$min" : "$rent" }, "maxRent" : { "$max" : "$rent" }, "avgRent" : { "$avg" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
-                                                                                                                document                                                                                                                 
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "_id" : "Chicago", "totalRent" : { "$numberInt" : "9400" }, "cnt" : { "$numberInt" : "4" }, "minRent" : { "$numberInt" : "2000" }, "maxRent" : { "$numberInt" : "2700" }, "avgRent" : { "$numberDouble" : "2350.0" } }
- { "_id" : "NYC", "totalRent" : { "$numberInt" : "25200" }, "cnt" : { "$numberInt" : "9" }, "minRent" : { "$numberInt" : "2000" }, "maxRent" : { "$numberInt" : "3500" }, "avgRent" : { "$numberDouble" : "2800.0" } }
- { "_id" : "Seattle", "totalRent" : { "$numberInt" : "29700" }, "cnt" : { "$numberInt" : "7" }, "minRent" : { "$numberInt" : "3500" }, "maxRent" : { "$numberInt" : "5000" }, "avgRent" : { "$numberDouble" : "4242.857142857143117" } }
-(3 rows)
-
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$group" : { "_id" : "$city", "totalRent" : { "$sum" : "$rent" }, "cnt" : { "$count" : {} }, "minRent" : { "$min" : "$rent" }, "maxRent" : { "$max" : "$rent" }, "avgRent" : { "$avg" : "$rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
                                                                                                                 document                                                                                                                 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -1643,15 +1475,6 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('iosdb_rum_missin
 (1 row)
 
 VACUUM (ANALYZE ON, FREEZE ON);
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
-SELECT document FROM bson_aggregation_pipeline('iosdb_rum_missing', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$match" : {"city": "Seattle"} }, { "$group" : { "_id" : "$rent", "n" : { "$sum" : 1 } } }, { "$sort" : {"_id" : 1} }], "cursor" : {}}');
-                              document                               
----------------------------------------------------------------------
- { "_id" : null, "n" : { "$numberInt" : "1" } }
- { "_id" : { "$numberInt" : "1000" }, "n" : { "$numberInt" : "1" } }
-(2 rows)
-
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_missing', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$match" : {"city": "Seattle"} }, { "$group" : { "_id" : "$rent", "n" : { "$sum" : 1 } } }, { "$sort" : {"_id" : 1} }], "cursor" : {}}') $$, p_ignore_heap_fetches => true);
                                                                                                                                                                                                                             run_explain_and_trim                                                                                                                                                                                                                             
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -1960,18 +1783,7 @@ SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate
  { "_id" : "98101", "cnt" : { "$numberInt" : "1" } }
 (2 rows)
 
--- D-G9: correctness parity with the covered-target IOS GUC off vs on for
--- a dotted-path $group. Both runs must produce identical output.
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
-SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "hint" : "addr_city_rent_1", "pipeline" : [{ "$group" : { "_id" : "$addr.city", "totalRent" : { "$sum" : "$addr.rent" }, "cnt" : { "$count" : {} }, "minRent" : { "$min" : "$addr.rent" }, "maxRent" : { "$max" : "$addr.rent" }, "avgRent" : { "$avg" : "$addr.rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
-                                                                                                                document                                                                                                                 
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "_id" : "Chicago", "totalRent" : { "$numberInt" : "7300" }, "cnt" : { "$numberInt" : "3" }, "minRent" : { "$numberInt" : "2000" }, "maxRent" : { "$numberInt" : "2800" }, "avgRent" : { "$numberDouble" : "2433.3333333333334849" } }
- { "_id" : "NYC", "totalRent" : { "$numberInt" : "9700" }, "cnt" : { "$numberInt" : "3" }, "minRent" : { "$numberInt" : "3000" }, "maxRent" : { "$numberInt" : "3500" }, "avgRent" : { "$numberDouble" : "3233.3333333333334849" } }
- { "_id" : "Seattle", "totalRent" : { "$numberInt" : "17700" }, "cnt" : { "$numberInt" : "4" }, "minRent" : { "$numberInt" : "4000" }, "maxRent" : { "$numberInt" : "5000" }, "avgRent" : { "$numberDouble" : "4425.0" } }
-(3 rows)
-
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
+-- D-G9: dotted-path $group correctness with covered aggregate targets.
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum_dotted', '{ "aggregate" : "rent_data", "hint" : "addr_city_rent_1", "pipeline" : [{ "$group" : { "_id" : "$addr.city", "totalRent" : { "$sum" : "$addr.rent" }, "cnt" : { "$count" : {} }, "minRent" : { "$min" : "$addr.rent" }, "maxRent" : { "$max" : "$addr.rent" }, "avgRent" : { "$avg" : "$addr.rent" } } }, { "$sort": {"_id": 1} }], "cursor" : {}}');
                                                                                                                 document                                                                                                                 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -2041,16 +1853,7 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          Index Cond: (collection.document @= '{ "city" : "Seattle" }'::bson)
 (7 rows)
 
--- NG4: correctness parity with enableIndexOnlyScanForCoveredAggregateTargets
--- off vs on for a no-accumulator $group. Both runs must produce identical output.
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to off;
-SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$match" : {"city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$city" } }], "cursor" : {}}');
-       document        
------------------------
- { "_id" : "Seattle" }
-(1 row)
-
-set documentdb.enableIndexOnlyScanForCoveredAggregateTargets to on;
+-- NG4: no-accumulator $group correctness.
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$match" : {"city": {"$eq": "Seattle"}} }, { "$group" : { "_id" : "$city" } }], "cursor" : {}}');
        document        
 -----------------------
@@ -2264,7 +2067,6 @@ SELECT COUNT(documentdb_api.insert_one('iosdb_rum', 'sum_const_test', FORMAT('{ 
    100
 (1 row)
 
-SET documentdb.enableIndexOnlyScanForCoveredAggregateTargets TO on;
 -- Result correctness must hold both with the legacy $sum accumulator and the
 -- new with-expr accumulator path; both runs should produce the same counts.
 SET documentdb.enableNewMinMaxAccumulators TO off;
@@ -2299,7 +2101,6 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          Heap Fetches: xxx
 (8 rows)
 
-RESET documentdb.enableIndexOnlyScanForCoveredAggregateTargets;
 RESET documentdb.enableNewWithExprAccumulators;
 SELECT documentdb_api.drop_collection('iosdb_rum', 'sum_const_test');
  drop_collection 

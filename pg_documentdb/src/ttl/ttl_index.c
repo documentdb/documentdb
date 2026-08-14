@@ -46,9 +46,6 @@ extern bool EnableTTLBatchObservability;
 extern bool SkipRepeatDeleteForUnOrderedIndex;
 extern int MaxTTLBatchSizeUnorderedIndex;
 
-extern bool TTLSkipCaughtUpIndexes;
-
-
 /* --------------------------------------------------------- */
 /* Data-types */
 /* --------------------------------------------------------- */
@@ -500,7 +497,7 @@ delete_expired_rows(PG_FUNCTION_ARGS)
 			 *  expired rows. Even if large number of documents start expiring for that index within
 			 *  that minute, in the worst case we delay processing by 60 seconds.
 			 */
-			if (TTLSkipCaughtUpIndexes && rowsDeletedForCurrentIndex == 0)
+			if (rowsDeletedForCurrentIndex == 0)
 			{
 				if (LogTTLProgressActivity)
 				{

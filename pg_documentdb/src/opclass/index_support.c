@@ -335,8 +335,6 @@ typedef struct RctQualInfo
 extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
-extern bool EnableIndexOnlyScanForCoveredAggregateTargets;
-extern bool EnableIndexOnlyScanForRangeMatch;
 extern bool EnableIndexOnlyScanForFindProject;
 extern bool TrackIndexOnlyScanFindCandidate;
 extern bool EnableObjectIdFuncExprConversion;
@@ -2360,11 +2358,6 @@ ExprIsValidForIndexOnlyScan(Expr *expr, bytea *indexOptions, bool *isShardKeyExp
 			if (IsA(expr, OpExpr) &&
 				((OpExpr *) expr)->opno == BsonRangeMatchOperatorOid())
 			{
-				if (!EnableIndexOnlyScanForRangeMatch)
-				{
-					return false;
-				}
-
 				Expr *secondArg = lsecond(args);
 				if (IsA(secondArg, Const))
 				{
@@ -3115,12 +3108,6 @@ IsQueryEligibleForIndexOnlyScan(PlannerInfo *root, Index scanRti, bool *hasDocum
 
 	if (projectionState.hasDocumentVar)
 	{
-		if (!EnableIndexOnlyScanForCoveredAggregateTargets && (planHasAggregates ||
-															   planHasGroupby))
-		{
-			return false;
-		}
-
 		if (hasDocumentVar != NULL)
 		{
 			*hasDocumentVar = true;

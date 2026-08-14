@@ -39,8 +39,6 @@
  */
 #define SIZE_OF_PARENT_OF_ARRAY_FOR_BSON 7
 
-extern bool EnableOperatorVariablesInLookup;
-
 /* --------------------------------------------------------- */
 /* Type declaration */
 /* --------------------------------------------------------- */
@@ -4575,11 +4573,6 @@ RegisterOperatorVariables(ParseAggregationExpressionContext *parentContext,
 						  ParseAggregationExpressionContext *currentContext,
 						  List *operatorVariablesList)
 {
-	if (!EnableOperatorVariablesInLookup)
-	{
-		return;
-	}
-
 	/* We need to override the shallow copy of the parent's variables */
 	currentContext->operatorVariables = CreateStringViewHashSet();
 	if (parentContext->operatorVariables)

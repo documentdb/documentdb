@@ -848,9 +848,7 @@ SELECT documentdb_api.insert_one('db','courses','{ "_id": 101, "name": "Distribu
 SELECT documentdb_api.insert_one('db','courses','{ "_id": 102, "name": "Data Structures", "school": "School A", "SharedFieldRefs": [{ "_id": 2 }, { "_id": 3 }] }', NULL);
 SELECT documentdb_api.insert_one('db','courses','{ "_id": 201, "name": "Calculus I", "school": "School B", "SharedFieldRefs": [{ "_id": 3 }, { "_id": 4 }] }', NULL);
 
--- error; disable GUC EnableOperatorVariablesInLookup
-SET documentdb.EnableOperatorVariablesInLookup TO off;
-
+-- implicit $$this operator variable
 SELECT document FROM bson_aggregation_pipeline(
   'db',
   '{
@@ -886,7 +884,7 @@ SELECT document FROM bson_aggregation_pipeline(
   }'
 );
 
-SET documentdb.EnableOperatorVariablesInLookup TO on;
+-- explicit operator variable alias
 SELECT document FROM bson_aggregation_pipeline(
   'db',
   '{
@@ -1198,9 +1196,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '{
 }');
 
 -- $lookup with nested $map in let: complex `in` expression
--- error: disable GUC EnableOperatorVariablesInLookup
-SET documentdb.EnableOperatorVariablesInLookup TO off;
-
 SELECT document FROM bson_aggregation_pipeline('db', '{
   "aggregate": "courses",
   "pipeline": [
@@ -1254,8 +1249,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '{
   ]
 }');
 
--- enable GUC EnableOperatorVariablesInLookup
-SET documentdb.EnableOperatorVariablesInLookup TO on;
+-- nested aliases with a projected scalar value
 SELECT document FROM bson_aggregation_pipeline('db', '{
   "aggregate": "courses",
   "pipeline": [
@@ -1728,8 +1722,6 @@ SELECT documentdb_api.drop_collection('db', 'users1');
 SELECT documentdb_api.drop_collection('db', 'tags1');
 
 -- $lookup with let with $filter and $map
--- error: disable GUC EnableOperatorVariablesInLookup
-SET documentdb.EnableOperatorVariablesInLookup TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '
 {
   "aggregate": "orders",
@@ -1782,9 +1774,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '
   ]
 }');
 
--- enable GUC EnableOperatorVariablesInLookup
-SET documentdb.EnableOperatorVariablesInLookup TO on;
-
+-- map alias with a scalar filter result
 SELECT document FROM bson_aggregation_pipeline('db', '
 {
   "aggregate": "orders",
@@ -2049,8 +2039,6 @@ SELECT document FROM bson_aggregation_pipeline('db', '
 }');
 
 -- $lookup with let with $reduce, $map and $filter
--- error: disable GUC EnableOperatorVariablesInLookup
-SET documentdb.EnableOperatorVariablesInLookup TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '
 {
   "aggregate": "orders",
@@ -2107,8 +2095,7 @@ SELECT document FROM bson_aggregation_pipeline('db', '
   ]
 }');
 
--- enable GUC EnableOperatorVariablesInLookup
-SET documentdb.EnableOperatorVariablesInLookup TO on;
+-- reduce over values produced by nested aliases
 SELECT document FROM bson_aggregation_pipeline('db', '
 {
   "aggregate": "orders",
@@ -2173,5 +2160,4 @@ SELECT documentdb_api.drop_collection('db', 'tags3');
 SELECT documentdb_api.drop_collection('db', 'orders');
 SELECT documentdb_api.drop_collection('db', 'products');
 
---disable GUC EnableOperatorVariablesInLookup
-SET documentdb.EnableOperatorVariablesInLookup TO off;
+-- End operator-variable lookup tests.

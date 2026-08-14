@@ -115,16 +115,6 @@ bool DefaultUseCompositeOpClass = DEFAULT_USE_NEW_COMPOSITE_INDEX_OPCLASS;
 #define DEFAULT_ENABLE_COMPOSITE_INDEX_PLANNER false
 bool EnableCompositeIndexPlanner = DEFAULT_ENABLE_COMPOSITE_INDEX_PLANNER;
 
-/* Added in v0.113, enabled in v0.113, remove after v0.115 */
-#define DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_COVERED_AGGREGATE_TARGETS true
-bool EnableIndexOnlyScanForCoveredAggregateTargets =
-	DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_COVERED_AGGREGATE_TARGETS;
-
-/* Added in v0.113, enabled in v0.113, remove after v0.115 */
-#define DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_RANGE_MATCH true
-bool EnableIndexOnlyScanForRangeMatch =
-	DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_RANGE_MATCH;
-
 /* Added in v0.109, Pending stabilization, enable in v0.125 */
 #define DEFAULT_ENABLE_ORDER_BY_ID_ON_COST false
 bool EnableOrderByIdOnCostFunction = DEFAULT_ENABLE_ORDER_BY_ID_ON_COST;
@@ -164,11 +154,6 @@ bool TrackIndexOnlyScanFindCandidate =
 #define DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE true
 bool EmitEnableOrderedIndexFalseInResponse =
 	DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE;
-
-/* Added in v0.111, enabled in v0.111, remove after v0.115 */
-#define DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS_ON_COMMON_SUBPATH true
-bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath =
-	DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS_ON_COMMON_SUBPATH;
 
 /* Added in v0.113, enabled in v0.113, remove after v0.116 */
 #define DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_PREFIX_TRIM true
@@ -387,7 +372,7 @@ bool EnableSupportFunctionIdPushdown = DEFAULT_ENABLE_SUPPORT_FUNCTION_ID_PUSHDO
 #define DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN true
 bool EnablePrimaryKeyCursorScan = DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN;
 
-/* Added in v0.110, Pending stabilization, enable in v0.117 */
+/* Added in v0.110, Pending stabilization, enable in v0.119 */
 #define DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP false
 bool EnableContinuationFastBitmapLookup = DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP;
 
@@ -429,7 +414,7 @@ bool EnableTailableCursorMaxAwaitTime = DEFAULT_ENABLE_TAILABLE_CURSOR_MAX_AWAIT
 #define DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG true
 bool FailOnNonEmptyGroupCountArg = DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG;
 
-/* Added in v0.115, Pending stabilization, enable in v0.117.*/
+/* Added in v0.115, Pending stabilization, enable in v0.118. */
 #define DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP false
 bool EnableProjectPushUpBeforeUnwindWithGroup =
 	DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP;
@@ -504,15 +489,6 @@ bool EnableExistentialNullArrayMatch = DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MAT
 #define DEFAULT_FORCE_NESTED_LOOKUP_PIPELINE_AFTER_JOIN false
 bool ForceNestedLookupPipelineAfterJoin =
 	DEFAULT_FORCE_NESTED_LOOKUP_PIPELINE_AFTER_JOIN;
-
-/*
- * SECTION: Let support feature flags
- */
-
-/* Added in v0.109, enabled in v0.113, remove after v0.115 */
-#define DEFAULT_ENABLE_OPERATOR_VARIABLES_IN_LOOKUP true
-bool EnableOperatorVariablesInLookup =
-	DEFAULT_ENABLE_OPERATOR_VARIABLES_IN_LOOKUP;
 
 /*
  * SECTION: Collation feature flags
@@ -616,19 +592,10 @@ bool IndexBuildsScheduledOnBgWorker = DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER
  * SECTION: TTL feature flags
  */
 
-/* Added in v0.110, enabled in v0.110, remove after v0.115 */
-#define DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE true
-bool CreateTTLIndexAsCompositeByDefault = DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE;
-
-
-/* Added in v0.113, Pending stabilization, enable in v0.117 */
+/* Added in v0.113, Pending stabilization, enable in v0.119 */
 #define DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK false
 bool EnableDeadIndexEntryMarkingByTTLTask =
 	DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK;
-
-/* Added in v0.111, enabled in v0.111, remove after v0.115 */
-#define DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES true
-bool TTLSkipCaughtUpIndexes = DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES;
 
 /* FEATURE FLAGS END */
 
@@ -746,14 +713,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether nested lookup stages are forced to run after the parent equality join. Unsupported query shapes may fail when this setting is enabled."),
 		NULL, &ForceNestedLookupPipelineAfterJoin,
 		DEFAULT_FORCE_NESTED_LOOKUP_PIPELINE_AFTER_JOIN,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.EnableOperatorVariablesInLookup", newGucPrefix),
-		gettext_noop(
-			"Whether or not to enable operator variables($map.as alias) support in let variables spec."),
-		NULL, &EnableOperatorVariablesInLookup,
-		DEFAULT_ENABLE_OPERATOR_VARIABLES_IN_LOOKUP,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -978,25 +937,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enableIndexOnlyScanForCoveredAggregateTargets",
-				 newGucPrefix),
-		gettext_noop(
-			"Whether to enable index only scan for aggregate target-list"
-			" expressions that reference covered document paths."),
-		NULL, &EnableIndexOnlyScanForCoveredAggregateTargets,
-		DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_COVERED_AGGREGATE_TARGETS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableIndexOnlyScanForRangeMatch", newGucPrefix),
-		gettext_noop(
-			"Whether to enable index only scan for range-match qualifiers on"
-			" covered index paths."),
-		NULL, &EnableIndexOnlyScanForRangeMatch,
-		DEFAULT_ENABLE_INDEX_ONLY_SCAN_FOR_RANGE_MATCH,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enablePartialMatchHasRecheck", newGucPrefix),
 		gettext_noop(
 			"Whether to enable partial match has recheck for queries that have partial index matches."),
@@ -1213,14 +1153,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.enableCompositeReducedCorrelatedTermsOnCommonSubPath", newGucPrefix),
-		gettext_noop(
-			"Whether to enable reduced term generation for correlated composite paths on common sub-paths."),
-		NULL, &EnableCompositeReducedCorrelatedTermsOnCommonSubPath,
-		DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS_ON_COMMON_SUBPATH,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enableCompositeReducedCorrelatedPrefixTrim", newGucPrefix),
 		gettext_noop(
 			"Whether to enable prefix-group-aware trimming of secondary variable bounds for reduced correlated composite indexes."),
@@ -1375,14 +1307,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to enable skipping bitmap records by tid without loading the heap to find the continuation point."),
 		NULL, &EnableContinuationFastBitmapLookup,
 		DEFAULT_ENABLE_CONTINUATION_FAST_BITMAP_LOOKUP,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.createTTLIndexAsCompositeByDefault", newGucPrefix),
-		gettext_noop(
-			"Whether to always create TTL indexes as composite indexes by default."),
-		NULL, &CreateTTLIndexAsCompositeByDefault,
-		DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -1561,17 +1485,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableDeadIndexEntryMarkingByTTLTask,
 		DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK,
-		PGC_USERSET,
-		0,
-		NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.TTLSkipCaughtUpIndexes", newGucPrefix),
-		gettext_noop(
-			"Whether to skip checking a TTL index further, once they are caught up during a TTL task invocation cycle."),
-		NULL,
-		&TTLSkipCaughtUpIndexes,
-		DEFAULT_SKIP_CAUGHT_UP_TTL_INDEXES,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

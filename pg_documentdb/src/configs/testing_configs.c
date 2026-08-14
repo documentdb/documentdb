@@ -103,6 +103,15 @@ bool EnableDataTableWithoutCreationTime =
 #define DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH true
 bool EnableCompositeUniqueHash = DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH;
 
+/* Left behind for long term testing of full correlated composite indexes */
+#define DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS_ON_COMMON_SUBPATH true
+bool EnableCompositeReducedCorrelatedTermsOnCommonSubPath =
+	DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS_ON_COMMON_SUBPATH;
+
+/* Left behind for long term testing of non-composite TTL indexes */
+#define DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE true
+bool CreateTTLIndexAsCompositeByDefault = DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE;
+
 #define DEFAULT_RUM_FAIL_ON_LOST_PATH false
 bool RumFailOnLostPath = DEFAULT_RUM_FAIL_ON_LOST_PATH;
 
@@ -417,6 +426,26 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 			"Left behind for long term testing of old (pre-composite-hash) unique indexes."),
 		NULL, &EnableCompositeUniqueHash,
 		DEFAULT_ENABLE_COMPOSITE_UNIQUE_HASH,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableCompositeReducedCorrelatedTermsOnCommonSubPath",
+				 newGucPrefix),
+		gettext_noop(
+			"Whether to enable reduced term generation for correlated composite paths "
+			"on common sub-paths. Left behind for long term testing of full correlated "
+			"composite indexes."),
+		NULL, &EnableCompositeReducedCorrelatedTermsOnCommonSubPath,
+		DEFAULT_ENABLE_REDUCED_CORRELATED_TERMS_ON_COMMON_SUBPATH,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.createTTLIndexAsCompositeByDefault", newGucPrefix),
+		gettext_noop(
+			"Whether to always create TTL indexes as composite indexes by default. "
+			"Left behind for long term testing of non-composite TTL indexes."),
+		NULL, &CreateTTLIndexAsCompositeByDefault,
+		DEFAULT_CREATE_TTL_INDEX_AS_COMPOSITE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
