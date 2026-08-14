@@ -348,6 +348,7 @@ extern bool EnableGroupByMultiKeySortPushdown;
 extern bool EnableCompositeReducedCorrelatedPrefixTrim;
 extern bool EnableCompositeReducedCorrelatedBoundsPlanning;
 extern bool EnableMergeSortForBitmapOr;
+extern bool EnableCrossIndexBitmapOrSortMerge;
 extern bool EnableCompositeReducedCorrelatedFirstOwnerFallback;
 
 /* --------------------------------------------------------- */
@@ -5678,9 +5679,10 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 			{
 				/*
 				 * The BitmapOr pushdown converts a BitmapOr of ordered per-branch
-				 * composite index scans (an $or whose branches share the same index
-				 * and order-by suffix) into a MergeAppend that streams already sorted,
-				 * removing the blocking Sort. Gated separately so it can be disabled
+				 * composite index scans into a MergeAppend that streams already sorted,
+				 * removing the blocking Sort. The default path requires branches to use
+				 * the same index; a separate feature flag permits different indexes that
+				 * provide identical pathkeys. Gated separately so it can be disabled
 				 * without turning off the $in-prefix merge-sort rewrite.
 				 */
 				if (!EnableMergeSortForBitmapOr)
@@ -5777,6 +5779,7 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 				 * MergeAppend to drop the repeats.
 				 */
 				List *branchEqBoundsList = NIL;
+				bool usesDifferentIndexes = false;
 				foreach(subPathCell, bitmapOrPath->bitmapquals)
 				{
 					Path *subPath = (Path *) lfirst(subPathCell);
@@ -5794,12 +5797,33 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 						break;
 					}
 
-					if (indexInfo->indexoid != indexSubPath->indexinfo->indexoid)
+					bool usesDifferentIndex =
+						indexInfo->indexoid != indexSubPath->indexinfo->indexoid;
+					if (usesDifferentIndex && !EnableCrossIndexBitmapOrSortMerge)
 					{
 						childrenValid = false;
 						break;
 					}
-					else if (!equal(subPathPathKeys, indexSubPath->path.pathkeys))
+
+					if (usesDifferentIndex)
+					{
+						if (!IsBsonRegularIndexAm(indexSubPath->indexinfo->relam))
+						{
+							childrenValid = false;
+							break;
+						}
+
+						if (!MergeSortInPrefixIndexEligible(indexSubPath->indexinfo))
+						{
+							childrenValid = false;
+							break;
+						}
+
+						bitmapOrNeedsDedup = true;
+						usesDifferentIndexes = true;
+					}
+
+					if (!equal(subPathPathKeys, indexSubPath->path.pathkeys))
 					{
 						/* If the sorts don't match they're not eligible */
 						childrenValid = false;
@@ -5820,6 +5844,18 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 					{
 						childrenValid = false;
 						break;
+					}
+
+					/*
+					 * Matching pathkeys already prove this branch can provide the
+					 * requested order. Cross-index branches are conservatively
+					 * de-duplicated, so they do not need the same-index equality-bound
+					 * analysis below.
+					 */
+					if (usesDifferentIndexes)
+					{
+						childPaths = lappend(childPaths, indexSubPath);
+						continue;
 					}
 
 					/* Validate indexquals */
@@ -5944,7 +5980,11 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 				 * proceeds but records that a heap-TID de-dup wrap is needed above
 				 * the MergeAppend to remove the repeats.
 				 */
-				if (childrenValid)
+				if (childrenValid && usesDifferentIndexes)
+				{
+					bitmapOrNeedsDedup = true;
+				}
+				else if (childrenValid)
 				{
 					/*
 					 * Compare the per-branch equality scalars under the index's

@@ -781,3 +781,787 @@ SELECT documentdb_api.drop_collection('msdb','or_stress');
  t
 (1 row)
 
+-- =====================================================================
+-- Different-index branches use the blocking Sort while the feature flag is
+-- off. When enabled, the ordered scans from both composite indexes can be
+-- merged because they provide the same requested scheduledTime order.
+-- =====================================================================
+SELECT documentdb_api.create_collection('msdb','flights');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.insert_one('msdb','flights',
+  '{ "_id": 1, "departureAirport": "SEA", "arrivalAirport": "PDX", "scheduledTime": 30 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('msdb','flights',
+  '{ "_id": 2, "departureAirport": "SFO", "arrivalAirport": "SEA", "scheduledTime": 40 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('msdb','flights',
+  '{ "_id": 3, "departureAirport": "SEA", "arrivalAirport": "LAX", "scheduledTime": 10 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('msdb','flights',
+  '{ "_id": 4, "departureAirport": "DEN", "arrivalAirport": "SEA", "scheduledTime": 20 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('msdb','flights',
+  '{ "_id": 5, "departureAirport": "SEA", "arrivalAirport": "SEA", "scheduledTime": 50 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "flights", "indexes": [
+      { "key": { "departureAirport": 1, "scheduledTime": -1 }, "name": "departure_time", "enableOrderedIndex": 1 },
+      { "key": { "arrivalAirport": 1, "scheduledTime": -1 }, "name": "arrival_time", "enableOrderedIndex": 1 }
+  ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "flights", "filter": { "$or": [ { "departureAirport": "SEA" }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 }, "limit": 10 }');
+                                                              document                                                               
+-------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "departureAirport" : "SEA", "arrivalAirport" : "SEA", "scheduledTime" : { "$numberInt" : "50" } }
+ { "_id" : { "$numberInt" : "2" }, "departureAirport" : "SFO", "arrivalAirport" : "SEA", "scheduledTime" : { "$numberInt" : "40" } }
+ { "_id" : { "$numberInt" : "1" }, "departureAirport" : "SEA", "arrivalAirport" : "PDX", "scheduledTime" : { "$numberInt" : "30" } }
+ { "_id" : { "$numberInt" : "4" }, "departureAirport" : "DEN", "arrivalAirport" : "SEA", "scheduledTime" : { "$numberInt" : "20" } }
+ { "_id" : { "$numberInt" : "3" }, "departureAirport" : "SEA", "arrivalAirport" : "LAX", "scheduledTime" : { "$numberInt" : "10" } }
+(5 rows)
+
+SET enable_sort TO off;
+SELECT line AS different_indexes_flag_off_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights", "filter": { "$or": [ { "departureAirport": "SEA" }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 }, "limit": 10 }')
+$cmd$) AS line;
+                                                        different_indexes_flag_off_plan                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual rows=5 loops=1)
+   ->  Sort (actual rows=5 loops=1)
+         Sort Key: (bson_orderby(document, '{ "scheduledTime" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+         Sort Method: quicksort  Memory: xxxkB
+         ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
+               namespaceName: msdb.flights
+               indexName: departure_time
+               indexKey: {"departureAirport": 1,"scheduledTime": -1}
+               isMultiKey: false
+               indexBounds: ["departureAirport": ["SEA", "SEA"], "scheduledTime": DESC(MinKey, MaxKey)]
+               innerScanLoops: 4 loops
+               scanType: ordered
+               scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+               indexName: arrival_time
+               indexKey: {"arrivalAirport": 1,"scheduledTime": -1}
+               isMultiKey: false
+               indexBounds: ["arrivalAirport": ["SEA", "SEA"], "scheduledTime": DESC(MinKey, MaxKey)]
+               innerScanLoops: 3 loops
+               scanType: ordered
+               scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+               ->  Bitmap Heap Scan on documents_39507 collection (actual rows=5 loops=1)
+                     Recheck Cond: ((document @= '{ "departureAirport" : "SEA" }'::bson) OR (document @= '{ "arrivalAirport" : "SEA" }'::bson))
+                     Heap Blocks: exact=1
+                     ->  BitmapOr (actual rows=0 loops=1)
+                           ->  Bitmap Index Scan on departure_time (actual rows=3 loops=1)
+                                 Index Cond: (document @= '{ "departureAirport" : "SEA" }'::bson)
+                           ->  Bitmap Index Scan on arrival_time (actual rows=3 loops=1)
+                                 Index Cond: (document @= '{ "arrivalAirport" : "SEA" }'::bson)
+(28 rows)
+
+SET documentdb.enable_cross_index_bitmap_or_sort_merge TO on;
+-- _id 5 matches both branches but must appear only once after TID de-dup.
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "flights", "filter": { "$or": [ { "departureAirport": "SEA" }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 }, "limit": 10 }');
+                                                              document                                                               
+-------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "5" }, "departureAirport" : "SEA", "arrivalAirport" : "SEA", "scheduledTime" : { "$numberInt" : "50" } }
+ { "_id" : { "$numberInt" : "2" }, "departureAirport" : "SFO", "arrivalAirport" : "SEA", "scheduledTime" : { "$numberInt" : "40" } }
+ { "_id" : { "$numberInt" : "1" }, "departureAirport" : "SEA", "arrivalAirport" : "PDX", "scheduledTime" : { "$numberInt" : "30" } }
+ { "_id" : { "$numberInt" : "4" }, "departureAirport" : "DEN", "arrivalAirport" : "SEA", "scheduledTime" : { "$numberInt" : "20" } }
+ { "_id" : { "$numberInt" : "3" }, "departureAirport" : "SEA", "arrivalAirport" : "LAX", "scheduledTime" : { "$numberInt" : "10" } }
+(5 rows)
+
+SELECT line AS different_indexes_flag_on_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights", "filter": { "$or": [ { "departureAirport": "SEA" }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 }, "limit": 10 }')
+$cmd$) AS line;
+                                                      different_indexes_flag_on_plan                                                      
+------------------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual rows=5 loops=1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
+         namespaceName: msdb.flights
+         indexName: departure_time
+         indexKey: {"departureAirport": 1,"scheduledTime": -1}
+         isMultiKey: false
+         indexBounds: ["departureAirport": ["SEA", "SEA"], "scheduledTime": DESC(MinKey, MaxKey)]
+         innerScanLoops: 4 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+         indexName: arrival_time
+         indexKey: {"arrivalAirport": 1,"scheduledTime": -1}
+         isMultiKey: false
+         indexBounds: ["arrivalAirport": ["SEA", "SEA"], "scheduledTime": DESC(MinKey, MaxKey)]
+         innerScanLoops: 3 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+         ->  Custom Scan (DocumentDBApiTidDedup) (actual rows=5 loops=1)
+               Duplicate Rows Removed: 1
+               ->  Result (actual rows=6 loops=1)
+                     ->  Merge Append (actual rows=6 loops=1)
+                           Sort Key: (bson_orderby(document, '{ "scheduledTime" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+                           ->  Index Scan using departure_time on documents_39507 collection (actual rows=3 loops=1)
+                                 Index Cond: (document @= '{ "departureAirport" : "SEA" }'::bson)
+                                 Order By: (document |-<> '{ "scheduledTime" : { "$numberInt" : "-1" } }'::bson)
+                           ->  Index Scan using arrival_time on documents_39507 collection (actual rows=3 loops=1)
+                                 Index Cond: (document @= '{ "arrivalAirport" : "SEA" }'::bson)
+                                 Order By: (document |-<> '{ "scheduledTime" : { "$numberInt" : "-1" } }'::bson)
+(28 rows)
+
+SET documentdb.enable_cross_index_bitmap_or_sort_merge TO off;
+SET enable_sort TO on;
+SELECT documentdb_api.drop_collection('msdb','flights');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- =====================================================================
+-- Different-index rejection cases. The feature flag is enabled and Sort is
+-- disabled to make a valid MergeAppend path preferable, but every case below
+-- has at least one branch that cannot provide the complete requested order.
+-- =====================================================================
+SET documentdb.enable_cross_index_bitmap_or_sort_merge TO on;
+SET enable_sort TO off;
+-- One branch has the requested sort path and the other index does not contain
+-- that path at all.
+SELECT documentdb_api.create_collection('msdb','flights_missing_order');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.insert_one('msdb','flights_missing_order',
+  '{ "_id": 1, "departureAirport": "SEA", "arrivalAirport": "PDX", "scheduledTime": 30, "gate": 4 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('msdb','flights_missing_order',
+  '{ "_id": 2, "departureAirport": "SFO", "arrivalAirport": "SEA", "scheduledTime": 40, "gate": 2 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "flights_missing_order", "indexes": [
+      { "key": { "departureAirport": 1, "scheduledTime": -1 }, "name": "departure_time", "enableOrderedIndex": 1 },
+      { "key": { "arrivalAirport": 1, "gate": 1 }, "name": "arrival_gate", "enableOrderedIndex": 1 }
+  ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT line AS missing_order_path_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights_missing_order", "filter": { "$or": [ { "departureAirport": "SEA" }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 } }')
+$cmd$) AS line;
+                                                         missing_order_path_plan                                                          
+------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Sort Key: (bson_orderby(document, '{ "scheduledTime" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         namespaceName: msdb.flights_missing_order
+         indexName: departure_time
+         indexKey: {"departureAirport": 1,"scheduledTime": -1}
+         isMultiKey: false
+         indexBounds: ["departureAirport": ["SEA", "SEA"], "scheduledTime": DESC(MinKey, MaxKey)]
+         innerScanLoops: 2 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+         indexName: arrival_gate
+         indexKey: {"arrivalAirport": 1,"gate": 1}
+         isMultiKey: false
+         indexBounds: ["arrivalAirport": ["SEA", "SEA"], "gate": (MinKey, MaxKey)]
+         innerScanLoops: 1 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+         ->  Bitmap Heap Scan on documents_39508 collection (actual rows=2 loops=1)
+               Recheck Cond: ((document @= '{ "departureAirport" : "SEA" }'::bson) OR (document @= '{ "arrivalAirport" : "SEA" }'::bson))
+               Heap Blocks: exact=1
+               ->  BitmapOr (actual rows=0 loops=1)
+                     ->  Bitmap Index Scan on departure_time (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "departureAirport" : "SEA" }'::bson)
+                     ->  Bitmap Index Scan on arrival_gate (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "arrivalAirport" : "SEA" }'::bson)
+(27 rows)
+
+SELECT line AS missing_order_path_reversed_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights_missing_order", "filter": { "$or": [ { "arrivalAirport": "SEA" }, { "departureAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 } }')
+$cmd$) AS line;
+                                                     missing_order_path_reversed_plan                                                     
+------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Sort Key: (bson_orderby(document, '{ "scheduledTime" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         namespaceName: msdb.flights_missing_order
+         indexName: arrival_gate
+         indexKey: {"arrivalAirport": 1,"gate": 1}
+         isMultiKey: false
+         indexBounds: ["arrivalAirport": ["SEA", "SEA"], "gate": (MinKey, MaxKey)]
+         innerScanLoops: 1 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+         indexName: departure_time
+         indexKey: {"departureAirport": 1,"scheduledTime": -1}
+         isMultiKey: false
+         indexBounds: ["departureAirport": ["SEA", "SEA"], "scheduledTime": DESC(MinKey, MaxKey)]
+         innerScanLoops: 2 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+         ->  Bitmap Heap Scan on documents_39508 collection (actual rows=2 loops=1)
+               Recheck Cond: ((document @= '{ "arrivalAirport" : "SEA" }'::bson) OR (document @= '{ "departureAirport" : "SEA" }'::bson))
+               Heap Blocks: exact=1
+               ->  BitmapOr (actual rows=0 loops=1)
+                     ->  Bitmap Index Scan on arrival_gate (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "arrivalAirport" : "SEA" }'::bson)
+                     ->  Bitmap Index Scan on departure_time (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "departureAirport" : "SEA" }'::bson)
+(27 rows)
+
+SELECT documentdb_api.drop_collection('msdb','flights_missing_order');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- A BitmapOr spanning the collection's _id B-tree and an ordered RUM index
+-- cannot be replaced by a MergeAppend. The RUM branch can provide the requested
+-- scheduledTime order, while the B-tree branch cannot.
+SET enable_sort TO on;
+SET documentdb.enable_support_function_id_pushdown TO on;
+SELECT documentdb_api.create_collection('msdb','flights_mixed_access_methods');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.insert_one('msdb','flights_mixed_access_methods',
+  '{ "_id": 1, "arrivalAirport": "PDX", "scheduledTime": 30 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('msdb','flights_mixed_access_methods',
+  '{ "_id": 2, "arrivalAirport": "SEA", "scheduledTime": 40 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT COUNT(documentdb_api.insert_one(
+  'msdb', 'flights_mixed_access_methods',
+  FORMAT('{ "_id": %s, "arrivalAirport": "SFO", "scheduledTime": %s }',
+         flight_id, flight_id)::bson))
+FROM generate_series(100, 199) AS flight_id;
+ count 
+-------
+   100
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "flights_mixed_access_methods", "indexes": [
+      { "key": { "arrivalAirport": 1, "scheduledTime": -1 }, "name": "arrival_time", "enableOrderedIndex": 1 }
+  ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ANALYZE;
+SELECT line AS mixed_btree_rum_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document
+    FROM documentdb_api.collection('msdb', 'flights_mixed_access_methods')
+    WHERE bson_dollar_eq(document, object_id, '{ "_id": 1 }')
+       OR document @= '{ "arrivalAirport": "SEA" }'
+    ORDER BY bson_orderby(document, '{ "scheduledTime": -1 }') DESC
+$cmd$) AS line;
+                                                                                  mixed_btree_rum_plan                                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Sort Key: (bson_orderby(document, '{ "scheduledTime" : { "$numberInt" : "-1" } }'::bson)) DESC
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         namespaceName: msdb.flights_mixed_access_methods
+         indexName: _id_
+         indexName: arrival_time
+         indexKey: {"arrivalAirport": 1,"scheduledTime": -1}
+         isMultiKey: false
+         indexBounds: ["arrivalAirport": ["SEA", "SEA"], "scheduledTime": DESC(MinKey, MaxKey)]
+         innerScanLoops: 2 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+         ->  Bitmap Heap Scan on documents_39509 (actual rows=2 loops=1)
+               Recheck Cond: (((shard_key_value = '39509'::bigint) AND (document @= '{ "_id" : { "$numberInt" : "1" } }'::bson)) OR (document @= '{ "arrivalAirport" : "SEA" }'::bson))
+               Filter: ((document @= '{ "_id" : { "$numberInt" : "1" } }'::bson) OR (document @= '{ "arrivalAirport" : "SEA" }'::bson))
+               Heap Blocks: exact=1
+               ->  BitmapOr (actual rows=0 loops=1)
+                     ->  Bitmap Index Scan on _id_ (actual rows=1 loops=1)
+                           Index Cond: ((shard_key_value = '39509'::bigint) AND (object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
+                     ->  Bitmap Index Scan on arrival_time (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "arrivalAirport" : "SEA" }'::bson)
+(22 rows)
+
+SELECT line AS mixed_btree_rum_reversed_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document
+    FROM documentdb_api.collection('msdb', 'flights_mixed_access_methods')
+    WHERE document @= '{ "arrivalAirport": "SEA" }'
+       OR bson_dollar_eq(document, object_id, '{ "_id": 1 }')
+    ORDER BY bson_orderby(document, '{ "scheduledTime": -1 }') DESC
+$cmd$) AS line;
+                                                                             mixed_btree_rum_reversed_plan                                                                              
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Sort Key: (bson_orderby(document, '{ "scheduledTime" : { "$numberInt" : "-1" } }'::bson)) DESC
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         namespaceName: msdb.flights_mixed_access_methods
+         indexName: arrival_time
+         indexKey: {"arrivalAirport": 1,"scheduledTime": -1}
+         isMultiKey: false
+         indexBounds: ["arrivalAirport": ["SEA", "SEA"], "scheduledTime": DESC(MinKey, MaxKey)]
+         innerScanLoops: 2 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+         indexName: _id_
+         ->  Bitmap Heap Scan on documents_39509 (actual rows=2 loops=1)
+               Recheck Cond: ((document @= '{ "arrivalAirport" : "SEA" }'::bson) OR ((shard_key_value = '39509'::bigint) AND (document @= '{ "_id" : { "$numberInt" : "1" } }'::bson)))
+               Filter: ((document @= '{ "arrivalAirport" : "SEA" }'::bson) OR (document @= '{ "_id" : { "$numberInt" : "1" } }'::bson))
+               Heap Blocks: exact=1
+               ->  BitmapOr (actual rows=0 loops=1)
+                     ->  Bitmap Index Scan on arrival_time (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "arrivalAirport" : "SEA" }'::bson)
+                     ->  Bitmap Index Scan on _id_ (actual rows=1 loops=1)
+                           Index Cond: ((shard_key_value = '39509'::bigint) AND (object_id = '{ "" : { "$numberInt" : "1" } }'::bson))
+(22 rows)
+
+SELECT documentdb_api.drop_collection('msdb','flights_mixed_access_methods');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+RESET documentdb.enable_support_function_id_pushdown;
+SET enable_sort TO off;
+-- A non-ordered RUM branch cannot participate with an ordered RUM branch,
+-- even when both indexes contain the requested sort path.
+SELECT documentdb_api.create_collection('msdb','flights_non_ordered_branch');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.insert_one('msdb','flights_non_ordered_branch',
+  '{ "_id": 1, "departureAirport": "SEA", "arrivalAirport": "PDX", "scheduledTime": 30 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('msdb','flights_non_ordered_branch',
+  '{ "_id": 2, "departureAirport": "SFO", "arrivalAirport": "SEA", "scheduledTime": 40 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "flights_non_ordered_branch", "indexes": [
+      { "key": { "departureAirport": 1, "scheduledTime": -1 }, "name": "departure_time_ordered", "enableOrderedIndex": 1 },
+      { "key": { "arrivalAirport": 1, "scheduledTime": -1 }, "name": "arrival_time_non_ordered", "enableOrderedIndex": false }
+  ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT line AS ordered_non_ordered_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights_non_ordered_branch", "filter": { "$or": [ { "departureAirport": "SEA" }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 } }')
+$cmd$) AS line;
+                                                         ordered_non_ordered_plan                                                         
+------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Sort Key: (bson_orderby(document, '{ "scheduledTime" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         namespaceName: msdb.flights_non_ordered_branch
+         indexName: departure_time_ordered
+         indexKey: {"departureAirport": 1,"scheduledTime": -1}
+         isMultiKey: false
+         indexBounds: ["departureAirport": ["SEA", "SEA"], "scheduledTime": DESC(MinKey, MaxKey)]
+         innerScanLoops: 2 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+         indexName: arrival_time_non_ordered
+         innerScanLoops: 1 loops
+         scanType: regular
+         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 1)]
+         ->  Bitmap Heap Scan on documents_39510 collection (actual rows=2 loops=1)
+               Recheck Cond: ((document @= '{ "departureAirport" : "SEA" }'::bson) OR (document @= '{ "arrivalAirport" : "SEA" }'::bson))
+               Heap Blocks: exact=1
+               ->  BitmapOr (actual rows=0 loops=1)
+                     ->  Bitmap Index Scan on departure_time_ordered (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "departureAirport" : "SEA" }'::bson)
+                     ->  Bitmap Index Scan on arrival_time_non_ordered (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "arrivalAirport" : "SEA" }'::bson)
+(24 rows)
+
+SELECT line AS ordered_non_ordered_reversed_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights_non_ordered_branch", "filter": { "$or": [ { "arrivalAirport": "SEA" }, { "departureAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 } }')
+$cmd$) AS line;
+                                                    ordered_non_ordered_reversed_plan                                                     
+------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Sort Key: (bson_orderby(document, '{ "scheduledTime" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         namespaceName: msdb.flights_non_ordered_branch
+         indexName: arrival_time_non_ordered
+         innerScanLoops: 1 loops
+         scanType: regular
+         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 1)]
+         indexName: departure_time_ordered
+         indexKey: {"departureAirport": 1,"scheduledTime": -1}
+         isMultiKey: false
+         indexBounds: ["departureAirport": ["SEA", "SEA"], "scheduledTime": DESC(MinKey, MaxKey)]
+         innerScanLoops: 2 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+         ->  Bitmap Heap Scan on documents_39510 collection (actual rows=2 loops=1)
+               Recheck Cond: ((document @= '{ "arrivalAirport" : "SEA" }'::bson) OR (document @= '{ "departureAirport" : "SEA" }'::bson))
+               Heap Blocks: exact=1
+               ->  BitmapOr (actual rows=0 loops=1)
+                     ->  Bitmap Index Scan on arrival_time_non_ordered (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "arrivalAirport" : "SEA" }'::bson)
+                     ->  Bitmap Index Scan on departure_time_ordered (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "departureAirport" : "SEA" }'::bson)
+(24 rows)
+
+SELECT documentdb_api.drop_collection('msdb','flights_non_ordered_branch');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- One branch provides the full compound order while the other provides only
+-- its leading scheduledTime key.
+SELECT documentdb_api.create_collection('msdb','flights_partial_order');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.insert_one('msdb','flights_partial_order',
+  '{ "_id": 1, "departureAirport": "SEA", "arrivalAirport": "PDX", "scheduledTime": 30, "flightCode": "B" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('msdb','flights_partial_order',
+  '{ "_id": 2, "departureAirport": "SFO", "arrivalAirport": "SEA", "scheduledTime": 40, "flightCode": "A" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "flights_partial_order", "indexes": [
+      { "key": { "departureAirport": 1, "scheduledTime": -1, "flightCode": 1 }, "name": "departure_time_code", "enableOrderedIndex": 1 },
+      { "key": { "arrivalAirport": 1, "scheduledTime": -1 }, "name": "arrival_time", "enableOrderedIndex": 1 }
+  ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT line AS partial_order_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights_partial_order", "filter": { "$or": [ { "departureAirport": "SEA" }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1, "flightCode": 1 } }')
+$cmd$) AS line;
+                                                                                            partial_order_plan                                                                                             
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Sort Key: (bson_orderby(document, '{ "scheduledTime" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST, (bson_orderby(document, '{ "flightCode" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         namespaceName: msdb.flights_partial_order
+         indexName: departure_time_code
+         indexKey: {"departureAirport": 1,"scheduledTime": -1,"flightCode": 1}
+         isMultiKey: false
+         indexBounds: ["departureAirport": ["SEA", "SEA"], "scheduledTime": DESC(MinKey, MaxKey), "flightCode": (MinKey, MaxKey)]
+         innerScanLoops: 2 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+         indexName: arrival_time
+         indexKey: {"arrivalAirport": 1,"scheduledTime": -1}
+         isMultiKey: false
+         indexBounds: ["arrivalAirport": ["SEA", "SEA"], "scheduledTime": DESC(MinKey, MaxKey)]
+         innerScanLoops: 1 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+         ->  Bitmap Heap Scan on documents_39511 collection (actual rows=2 loops=1)
+               Recheck Cond: ((document @= '{ "departureAirport" : "SEA" }'::bson) OR (document @= '{ "arrivalAirport" : "SEA" }'::bson))
+               Heap Blocks: exact=1
+               ->  BitmapOr (actual rows=0 loops=1)
+                     ->  Bitmap Index Scan on departure_time_code (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "departureAirport" : "SEA" }'::bson)
+                     ->  Bitmap Index Scan on arrival_time (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "arrivalAirport" : "SEA" }'::bson)
+(27 rows)
+
+SELECT line AS partial_order_reversed_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights_partial_order", "filter": { "$or": [ { "arrivalAirport": "SEA" }, { "departureAirport": "SEA" } ] }, "sort": { "scheduledTime": -1, "flightCode": 1 } }')
+$cmd$) AS line;
+                                                                                        partial_order_reversed_plan                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Sort Key: (bson_orderby(document, '{ "scheduledTime" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST, (bson_orderby(document, '{ "flightCode" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         namespaceName: msdb.flights_partial_order
+         indexName: arrival_time
+         indexKey: {"arrivalAirport": 1,"scheduledTime": -1}
+         isMultiKey: false
+         indexBounds: ["arrivalAirport": ["SEA", "SEA"], "scheduledTime": DESC(MinKey, MaxKey)]
+         innerScanLoops: 1 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+         indexName: departure_time_code
+         indexKey: {"departureAirport": 1,"scheduledTime": -1,"flightCode": 1}
+         isMultiKey: false
+         indexBounds: ["departureAirport": ["SEA", "SEA"], "scheduledTime": DESC(MinKey, MaxKey), "flightCode": (MinKey, MaxKey)]
+         innerScanLoops: 2 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+         ->  Bitmap Heap Scan on documents_39511 collection (actual rows=2 loops=1)
+               Recheck Cond: ((document @= '{ "arrivalAirport" : "SEA" }'::bson) OR (document @= '{ "departureAirport" : "SEA" }'::bson))
+               Heap Blocks: exact=1
+               ->  BitmapOr (actual rows=0 loops=1)
+                     ->  Bitmap Index Scan on arrival_time (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "arrivalAirport" : "SEA" }'::bson)
+                     ->  Bitmap Index Scan on departure_time_code (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "departureAirport" : "SEA" }'::bson)
+(27 rows)
+
+SELECT documentdb_api.drop_collection('msdb','flights_partial_order');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- Both indexes contain the compound sort paths, but one has an incompatible
+-- direction for the second key and can provide only the first sort key.
+SELECT documentdb_api.create_collection('msdb','flights_direction_mismatch');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.insert_one('msdb','flights_direction_mismatch',
+  '{ "_id": 1, "departureAirport": "SEA", "arrivalAirport": "PDX", "scheduledTime": 30, "gate": 4 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('msdb','flights_direction_mismatch',
+  '{ "_id": 2, "departureAirport": "SFO", "arrivalAirport": "SEA", "scheduledTime": 40, "gate": 2 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "flights_direction_mismatch", "indexes": [
+      { "key": { "departureAirport": 1, "scheduledTime": -1, "gate": 1 }, "name": "departure_time_gate", "enableOrderedIndex": 1 },
+      { "key": { "arrivalAirport": 1, "scheduledTime": -1, "gate": -1 }, "name": "arrival_time_gate", "enableOrderedIndex": 1 }
+  ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT line AS direction_mismatch_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights_direction_mismatch", "filter": { "$or": [ { "departureAirport": "SEA" }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1, "gate": 1 } }')
+$cmd$) AS line;
+                                                                                       direction_mismatch_plan                                                                                       
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Sort Key: (bson_orderby(document, '{ "scheduledTime" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST, (bson_orderby(document, '{ "gate" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         namespaceName: msdb.flights_direction_mismatch
+         indexName: departure_time_gate
+         indexKey: {"departureAirport": 1,"scheduledTime": -1,"gate": 1}
+         isMultiKey: false
+         indexBounds: ["departureAirport": ["SEA", "SEA"], "scheduledTime": DESC(MinKey, MaxKey), "gate": (MinKey, MaxKey)]
+         innerScanLoops: 2 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+         indexName: arrival_time_gate
+         indexKey: {"arrivalAirport": 1,"scheduledTime": -1,"gate": -1}
+         isMultiKey: false
+         indexBounds: ["arrivalAirport": ["SEA", "SEA"], "scheduledTime": DESC(MinKey, MaxKey), "gate": DESC(MinKey, MaxKey)]
+         innerScanLoops: 1 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+         ->  Bitmap Heap Scan on documents_39512 collection (actual rows=2 loops=1)
+               Recheck Cond: ((document @= '{ "departureAirport" : "SEA" }'::bson) OR (document @= '{ "arrivalAirport" : "SEA" }'::bson))
+               Heap Blocks: exact=1
+               ->  BitmapOr (actual rows=0 loops=1)
+                     ->  Bitmap Index Scan on departure_time_gate (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "departureAirport" : "SEA" }'::bson)
+                     ->  Bitmap Index Scan on arrival_time_gate (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "arrivalAirport" : "SEA" }'::bson)
+(27 rows)
+
+SELECT documentdb_api.drop_collection('msdb','flights_direction_mismatch');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- A range bound on the leading index path does not fix that path to one value,
+-- so the following scheduledTime path cannot provide a global order.
+SELECT documentdb_api.create_collection('msdb','flights_range_prefix');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT documentdb_api.insert_one('msdb','flights_range_prefix',
+  '{ "_id": 1, "departureAirport": "SEA", "arrivalAirport": "PDX", "scheduledTime": 30 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('msdb','flights_range_prefix',
+  '{ "_id": 2, "departureAirport": "SFO", "arrivalAirport": "SEA", "scheduledTime": 40 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "flights_range_prefix", "indexes": [
+      { "key": { "departureAirport": 1, "scheduledTime": -1 }, "name": "departure_time", "enableOrderedIndex": 1 },
+      { "key": { "arrivalAirport": 1, "scheduledTime": -1 }, "name": "arrival_time", "enableOrderedIndex": 1 }
+  ] }', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT line AS range_prefix_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights_range_prefix", "filter": { "$or": [ { "departureAirport": { "$gte": "S" } }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 } }')
+$cmd$) AS line;
+                                                            range_prefix_plan                                                            
+-----------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=2 loops=1)
+   Sort Key: (bson_orderby(document, '{ "scheduledTime" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+         namespaceName: msdb.flights_range_prefix
+         indexName: departure_time
+         indexKey: {"departureAirport": 1,"scheduledTime": -1}
+         isMultiKey: false
+         indexBounds: ["departureAirport": ["S", { }), "scheduledTime": DESC(MinKey, MaxKey)]
+         innerScanLoops: 2 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
+         indexName: arrival_time
+         indexKey: {"arrivalAirport": 1,"scheduledTime": -1}
+         isMultiKey: false
+         indexBounds: ["arrivalAirport": ["SEA", "SEA"], "scheduledTime": DESC(MinKey, MaxKey)]
+         innerScanLoops: 1 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1)]
+         ->  Bitmap Heap Scan on documents_39513 collection (actual rows=2 loops=1)
+               Recheck Cond: ((document @>= '{ "departureAirport" : "S" }'::bson) OR (document @= '{ "arrivalAirport" : "SEA" }'::bson))
+               Heap Blocks: exact=1
+               ->  BitmapOr (actual rows=0 loops=1)
+                     ->  Bitmap Index Scan on departure_time (actual rows=2 loops=1)
+                           Index Cond: (document @>= '{ "departureAirport" : "S" }'::bson)
+                     ->  Bitmap Index Scan on arrival_time (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "arrivalAirport" : "SEA" }'::bson)
+(27 rows)
+
+SELECT documentdb_api.drop_collection('msdb','flights_range_prefix');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SET enable_sort TO on;
+SET documentdb.enable_cross_index_bitmap_or_sort_merge TO off;

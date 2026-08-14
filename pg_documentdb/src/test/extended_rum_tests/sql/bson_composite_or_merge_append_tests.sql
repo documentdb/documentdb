@@ -413,3 +413,240 @@ $cmd$) AS line;
 SET enable_sort TO on;
 
 SELECT documentdb_api.drop_collection('msdb','or_stress');
+
+-- =====================================================================
+-- Different-index branches use the blocking Sort while the feature flag is
+-- off. When enabled, the ordered scans from both composite indexes can be
+-- merged because they provide the same requested scheduledTime order.
+-- =====================================================================
+SELECT documentdb_api.create_collection('msdb','flights');
+SELECT documentdb_api.insert_one('msdb','flights',
+  '{ "_id": 1, "departureAirport": "SEA", "arrivalAirport": "PDX", "scheduledTime": 30 }');
+SELECT documentdb_api.insert_one('msdb','flights',
+  '{ "_id": 2, "departureAirport": "SFO", "arrivalAirport": "SEA", "scheduledTime": 40 }');
+SELECT documentdb_api.insert_one('msdb','flights',
+  '{ "_id": 3, "departureAirport": "SEA", "arrivalAirport": "LAX", "scheduledTime": 10 }');
+SELECT documentdb_api.insert_one('msdb','flights',
+  '{ "_id": 4, "departureAirport": "DEN", "arrivalAirport": "SEA", "scheduledTime": 20 }');
+SELECT documentdb_api.insert_one('msdb','flights',
+  '{ "_id": 5, "departureAirport": "SEA", "arrivalAirport": "SEA", "scheduledTime": 50 }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "flights", "indexes": [
+      { "key": { "departureAirport": 1, "scheduledTime": -1 }, "name": "departure_time", "enableOrderedIndex": 1 },
+      { "key": { "arrivalAirport": 1, "scheduledTime": -1 }, "name": "arrival_time", "enableOrderedIndex": 1 }
+  ] }', true);
+
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "flights", "filter": { "$or": [ { "departureAirport": "SEA" }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 }, "limit": 10 }');
+
+SET enable_sort TO off;
+SELECT line AS different_indexes_flag_off_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights", "filter": { "$or": [ { "departureAirport": "SEA" }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 }, "limit": 10 }')
+$cmd$) AS line;
+
+SET documentdb.enable_cross_index_bitmap_or_sort_merge TO on;
+
+-- _id 5 matches both branches but must appear only once after TID de-dup.
+SELECT document FROM bson_aggregation_find('msdb',
+  '{ "find": "flights", "filter": { "$or": [ { "departureAirport": "SEA" }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 }, "limit": 10 }');
+
+SELECT line AS different_indexes_flag_on_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights", "filter": { "$or": [ { "departureAirport": "SEA" }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 }, "limit": 10 }')
+$cmd$) AS line;
+SET documentdb.enable_cross_index_bitmap_or_sort_merge TO off;
+SET enable_sort TO on;
+
+SELECT documentdb_api.drop_collection('msdb','flights');
+
+-- =====================================================================
+-- Different-index rejection cases. The feature flag is enabled and Sort is
+-- disabled to make a valid MergeAppend path preferable, but every case below
+-- has at least one branch that cannot provide the complete requested order.
+-- =====================================================================
+SET documentdb.enable_cross_index_bitmap_or_sort_merge TO on;
+SET enable_sort TO off;
+
+-- One branch has the requested sort path and the other index does not contain
+-- that path at all.
+SELECT documentdb_api.create_collection('msdb','flights_missing_order');
+SELECT documentdb_api.insert_one('msdb','flights_missing_order',
+  '{ "_id": 1, "departureAirport": "SEA", "arrivalAirport": "PDX", "scheduledTime": 30, "gate": 4 }');
+SELECT documentdb_api.insert_one('msdb','flights_missing_order',
+  '{ "_id": 2, "departureAirport": "SFO", "arrivalAirport": "SEA", "scheduledTime": 40, "gate": 2 }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "flights_missing_order", "indexes": [
+      { "key": { "departureAirport": 1, "scheduledTime": -1 }, "name": "departure_time", "enableOrderedIndex": 1 },
+      { "key": { "arrivalAirport": 1, "gate": 1 }, "name": "arrival_gate", "enableOrderedIndex": 1 }
+  ] }', true);
+
+SELECT line AS missing_order_path_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights_missing_order", "filter": { "$or": [ { "departureAirport": "SEA" }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 } }')
+$cmd$) AS line;
+
+SELECT line AS missing_order_path_reversed_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights_missing_order", "filter": { "$or": [ { "arrivalAirport": "SEA" }, { "departureAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 } }')
+$cmd$) AS line;
+
+SELECT documentdb_api.drop_collection('msdb','flights_missing_order');
+
+-- A BitmapOr spanning the collection's _id B-tree and an ordered RUM index
+-- cannot be replaced by a MergeAppend. The RUM branch can provide the requested
+-- scheduledTime order, while the B-tree branch cannot.
+SET enable_sort TO on;
+SET documentdb.enable_support_function_id_pushdown TO on;
+SELECT documentdb_api.create_collection('msdb','flights_mixed_access_methods');
+SELECT documentdb_api.insert_one('msdb','flights_mixed_access_methods',
+  '{ "_id": 1, "arrivalAirport": "PDX", "scheduledTime": 30 }');
+SELECT documentdb_api.insert_one('msdb','flights_mixed_access_methods',
+  '{ "_id": 2, "arrivalAirport": "SEA", "scheduledTime": 40 }');
+SELECT COUNT(documentdb_api.insert_one(
+  'msdb', 'flights_mixed_access_methods',
+  FORMAT('{ "_id": %s, "arrivalAirport": "SFO", "scheduledTime": %s }',
+         flight_id, flight_id)::bson))
+FROM generate_series(100, 199) AS flight_id;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "flights_mixed_access_methods", "indexes": [
+      { "key": { "arrivalAirport": 1, "scheduledTime": -1 }, "name": "arrival_time", "enableOrderedIndex": 1 }
+  ] }', true);
+ANALYZE;
+
+SELECT line AS mixed_btree_rum_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document
+    FROM documentdb_api.collection('msdb', 'flights_mixed_access_methods')
+    WHERE bson_dollar_eq(document, object_id, '{ "_id": 1 }')
+       OR document @= '{ "arrivalAirport": "SEA" }'
+    ORDER BY bson_orderby(document, '{ "scheduledTime": -1 }') DESC
+$cmd$) AS line;
+
+SELECT line AS mixed_btree_rum_reversed_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document
+    FROM documentdb_api.collection('msdb', 'flights_mixed_access_methods')
+    WHERE document @= '{ "arrivalAirport": "SEA" }'
+       OR bson_dollar_eq(document, object_id, '{ "_id": 1 }')
+    ORDER BY bson_orderby(document, '{ "scheduledTime": -1 }') DESC
+$cmd$) AS line;
+
+SELECT documentdb_api.drop_collection('msdb','flights_mixed_access_methods');
+RESET documentdb.enable_support_function_id_pushdown;
+SET enable_sort TO off;
+
+-- A non-ordered RUM branch cannot participate with an ordered RUM branch,
+-- even when both indexes contain the requested sort path.
+SELECT documentdb_api.create_collection('msdb','flights_non_ordered_branch');
+SELECT documentdb_api.insert_one('msdb','flights_non_ordered_branch',
+  '{ "_id": 1, "departureAirport": "SEA", "arrivalAirport": "PDX", "scheduledTime": 30 }');
+SELECT documentdb_api.insert_one('msdb','flights_non_ordered_branch',
+  '{ "_id": 2, "departureAirport": "SFO", "arrivalAirport": "SEA", "scheduledTime": 40 }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "flights_non_ordered_branch", "indexes": [
+      { "key": { "departureAirport": 1, "scheduledTime": -1 }, "name": "departure_time_ordered", "enableOrderedIndex": 1 },
+      { "key": { "arrivalAirport": 1, "scheduledTime": -1 }, "name": "arrival_time_non_ordered", "enableOrderedIndex": false }
+  ] }', true);
+
+SELECT line AS ordered_non_ordered_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights_non_ordered_branch", "filter": { "$or": [ { "departureAirport": "SEA" }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 } }')
+$cmd$) AS line;
+
+SELECT line AS ordered_non_ordered_reversed_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights_non_ordered_branch", "filter": { "$or": [ { "arrivalAirport": "SEA" }, { "departureAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 } }')
+$cmd$) AS line;
+
+SELECT documentdb_api.drop_collection('msdb','flights_non_ordered_branch');
+
+-- One branch provides the full compound order while the other provides only
+-- its leading scheduledTime key.
+SELECT documentdb_api.create_collection('msdb','flights_partial_order');
+SELECT documentdb_api.insert_one('msdb','flights_partial_order',
+  '{ "_id": 1, "departureAirport": "SEA", "arrivalAirport": "PDX", "scheduledTime": 30, "flightCode": "B" }');
+SELECT documentdb_api.insert_one('msdb','flights_partial_order',
+  '{ "_id": 2, "departureAirport": "SFO", "arrivalAirport": "SEA", "scheduledTime": 40, "flightCode": "A" }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "flights_partial_order", "indexes": [
+      { "key": { "departureAirport": 1, "scheduledTime": -1, "flightCode": 1 }, "name": "departure_time_code", "enableOrderedIndex": 1 },
+      { "key": { "arrivalAirport": 1, "scheduledTime": -1 }, "name": "arrival_time", "enableOrderedIndex": 1 }
+  ] }', true);
+
+SELECT line AS partial_order_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights_partial_order", "filter": { "$or": [ { "departureAirport": "SEA" }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1, "flightCode": 1 } }')
+$cmd$) AS line;
+
+SELECT line AS partial_order_reversed_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights_partial_order", "filter": { "$or": [ { "arrivalAirport": "SEA" }, { "departureAirport": "SEA" } ] }, "sort": { "scheduledTime": -1, "flightCode": 1 } }')
+$cmd$) AS line;
+
+SELECT documentdb_api.drop_collection('msdb','flights_partial_order');
+
+-- Both indexes contain the compound sort paths, but one has an incompatible
+-- direction for the second key and can provide only the first sort key.
+SELECT documentdb_api.create_collection('msdb','flights_direction_mismatch');
+SELECT documentdb_api.insert_one('msdb','flights_direction_mismatch',
+  '{ "_id": 1, "departureAirport": "SEA", "arrivalAirport": "PDX", "scheduledTime": 30, "gate": 4 }');
+SELECT documentdb_api.insert_one('msdb','flights_direction_mismatch',
+  '{ "_id": 2, "departureAirport": "SFO", "arrivalAirport": "SEA", "scheduledTime": 40, "gate": 2 }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "flights_direction_mismatch", "indexes": [
+      { "key": { "departureAirport": 1, "scheduledTime": -1, "gate": 1 }, "name": "departure_time_gate", "enableOrderedIndex": 1 },
+      { "key": { "arrivalAirport": 1, "scheduledTime": -1, "gate": -1 }, "name": "arrival_time_gate", "enableOrderedIndex": 1 }
+  ] }', true);
+
+SELECT line AS direction_mismatch_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights_direction_mismatch", "filter": { "$or": [ { "departureAirport": "SEA" }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1, "gate": 1 } }')
+$cmd$) AS line;
+
+SELECT documentdb_api.drop_collection('msdb','flights_direction_mismatch');
+
+-- A range bound on the leading index path does not fix that path to one value,
+-- so the following scheduledTime path cannot provide a global order.
+SELECT documentdb_api.create_collection('msdb','flights_range_prefix');
+SELECT documentdb_api.insert_one('msdb','flights_range_prefix',
+  '{ "_id": 1, "departureAirport": "SEA", "arrivalAirport": "PDX", "scheduledTime": 30 }');
+SELECT documentdb_api.insert_one('msdb','flights_range_prefix',
+  '{ "_id": 2, "departureAirport": "SFO", "arrivalAirport": "SEA", "scheduledTime": 40 }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('msdb',
+  '{ "createIndexes": "flights_range_prefix", "indexes": [
+      { "key": { "departureAirport": 1, "scheduledTime": -1 }, "name": "departure_time", "enableOrderedIndex": 1 },
+      { "key": { "arrivalAirport": 1, "scheduledTime": -1 }, "name": "arrival_time", "enableOrderedIndex": 1 }
+  ] }', true);
+
+SELECT line AS range_prefix_plan
+FROM documentdb_test_helpers.run_explain_and_trim( $cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('msdb',
+      '{ "find": "flights_range_prefix", "filter": { "$or": [ { "departureAirport": { "$gte": "S" } }, { "arrivalAirport": "SEA" } ] }, "sort": { "scheduledTime": -1 } }')
+$cmd$) AS line;
+
+SELECT documentdb_api.drop_collection('msdb','flights_range_prefix');
+
+SET enable_sort TO on;
+SET documentdb.enable_cross_index_bitmap_or_sort_merge TO off;

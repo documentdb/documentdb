@@ -432,6 +432,11 @@ bool EnableMergeSortForInPrefix = DEFAULT_ENABLE_MERGE_SORT_FOR_IN_PREFIX;
 #define DEFAULT_ENABLE_MERGE_SORT_FOR_BITMAP_OR true
 bool EnableMergeSortForBitmapOr = DEFAULT_ENABLE_MERGE_SORT_FOR_BITMAP_OR;
 
+/* Added on v0.118, pending stabilization, enable on v0.123 */
+#define DEFAULT_ENABLE_CROSS_INDEX_BITMAP_OR_SORT_MERGE false
+bool EnableCrossIndexBitmapOrSortMerge =
+	DEFAULT_ENABLE_CROSS_INDEX_BITMAP_OR_SORT_MERGE;
+
 /* Added in v0.116, enabled in v0.116, remove after v0.118 */
 #define DEFAULT_ENABLE_COMPOSITE_SECONDARY_PATH_ORDER_PUSHDOWN true
 bool EnableCompositeSecondaryPathOrderPushdown =
@@ -1099,6 +1104,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to push a composite index sort to a merge of the ordered per-branch index scans of a bitmap OR when the $or branches share the index and order-by suffix."),
 		NULL, &EnableMergeSortForBitmapOr,
 		DEFAULT_ENABLE_MERGE_SORT_FOR_BITMAP_OR,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_cross_index_bitmap_or_sort_merge", newGucPrefix),
+		gettext_noop(
+			"Whether to enable sort merge support for cross-index bitmap OR branches."),
+		NULL, &EnableCrossIndexBitmapOrSortMerge,
+		DEFAULT_ENABLE_CROSS_INDEX_BITMAP_OR_SORT_MERGE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
