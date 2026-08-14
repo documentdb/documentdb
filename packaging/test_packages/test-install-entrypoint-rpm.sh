@@ -14,6 +14,14 @@ dnf install -y /tmp/documentdb.rpm
 
 echo "RPM package installed successfully!"
 
+# One-glance environment fingerprint. When this suite goes red across all PRs
+# (as it did when PGDG rolled 18.4 -> 18.6 under us), the first question is
+# "what changed vs the last green run" -- answer it here instead of making
+# someone diff two 12k-line logs.
+echo "=== Installed PostgreSQL/PGDG packages ==="
+rpm -qa 'postgresql*' 'pgvector*' 'pg_cron*' 'postgis*' | sort
+echo "=========================================="
+
 # Assert the package installed what it claims to, BEFORE running anything that
 # could accidentally pass against a different tree.
 for f in /usr/pgsql-${POSTGRES_VERSION}/lib/pg_documentdb.so \
@@ -89,6 +97,16 @@ else
     exit 1
 fi
 
+# Test diff -- pg_regress shells out to it for every output comparison and
+# reports a missing binary as a per-test "diff command failed with status
+# 32512", which reads like a test failure rather than a broken image.
+if command -v diff >/dev/null 2>&1; then
+    echo "✓ diff found at $(command -v diff)"
+else
+    echo "✗ diff not found; the test image must install diffutils (pg_regress needs it)"
+    exit 1
+fi
+
 echo "=== Environment tests passed! ==="
 
 # PGDG RHEL's postgresql.conf.sample enables logging_collector by default, which
@@ -110,14 +128,20 @@ chown -R documentdb:documentdb .
 # Switch to the documentdb user and run the tests
 echo "Running make check as documentdb user..."
 if ! su documentdb -c "export PG_CONFIG=/usr/pgsql-${POSTGRES_VERSION}/bin/pg_config && export PATH=/usr/pgsql-${POSTGRES_VERSION}/bin:\$PATH && make check"; then
-    echo "make check failed. Displaying postmaster.log if it exists:"
-    LOG_FILE="/usr/src/documentdb/pg_documentdb/src/test/regress/log/postmaster.log"
-    if [ -f "$LOG_FILE" ]; then
-        echo "=== Contents of $LOG_FILE ==="
-        cat "$LOG_FILE"
-        echo "==============================="
+    echo "make check failed. Displaying any postmaster.log found:"
+    # make check recurses into several suites (pg_documentdb_core,
+    # pg_documentdb, ...), each with its own regress log dir. The old
+    # hard-coded pg_documentdb path printed "not found" whenever a different
+    # suite failed, discarding the crash evidence -- search the whole tree.
+    FOUND_LOGS=$(find /usr/src/documentdb -type f -name postmaster.log 2>/dev/null)
+    if [ -n "$FOUND_LOGS" ]; then
+        for LOG_FILE in $FOUND_LOGS; do
+            echo "=== Contents of $LOG_FILE ==="
+            cat "$LOG_FILE"
+            echo "==============================="
+        done
     else
-        echo "Log file $LOG_FILE not found."
+        echo "No postmaster.log found under /usr/src/documentdb."
     fi
     exit 1
 fi
