@@ -38,7 +38,7 @@ BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_q_runtime_dist_explain_db', '{ "find": "coll_simple_d", "filter": { "a": "CAT" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
-                                                                run_explain_and_trim                                                                
+                                                                   run_explain_and_trim                                                                   
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -47,9 +47,10 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
          Tasks Shown: One of 8
          ->  Task
                Node: host=localhost port=58070 dbname=regression
-               ->  Seq Scan on documents_95681_95680004 collection
-                     Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(9 rows)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     ->  Seq Scan on documents_95681_95680004 collection
+                           Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(10 rows)
 
 END;
 -- $expr equality with collation
@@ -57,7 +58,7 @@ BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_q_runtime_dist_explain_db', '{ "find": "coll_simple_d", "filter": { "$expr": {"$eq": ["$a", "CAT"]} }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
-                                                                                                                        run_explain_and_trim                                                                                                                         
+                                                                                                                           run_explain_and_trim                                                                                                                            
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -66,9 +67,10 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
          Tasks Shown: One of 8
          ->  Task
                Node: host=localhost port=58070 dbname=regression
-               ->  Seq Scan on documents_95681_95680004 collection
-                     Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : { "$eq" : [ "$a", "CAT" ] }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
-(9 rows)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     ->  Seq Scan on documents_95681_95680004 collection
+                           Filter: documentdb_api_internal.bson_dollar_expr(document, '{ "" : { "$eq" : [ "$a", "CAT" ] }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
+(10 rows)
 
 END;
 -- aggregation pipeline with $match and collation
@@ -76,7 +78,7 @@ BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_q_runtime_dist_explain_db', '{ "aggregate": "coll_simple_d", "pipeline": [ { "$match": { "a": "DOG" } }, { "$sort": { "_id": 1 } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
-                                                                run_explain_and_trim                                                                
+                                                                   run_explain_and_trim                                                                   
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -85,8 +87,9 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
          Tasks Shown: One of 8
          ->  Task
                Node: host=localhost port=58070 dbname=regression
-               ->  Seq Scan on documents_95681_95680004 collection
-                     Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "DOG", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(9 rows)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     ->  Seq Scan on documents_95681_95680004 collection
+                           Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "DOG", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(10 rows)
 
 END;

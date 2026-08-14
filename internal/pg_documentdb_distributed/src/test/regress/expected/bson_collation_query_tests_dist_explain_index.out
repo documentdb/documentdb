@@ -70,7 +70,8 @@ $cmd$);
                Tasks Shown: One of 8
                ->  Task
                      Node: host=localhost port=58070 dbname=regression
-                     ->  Seq Scan on documents_95651_95650004 collection
+                     ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                           ->  Seq Scan on documents_95651_95650004 collection
    ->  Distributed Subplan 41_2
          ->  Custom Scan (Citus Adaptive)
                Task Count: 8
@@ -96,7 +97,7 @@ $cmd$);
                ->  Aggregate
                      ->  Function Scan on read_intermediate_result intermediate_result_1
                            Filter: documentdb_api_internal.bson_dollar_lookup_join_filter(document, intermediate_result.lookup_filter, '_id'::text)
-(33 rows)
+(34 rows)
 
 END;
 -- ======================================================================
@@ -147,16 +148,17 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_q_idx_dist_explain_db', '{ "aggregate": "coll_agg_d", "pipeline": [ { "$match": { "_id": { "$eq": "CAT" } } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
-                                                              run_explain_and_trim                                                              
+                                                                 run_explain_and_trim                                                                 
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 8
    Tasks Shown: One of 8
    ->  Task
          Node: host=localhost port=58070 dbname=regression
-         ->  Seq Scan on documents_95652_95650014 collection
-               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(7 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan)
+               ->  Seq Scan on documents_95652_95650014 collection
+                     Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(8 rows)
 
 END;
 -- Numeric shard key value with collation: not collation-aware, single shard
@@ -370,16 +372,17 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('coll_q_idx_dist_explain_db', 'coll_delete_d')
   WHERE documentdb_api_internal.bson_query_match(document, '{"b": "CaT"}'::bson, '{}'::bson, 'en-u-ks-level1')
 $cmd$);
-                                                             run_explain_and_trim                                                             
+                                                                run_explain_and_trim                                                                
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 8
    Tasks Shown: One of 8
    ->  Task
          Node: host=localhost port=58070 dbname=regression
-         ->  Seq Scan on documents_95654_95650034 documents_95654
-               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "b" : "CaT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(7 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan)
+               ->  Seq Scan on documents_95654_95650034 documents_95654
+                     Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "b" : "CaT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(8 rows)
 
 END;
 -- deleteOne predicate with collation-aware shard key value filter
@@ -549,16 +552,17 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM documentdb_api.collection('coll_q_idx_dist_explain_db', 'coll_qm_d') WHERE documentdb_api_internal.bson_query_match(document, '{ "_id": "CAT" }', '{}', 'en-u-ks-level1')
 $cmd$);
-                                                              run_explain_and_trim                                                              
+                                                                 run_explain_and_trim                                                                 
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Task Count: 8
    Tasks Shown: One of 8
    ->  Task
          Node: host=localhost port=58070 dbname=regression
-         ->  Seq Scan on documents_95655_95650044 documents_95655
-               Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(7 rows)
+         ->  Custom Scan (DocumentDBApiExplainQueryScan)
+               ->  Seq Scan on documents_95655_95650044 documents_95655
+                     Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : "CAT", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(8 rows)
 
 END;
 -- Not distributed: shard key value is not collation-aware (single shard)

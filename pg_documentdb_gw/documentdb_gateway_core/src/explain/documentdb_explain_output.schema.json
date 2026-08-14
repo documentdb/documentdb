@@ -509,6 +509,13 @@
           "type": "integer",
           "description": "Number of parallel workers launched for this stage. Derived from PostgreSQL's 'Workers Launched'. Omitted if zero."
         },
+        "stageWorkerData": {
+          "type": "array",
+          "description": "Per-worker execution details reported by PostgreSQL for a parallel plan stage. Present only when PostgreSQL includes a Workers array.",
+          "items": {
+            "$ref": "#/$defs/ExplainWorker"
+          }
+        },
         "inputStage": {
           "$ref": "#/$defs/ExecutionStatsStage",
           "description": "The single child input stage. Present when there is exactly one child plan node."
@@ -522,6 +529,84 @@
         }
       },
       "required": ["stage", "nReturned", "executionTimeMillis", "totalKeysExamined"]
+    },
+    "ExplainWorker": {
+      "type": "object",
+      "description": "Execution details for one PostgreSQL parallel worker. Fields are included when reported by PostgreSQL, including zero-valued counters.",
+      "properties": {
+        "workerNumber": {
+          "type": "integer",
+          "description": "Zero-based PostgreSQL worker number."
+        },
+        "actualStartupTime": {
+          "type": "number",
+          "description": "Worker startup time in milliseconds."
+        },
+        "actualTotalTime": {
+          "type": "number",
+          "description": "Worker total execution time in milliseconds."
+        },
+        "actualRows": {
+          "type": "number",
+          "description": "Rows produced by the worker."
+        },
+        "actualLoops": {
+          "type": "number",
+          "description": "Number of times the worker executed the plan node."
+        },
+        "sortMethod": {
+          "type": "string",
+          "description": "Sort algorithm used by the worker."
+        },
+        "sortSpaceUsed": {
+          "type": "integer",
+          "description": "Sort space used by the worker, in the unit reported by PostgreSQL."
+        },
+        "sortSpaceType": {
+          "type": "string",
+          "description": "Storage type used for worker sort space, such as Memory or Disk."
+        },
+        "sharedHitBlocks": {
+          "type": "integer",
+          "description": "Shared buffer blocks found in cache by the worker."
+        },
+        "sharedReadBlocks": {
+          "type": "integer",
+          "description": "Shared buffer blocks read by the worker."
+        },
+        "sharedDirtiedBlocks": {
+          "type": "integer",
+          "description": "Shared buffer blocks dirtied by the worker."
+        },
+        "sharedWrittenBlocks": {
+          "type": "integer",
+          "description": "Shared buffer blocks written by the worker."
+        },
+        "localHitBlocks": {
+          "type": "integer",
+          "description": "Local buffer blocks found in cache by the worker."
+        },
+        "localReadBlocks": {
+          "type": "integer",
+          "description": "Local buffer blocks read by the worker."
+        },
+        "localDirtiedBlocks": {
+          "type": "integer",
+          "description": "Local buffer blocks dirtied by the worker."
+        },
+        "localWrittenBlocks": {
+          "type": "integer",
+          "description": "Local buffer blocks written by the worker."
+        },
+        "tempReadBlocks": {
+          "type": "integer",
+          "description": "Temporary blocks read by the worker."
+        },
+        "tempWrittenBlocks": {
+          "type": "integer",
+          "description": "Temporary blocks written by the worker."
+        }
+      }
     },
     "ExecutionStatsIndexUsage": {
       "type": "object",

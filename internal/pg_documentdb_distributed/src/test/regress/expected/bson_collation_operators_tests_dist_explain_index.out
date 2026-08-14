@@ -195,7 +195,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "single_field_d", "filter": { "a": { "$eq": "apple" } }, "sort": { "_id": 1 } }')
 $cmd$);
-                                                 run_explain_and_trim                                                 
+                                                    run_explain_and_trim                                                    
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -204,9 +204,10 @@ $cmd$);
          Tasks Shown: One of 8
          ->  Task
                Node: host=localhost port=58070 dbname=regression
-               ->  Seq Scan on documents_95211_95210004 collection
-                     Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "apple" }'::documentdb_core.bson)
-(9 rows)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     ->  Seq Scan on documents_95211_95210004 collection
+                           Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "apple" }'::documentdb_core.bson)
+(10 rows)
 
 END;
 -- ======================================================================
@@ -792,7 +793,7 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "elemmatch_d", "filter": { "items": { "$elemMatch": { "$eq": "APPLE" } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 1 } }')
 $cmd$);
-                                                                         run_explain_and_trim                                                                          
+                                                                            run_explain_and_trim                                                                             
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -801,9 +802,10 @@ $cmd$);
          Tasks Shown: One of 8
          ->  Task
                Node: host=localhost port=58070 dbname=regression
-               ->  Seq Scan on documents_95213_95210024 collection
-                     Filter: (document OPERATOR(documentdb_api_catalog.@#?) '{ "items" : { "$eq" : "APPLE" }, "collation" : "de-u-ks-level1" }'::documentdb_core.bson)
-(9 rows)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     ->  Seq Scan on documents_95213_95210024 collection
+                           Filter: (document OPERATOR(documentdb_api_catalog.@#?) '{ "items" : { "$eq" : "APPLE" }, "collation" : "de-u-ks-level1" }'::documentdb_core.bson)
+(10 rows)
 
 END;
 -- ======================================================================
@@ -1226,7 +1228,7 @@ SET LOCAL documentdb.enableOrderByIndexTerm TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_id_d", "filter": {}, "sort": { "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
 $cmd$);
-                       run_explain_and_trim                        
+                          run_explain_and_trim                           
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -1235,8 +1237,9 @@ $cmd$);
          Tasks Shown: One of 8
          ->  Task
                Node: host=localhost port=58070 dbname=regression
-               ->  Seq Scan on documents_95216_95210054 collection
-(8 rows)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     ->  Seq Scan on documents_95216_95210054 collection
+(9 rows)
 
 END;
 -- 11i: _id DESC sort with collation — _id_ PK rejected under collation; falls back to per-shard Seq Scan
@@ -1250,7 +1253,7 @@ SET LOCAL documentdb.enableOrderByIndexTerm TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_id_d", "filter": {}, "sort": { "_id": -1 }, "collation": { "locale": "en", "numericOrdering": true } }')
 $cmd$);
-                       run_explain_and_trim                        
+                          run_explain_and_trim                           
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" DESC NULLS LAST
@@ -1259,8 +1262,9 @@ $cmd$);
          Tasks Shown: One of 8
          ->  Task
                Node: host=localhost port=58070 dbname=regression
-               ->  Seq Scan on documents_95216_95210054 collection
-(8 rows)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     ->  Seq Scan on documents_95216_95210054 collection
+(9 rows)
 
 END;
 -- 11j: _id eq filter + _id collated sort — PK rejected for both filter and sort under collation;
@@ -1275,7 +1279,7 @@ SET LOCAL documentdb.enableOrderByIndexTerm TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_idx_dist_explain_db', '{ "find": "ord_id_d", "filter": { "_id": "item2" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "numericOrdering": true } }')
 $cmd$);
-                                                                      run_explain_and_trim                                                                      
+                                                                         run_explain_and_trim                                                                         
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -1284,9 +1288,10 @@ $cmd$);
          Tasks Shown: One of 8
          ->  Task
                Node: host=localhost port=58070 dbname=regression
-               ->  Seq Scan on documents_95216_95210054 collection
-                     Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : "item2", "collation" : "en-u-ks-level3-kn-true" }'::documentdb_core.bson)
-(9 rows)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     ->  Seq Scan on documents_95216_95210054 collection
+                           Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "_id" : "item2", "collation" : "en-u-ks-level3-kn-true" }'::documentdb_core.bson)
+(10 rows)
 
 END;
 -- 11k: uncollated query against the collated index — existence scan still uses the index

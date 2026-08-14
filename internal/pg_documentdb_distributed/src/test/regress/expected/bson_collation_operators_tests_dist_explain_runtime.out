@@ -44,7 +44,7 @@ BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_runtime_dist_explain_db', '{ "find": "single_field_d", "filter": { "a": { "$eq": "apple" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
-                                                                 run_explain_and_trim                                                                 
+                                                                    run_explain_and_trim                                                                    
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -53,9 +53,10 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
          Tasks Shown: One of 8
          ->  Task
                Node: host=localhost port=58070 dbname=regression
-               ->  Seq Scan on documents_95241_95240004 collection
-                     Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(9 rows)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     ->  Seq Scan on documents_95241_95240004 collection
+                           Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "apple", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(10 rows)
 
 END;
 -- $gt with collation across shards
@@ -63,7 +64,7 @@ BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_runtime_dist_explain_db', '{ "find": "single_field_d", "filter": { "a": { "$gt": "banana" } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
-                                                                 run_explain_and_trim                                                                  
+                                                                    run_explain_and_trim                                                                     
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -72,9 +73,10 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
          Tasks Shown: One of 8
          ->  Task
                Node: host=localhost port=58070 dbname=regression
-               ->  Seq Scan on documents_95241_95240004 collection
-                     Filter: (document OPERATOR(documentdb_api_catalog.@>) '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(9 rows)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     ->  Seq Scan on documents_95241_95240004 collection
+                           Filter: (document OPERATOR(documentdb_api_catalog.@>) '{ "a" : "banana", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(10 rows)
 
 END;
 -- aggregation pipeline with $match and collation
@@ -82,7 +84,7 @@ BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_ops_runtime_dist_explain_db', '{ "aggregate": "single_field_d", "pipeline": [ { "$match": { "a": { "$eq": "cherry" } } }, { "$sort": { "_id": 1 } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
-                                                                 run_explain_and_trim                                                                  
+                                                                    run_explain_and_trim                                                                     
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -91,9 +93,10 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
          Tasks Shown: One of 8
          ->  Task
                Node: host=localhost port=58070 dbname=regression
-               ->  Seq Scan on documents_95241_95240004 collection
-                     Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
-(9 rows)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     ->  Seq Scan on documents_95241_95240004 collection
+                           Filter: (document OPERATOR(documentdb_api_catalog.@=) '{ "a" : "cherry", "collation" : "en-u-ks-level1" }'::documentdb_core.bson)
+(10 rows)
 
 END;
 -- collated ORDER BY on a non-_id field without a collation-aware index —
@@ -107,7 +110,7 @@ SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SET LOCAL documentdb.enableOrderByIndexTerm TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('coll_ops_runtime_dist_explain_db', '{ "find": "single_field_d", "filter": {}, "sort": { "a": 1 }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
-                       run_explain_and_trim                        
+                          run_explain_and_trim                           
 ---------------------------------------------------------------------
  Sort
    Sort Key: remote_scan."?sort?" NULLS FIRST
@@ -116,7 +119,8 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
          Tasks Shown: One of 8
          ->  Task
                Node: host=localhost port=58070 dbname=regression
-               ->  Seq Scan on documents_95241_95240004 collection
-(8 rows)
+               ->  Custom Scan (DocumentDBApiExplainQueryScan)
+                     ->  Seq Scan on documents_95241_95240004 collection
+(9 rows)
 
 END;

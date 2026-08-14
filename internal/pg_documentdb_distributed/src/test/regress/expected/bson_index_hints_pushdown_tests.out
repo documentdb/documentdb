@@ -122,11 +122,12 @@ EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregati
 
 -- this pushes to a seqscan because the index is hashed
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": "d_hashed" }');
-                            QUERY PLAN                            
+                               QUERY PLAN                               
 ---------------------------------------------------------------------
- Seq Scan on documents_69501_695002 collection
-   Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-(2 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   ->  Seq Scan on documents_69501_695002 collection
+         Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
+(3 rows)
 
 -- this should fail.
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": "e_text" }');
@@ -199,11 +200,12 @@ EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregati
 
 -- this pushes to a seqscan because the index is hashed
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": { "d": "hashed" } }');
-                            QUERY PLAN                            
+                               QUERY PLAN                               
 ---------------------------------------------------------------------
- Seq Scan on documents_69501_695002 collection
-   Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
-(2 rows)
+ Custom Scan (DocumentDBApiExplainQueryScan)
+   ->  Seq Scan on documents_69501_695002 collection
+         Filter: (document @= '{ "x" : { "$numberInt" : "1" } }'::bson)
+(3 rows)
 
 -- this should fail.
 EXPLAIN (COSTS OFF, VERBOSE OFF, TIMING OFF) SELECT document from bson_aggregation_find('hint_db', '{ "find": "query_index_hints", "filter": { "x": 1 }, "hint": { "$**": "text" } }');

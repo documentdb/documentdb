@@ -145,6 +145,7 @@ static const ExtensibleNodeMethods InputQueryStateMethods =
 
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableExplainScanNamespaceName;
+extern bool EnableExplainScanSeqScan;
 
 
 /*
@@ -186,7 +187,8 @@ IsValidPath(Path *inputPath)
 
 	if (inputPath->pathtype == T_IndexScan ||
 		inputPath->pathtype == T_IndexOnlyScan ||
-		inputPath->pathtype == T_BitmapHeapScan)
+		inputPath->pathtype == T_BitmapHeapScan ||
+		(inputPath->pathtype == T_SeqScan && EnableExplainScanSeqScan))
 	{
 		return true;
 	}

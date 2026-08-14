@@ -11,8 +11,8 @@ use std::{cmp::Ordering, collections::HashMap, str::FromStr, sync::LazyLock};
 
 use bson::{rawdoc, Document, RawArrayBuf, RawBson, RawDocument, RawDocumentBuf};
 use model::{
-    DistributedJob, DistributedQueryPlan, DistributedSubPlan, ExplainPlan, IndexCost, IndexDetails,
-    PostgresExplain, VectorSearchParams,
+    DistributedJob, DistributedQueryPlan, DistributedSubPlan, ExplainPlan, ExplainWorker,
+    IndexCost, IndexDetails, PostgresExplain, VectorSearchParams,
 };
 use serde_json::Value;
 
@@ -1961,6 +1961,15 @@ fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocume
                 doc.append("parallelWorkers", smallest_from_i64(v));
             }
         }
+        if let Some(workers) = plan.workers.as_ref() {
+            if !workers.is_empty() {
+                let mut worker_array = RawArrayBuf::new();
+                for worker in workers {
+                    worker_array.push(build_worker_doc(worker));
+                }
+                doc.append("stageWorkerData", worker_array);
+            }
+        }
 
         doc
     });
@@ -1982,6 +1991,55 @@ fn distribute_index_details(plan: &mut ExplainPlan, index_details: Option<Vec<In
         for inner_plan in inner_plans {
             distribute_index_details(inner_plan, plan.index_details.clone());
         }
+    }
+}
+
+fn build_worker_doc(worker: &ExplainWorker) -> RawDocumentBuf {
+    let mut doc = RawDocumentBuf::new();
+
+    append_optional_i64(&mut doc, "workerNumber", worker.worker_number);
+    append_optional_f64(&mut doc, "actualStartupTime", worker.actual_startup_time);
+    append_optional_f64(&mut doc, "actualTotalTime", worker.actual_total_time);
+    append_optional_f64(&mut doc, "actualRows", worker.actual_rows);
+    append_optional_f64(&mut doc, "actualLoops", worker.actual_loops);
+    if let Some(sort_method) = worker.sort_method.as_deref() {
+        doc.append("sortMethod", sort_method);
+    }
+    append_optional_i64(&mut doc, "sortSpaceUsed", worker.sort_space_used);
+    if let Some(sort_space_type) = worker.sort_space_type.as_deref() {
+        doc.append("sortSpaceType", sort_space_type);
+    }
+    append_optional_i64(&mut doc, "sharedHitBlocks", worker.shared_hit_blocks);
+    append_optional_i64(&mut doc, "sharedReadBlocks", worker.shared_read_blocks);
+    append_optional_i64(
+        &mut doc,
+        "sharedDirtiedBlocks",
+        worker.shared_dirtied_blocks,
+    );
+    append_optional_i64(
+        &mut doc,
+        "sharedWrittenBlocks",
+        worker.shared_written_blocks,
+    );
+    append_optional_i64(&mut doc, "localHitBlocks", worker.local_hit_blocks);
+    append_optional_i64(&mut doc, "localReadBlocks", worker.local_read_blocks);
+    append_optional_i64(&mut doc, "localDirtiedBlocks", worker.local_dirtied_blocks);
+    append_optional_i64(&mut doc, "localWrittenBlocks", worker.local_written_blocks);
+    append_optional_i64(&mut doc, "tempReadBlocks", worker.temp_read_blocks);
+    append_optional_i64(&mut doc, "tempWrittenBlocks", worker.temp_written_blocks);
+
+    doc
+}
+
+fn append_optional_i64(doc: &mut RawDocumentBuf, name: &str, value: Option<i64>) {
+    if let Some(value) = value {
+        doc.append(name, smallest_from_i64(value));
+    }
+}
+
+fn append_optional_f64(doc: &mut RawDocumentBuf, name: &str, value: Option<f64>) {
+    if let Some(value) = value {
+        doc.append(name, smallest_from_f64(value));
     }
 }
 
@@ -2070,10 +2128,11 @@ fn collect_index_costs(
 /// Repeatedly strips intermediate wrapper nodes from the plan tree until a
 /// non-skippable node is reached. Wrapper nodes (`Subquery Scan` with
 /// `bson_repath_and_build`, `ExplainQueryScan`, `DocumentDBApiCursorScan`,
-/// `DocumentDBApiScan`) are internal implementation details that should not be
-/// exposed in the wire-protocol explain output. Properties such as
-/// `cursor_scan_type`, `skipped_tuples`, `alias`, and `index_details` are
-/// propagated from skipped nodes to the surviving child.
+/// `DocumentDBApiRumIndexOnlyScan`, `DocumentDBApiScan`) are internal
+/// implementation details that should not be exposed in the wire-protocol
+/// explain output. Properties such as `cursor_scan_type`, `skipped_tuples`,
+/// `alias`, and `index_details` are propagated from skipped nodes to the
+/// surviving child.
 #[expect(clippy::expect_used, reason = "values are checked before access")]
 fn skip_stage(mut plan: ExplainPlan, query_catalog: &QueryCatalog) -> ExplainPlan {
     loop {
@@ -2118,7 +2177,11 @@ fn skip_stage(mut plan: ExplainPlan, query_catalog: &QueryCatalog) -> ExplainPla
         } else if plan.node_type == "Custom Scan"
             && matches!(
                 plan.custom_plan_provider.as_deref(),
-                Some("DocumentDBApiCursorScan" | "DocumentDBApiScan")
+                Some(
+                    "DocumentDBApiCursorScan"
+                        | "DocumentDBApiRumIndexOnlyScan"
+                        | "DocumentDBApiScan"
+                )
             )
             && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
         {
@@ -2373,6 +2436,92 @@ mod tests {
 
         assert_eq!(stage, "PARALLEL_SORT_MERGE");
         assert!(inner.is_none());
+    }
+
+    #[test]
+    fn rum_index_only_scan_is_skipped() {
+        let child = ExplainPlan {
+            node_type: "Index Only Scan".to_owned(),
+            index_name: Some("idx_a".to_owned()),
+            ..Default::default()
+        };
+        let plan = ExplainPlan {
+            node_type: "Custom Scan".to_owned(),
+            custom_plan_provider: Some("DocumentDBApiRumIndexOnlyScan".to_owned()),
+            namespace_name: Some("db.collection".to_owned()),
+            inner_plans: Some(vec![child]),
+            ..Default::default()
+        };
+
+        let result = skip_stage(plan, &QueryCatalog::default());
+
+        assert_eq!(result.node_type, "Index Only Scan");
+        assert_eq!(result.index_name.as_deref(), Some("idx_a"));
+    }
+
+    #[test]
+    fn execution_stats_include_all_parallel_worker_fields() {
+        let worker: ExplainWorker = serde_json::from_str(
+            r#"{
+                "Worker Number": 0,
+                "Actual Startup Time": 1.25,
+                "Actual Total Time": 2.5,
+                "Actual Rows": 3,
+                "Actual Loops": 4,
+                "Sort Method": "quicksort",
+                "Sort Space Used": 5,
+                "Sort Space Type": "Memory",
+                "Shared Hit Blocks": 6,
+                "Shared Read Blocks": 7,
+                "Shared Dirtied Blocks": 8,
+                "Shared Written Blocks": 9,
+                "Local Hit Blocks": 10,
+                "Local Read Blocks": 11,
+                "Local Dirtied Blocks": 12,
+                "Local Written Blocks": 13,
+                "Temp Read Blocks": 14,
+                "Temp Written Blocks": 15
+            }"#,
+        )
+        .expect("PostgreSQL worker data should deserialize");
+        let plan = ExplainPlan {
+            node_type: "Gather".to_owned(),
+            workers: Some(vec![worker]),
+            ..Default::default()
+        };
+
+        let stats = execution_stats(plan, &QueryCatalog::default());
+        let workers = stats
+            .get_document("executionStages")
+            .expect("execution stages should be present")
+            .get_array("stageWorkerData")
+            .expect("stage worker data should be present");
+        let worker = workers
+            .into_iter()
+            .next()
+            .expect("workers should not be empty")
+            .expect("worker should be valid BSON")
+            .as_document()
+            .expect("worker should be a document");
+
+        assert_eq!(worker.get_i32("workerNumber"), Ok(0));
+        assert_eq!(worker.get_f64("actualStartupTime"), Ok(1.25));
+        assert_eq!(worker.get_f64("actualTotalTime"), Ok(2.5));
+        assert_eq!(worker.get_i32("actualRows"), Ok(3));
+        assert_eq!(worker.get_i32("actualLoops"), Ok(4));
+        assert_eq!(worker.get_str("sortMethod"), Ok("quicksort"));
+        assert_eq!(worker.get_i32("sortSpaceUsed"), Ok(5));
+        assert_eq!(worker.get_str("sortSpaceType"), Ok("Memory"));
+        assert_eq!(worker.get_i32("sharedHitBlocks"), Ok(6));
+        assert_eq!(worker.get_i32("sharedReadBlocks"), Ok(7));
+        assert_eq!(worker.get_i32("sharedDirtiedBlocks"), Ok(8));
+        assert_eq!(worker.get_i32("sharedWrittenBlocks"), Ok(9));
+        assert_eq!(worker.get_i32("localHitBlocks"), Ok(10));
+        assert_eq!(worker.get_i32("localReadBlocks"), Ok(11));
+        assert_eq!(worker.get_i32("localDirtiedBlocks"), Ok(12));
+        assert_eq!(worker.get_i32("localWrittenBlocks"), Ok(13));
+        assert_eq!(worker.get_i32("tempReadBlocks"), Ok(14));
+        assert_eq!(worker.get_i32("tempWrittenBlocks"), Ok(15));
     }
 
     #[test]

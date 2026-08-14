@@ -1047,10 +1047,12 @@ $cmd$);
  Sort (actual rows=9 loops=1)
    Sort Key: (bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Seq Scan on documents_2200 collection (actual rows=9 loops=1)
-         Filter: (document @> '{ "a" : { "$numberInt" : "0" } }'::bson)
-         Rows Removed by Filter: 3
-(6 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=9 loops=1)
+         namespaceName: msdb.coll
+         ->  Seq Scan on documents_2200 collection (actual rows=9 loops=1)
+               Filter: (document @> '{ "a" : { "$numberInt" : "0" } }'::bson)
+               Rows Removed by Filter: 3
+(8 rows)
 
 -- =====================================================================
 -- Negative: no composite index on the queried collection => no MergeAppend.

@@ -182,22 +182,26 @@ set documentdb.enableExtendedExplainPlans to on;
 SELECT documentdb_test_helpers.run_explain_and_trim($$
     EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pinsert_db', '{ "count": "pbuild", "query": { "a": { "$gt": 500 } } }');
 $$);
-                           run_explain_and_trim                           
---------------------------------------------------------------------------
+                              run_explain_and_trim                              
+--------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
-   ->  Seq Scan on documents_1401 collection (actual rows=1500 loops=1)
-         Filter: (document @> '{ "a" : { "$numberInt" : "500" } }'::bson)
-         Rows Removed by Filter: 1500
-(4 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1500 loops=1)
+         namespaceName: pinsert_db.pbuild
+         ->  Seq Scan on documents_1401 collection (actual rows=1500 loops=1)
+               Filter: (document @> '{ "a" : { "$numberInt" : "500" } }'::bson)
+               Rows Removed by Filter: 1500
+(6 rows)
 
 SELECT documentdb_test_helpers.run_explain_and_trim($$
     EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pinsert_db', '{ "count": "pbuild", "query": { "a": { "$eq": 500 } } }');
 $$);
-                           run_explain_and_trim                           
---------------------------------------------------------------------------
+                              run_explain_and_trim                              
+--------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
-   ->  Seq Scan on documents_1401 collection (actual rows=3 loops=1)
-         Filter: (document @= '{ "a" : { "$numberInt" : "500" } }'::bson)
-         Rows Removed by Filter: 2997
-(4 rows)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+         namespaceName: pinsert_db.pbuild
+         ->  Seq Scan on documents_1401 collection (actual rows=3 loops=1)
+               Filter: (document @= '{ "a" : { "$numberInt" : "500" } }'::bson)
+               Rows Removed by Filter: 2997
+(6 rows)
 

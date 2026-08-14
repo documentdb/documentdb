@@ -64,6 +64,63 @@ pub struct PostgresExplain {
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
+pub struct ExplainWorker {
+    #[serde(rename = "Actual Loops")]
+    pub actual_loops: Option<f64>,
+
+    #[serde(rename = "Actual Rows")]
+    pub actual_rows: Option<f64>,
+
+    #[serde(rename = "Actual Startup Time")]
+    pub actual_startup_time: Option<f64>,
+
+    #[serde(rename = "Actual Total Time")]
+    pub actual_total_time: Option<f64>,
+
+    #[serde(rename = "Local Dirtied Blocks")]
+    pub local_dirtied_blocks: Option<i64>,
+
+    #[serde(rename = "Local Hit Blocks")]
+    pub local_hit_blocks: Option<i64>,
+
+    #[serde(rename = "Local Read Blocks")]
+    pub local_read_blocks: Option<i64>,
+
+    #[serde(rename = "Local Written Blocks")]
+    pub local_written_blocks: Option<i64>,
+
+    #[serde(rename = "Shared Dirtied Blocks")]
+    pub shared_dirtied_blocks: Option<i64>,
+
+    #[serde(rename = "Shared Hit Blocks")]
+    pub shared_hit_blocks: Option<i64>,
+
+    #[serde(rename = "Shared Read Blocks")]
+    pub shared_read_blocks: Option<i64>,
+
+    #[serde(rename = "Shared Written Blocks")]
+    pub shared_written_blocks: Option<i64>,
+
+    #[serde(rename = "Sort Method")]
+    pub sort_method: Option<String>,
+
+    #[serde(rename = "Sort Space Type")]
+    pub sort_space_type: Option<String>,
+
+    #[serde(rename = "Sort Space Used")]
+    pub sort_space_used: Option<i64>,
+
+    #[serde(rename = "Temp Read Blocks")]
+    pub temp_read_blocks: Option<i64>,
+
+    #[serde(rename = "Temp Written Blocks")]
+    pub temp_written_blocks: Option<i64>,
+
+    #[serde(rename = "Worker Number")]
+    pub worker_number: Option<i64>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "PascalCase")]
 pub struct ExplainPlan {
     #[serde(rename = "Actual Rows")]
@@ -192,6 +249,9 @@ pub struct ExplainPlan {
 
     #[serde(rename = "Workers Planned")]
     pub workers_planned: Option<i64>,
+
+    #[serde(rename = "Workers")]
+    pub workers: Option<Vec<ExplainWorker>>,
 
     #[serde(rename = "Strategy")]
     pub strategy: Option<String>,

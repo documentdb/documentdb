@@ -1132,12 +1132,15 @@ SELECT document FROM documentdb_api_catalog.bson_aggregation_find('regexIdDb',
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('regexIdDb',
     '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" } } }');
-                                                        QUERY PLAN                                                        
---------------------------------------------------------------------------------------------------------------------------
- Seq Scan on documentdb_data.documents_86101 collection
+                                                           QUERY PLAN                                                           
+--------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan)
    Output: document
-   Filter: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
-(3 rows)
+   namespaceName: regexIdDb.regex_id_coll
+   ->  Seq Scan on documentdb_data.documents_86101 collection
+         Output: document
+         Filter: (collection.document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
+(6 rows)
 
 -- EXPLAIN with feature flag off should show different plan (no object_id pushdown)
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
@@ -1145,12 +1148,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_find('regexIdDb',
         '{ "find": "regex_id_coll", "filter": { "_id": { "$regex": "^abc" } } }')
 $cmd$);
-                                             run_explain_and_trim                                              
----------------------------------------------------------------------------------------------------------------
- Seq Scan on documents_86101 collection (actual rows=2 loops=1)
-   Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
-   Rows Removed by Filter: 24
-(3 rows)
+                                                run_explain_and_trim                                                 
+---------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
+   namespaceName: regexIdDb.regex_id_coll
+   ->  Seq Scan on documents_86101 collection (actual rows=2 loops=1)
+         Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
+         Rows Removed by Filter: 24
+(5 rows)
 
 ROLLBACK;
 -- =============================================
@@ -1210,12 +1215,14 @@ SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     SELECT document FROM bson_aggregation_find('regexIdDb',
         '{ "find": "regex_id_big", "filter": { "_id": { "$regex": "^abc" } } }')
 $cmd$);
-                                             run_explain_and_trim                                              
----------------------------------------------------------------------------------------------------------------
- Seq Scan on documents_86103 collection (actual rows=1 loops=1)
-   Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
-   Rows Removed by Filter: 10000
-(3 rows)
+                                                run_explain_and_trim                                                 
+---------------------------------------------------------------------------------------------------------------------
+ Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=1 loops=1)
+   namespaceName: regexIdDb.regex_id_big
+   ->  Seq Scan on documents_86103 collection (actual rows=1 loops=1)
+         Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^abc", "options" : "" } } }'::bson)
+         Rows Removed by Filter: 10000
+(5 rows)
 
 ROLLBACK;
 RESET documentdb.enableExtendedExplainPlans;

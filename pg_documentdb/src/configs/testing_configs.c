@@ -137,6 +137,9 @@ bool EnableExplainScanIndexCosts = DEFAULT_ENABLE_EXPLAIN_SCAN_INDEX_COSTS;
 #define DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME true
 bool EnableExplainScanNamespaceName = DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME;
 
+#define DEFAULT_ENABLE_EXPLAIN_SCAN_SEQ_SCAN true
+bool EnableExplainScanSeqScan = DEFAULT_ENABLE_EXPLAIN_SCAN_SEQ_SCAN;
+
 /*
  * See create_indexes_background.c for the full description of each failure point value.
  */
@@ -485,6 +488,14 @@ InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
 			"Whether to include namespace name in explain output for index scans. requires enableextendedexplainplans"),
 		NULL, &EnableExplainScanNamespaceName,
 		DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_explain_scan_seq_scan", newGucPrefix),
+		gettext_noop(
+			"Whether to wrap sequential scans in extended explain output."),
+		NULL, &EnableExplainScanSeqScan,
+		DEFAULT_ENABLE_EXPLAIN_SCAN_SEQ_SCAN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomIntVariable(
