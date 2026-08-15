@@ -577,15 +577,15 @@ ProcessFindAndModifySpec(MongoCollection *collection, FindAndModifySpec *spec,
 												   CurrentMemoryContext);
 		}
 
-		UpdateOne(collection, &updateOneParams, shardKeyHash, transactionId,
-				  &updateOneResult, forceInlineWrites, evalState);
+		ExecuteUpdateOne(collection, &updateOneParams, shardKeyHash, transactionId,
+						 &updateOneResult, forceInlineWrites, evalState);
 
 		bool performedUpdateOrUpsert = updateOneResult.isRowUpdated ||
 									   updateOneResult.upsertedObjectId != NULL;
 		if (updateOneResult.isRetry)
 		{
 			/*
-			 * Cannot verify whether UpdateOne should have returned result
+			 * Cannot verify whether ExecuteUpdateOne should have returned result
 			 * document if it's a retry since the value of
 			 * UpdateOneParams.returnDocument is ignored in that case.
 			 */

@@ -14,7 +14,7 @@
  *    We perform a separate INSERT in case of upsert:true when the UPDATE
  *    matches 0 rows.
  *
- * 2) UpdateOne is used for multi:false scenarios and calls the update_one
+ * 2) ExecuteUpdateOne is used for multi:false scenarios and calls the update_one
  *    UDF, which can potentially get delegated to the worker nodes that
  *    stores the shard_key_value. In case of an unsharded collection it
  *    is called with shard_key_value 0.
@@ -32,14 +32,14 @@
  *    the TID points directly to the right page and tuple index.
  *
  *    If the document was deleted, update_one sets "o_reinsert_document".
- *    UpdateOne then calls InsertDocument to re-insert the document with
+ *    ExecuteUpdateOne then calls InsertDocument to re-insert the document with
  *    its new shard key value.
  *
  *    We perform an INSERT within update_one in case of upsert:true when the
  *    SELECT .. FOR UPDATE matches 0 rows. If the shard key value changes,
  *    we use o_reinsert_document to perform the insert via coordinator.
  *
- * 3) UpdateOneObjectId is used for multi:false scenarios involving an _id
+ * 3) UpdateOneByObjectId is used for multi:false scenarios involving an _id
  *    equals query on a sharded collection that is not sharded by _id.
  *    Since we do not know where the _id lives, and because there could be
  *    multiple documents with the same _id as long as they have different
@@ -318,20 +318,21 @@ static UpdateAllMatchingDocsResult UpdateAllMatchingDocuments(MongoCollection *c
 															  pgbson *
 															  schemaValidator,
 															  bool *hasOnlyObjectIdFilter);
-static void CallUpdateOne(MongoCollection *collection, UpdateOneParams *updateOneParams,
-						  int64 shardKeyHash, text *transactionId,
-						  UpdateOneResult *result, bool forceInlineWrites,
-						  ExprEvalState *stateForSchemaValidation);
-static void UpdateOneInternal(MongoCollection *collectionId,
+static void DispatchUpdateOne(MongoCollection *collection,
 							  UpdateOneParams *updateOneParams,
-							  int64 shardKeyHash, UpdateOneResult *result,
+							  int64 shardKeyHash, text *transactionId,
+							  UpdateOneResult *result, bool forceInlineWrites,
 							  ExprEvalState *stateForSchemaValidation);
-static void UpdateOneInternalWithRetryRecord(MongoCollection *collection, int64
-											 shardKeyHash,
-											 text *transactionId,
-											 UpdateOneParams *updateOneParams,
-											 UpdateOneResult *result,
-											 ExprEvalState *stateForSchemaValidation);
+static void ExecuteLocalUpdateOne(MongoCollection *collectionId,
+								  UpdateOneParams *updateOneParams,
+								  int64 shardKeyHash, UpdateOneResult *result,
+								  ExprEvalState *stateForSchemaValidation);
+static void ExecuteRetryableLocalUpdateOne(MongoCollection *collection, int64
+										   shardKeyHash,
+										   text *transactionId,
+										   UpdateOneParams *updateOneParams,
+										   UpdateOneResult *result,
+										   ExprEvalState *stateForSchemaValidation);
 static bool SelectUpdateCandidate(MongoCollection *collection, int64
 								  shardKeyHash, UpdateOneParams *updateOneParams,
 								  UpdateCandidate *updateCandidate,
@@ -345,13 +346,13 @@ static bool UpdateDocumentByTID(uint64 collectionId, const char *shardTableName,
 								ItemPointer tid, pgbson *updatedDocument);
 static bool DeleteDocumentByTID(uint64 collectionId, int64 shardKeyHash,
 								ItemPointer tid);
-static void UpdateOneObjectId(MongoCollection *collection,
-							  UpdateOneParams *updateOneParams,
-							  bson_value_t *objectId,
-							  bool queryHasNonIdFilters,
-							  text *transactionId,
-							  UpdateOneResult *result,
-							  ExprEvalState *stateForSchemaValidation);
+static void UpdateOneByObjectId(MongoCollection *collection,
+								UpdateOneParams *updateOneParams,
+								bson_value_t *objectId,
+								bool queryHasNonIdFilters,
+								text *transactionId,
+								UpdateOneResult *result,
+								ExprEvalState *stateForSchemaValidation);
 static pgbson * UpsertDocument(MongoCollection *collection, const bson_value_t *update,
 							   const bson_value_t *query, const
 							   bson_value_t *arrayFilters,
@@ -381,10 +382,10 @@ static pgbson * ProcessUnshardedUpdateBatchWorker(MongoCollection *collection,
 												  int64 shardKeyHash,
 												  text *transactionId,
 												  ExprEvalState *stateForSchemaValidation);
-static void CallUpdateWorkerForUpdateOne(MongoCollection *collection,
-										 UpdateOneParams *updateOneParams,
-										 int64 shardKeyHash, text *transactionId,
-										 UpdateOneResult *result);
+static void ExecuteWorkerUpdateOne(MongoCollection *collection,
+								   UpdateOneParams *updateOneParams,
+								   int64 shardKeyHash, text *transactionId,
+								   UpdateOneResult *result);
 static pgbson * SerializeUpdateManyParams(UpdateOneParams *params);
 static void DeserializeUpdateManyWorkerSpec(const bson_value_t *value,
 											WorkerUpdateParam *params);
@@ -1766,78 +1767,79 @@ ProcessUpdate(MongoCollection *collection, UpdateSpec *updateSpec,
 													  updateSpec->updateOneParams.
 													  variableSpec);
 		}
+
+		return;
+	}
+
+	/* Handle single document update (multi: false) */
+	UpdateOneResult updateOneResult;
+	memset(&updateOneResult, 0, sizeof(UpdateOneResult));
+
+	if (hasShardKeyValueFilter)
+	{
+		/*
+		 * Update at most 1 document that matches the query on a single shard.
+		 *
+		 * For unsharded collection, this is the shard that contains all the
+		 * data.
+		 */
+		ExecuteUpdateOne(collection, &updateSpec->updateOneParams, shardKeyHash,
+						 transactionId, &updateOneResult, forceInlineWrites,
+						 stateForSchemaValidation);
+	}
+	else if (isUpsert)
+	{
+		/*
+		 * Upsert on a shard collection without a shard key filter is not supported currently.
+		 *
+		 * TODO: Use ErrorCodes.ShardKeyNotFound
+		 */
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("An {upsert:true} update on a sharded collection "
+							   "must target a single shard")));
 	}
 	else
 	{
-		UpdateOneResult updateOneResult;
-		memset(&updateOneResult, 0, sizeof(UpdateOneResult));
+		/* determine whether query filters by a single object ID */
+		bson_iter_t queryDocIter;
+		BsonValueInitIterator(query, &queryDocIter);
+		bson_value_t idFromQueryDocument = { 0 };
+		bool errorOnConflict = false;
+		bool queryHasNonIdFilters = false;
+		bool isIdFilterCollationAwareIgnore = false;
+		bool hasObjectIdFilter =
+			TraverseQueryDocumentAndGetId(&queryDocIter, &idFromQueryDocument,
+										  errorOnConflict, &queryHasNonIdFilters,
+										  &isIdFilterCollationAwareIgnore);
 
-		if (hasShardKeyValueFilter)
+		if (hasObjectIdFilter)
 		{
 			/*
-			 * Update at most 1 document that matches the query on a single shard.
-			 *
-			 * For unsharded collection, this is the shard that contains all the
-			 * data.
+			 * Update at most 1 document that matches an _id equality filter from
+			 * a sharded collection without specifying a a shard key filter.
 			 */
-			UpdateOne(collection, &updateSpec->updateOneParams, shardKeyHash,
-					  transactionId, &updateOneResult, forceInlineWrites,
-					  stateForSchemaValidation);
-		}
-		else if (isUpsert)
-		{
-			/*
-			 * Upsert on a shard collection without a shard key filter is not supported currently.
-			 *
-			 * TODO: Use ErrorCodes.ShardKeyNotFound
-			 */
-			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							errmsg("An {upsert:true} update on a sharded collection "
-								   "must target a single shard")));
+			UpdateOneByObjectId(collection, &updateSpec->updateOneParams,
+								&idFromQueryDocument, queryHasNonIdFilters,
+								transactionId, &updateOneResult,
+								stateForSchemaValidation);
 		}
 		else
 		{
-			/* determine whether query filters by a single object ID */
-			bson_iter_t queryDocIter;
-			BsonValueInitIterator(query, &queryDocIter);
-			bson_value_t idFromQueryDocument = { 0 };
-			bool errorOnConflict = false;
-			bool queryHasNonIdFilters = false;
-			bool isIdFilterCollationAwareIgnore = false;
-			bool hasObjectIdFilter =
-				TraverseQueryDocumentAndGetId(&queryDocIter, &idFromQueryDocument,
-											  errorOnConflict, &queryHasNonIdFilters,
-											  &isIdFilterCollationAwareIgnore);
-
-			if (hasObjectIdFilter)
-			{
-				/*
-				 * Update at most 1 document that matches an _id equality filter from
-				 * a sharded collection without specifying a a shard key filter.
-				 */
-				UpdateOneObjectId(collection, &updateSpec->updateOneParams,
-								  &idFromQueryDocument, queryHasNonIdFilters,
-								  transactionId, &updateOneResult,
-								  stateForSchemaValidation);
-			}
-			else
-			{
-				ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-								errmsg("A {multi:false} update on a sharded collection "
-									   "must contain an exact match on _id or target a "
-									   "single shard")));
-			}
+			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("A {multi:false} update on a sharded collection "
+								   "must contain an exact match on _id or target a "
+								   "single shard")));
 		}
+	}
 
-		result->rowsModified = updateOneResult.isRowUpdated ? 1 : 0;
-		result->rowsMatched = updateOneResult.isRowUpdated ||
-							  updateOneResult.updateSkipped ? 1 : 0;
+	result->rowsModified = updateOneResult.isRowUpdated ? 1 : 0;
+	result->rowsMatched = updateOneResult.isRowUpdated ||
+						  updateOneResult.updateSkipped ? 1 : 0;
 
-		if (isUpsert && !updateOneResult.isRowUpdated && !updateOneResult.updateSkipped)
-		{
-			result->performedUpsert = true;
-			result->upsertedObjectId = updateOneResult.upsertedObjectId;
-		}
+	if (isUpsert && !updateOneResult.isRowUpdated && !updateOneResult.updateSkipped)
+	{
+		result->performedUpsert = true;
+		result->upsertedObjectId = updateOneResult.upsertedObjectId;
 	}
 }
 
@@ -2336,18 +2338,18 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 
 
 /*
- * UpdateOne is the top-level function for updates with multi:false. It internally
+ * ExecuteUpdateOne is the top-level function for updates with multi:false. It internally
  * calls ApiInternalSchemaName.update_one(..) to perform an update or delete of a single
  * row on a specific shard. If update_one returns a reinsert flag, which indicates
  * a change of shard_key_value, it additionally reinserts the document.
  */
 void
-UpdateOne(MongoCollection *collection, UpdateOneParams *updateOneParams,
-		  int64 shardKeyHash, text *transactionId, UpdateOneResult *result,
-		  bool forceInlineWrites, ExprEvalState *stateForSchemaValidation)
+ExecuteUpdateOne(MongoCollection *collection, UpdateOneParams *updateOneParams,
+				 int64 shardKeyHash, text *transactionId, UpdateOneResult *result,
+				 bool forceInlineWrites, ExprEvalState *stateForSchemaValidation)
 {
-	CallUpdateOne(collection, updateOneParams, shardKeyHash, transactionId, result,
-				  forceInlineWrites, stateForSchemaValidation);
+	DispatchUpdateOne(collection, updateOneParams, shardKeyHash, transactionId, result,
+					  forceInlineWrites, stateForSchemaValidation);
 
 	/* check for shard key value changes */
 	if (result->reinsertDocument)
@@ -2375,12 +2377,12 @@ UpdateOne(MongoCollection *collection, UpdateOneParams *updateOneParams,
 
 
 static void
-CallUpdateOne(MongoCollection *collection, UpdateOneParams *updateOneParams,
-			  int64 shardKeyHash, text *transactionId, UpdateOneResult *result,
-			  bool forceInlineWrites, ExprEvalState *stateForSchemaValidation)
+DispatchUpdateOne(MongoCollection *collection, UpdateOneParams *updateOneParams,
+				  int64 shardKeyHash, text *transactionId, UpdateOneResult *result,
+				  bool forceInlineWrites, ExprEvalState *stateForSchemaValidation)
 {
-	/* If we can simply call the updateOne here, don't bother trying to spin up an SPI runtime
-	 * to call UpdateOne again.
+	/* If we can simply execute the update here, don't bother trying to spin up an SPI runtime
+	 * to dispatch it again.
 	 * In the scenarios where we can thunk directly to the table since the table (shard) is on the same
 	 * node as the query coordinator, call the functions directly here.
 	 */
@@ -2389,14 +2391,14 @@ CallUpdateOne(MongoCollection *collection, UpdateOneParams *updateOneParams,
 	{
 		if (transactionId != NULL)
 		{
-			UpdateOneInternalWithRetryRecord(collection, shardKeyHash,
-											 transactionId, updateOneParams,
-											 result, stateForSchemaValidation);
+			ExecuteRetryableLocalUpdateOne(collection, shardKeyHash,
+										   transactionId, updateOneParams,
+										   result, stateForSchemaValidation);
 		}
 		else
 		{
-			UpdateOneInternal(collection, updateOneParams,
-							  shardKeyHash, result, stateForSchemaValidation);
+			ExecuteLocalUpdateOne(collection, updateOneParams,
+								  shardKeyHash, result, stateForSchemaValidation);
 		}
 	}
 	else
@@ -2405,8 +2407,8 @@ CallUpdateOne(MongoCollection *collection, UpdateOneParams *updateOneParams,
 		/* pass down bypassDocumentValidation to updateOne*/
 		updateOneParams->bypassDocumentValidation = !EnableSchemaValidation ||
 													stateForSchemaValidation == NULL;
-		CallUpdateWorkerForUpdateOne(collection, updateOneParams, shardKeyHash,
-									 transactionId, result);
+		ExecuteWorkerUpdateOne(collection, updateOneParams, shardKeyHash,
+							   transactionId, result);
 	}
 }
 
@@ -2475,10 +2477,10 @@ CallUpdateWorker(MongoCollection *collection, pgbson *serializedSpec,
 
 
 static void
-CallUpdateWorkerForUpdateOne(MongoCollection *collection,
-							 UpdateOneParams *updateOneParams,
-							 int64 shardKeyHash, text *transactionId,
-							 UpdateOneResult *result)
+ExecuteWorkerUpdateOne(MongoCollection *collection,
+					   UpdateOneParams *updateOneParams,
+					   int64 shardKeyHash, text *transactionId,
+					   UpdateOneResult *result)
 {
 	/* initialize result */
 	memset(result, 0, sizeof(UpdateOneResult));
@@ -2495,10 +2497,10 @@ CallUpdateWorkerForUpdateOne(MongoCollection *collection,
 
 
 static void
-UpdateOneInternalWithRetryRecord(MongoCollection *collection, int64 shardKeyHash,
-								 text *transactionId, UpdateOneParams *updateOneParams,
-								 UpdateOneResult *result,
-								 ExprEvalState *stateForSchemaValidation)
+ExecuteRetryableLocalUpdateOne(MongoCollection *collection, int64 shardKeyHash,
+							   text *transactionId, UpdateOneParams *updateOneParams,
+							   UpdateOneResult *result,
+							   ExprEvalState *stateForSchemaValidation)
 {
 	RetryableWriteResult writeResult;
 
@@ -2523,8 +2525,8 @@ UpdateOneInternalWithRetryRecord(MongoCollection *collection, int64 shardKeyHash
 	else
 	{
 		/* no retry record exists, update the row and get the object ID */
-		UpdateOneInternal(collection, updateOneParams, shardKeyHash,
-						  result, stateForSchemaValidation);
+		ExecuteLocalUpdateOne(collection, updateOneParams, shardKeyHash,
+							  result, stateForSchemaValidation);
 
 		pgbson *objectId = NULL;
 
@@ -2635,16 +2637,16 @@ command_update_worker(PG_FUNCTION_ARGS)
 		if (transactionId != NULL)
 		{
 			/* transaction ID specified, use retryable write path */
-			UpdateOneInternalWithRetryRecord(mongoCollection, shardKeyHash,
-											 transactionId,
-											 &params.param.updateOne, &result,
-											 stateForSchemaValidation);
+			ExecuteRetryableLocalUpdateOne(mongoCollection, shardKeyHash,
+										   transactionId,
+										   &params.param.updateOne, &result,
+										   stateForSchemaValidation);
 		}
 		else
 		{
 			/* no transaction ID specified, do regular update */
-			UpdateOneInternal(mongoCollection, &params.param.updateOne,
-							  shardKeyHash, &result, stateForSchemaValidation);
+			ExecuteLocalUpdateOne(mongoCollection, &params.param.updateOne,
+								  shardKeyHash, &result, stateForSchemaValidation);
 		}
 
 		pgbson *serializedResult = SerializeUpdateOneResult(&result);
@@ -3357,14 +3359,14 @@ UpdateBatchResultFromWorkerResult(BatchUpdateResult *result, int32_t updateIndex
 
 
 /*
- * UpdateOneInternal updates a single document with a specific shard key value filter.
+ * ExecuteLocalUpdateOne updates a single document with a specific shard key value filter.
  * Returns whether a document was updated and if so sets the updatedDocument and
  * whether reinsertion will be required (due to shard key value change).
  */
 static void
-UpdateOneInternal(MongoCollection *collection, UpdateOneParams *updateOneParams,
-				  int64 shardKeyHash, UpdateOneResult *result,
-				  ExprEvalState *stateForSchemaValidation)
+ExecuteLocalUpdateOne(MongoCollection *collection, UpdateOneParams *updateOneParams,
+					  int64 shardKeyHash, UpdateOneResult *result,
+					  ExprEvalState *stateForSchemaValidation)
 {
 	/* initialize result */
 	memset(result, 0, sizeof(UpdateOneResult));
@@ -3997,7 +3999,7 @@ DeleteDocumentByTID(uint64 collectionId, int64 shardKeyHash, ItemPointer tid)
 
 
 /*
- * UpdateOneObjectId handles the case where we are updating a single document
+ * UpdateOneByObjectId handles the case where we are updating a single document
  * by _id from a collection that is sharded on some other key. In this case,
  * we need to look across all shards for a matching _id, then update only that
  * one.
@@ -4008,9 +4010,10 @@ DeleteDocumentByTID(uint64 collectionId, int64 shardKeyHash, ItemPointer tid)
  * be deleted or updated concurrently. In that case, we try again.
  */
 static void
-UpdateOneObjectId(MongoCollection *collection, UpdateOneParams *updateOneParams,
-				  bson_value_t *objectId, bool queryHasNonIdFilters, text *transactionId,
-				  UpdateOneResult *result, ExprEvalState *stateForSchemaValidation)
+UpdateOneByObjectId(MongoCollection *collection, UpdateOneParams *updateOneParams,
+					bson_value_t *objectId, bool queryHasNonIdFilters,
+					text *transactionId,
+					UpdateOneResult *result, ExprEvalState *stateForSchemaValidation)
 {
 	/* initialize result */
 	memset(result, 0, sizeof(UpdateOneResult));
@@ -4056,8 +4059,9 @@ UpdateOneObjectId(MongoCollection *collection, UpdateOneParams *updateOneParams,
 		Assert(updateOneParams->isUpsert == false);
 
 		bool forceInlineWrites = false;
-		CallUpdateOne(collection, updateOneParams, shardKeyValue,
-					  transactionId, result, forceInlineWrites, stateForSchemaValidation);
+		DispatchUpdateOne(collection, updateOneParams, shardKeyValue,
+						  transactionId, result, forceInlineWrites,
+						  stateForSchemaValidation);
 
 		if (result->isRowUpdated || result->updateSkipped)
 		{
