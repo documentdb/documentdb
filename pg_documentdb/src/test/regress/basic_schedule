@@ -1,6 +1,7 @@
 test: documentdb_test_helpers
 # Leave this running first since this validates global state.
 test: public_api_schema
+test: documentdb_stat_bgworker_jobs
 test: authentication_scram_sha_256
 # Leave this running first since this validates global config database state.
 test: bson_aggregation_pipeline_config_database

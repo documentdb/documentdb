@@ -2203,6 +2203,7 @@ RegisterIndexBuildBackgroundWorkerJobs(void)
 	BackgroundWorkerJob indexBuildJob1 = {
 		.jobId = DOCUMENTDB_INDEX_BUILD_JOB1_JOBID,
 		.jobName = "documentdb_index_build_background_job_1",
+		.roleExecutionProfile = BackgroundWorkerJobRoleExecutionProfile_PrimaryOnly,
 		.command = {
 			.schema = ApiInternalSchemaName,
 			.name = "build_index_background"
@@ -2220,6 +2221,7 @@ RegisterIndexBuildBackgroundWorkerJobs(void)
 	BackgroundWorkerJob indexBuildJob2 = {
 		.jobId = DOCUMENTDB_INDEX_BUILD_JOB2_JOBID,
 		.jobName = "documentdb_index_build_background_job_2",
+		.roleExecutionProfile = BackgroundWorkerJobRoleExecutionProfile_PrimaryOnly,
 		.command = {
 			.schema = ApiInternalSchemaName,
 			.name = "build_index_background"

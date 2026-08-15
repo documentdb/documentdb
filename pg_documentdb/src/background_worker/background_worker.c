@@ -147,6 +147,9 @@ static bool AreAllInitJobsDone(void);
 
 /* Background worker job functions*/
 static void ValidateJob(BackgroundWorkerJob job);
+static void ValidateRoleExecutionProfile(const char *jobName,
+										 BackgroundWorkerJobRoleExecutionProfile
+										 roleExecutionProfile);
 static void ManageJobsLifeCycle(List *jobExecutions, char *userName, char *databaseName);
 static void ExecuteJob(BackgroundWorkerJobExecution *jobExec, char *userName,
 					   char *databaseName, TimestampTz currentTime);
@@ -175,7 +178,11 @@ static int AllowedCommandEntries = 0;
 
 
 /*
- * The jobs registry should not be exposed outside this c file to avoid unpredictable behavior.
+ * The jobs registry. Written only by RegisterBackgroundWorkerJob during
+ * shared_preload_libraries; never mutated afterward. The symbols stay file-local
+ * static so the write path cannot be reached from outside this file; read-only
+ * access for consumers (e.g. the stats view) is provided via
+ * GetBackgroundWorkerJobCount / GetBackgroundWorkerJob.
  */
 #define MAX_BACKGROUND_WORKER_JOBS 5
 static BackgroundWorkerJob JobRegistry[MAX_BACKGROUND_WORKER_JOBS];
@@ -193,6 +200,32 @@ inline static int
 GetDefaultScheduleIntervalInSeconds(void)
 {
 	return 60;
+}
+
+
+/*
+ * ValidateRoleExecutionProfile validates where a periodic job may be
+ * dispatched.
+ */
+static void
+ValidateRoleExecutionProfile(const char *jobName,
+							 BackgroundWorkerJobRoleExecutionProfile
+							 roleExecutionProfile)
+{
+	if (roleExecutionProfile == BackgroundWorkerJobRoleExecutionProfile_Unspecified)
+	{
+		ereport(ERROR, (errmsg(
+							"Background worker job '%s' must declare a role execution profile",
+							jobName)));
+	}
+
+	if (roleExecutionProfile < BackgroundWorkerJobRoleExecutionProfile_PrimaryOnly ||
+		roleExecutionProfile > BackgroundWorkerJobRoleExecutionProfile_RecoveryEligible)
+	{
+		ereport(ERROR, (errmsg(
+							"Background worker job '%s' has invalid role execution profile value %d",
+							jobName, roleExecutionProfile)));
+	}
 }
 
 
@@ -460,6 +493,25 @@ RegisterBackgroundWorkerJob(BackgroundWorkerJob job)
 	ValidateJob(job);
 
 	JobRegistry[JobEntries++] = job;
+}
+
+
+int
+GetBackgroundWorkerJobCount(void)
+{
+	return JobEntries;
+}
+
+
+const BackgroundWorkerJob *
+GetBackgroundWorkerJob(int index)
+{
+	if (index < 0 || index >= JobEntries)
+	{
+		return NULL;
+	}
+
+	return &JobRegistry[index];
 }
 
 
@@ -933,6 +985,8 @@ ValidateJob(BackgroundWorkerJob job)
 							"Background worker job argument can not be NULL when isnull is set to false.")));
 	}
 
+	ValidateRoleExecutionProfile(job.jobName, job.roleExecutionProfile);
+
 	const int scheduleIntervalInSeconds = job.get_schedule_interval_in_seconds_hook();
 
 	if (scheduleIntervalInSeconds <= 0 ||
@@ -1022,7 +1076,8 @@ GenerateJobExecutions(void)
 		{
 			ereport(WARNING, (errmsg(
 								  "Skipping background worker job %s with id %d because an execution instance could not be generated.",
-								  JobRegistry[i].jobName, JobRegistry[i].jobId)));
+								  JobRegistry[i].jobName,
+								  JobRegistry[i].jobId)));
 		}
 		else
 		{

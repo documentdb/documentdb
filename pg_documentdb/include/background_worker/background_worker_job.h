@@ -50,6 +50,17 @@ typedef struct
 	bool isNull;
 } BackgroundWorkerJobArgument;
 
+/*
+ * Server roles in which a periodic job may be dispatched.
+ * RecoveryEligible includes both primary and recovery.
+ */
+typedef enum BackgroundWorkerJobRoleExecutionProfile
+{
+	BackgroundWorkerJobRoleExecutionProfile_Unspecified = 0,
+	BackgroundWorkerJobRoleExecutionProfile_PrimaryOnly,
+	BackgroundWorkerJobRoleExecutionProfile_RecoveryEligible,
+} BackgroundWorkerJobRoleExecutionProfile;
+
 
 /*
  * Define a hook that clients can supply. This can be used to dynamically
@@ -67,6 +78,9 @@ typedef struct
 
 	/* Job name, this will be used in log emission. */
 	const char *jobName;
+
+	/* Server roles in which the job may be dispatched. */
+	BackgroundWorkerJobRoleExecutionProfile roleExecutionProfile;
 
 	/* Pair of schema and function/procedure name to be executed. */
 	BackgroundWorkerJobCommand command;
@@ -100,9 +114,28 @@ typedef struct
 } BackgroundWorkerJob;
 
 /*
- * Function to register a new BackgroundWorkerJob to-be scheduled.
+ * Register a periodic job.
  */
 void RegisterBackgroundWorkerJob(BackgroundWorkerJob job);
+
+/*
+ * Number of background worker jobs registered during shared_preload_libraries.
+ * Stable for the life of the process: the registry is populated once at
+ * extension init (pre-fork) and never mutated afterward.
+ */
+int GetBackgroundWorkerJobCount(void);
+
+
+/*
+ * Read-only access to the registered job at `index`, where
+ * 0 <= index < GetBackgroundWorkerJobCount().
+ *
+ * Returns a pointer into the process-lifetime-stable registry, or NULL if
+ * `index` is out of range. The caller must treat the target as immutable. The
+ * pointer is valid for the life of the process (static storage, never freed or
+ * resized).
+ */
+const BackgroundWorkerJob * GetBackgroundWorkerJob(int index);
 
 
 /*
