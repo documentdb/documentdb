@@ -532,6 +532,13 @@ pub trait PgDataClient: Send + Sync {
         if let Some((persist, cursor)) = response.get_cursor()? {
             let connection = persist.then_some(connection);
 
+            // Surface the backend cursor id for diagnostics: find/aggregate first pages
+            // open a cursor here when the result spans multiple batches. The same request
+            // tracker instance is read back at telemetry-emission time.
+            request_context
+                .tracker
+                .set_cursor_id(cursor.cursor_id.into());
+
             let dynamic_config = self.service_context().dynamic_configuration();
 
             let cursor_timeout = Duration::from_secs(if connection.is_none() {

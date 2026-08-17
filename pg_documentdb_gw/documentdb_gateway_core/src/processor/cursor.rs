@@ -113,6 +113,13 @@ pub async fn process_kill_cursors(
         ))?;
         cursor_ids.push(cursor);
     }
+
+    // Surface the cursor id for diagnostics only when a single cursor is targeted;
+    // the diagnostic field holds a single value.
+    if let [single_cursor_id] = cursor_ids.as_slice() {
+        request_context.tracker.set_cursor_id(*single_cursor_id);
+    }
+
     let (removed_cursors, missing_cursors) = connection_context
         .service_context
         .cursor_store()
@@ -303,6 +310,9 @@ pub async fn process_get_more(
     let id = id.ok_or(DocumentDBError::bad_value(
         "getMore not present in document".to_owned(),
     ))?;
+
+    // Surface the continued cursor id for diagnostics.
+    request_context.tracker.set_cursor_id(id);
 
     // We use the session id from the request context since we may, or may not be in a transaction.
     let current_lsid = request_context.request().lsid();
