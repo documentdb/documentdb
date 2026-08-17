@@ -27,7 +27,6 @@
 #include "collation/collation.h"
 
 #define ALPHABET_SIZE 26
-#define DEFAULT_ICU_COLLATION_SORT_KEY_LENGTH 512
 
 typedef struct
 {
@@ -252,7 +251,9 @@ inline static void CheckCollationInputParamType(bson_type_t expectedType, bson_t
 
 inline static bool CheckIfValidLocale(const char *locale);
 inline static void ThrowInvalidLocaleError(const char *locale);
-static int32_t icu_to_uchar_core(UChar **buff_uchar, const char *buff, size_t nbytes);
+static int32_t icu_to_uchar_core(UChar **buff_uchar, UChar *scratch,
+								 int32_t scratchCapacity, const char *buff,
+								 size_t nbytes);
 
 /*
  *  This takes a collation document and convert to postgres locale string
@@ -532,35 +533,50 @@ StringCompareWithCollation(const char *left, uint32_t leftLength,
 
 
 /*
- *  Convenience function to generate a collation aware sortkey that can be used in strcmp().
- *
- *  Two calls to ucol_getSortKey() is a pattern used in pg code. This is to know the expected size
- *  of the sort key so that we allocate a larger buffer if needed.
- *  Reference: https://unicode-org.github.io/icu-docs/apidoc/dev/icu4c/ucol_8h.html#a58be2c76d01184cb1821ff0af28081c2
- *  Reference: https://unicode-org.github.io/icu/userguide/collation/api.html
+ * Generates a collation-aware sort key (usable in strcmp()/hashing). *sortKey points
+ * into 'scratch' when it fits, else a palloc'd buffer the caller must pfree.
  */
-inline char *
-GetCollationSortKey(const char *collationString, char *key, int keyLength)
+int32_t
+GetCollationSortKey(const char *collationString, const char *string,
+					int32_t stringLength, uint8_t *scratch, int32_t scratchCapacity,
+					uint8_t **sortKey)
 {
 	ucollator_cache_entry *collation_entry = LookupUCollatorCache(collationString);
 
-	uint8_t *sortKeyPtr = palloc(DEFAULT_ICU_COLLATION_SORT_KEY_LENGTH);
+	UChar ucharScratch[COLLATION_SORT_KEY_SCRATCH_BYTES];
 	UChar *uchar;
-	int32_t ulen;
+	int32_t ulen = icu_to_uchar_core(&uchar, ucharScratch,
+									 COLLATION_SORT_KEY_SCRATCH_BYTES,
+									 string, stringLength);
 
-	ulen = icu_to_uchar_core(&uchar, key, keyLength);
-	Size expectedLength = ucol_getSortKey(collation_entry->collator, uchar, ulen,
-										  sortKeyPtr,
-										  DEFAULT_ICU_COLLATION_SORT_KEY_LENGTH);
-	if (expectedLength > DEFAULT_ICU_COLLATION_SORT_KEY_LENGTH)
+	int32_t keyLength = ucol_getSortKey(collation_entry->collator, uchar, ulen,
+										scratch, scratchCapacity);
+	if (keyLength > scratchCapacity)
 	{
-		sortKeyPtr = repalloc(sortKeyPtr, expectedLength);
-		ucol_getSortKey(collation_entry->collator, uchar, ulen, sortKeyPtr,
-						expectedLength);
+		/* Scratch too small: allocate the exact size and regenerate. */
+		*sortKey = palloc(keyLength);
+		ucol_getSortKey(collation_entry->collator, uchar, ulen, *sortKey, keyLength);
+	}
+	else
+	{
+		*sortKey = scratch;
 	}
 
-	pfree(uchar);
-	return (char *) sortKeyPtr;
+	if (uchar != ucharScratch)
+	{
+		pfree(uchar);
+	}
+
+	if (keyLength <= 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg(
+							"Failed to generate collation sort key for collation language tag: %s",
+							collationString)));
+	}
+
+	/* keyLength counts ICU's terminating zero, which the key itself never contains. */
+	return keyLength - 1;
 }
 
 
@@ -1045,27 +1061,6 @@ init_icu_converter(void)
 /*
  * Ported from pg_locale.c in Postgres 17:
  * See https://github.com/postgres/postgres/blob/REL_17_STABLE/src/backend/utils/adt/pg_locale.c#L2758
- * Find length, in UChars, of given string if converted to UChar string.
- */
-static size_t
-uchar_length(UConverter *converter, const char *str, int32_t len)
-{
-	UErrorCode status = U_ZERO_ERROR;
-	int32_t ulen;
-
-	ulen = ucnv_toUChars(converter, NULL, 0, str, len, &status);
-	if (U_FAILURE(status) && status != U_BUFFER_OVERFLOW_ERROR)
-	{
-		ereport(ERROR,
-				(errmsg("%s failed: %s", "ucnv_toUChars", u_errorName(status))));
-	}
-	return ulen;
-}
-
-
-/*
- * Ported from pg_locale.c in Postgres 17:
- * See https://github.com/postgres/postgres/blob/REL_17_STABLE/src/backend/utils/adt/pg_locale.c#L2758
  * Convert the given source string into a UChar string, stored in dest, and
  * return the length (in UChars).
  */
@@ -1090,29 +1085,32 @@ uchar_convert(UConverter *converter, UChar *dest, int32_t destlen,
 /*
  * Ported from pg_locale.c in Postgres 17:
  * See https://github.com/postgres/postgres/blob/REL_17_STABLE/src/backend/utils/adt/pg_locale.c#L2758
- * Convert a string in the database encoding into a string of UChars.
- *
- * The source string at buff is of length nbytes
- * (it needn't be nul-terminated)
- *
- * *buff_uchar receives a pointer to the palloc'd result string, and
- * the function's result is the number of UChars generated.
- *
- * The result string is nul-terminated, though most callers rely on the
- * result length instead.
+ * Convert a database-encoding string (buff, nbytes, needn't be nul-terminated) into
+ * UChars. *buff_uchar points into 'scratch' when it fits, else a palloc'd buffer the
+ * caller must pfree.
  */
 static int32_t
-icu_to_uchar_core(UChar **buff_uchar, const char *buff, size_t nbytes)
+icu_to_uchar_core(UChar **buff_uchar, UChar *scratch, int32_t scratchCapacity,
+				  const char *buff, size_t nbytes)
 {
-	int32_t len_uchar;
-
 	init_icu_converter();
 
-	len_uchar = uchar_length(icu_converter, buff, nbytes);
+	UErrorCode status = U_ZERO_ERROR;
+	int32_t len_uchar = ucnv_toUChars(icu_converter, scratch, scratchCapacity,
+									  buff, nbytes, &status);
+	if (status == U_BUFFER_OVERFLOW_ERROR)
+	{
+		/* Scratch too small: allocate the exact size (plus terminator) and retry. */
+		*buff_uchar = palloc((len_uchar + 1) * sizeof(**buff_uchar));
+		return uchar_convert(icu_converter, *buff_uchar, len_uchar + 1, buff, nbytes);
+	}
 
-	*buff_uchar = palloc((len_uchar + 1) * sizeof(**buff_uchar));
-	len_uchar = uchar_convert(icu_converter,
-							  *buff_uchar, len_uchar + 1, buff, nbytes);
+	if (U_FAILURE(status))
+	{
+		ereport(ERROR,
+				(errmsg("%s failed: %s", "ucnv_toUChars", u_errorName(status))));
+	}
 
+	*buff_uchar = scratch;
 	return len_uchar;
 }

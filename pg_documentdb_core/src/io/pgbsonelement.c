@@ -657,20 +657,23 @@ FillBsonElementValueAndPathUnsafe(pgbsonelement *element, uint8_t *data, int len
 			}
 
 			/* First is a string for code */
-			int32_t codeLength = *((int32_t *) data);
+			int32_t codeLength;
+			memcpy(&codeLength, data, sizeof(int32_t));
 			data += 4;
 
-			if (totalcodeLength < codeLength)
+			/* the length prefix counts the trailing null terminator */
+			if (codeLength < 1 || totalcodeLength < codeLength)
 			{
 				return false;
 			}
 
 			element->bsonValue.value.v_codewscope.code = (char *) data;
-			element->bsonValue.value.v_codewscope.code_len = codeLength;
-			data += codeLength + 1;
+			element->bsonValue.value.v_codewscope.code_len = codeLength - 1;
+			data += codeLength;
 
 			/* next is the scope doc */
-			int32_t docLength = *((int32_t *) data);
+			int32_t docLength;
+			memcpy(&docLength, data, sizeof(int32_t));
 
 			if (totalcodeLength < docLength)
 			{

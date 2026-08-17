@@ -98,6 +98,14 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
      "indexes": [{ "key": {"grp": 1}, "name": "idx_grp_en_s1",
                    "collation": {"locale": "en", "strength": 1} }] }', TRUE);
 
+-- Section 23 coll_code_collation: index over values whose types a collation must
+-- not reach, so index terms and the runtime comparator are checked against each
+-- other. Also covers building terms for code with scope.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
+  '{ "createIndexes": "coll_code_collation",
+     "indexes": [{ "key": {"v": 1}, "name": "idx_v_en_s1",
+                   "collation": {"locale": "en", "strength": 1} }] }', TRUE);
+
 -- ======================================================================
 -- Source the core body so all queries run against indexed collections.
 -- ======================================================================

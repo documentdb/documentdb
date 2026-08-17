@@ -347,6 +347,41 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "col
 SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setUnion": [["$a", "cAT", "dog"], ["CAT", "DOG"]]} } }, { "$project": { "a": 1, "newField": {"$sortArray": {"input": "$newField", "sortBy": 1}} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }');
 SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setUnion": [["$a", "cAT", "dog"], ["CAT", "DOG"]]} } }, { "$project": { "a": 1, "newField": {"$sortArray": {"input": "$newField", "sortBy": 1}} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 3} }');
 
+-- $setUnion — the "simple" locale hashes like no collation (binary), so the two results below must be byte-identical.
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$setUnion": [ [ "cat", "Cat", "CAT", "caT", "dog", "Dog", "DOG", "bird", "Bird", "BIRD" ] ] } } } ], "cursor": {}, "collation": { "locale": "simple" } }');
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$setUnion": [ [ "cat", "Cat", "CAT", "caT", "dog", "Dog", "DOG", "bird", "Bird", "BIRD" ] ] } } } ], "cursor": {} }');
+
+-- Collation applies to utf8 and symbol, and to strings nested in documents and arrays.
+-- Code, code with scope, and db pointers compare byte-wise, in hashing as in comparison.
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$setUnion": [ [ { "$symbol": "cat" }, { "$symbol": "CAT" }, "Cat" ] ] } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$sortArray": { "input": { "$setUnion": [ [ { "$code": "cat" }, { "$code": "CAT" } ] ] }, "sortBy": 1 } } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$sortArray": { "input": { "$setUnion": [ [ { "$code": "cat", "$scope": { "s": 1 } }, { "$code": "CAT", "$scope": { "s": 1 } } ] ] }, "sortBy": 1 } } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+-- Strings inside a scope document are not collated either.
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$sortArray": { "input": { "$setUnion": [ [ { "$code": "c", "$scope": { "s": "cat" } }, { "$code": "c", "$scope": { "s": "CAT" } } ] ] }, "sortBy": 1 } } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$sortArray": { "input": { "$setUnion": [ [ { "$dbPointer": { "$ref": "cat", "$id": { "$oid": "111111111111111111111111" } } }, { "$dbPointer": { "$ref": "CAT", "$id": { "$oid": "111111111111111111111111" } } } ] ] }, "sortBy": 1 } } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+-- Equality filters follow the same rule.
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_code_collation', '{ "_id": "string", "v": "cat" }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_code_collation', '{ "_id": "symbol", "v": { "$symbol": "cat" } }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_code_collation', '{ "_id": "code", "v": { "$code": "cat" } }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_code_collation', '{ "_id": "codeWithScopeSource", "v": { "$code": "cat", "$scope": { "x": 1 } } }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_code_collation', '{ "_id": "codeWithScopeValue", "v": { "$code": "return x", "$scope": { "x": "cat" } } }');
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_code_collation', '{ "_id": "dbPointer", "v": { "$dbPointer": { "$ref": "cat", "$id": { "$oid": "111111111111111111111111" } } } }');
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_code_collation", "filter": { "v": "CAT" }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_code_collation", "filter": { "v": { "$code": "CAT" } }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_code_collation", "filter": { "v": { "$code": "CAT", "$scope": { "x": 1 } } }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_code_collation", "filter": { "v": { "$code": "return x", "$scope": { "x": "CAT" } } }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_code_collation", "filter": { "v": { "$dbPointer": { "$ref": "CAT", "$id": { "$oid": "111111111111111111111111" } } } }, "collation": { "locale": "en", "strength": 1 } }');
+-- Strength 3 keeps case significant, so the same values stay distinct.
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$sortArray": { "input": { "$setUnion": [ [ { "$symbol": "cat" }, { "$symbol": "CAT" }, "Cat" ] ] }, "sortBy": 1 } } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 3 } }');
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$sortArray": { "input": { "$setUnion": [ [ { "$code": "cat" }, { "$code": "CAT" } ] ] }, "sortBy": 1 } } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 3 } }');
+-- The binary "simple" locale never folds case for these types either.
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$sortArray": { "input": { "$setUnion": [ [ { "$symbol": "cat" }, { "$symbol": "CAT" } ] ] }, "sortBy": 1 } } } } ], "cursor": {}, "collation": { "locale": "simple" } }');
+
+-- Sort keys larger than the stack scratch buffer must fall back to the heap and still
+-- collate correctly. 600 characters is well past the scratch size.
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', ('{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "n": { "$size": { "$setUnion": [ [ "' || repeat('ab', 300) || '", "' || repeat('AB', 300) || '" ] ] } } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')::bson);
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', ('{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "n": { "$size": { "$setUnion": [ [ "' || repeat('ab', 300) || '", "' || repeat('AB', 300) || '" ] ] } } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 3 } }')::bson);
+
 -- $setDifference.
 SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setDifference": [["$a"], ["CAT"]]} } }, { "$project": { "a": 1, "newField": {"$sortArray": {"input": "$newField", "sortBy": 1}} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }');
 SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setDifference": [["$a"], ["DOG"]]} } }, { "$project": { "a": 1, "newField": {"$sortArray": {"input": "$newField", "sortBy": 1}} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 2} }');
@@ -1215,6 +1250,7 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "col
 -- CLEANUP
 -- ======================================================================
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_agg_proj');
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_code_collation');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_delete');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_delete_sort');
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_find_positional');

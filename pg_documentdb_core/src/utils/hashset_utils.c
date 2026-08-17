@@ -9,6 +9,7 @@
  */
 
 #include <postgres.h>
+#include <miscadmin.h>
 #include <utils/hsearch.h>
 
 #include "io/bson_core.h"
@@ -316,15 +317,36 @@ PgbsonElementOrderedHashCompareFunc(const void *obj1, const void *obj2, Size obj
 
 
 /*
+ * Hashes a string under a non-simple collation by hashing its ICU sort key.
+ * pg_noinline keeps the scratch out of the recursive caller's stack frame.
+ */
+static pg_noinline uint32_t
+HashStringWithCollation(const char *collationString, const char *string,
+						uint32_t stringLength)
+{
+	uint8_t sortKeyScratch[COLLATION_SORT_KEY_SCRATCH_BYTES];
+	uint8_t *sortKey;
+	int32_t sortKeyLength = GetCollationSortKey(collationString, string, stringLength,
+												sortKeyScratch, sizeof(sortKeyScratch),
+												&sortKey);
+
+	uint32_t hashValue = hash_bytes(sortKey, sortKeyLength);
+	if (sortKey != sortKeyScratch)
+	{
+		pfree(sortKey);
+	}
+	return hashValue;
+}
+
+
+/*
  * Hashes a bson value for use in hash set.
  *
- * If no valid collation string is provided or collation is disabled, we simply
- * hash the bson value.
- *
- * If a collation string is provided, we need to consider the following:
- * (1) non-collation-aware bson value, just hash the value.
- * (2) utf8 bson value, create collation sort key and hash that.
- * (3) arrays and documents, recurse into them, and apply (1), (2), (3) to entries.
+ * (1) No collation to apply, either because none was given, collation is disabled, the
+ *     locale is the binary "simple" one, or the type is not collation aware: hash the
+ *     bson value directly.
+ * (2) string-family bson value: hash its collation sort key.
+ * (3) arrays and documents: recurse into them, applying (1), (2), (3) to each entry.
  *
  * The final hash value is the sum of all the hash values.
  */
@@ -332,33 +354,44 @@ static void
 BsonValueHashFuncCore(const bson_value_t *bsonValue, const
 					  char *collationString, uint32_t *hashValue)
 {
-	/* collation disabled or invalid collation string provided, */
-	/* simply hash the bson value and return */
-	if (!IsCollationApplicable(collationString))
+	check_stack_depth();
+
+	/*
+	 * (1) No collation, the binary "simple" locale, or a type that collation does not
+	 * apply to: hash the bson value directly.
+	 */
+	if (!IsCollationApplicable(collationString) ||
+		IsSimpleCollation(collationString) ||
+		!IsBsonTypeCollationAware(bsonValue->value_type))
 	{
 		*hashValue += BsonValueHashUint32(bsonValue);
 		return;
 	}
 
-	/* base cases */
-	/* (1) non-collation-aware bson value, just hash value */
-	if (!IsBsonTypeCollationAware(bsonValue->value_type) ||
-		!IsCollationApplicable(collationString))
+	/* (2) string-family bson value, create collation sort key and hash that */
+	switch (bsonValue->value_type)
 	{
-		*hashValue += BsonValueHashUint32(bsonValue);
-		return;
-	}
+		case BSON_TYPE_UTF8:
+		{
+			*hashValue += HashStringWithCollation(collationString,
+												  bsonValue->value.v_utf8.str,
+												  bsonValue->value.v_utf8.len);
+			return;
+		}
 
-	/* (2) utf8 bson value, create collation sort key and hash that */
-	if (bsonValue->value_type == BSON_TYPE_UTF8)
-	{
-		char *key = bsonValue->value.v_utf8.str;
-		char *sortKey = GetCollationSortKey(collationString, key,
-											bsonValue->value.v_utf8.len);
+		case BSON_TYPE_SYMBOL:
+		{
+			*hashValue += HashStringWithCollation(collationString,
+												  bsonValue->value.v_symbol.symbol,
+												  bsonValue->value.v_symbol.len);
+			return;
+		}
 
-		*hashValue += hash_bytes((unsigned char *) sortKey, strlen(sortKey));
-		pfree(sortKey);
-		return;
+		default:
+		{
+			/* documents and arrays fall through to the recursive case */
+			break;
+		}
 	}
 
 	/* recursive case: arrays and documents */
@@ -370,6 +403,8 @@ BsonValueHashFuncCore(const bson_value_t *bsonValue, const
 
 	while (bson_iter_next(&arrayValueIterator))
 	{
+		CHECK_FOR_INTERRUPTS();
+
 		const bson_value_t *value = bson_iter_value(&arrayValueIterator);
 		BsonValueHashFuncCore(value, collationString, hashValue);
 	}

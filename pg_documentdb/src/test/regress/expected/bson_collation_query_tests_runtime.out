@@ -1699,6 +1699,151 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "col
  { "_id" : "bat", "a" : "bat", "newField" : [ "bat", "cAT", "CAT", "dog", "DOG" ] }
 (6 rows)
 
+-- $setUnion — the "simple" locale hashes like no collation (binary), so the two results below must be byte-identical.
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$setUnion": [ [ "cat", "Cat", "CAT", "caT", "dog", "Dog", "DOG", "bird", "Bird", "BIRD" ] ] } } } ], "cursor": {}, "collation": { "locale": "simple" } }');
+                                  documents_aggregate                                  
+---------------------------------------------------------------------------------------
+ { "u" : [ "bird", "Bird", "caT", "Dog", "cat", "Cat", "DOG", "CAT", "dog", "BIRD" ] }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$setUnion": [ [ "cat", "Cat", "CAT", "caT", "dog", "Dog", "DOG", "bird", "Bird", "BIRD" ] ] } } } ], "cursor": {} }');
+                                  documents_aggregate                                  
+---------------------------------------------------------------------------------------
+ { "u" : [ "bird", "Bird", "caT", "Dog", "cat", "Cat", "DOG", "CAT", "dog", "BIRD" ] }
+(1 row)
+
+-- Collation applies to utf8 and symbol, and to strings nested in documents and arrays.
+-- Code, code with scope, and db pointers compare byte-wise, in hashing as in comparison.
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$setUnion": [ [ { "$symbol": "cat" }, { "$symbol": "CAT" }, "Cat" ] ] } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+         documents_aggregate         
+-------------------------------------
+ { "u" : [ { "$symbol" : "cat" } ] }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$sortArray": { "input": { "$setUnion": [ [ { "$code": "cat" }, { "$code": "CAT" } ] ] }, "sortBy": 1 } } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+                  documents_aggregate                   
+--------------------------------------------------------
+ { "u" : [ { "$code" : "CAT" }, { "$code" : "cat" } ] }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$sortArray": { "input": { "$setUnion": [ [ { "$code": "cat", "$scope": { "s": 1 } }, { "$code": "CAT", "$scope": { "s": 1 } } ] ] }, "sortBy": 1 } } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+                                                               documents_aggregate                                                                
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ { "u" : [ { "$code" : "CAT", "$scope" : { "s" : { "$numberInt" : "1" } } }, { "$code" : "cat", "$scope" : { "s" : { "$numberInt" : "1" } } } ] }
+(1 row)
+
+-- Strings inside a scope document are not collated either.
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$sortArray": { "input": { "$setUnion": [ [ { "$code": "c", "$scope": { "s": "cat" } }, { "$code": "c", "$scope": { "s": "CAT" } } ] ] }, "sortBy": 1 } } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+                                            documents_aggregate                                             
+------------------------------------------------------------------------------------------------------------
+ { "u" : [ { "$code" : "c", "$scope" : { "s" : "CAT" } }, { "$code" : "c", "$scope" : { "s" : "cat" } } ] }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$sortArray": { "input": { "$setUnion": [ [ { "$dbPointer": { "$ref": "cat", "$id": { "$oid": "111111111111111111111111" } } }, { "$dbPointer": { "$ref": "CAT", "$id": { "$oid": "111111111111111111111111" } } } ] ] }, "sortBy": 1 } } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
+                                                                                     documents_aggregate                                                                                      
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "u" : [ { "$dbPointer" : { "$ref" : "CAT", "$id" : { "$oid" : "111111111111111111111111" } } }, { "$dbPointer" : { "$ref" : "cat", "$id" : { "$oid" : "111111111111111111111111" } } } ] }
+(1 row)
+
+-- Equality filters follow the same rule.
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_code_collation', '{ "_id": "string", "v": "cat" }');
+psql:sql/bson_collation_query_tests_core.sql:363: NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_code_collation', '{ "_id": "symbol", "v": { "$symbol": "cat" } }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_code_collation', '{ "_id": "code", "v": { "$code": "cat" } }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_code_collation', '{ "_id": "codeWithScopeSource", "v": { "$code": "cat", "$scope": { "x": 1 } } }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_code_collation', '{ "_id": "codeWithScopeValue", "v": { "$code": "return x", "$scope": { "x": "cat" } } }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('coll_q_db', 'coll_code_collation', '{ "_id": "dbPointer", "v": { "$dbPointer": { "$ref": "cat", "$id": { "$oid": "111111111111111111111111" } } } }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_code_collation", "filter": { "v": "CAT" }, "collation": { "locale": "en", "strength": 1 } }');
+                     document                      
+---------------------------------------------------
+ { "_id" : "string", "v" : "cat" }
+ { "_id" : "symbol", "v" : { "$symbol" : "cat" } }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_code_collation", "filter": { "v": { "$code": "CAT" } }, "collation": { "locale": "en", "strength": 1 } }');
+ document 
+----------
+(0 rows)
+
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_code_collation", "filter": { "v": { "$code": "CAT", "$scope": { "x": 1 } } }, "collation": { "locale": "en", "strength": 1 } }');
+ document 
+----------
+(0 rows)
+
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_code_collation", "filter": { "v": { "$code": "return x", "$scope": { "x": "CAT" } } }, "collation": { "locale": "en", "strength": 1 } }');
+ document 
+----------
+(0 rows)
+
+SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_code_collation", "filter": { "v": { "$dbPointer": { "$ref": "CAT", "$id": { "$oid": "111111111111111111111111" } } } }, "collation": { "locale": "en", "strength": 1 } }');
+ document 
+----------
+(0 rows)
+
+-- Strength 3 keeps case significant, so the same values stay distinct.
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$sortArray": { "input": { "$setUnion": [ [ { "$symbol": "cat" }, { "$symbol": "CAT" }, "Cat" ] ] }, "sortBy": 1 } } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 3 } }');
+                        documents_aggregate                        
+-------------------------------------------------------------------
+ { "u" : [ { "$symbol" : "cat" }, "Cat", { "$symbol" : "CAT" } ] }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$sortArray": { "input": { "$setUnion": [ [ { "$code": "cat" }, { "$code": "CAT" } ] ] }, "sortBy": 1 } } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 3 } }');
+                  documents_aggregate                   
+--------------------------------------------------------
+ { "u" : [ { "$code" : "CAT" }, { "$code" : "cat" } ] }
+(1 row)
+
+-- The binary "simple" locale never folds case for these types either.
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "u": { "$sortArray": { "input": { "$setUnion": [ [ { "$symbol": "cat" }, { "$symbol": "CAT" } ] ] }, "sortBy": 1 } } } } ], "cursor": {}, "collation": { "locale": "simple" } }');
+                    documents_aggregate                     
+------------------------------------------------------------
+ { "u" : [ { "$symbol" : "CAT" }, { "$symbol" : "cat" } ] }
+(1 row)
+
+-- Sort keys larger than the stack scratch buffer must fall back to the heap and still
+-- collate correctly. 600 characters is well past the scratch size.
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', ('{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "n": { "$size": { "$setUnion": [ [ "' || repeat('ab', 300) || '", "' || repeat('AB', 300) || '" ] ] } } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')::bson);
+       documents_aggregate        
+----------------------------------
+ { "n" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('coll_q_db', ('{ "aggregate": 1, "pipeline": [ { "$documents": [ {} ] }, { "$project": { "n": { "$size": { "$setUnion": [ [ "' || repeat('ab', 300) || '", "' || repeat('AB', 300) || '" ] ] } } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 3 } }')::bson);
+       documents_aggregate        
+----------------------------------
+ { "n" : { "$numberInt" : "2" } }
+(1 row)
+
 -- $setDifference.
 SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setDifference": [["$a"], ["CAT"]]} } }, { "$project": { "a": 1, "newField": {"$sortArray": {"input": "$newField", "sortBy": 1}} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }');
                                 document                                 
@@ -1883,7 +2028,7 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "col
 -- SECTION 9: aggregation — $lookup, $facet, $unionWith, $graphLookup
 -- ==============================================================================
 SELECT documentdb_api.insert_one('coll_q_db','coll_lookup_src', '{"_id": "DOG", "a" : { "b" : "DOG" }}', NULL);
-psql:sql/bson_collation_query_tests_core.sql:378: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:413: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2007,7 +2152,7 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "col
 
 -- $graphLookup — traversal across `connectFromField`/`connectToField` uses command collation.
 SELECT documentdb_api.insert_one('coll_q_db','coll_graph_src', '{"_id": "alice", "pet" : "dog" }', NULL);
-psql:sql/bson_collation_query_tests_core.sql:411: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:446: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2020,7 +2165,7 @@ SELECT documentdb_api.insert_one('coll_q_db','coll_graph_src', '{"_id": "bob", "
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_q_db','coll_graph_target', '{"_id": "DOG", "name" : "DOG" }', NULL);
-psql:sql/bson_collation_query_tests_core.sql:414: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:449: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2270,7 +2415,7 @@ SELECT documentdb_api_internal.bson_query_match('{"a": ["cat"]}', '{ "a": {"$in"
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_q_db', 'nested_arrays', '{ "_id": 1, "a": ["dog"] }');
-psql:sql/bson_collation_query_tests_core.sql:494: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:529: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2320,7 +2465,7 @@ SELECT documentdb_api_internal.bson_query_match('{"a": {"b": {"c": "cat"}}}', '{
 (1 row)
 
 SELECT documentdb_api.insert_one('coll_q_db', 'nested_docs', '{ "_id": 1, "a": { "b": "cat" } }');
-psql:sql/bson_collation_query_tests_core.sql:506: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:541: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2375,7 +2520,7 @@ SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "nested_docs"
 
 -- Mix of nested arrays and documents.
 SELECT documentdb_api.insert_one('coll_q_db', 'nested_arrays_docs', '{ "_id": 1, "a": { "b": ["cat"] } }');
-psql:sql/bson_collation_query_tests_core.sql:520: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:555: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2429,7 +2574,7 @@ SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "nested_array
 -- ==============================================================================
 -- find with positional projection (`b.$`) — collation drives both the top-level $eq and the $elemMatch.
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_find_positional', '{"_id":1, "a":"cat", "b":[{"a":"cat"},{"a":"caT"}], "c": ["cat"]}', NULL);
-psql:sql/bson_collation_query_tests_core.sql:535: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:570: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2487,7 +2632,7 @@ SELECT documentdb_api.drop_collection('coll_q_db', 'coll_find_positional');
 -- $in: [] short-circuit through bson_dollar_* helpers.
 -- ----------------------------------------------------------------
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_in_empty', '{"_id": 1, "name": "cat", "sound": "meow"}');
-psql:sql/bson_collation_query_tests_core.sql:566: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:601: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2879,7 +3024,7 @@ SELECT documentdb_api_internal.bson_expression_partition_get(
 -- SECTION 13: write — delete with collation
 -- ==============================================================================
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_delete', '{"_id": "dog", "a":"dog"}');
-psql:sql/bson_collation_query_tests_core.sql:767: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:802: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -2907,7 +3052,7 @@ SELECT documentdb_api.insert_one('coll_q_db', 'coll_delete', '{"_id": "CAT", "a"
 SET documentdb_core.enableCollation TO off;
 BEGIN;
 SELECT documentdb_api.delete('coll_q_db', '{ "delete": "coll_delete", "deletes": [ {"q": {"_id": "DoG" }, "limit": 0, "collation": { "locale": "fr", "strength" : 2}} ]}');
-psql:sql/bson_collation_query_tests_core.sql:776: ERROR:  BSON field 'delete.deletes.collation' is not yet supported
+psql:sql/bson_collation_query_tests_core.sql:811: ERROR:  BSON field 'delete.deletes.collation' is not yet supported
 ROLLBACK;
 -- enableCollation = on for the rest of the section.
 SET documentdb_core.enableCollation TO on;
@@ -3048,7 +3193,7 @@ SELECT document from documentdb_api.collection('coll_q_db', 'coll_delete');
 ROLLBACK;
 -- delete with sort: sort ordering uses collation, so deleteOne picks the right row.
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_delete_sort', '{"_id": "dog", "a": "dog"}');
-psql:sql/bson_collation_query_tests_core.sql:822: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:857: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -3163,25 +3308,25 @@ SELECT documentdb_api.drop_collection('coll_q_db', 'coll_delete_sort');
 -- ==============================================================================
 -- Each query exercises a different invalid combination (alternate, locale, caseFirst, strength).
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1, "caseLevel": true, "caseFirst": "upper", "numericOrdering": true, "alternate": "none"} }');
-psql:sql/bson_collation_query_tests_core.sql:874: ERROR:  Collation field 'alternate' must be one of 'non-ignorable' or 'shifted', got 'none'.
+psql:sql/bson_collation_query_tests_core.sql:909: ERROR:  Collation field 'alternate' must be one of 'non-ignorable' or 'shifted', got 'none'.
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en_DB", "strength" : 1, "caseLevel": true, "caseFirst": "upper", "numericOrdering": true, "alternate": "shifted"} }');
-psql:sql/bson_collation_query_tests_core.sql:875: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "en_DB", strength: 1 }.
+psql:sql/bson_collation_query_tests_core.sql:910: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "en_DB", strength: 1 }.
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1, "caseLevel": true, "caseFirst": "bad", "numericOrdering": true} }');
-psql:sql/bson_collation_query_tests_core.sql:876: ERROR:  unable to parse collation :: caused by :: Enumeration value 'bad' for field 'collation.caseFirst' is not a valid value.
+psql:sql/bson_collation_query_tests_core.sql:911: ERROR:  unable to parse collation :: caused by :: Enumeration value 'bad' for field 'collation.caseFirst' is not a valid value.
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 0, "caseLevel": true, "caseFirst": "bad", "numericOrdering": true} }');
-psql:sql/bson_collation_query_tests_core.sql:877: ERROR:  unable to parse collation :: caused by :: Enumeration value '0' for field 'collation.strength' is not a valid value
+psql:sql/bson_collation_query_tests_core.sql:912: ERROR:  unable to parse collation :: caused by :: Enumeration value '0' for field 'collation.strength' is not a valid value
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : -1, "caseLevel": true, "caseFirst": "bad", "numericOrdering": true} }');
-psql:sql/bson_collation_query_tests_core.sql:878: ERROR:  unable to parse collation :: caused by :: BSON field 'strength' value must be >= 0, actual value '-1'
+psql:sql/bson_collation_query_tests_core.sql:913: ERROR:  unable to parse collation :: caused by :: BSON field 'strength' value must be >= 0, actual value '-1'
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 6, "caseLevel": true, "caseFirst": "bad", "numericOrdering": true} }');
-psql:sql/bson_collation_query_tests_core.sql:879: ERROR:  unable to parse collation :: caused by :: BSON field 'strength' value must be <= 5, actual value '6'
+psql:sql/bson_collation_query_tests_core.sql:914: ERROR:  unable to parse collation :: caused by :: BSON field 'strength' value must be <= 5, actual value '6'
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "abcd", "strength" : 1, "caseLevel": true, "caseFirst": "upper", "numericOrdering": true} }');
-psql:sql/bson_collation_query_tests_core.sql:880: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "abcd", strength: 1 }.
+psql:sql/bson_collation_query_tests_core.sql:915: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "abcd", strength: 1 }.
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "fr_FR", "strength" : 1, "caseLevel": true, "caseFirst": "lower", "numericOrdering": true} }');
-psql:sql/bson_collation_query_tests_core.sql:881: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "fr_FR", strength: 1 }.
+psql:sql/bson_collation_query_tests_core.sql:916: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "fr_FR", strength: 1 }.
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1, "caseLevel": true, "caseFirst": "upper", "numericOrdering": true, "alternate": "shifted", "backwards" : "0"} }');
-psql:sql/bson_collation_query_tests_core.sql:882: ERROR:  unable to parse collation :: caused by :: BSON field 'collation.backwards' is the wrong type 'string', expected type 'bool'
+psql:sql/bson_collation_query_tests_core.sql:917: ERROR:  unable to parse collation :: caused by :: BSON field 'collation.backwards' is the wrong type 'string', expected type 'bool'
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1, "caseLevel": true, "caseFirst": "lower", "numericOrdering": true, "alternate": "non-ignorable", "backwards" : true, "normalization" : 1} }');
-psql:sql/bson_collation_query_tests_core.sql:883: ERROR:  unable to parse collation :: caused by :: BSON field 'collation.normalization' is the wrong type 'int', expected type 'bool'
+psql:sql/bson_collation_query_tests_core.sql:918: ERROR:  unable to parse collation :: caused by :: BSON field 'collation.normalization' is the wrong type 'int', expected type 'bool'
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1, "caseLevel": true, "caseFirst": "lower", "numericOrdering": true, "alternate": "non-ignorable", "backwards" : true, "normalization" : true} }');
                     document                     
 -------------------------------------------------
@@ -3189,13 +3334,13 @@ SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_c
 (1 row)
 
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 0.9 } }');
-psql:sql/bson_collation_query_tests_core.sql:885: ERROR:  unable to parse collation :: caused by :: Enumeration value '0' for field 'collation.strength' is not a valid value
+psql:sql/bson_collation_query_tests_core.sql:920: ERROR:  unable to parse collation :: caused by :: Enumeration value '0' for field 'collation.strength' is not a valid value
 -- ==============================================================================
 -- SECTION 15: collation parsing
 -- ==============================================================================
 -- Missing locale: must be rejected.
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": {}, "sort": { "_id": 1 }, "limit": 1, "collation": { "strength": 1 } }');
-psql:sql/bson_collation_query_tests_core.sql:892: ERROR:  Collation specification is missing the required 'locale' field.
+psql:sql/bson_collation_query_tests_core.sql:927: ERROR:  Collation specification is missing the required 'locale' field.
 -- alternate / maxVariable / backwards: parse, validate, and apply.
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "a": "cat" }, "sort": { "_id": 1 }, "limit": 1, "collation": { "locale": "en", "alternate": "shifted" } }');
                     document                     
@@ -3224,11 +3369,11 @@ SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings
 
 -- Invalid enums and wrong types: rejected at parse time.
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": {}, "collation": { "locale": "en", "alternate": "bogus" } }');
-psql:sql/bson_collation_query_tests_core.sql:903: ERROR:  Collation field 'alternate' must be one of 'non-ignorable' or 'shifted', got 'bogus'.
+psql:sql/bson_collation_query_tests_core.sql:938: ERROR:  Collation field 'alternate' must be one of 'non-ignorable' or 'shifted', got 'bogus'.
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": {}, "collation": { "locale": "en", "alternate": "shifted", "maxVariable": "bogus" } }');
-psql:sql/bson_collation_query_tests_core.sql:904: ERROR:  Collation field 'maxVariable' must be one of 'punct' or 'space', got 'bogus'.
+psql:sql/bson_collation_query_tests_core.sql:939: ERROR:  Collation field 'maxVariable' must be one of 'punct' or 'space', got 'bogus'.
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": {}, "collation": { "locale": "en", "backwards": "true" } }');
-psql:sql/bson_collation_query_tests_core.sql:905: ERROR:  unable to parse collation :: caused by :: BSON field 'collation.backwards' is the wrong type 'string', expected type 'bool'
+psql:sql/bson_collation_query_tests_core.sql:940: ERROR:  unable to parse collation :: caused by :: BSON field 'collation.backwards' is the wrong type 'string', expected type 'bool'
 -- Locale lookup table entries.
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "a": "cat" }, "sort": { "_id": 1 }, "limit": 1, "collation": { "locale": "sr_Latn", "strength": 1 } }');
                     document                     
@@ -3250,7 +3395,7 @@ SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings
 
 -- @collation= suffix is stripped from the ICU language tag (see explain output).
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_phonebook', '{ "_id": 1, "name": "Mueller" }');
-psql:sql/bson_collation_query_tests_core.sql:913: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:948: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -3303,7 +3448,7 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
     ],
     "collation": { "locale": "en", "strength": 1 }
 }');
-psql:sql/bson_collation_query_tests_core.sql:947: ERROR:  Collation is currently unsupported in the $bucket stage.
+psql:sql/bson_collation_query_tests_core.sql:982: ERROR:  Collation is currently unsupported in the $bucket stage.
 -- $geoNear
 SELECT document FROM bson_aggregation_pipeline('coll_q_db',
 '{ "aggregate": "coll_strings",
@@ -3319,7 +3464,7 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
    ],
    "collation": { "locale": "en", "strength": 1 }
 }');
-psql:sql/bson_collation_query_tests_core.sql:963: ERROR:  collation is not supported in the $geoNear stage yet.
+psql:sql/bson_collation_query_tests_core.sql:998: ERROR:  collation is not supported in the $geoNear stage yet.
 -- $fill
 SELECT document FROM bson_aggregation_pipeline('coll_q_db', 
 '{
@@ -3341,7 +3486,7 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
     ],
     "collation": { "locale": "en", "strength": 1 }
 }');
-psql:sql/bson_collation_query_tests_core.sql:985: ERROR:  collation is not supported in the $fill stage yet.
+psql:sql/bson_collation_query_tests_core.sql:1020: ERROR:  collation is not supported in the $fill stage yet.
 -- $setWindowFields
 SELECT document FROM bson_aggregation_pipeline('coll_q_db',
 '{ "aggregate": "coll_strings",
@@ -3355,7 +3500,7 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
    ],
    "collation": { "locale": "en", "strength": 1 }
 }');
-psql:sql/bson_collation_query_tests_core.sql:999: ERROR:  collation is not supported in the $setWindowFields stage yet.
+psql:sql/bson_collation_query_tests_core.sql:1034: ERROR:  collation is not supported in the $setWindowFields stage yet.
 -- $sortByCount
 SELECT document FROM bson_aggregation_pipeline('coll_q_db',
 '{ "aggregate": "coll_strings",
@@ -3371,13 +3516,13 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
    ],
    "collation": { "locale": "en", "strength": 1 }
 }');
-psql:sql/bson_collation_query_tests_core.sql:1015: ERROR:  collation is not supported in the $sortByCount stage yet.
+psql:sql/bson_collation_query_tests_core.sql:1050: ERROR:  collation is not supported in the $sortByCount stage yet.
 -- ==============================================================================
 -- SECTION 20: unsupported — $merge and write commands with collation
 -- ==============================================================================
 -- $merge: collation propagation through writes is not supported.
 SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_lookup_src", "pipeline": [{"$merge" : { "into": "coll_merge_target", "whenMatched" : "replace" }} ], "collation": { "locale": "en", "strength" : 1} }');
-psql:sql/bson_collation_query_tests_core.sql:1022: ERROR:  collation is not supported with $merge yet
+psql:sql/bson_collation_query_tests_core.sql:1057: ERROR:  collation is not supported with $merge yet
 -- $bucketAuto
 SELECT document FROM bson_aggregation_pipeline('coll_q_db',
 '{ "aggregate": "coll_strings",
@@ -3386,22 +3531,22 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db',
    ],
    "collation": { "locale": "en", "strength": 1 }
 }');
-psql:sql/bson_collation_query_tests_core.sql:1031: ERROR:  collation is not supported in the $bucketAuto stage yet.
+psql:sql/bson_collation_query_tests_core.sql:1066: ERROR:  collation is not supported in the $bucketAuto stage yet.
 -- findAndModify with collation.
 SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "coll_multi_collation", "query": {"a": 1}, "update": {"_id": 1, "b": 1}, "collation" : {"locale" : "en", "strength": 1} }');
-psql:sql/bson_collation_query_tests_core.sql:1034: ERROR:  findAndModify.collation is not implemented yet
+psql:sql/bson_collation_query_tests_core.sql:1069: ERROR:  findAndModify.collation is not implemented yet
 -- findAndModify $elemMatch projection with collation (documents current unimplemented state).
 SELECT documentdb_api.find_and_modify('fam', '{"findAndModify": "coll_multi_collation", "query": {"a": "Cat"}, "update": {"$set": {"b": 99}}, "fields": {"a": 1}, "collation": {"locale": "en", "strength": 1}}');
-psql:sql/bson_collation_query_tests_core.sql:1037: ERROR:  findAndModify.collation is not implemented yet
+psql:sql/bson_collation_query_tests_core.sql:1072: ERROR:  findAndModify.collation is not implemented yet
 -- update with collation + arrayFilters.
 SELECT documentdb_api.update('update', '{"update":"coll_multi_collation", "updates":[{"q":{"_id": 134111, "b": [ 5, 2, 4 ] },"u":{"$set" : {"b.$[a]":3} },"upsert":true, "collation" : {"locale" : "en", "strength": 1}, "arrayFilters": [ { "a": 2 } ]}]}');
-psql:sql/bson_collation_query_tests_core.sql:1040: ERROR:  BSON field 'update.updates.collation' is not yet supported
+psql:sql/bson_collation_query_tests_core.sql:1075: ERROR:  BSON field 'update.updates.collation' is not yet supported
 -- count with collation: unsupported
 SELECT documentdb_api.count_query('coll_q_db', '{"count":"coll_strings", "query":{"a":"cat"}, "collation":{"locale":"en","strength":1}}');
-psql:sql/bson_collation_query_tests_core.sql:1043: ERROR:  collation is not supported in the count command yet.
+psql:sql/bson_collation_query_tests_core.sql:1078: ERROR:  collation is not supported in the count command yet.
 -- distinct with collation: unsupported
 SELECT documentdb_api.distinct_query('coll_q_db', '{"distinct":"coll_strings", "key":"a", "query":{}, "collation":{"locale":"en","strength":1}}');
-psql:sql/bson_collation_query_tests_core.sql:1046: ERROR:  collation is not supported in the distinct command yet.
+psql:sql/bson_collation_query_tests_core.sql:1081: ERROR:  collation is not supported in the distinct command yet.
 -- ==============================================================================
 -- SECTION 21: covered $count and a collation-aware index keyed on `_id`
 -- ==============================================================================
@@ -3412,7 +3557,7 @@ psql:sql/bson_collation_query_tests_core.sql:1046: ERROR:  collation is not supp
 SET documentdb_core.enableCollation TO on;
 -- coll_ios: scalar `country` field, exercised by covered $count and range queries.
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_ios', '{ "_id": 1, "country": "usa", "provider": "aws" }');
-psql:sql/bson_collation_query_tests_core.sql:1059: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:1094: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -3498,7 +3643,7 @@ SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_ios", "
 
 -- coll_id_ios: scalar string `_id` values that collate equally but differ byte-wise.
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "cat", "v": 1 }');
-psql:sql/bson_collation_query_tests_core.sql:1080: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:1115: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -3840,7 +3985,7 @@ SELECT documentdb_api_internal.bson_expression_get(
 -- flows command -> pipeline -> expression parse (the bson_expression_get tests above bypass this).
 -- Binary: $max "apple" / $min "Banana"; collation strength 1: $max "Banana" / $min "apple".
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_minmax_idx', '{ "_id": 1, "grp": "r", "vals": ["apple", "Banana"] }');
-psql:sql/bson_collation_query_tests_core.sql:1208: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_core.sql:1243: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -3862,6 +4007,12 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "col
 -- CLEANUP
 -- ======================================================================
 SELECT documentdb_api.drop_collection('coll_q_db', 'coll_agg_proj');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('coll_q_db', 'coll_code_collation');
  drop_collection 
 -----------------
  t

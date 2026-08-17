@@ -343,6 +343,8 @@ CompareBsonIter(bson_iter_t *leftIter, bson_iter_t *rightIter, bool compareField
 	check_stack_depth();
 	while (true)
 	{
+		CHECK_FOR_INTERRUPTS();
+
 		bool leftNext = bson_iter_next(leftIter);
 		bool rightNext = bson_iter_next(rightIter);
 		int32_t cmp;
@@ -1219,20 +1221,24 @@ CompareBsonValue(const bson_value_t *left, const bson_value_t *right,
 
 		case BSON_TYPE_CODE:
 		{
+			/* Code is never collated. */
+			const char *codeCollationString = NULL;
 			return CompareStrings(
 				left->value.v_code.code,
 				left->value.v_code.code_len,
 				right->value.v_code.code,
-				right->value.v_code.code_len, collationString);
+				right->value.v_code.code_len, codeCollationString);
 		}
 
 		case BSON_TYPE_CODEWSCOPE:
 		{
+			/* Neither the code nor the scope document is collated. */
+			const char *codeCollationString = NULL;
 			int cmp = CompareStrings(
 				left->value.v_codewscope.code,
 				left->value.v_codewscope.code_len,
 				right->value.v_codewscope.code,
-				right->value.v_codewscope.code_len, collationString);
+				right->value.v_codewscope.code_len, codeCollationString);
 			if (cmp != 0)
 			{
 				return cmp;
@@ -1258,16 +1264,18 @@ CompareBsonValue(const bson_value_t *left, const bson_value_t *right,
 
 			bool compareFields = true;
 			return CompareBsonIter(&leftInnerIt, &rightInnerIt, compareFields,
-								   collationString);
+								   codeCollationString);
 		}
 
 		case BSON_TYPE_DBPOINTER:
 		{
+			/* The collection name is never collated. */
+			const char *dbPointerCollationString = NULL;
 			int cmp = CompareStrings(
 				left->value.v_dbpointer.collection,
 				left->value.v_dbpointer.collection_len,
 				right->value.v_dbpointer.collection,
-				right->value.v_dbpointer.collection_len, collationString);
+				right->value.v_dbpointer.collection_len, dbPointerCollationString);
 			if (cmp != 0)
 			{
 				return cmp;
