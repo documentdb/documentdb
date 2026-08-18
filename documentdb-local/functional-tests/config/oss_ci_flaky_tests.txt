@@ -1907,3 +1907,13 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/merge/test_stages_merge_unique_index.py::test_stages_merge_unique_index[documentdb-unique_idx_err_partial]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/stages/merge/test_stages_merge_unique_index.py::test_stages_merge_unique_index[documentdb-unique_idx_sparse]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/system-stages/currentOp/test_system_stage_currentOp_live_state.py::test_currentOp_live_state[documentdb-idle_sessions_true_reports_session]
+# Added after gate run 32186281763 (first run of the refreshed baseline):
+#  - 3 currentOp live-state cases that XPASS(strict)ed in run 32182615216 and
+#    then failed here, so neither strict direction holds. All three assert on
+#    state that only exists while another operation or connection happens to be
+#    concurrent: two report no inactive/idle entry at all, and the truncateOps
+#    case times out waiting for its own 'query' op to show up within 10s.
+#    Non-strict absorbs either outcome.
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/system-stages/currentOp/test_system_stage_currentOp_live_state.py::test_currentOp_live_state[documentdb-command_full_truncateOps_omitted_large]
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/system-stages/currentOp/test_system_stage_currentOp_live_state.py::test_currentOp_live_state[documentdb-idle_connections_true_reports_inactive]
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/operator/system-stages/currentOp/test_system_stage_currentOp_live_state.py::test_currentOp_live_state[documentdb-inactive_op_document_fields]
