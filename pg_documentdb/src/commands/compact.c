@@ -31,6 +31,9 @@ extern bool EnableCompactVacuumFull;
  */
 typedef enum CompactMode
 {
+	/* No mode option has been selected yet. */
+	COMPACT_MODE_UNSPECIFIED = 0,
+
 	/*
 	 * Plain VACUUM: marks dead tuple space as reusable within the table (via
 	 * the free space map) without rewriting it, so later inserts/updates reuse
@@ -41,7 +44,10 @@ typedef enum CompactMode
 	 * This is the default so that an omitted mode runs the non-blocking VACUUM
 	 * rather than the blocking, table-rewriting VACUUM FULL.
 	 */
-	COMPACT_MODE_STANDARD = 0,
+	COMPACT_MODE_STANDARD,
+
+	/* Update planner statistics without vacuuming the table. */
+	COMPACT_MODE_UPDATE_STATS,
 
 	/*
 	 * VACUUM FULL: rewrites the table, returning freed space to the OS but
@@ -59,13 +65,10 @@ typedef struct CompactArgs
 	/* The name of the collection */
 	char *collectionName;
 
-	/* Which VACUUM flavor to run. Defaults to COMPACT_MODE_STANDARD. */
+	/* The requested compact behavior. Defaults to COMPACT_MODE_STANDARD. */
 	CompactMode mode;
 
-	/*
-	 * Estimate the amount of space that would be freed by a compact operation
-	 * without actually performing it.
-	 */
+	/* Estimate reclaimed space without performing table maintenance. */
 	bool dryRun;
 
 	/*
@@ -83,7 +86,8 @@ typedef struct CompactArgs
 } CompactArgs;
 
 static void ParseCompactCommandSpec(pgbson *compactSpec, CompactArgs *args);
-static void PerformVacuum(MongoCollection *collection, CompactMode mode);
+static void SelectCompactMode(CompactArgs *args, CompactMode mode);
+static void PerformCompactOperation(MongoCollection *collection, CompactMode mode);
 static void ValidateCompactAccess(MongoCollection *collection, CompactMode mode);
 static void ValidateLocksAndCheckAccess(MongoCollection *collection, CompactMode mode);
 
@@ -129,6 +133,16 @@ command_compact(PG_FUNCTION_ARGS)
 	CompactArgs args;
 	memset(&args, 0, sizeof(CompactArgs));
 	ParseCompactCommandSpec(compactSpec, &args);
+	if (args.mode == COMPACT_MODE_UNSPECIFIED)
+	{
+		args.mode = COMPACT_MODE_STANDARD;
+	}
+	if (args.dryRun && args.mode == COMPACT_MODE_UPDATE_STATS)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg(
+							"compact option dryRun:true cannot be combined with mode 'updateStats'")));
+	}
 
 	if (args.databaseName == NULL || args.collectionName == NULL)
 	{
@@ -197,6 +211,15 @@ command_compact(PG_FUNCTION_ARGS)
 	PgbsonWriterInit(&response);
 	PgbsonWriterAppendDouble(&response, "ok", 2, 1);
 
+	if (args.mode == COMPACT_MODE_UPDATE_STATS)
+	{
+		elog(LOG, "Updating statistics for collection %s.%s",
+			 args.databaseName, args.collectionName);
+		PerformCompactOperation(collection, args.mode);
+		PgbsonWriterAppendInt64(&response, "bytesFreed", 10, 0);
+		PG_RETURN_POINTER(PgbsonWriterGetPgbson(&response));
+	}
+
 	/* Get the bloat stats before vacuuming */
 	CollectionBloatStats beforeVacuumStats;
 	memset(&beforeVacuumStats, 0, sizeof(CollectionBloatStats));
@@ -212,7 +235,7 @@ command_compact(PG_FUNCTION_ARGS)
 		elog(LOG, "Performing compact (%s) on collection %s.%s",
 			 args.mode == COMPACT_MODE_FULL ? "vacuum full" : "vacuum",
 			 args.databaseName, args.collectionName);
-		PerformVacuum(collection, args.mode);
+		PerformCompactOperation(collection, args.mode);
 
 		/*
 		 * Report the on-disk space returned to the OS. VACUUM FULL rewrites the
@@ -259,7 +282,7 @@ ValidateCompactAccess(MongoCollection *collection, CompactMode mode)
 	}
 	Form_pg_class classForm = (Form_pg_class) GETSTRUCT(tuple);
 
-	uint32 options = VACOPT_VACUUM;
+	uint32 options = mode == COMPACT_MODE_UPDATE_STATS ? VACOPT_ANALYZE : VACOPT_VACUUM;
 	if (mode == COMPACT_MODE_FULL)
 	{
 		options |= VACOPT_FULL;
@@ -334,26 +357,36 @@ ValidateLocksAndCheckAccess(MongoCollection *collection, CompactMode mode)
 
 
 /*
- * This sends a VACUUM (FULL, for compact mode "full") command to the local server via
- * libpq, as VACUUM can't be executed in a transaction block.
+ * This sends an ANALYZE or VACUUM (FULL, for compact mode "full") command to the
+ * local server via libpq, as VACUUM can't be executed in a transaction block.
  */
 static void
-PerformVacuum(MongoCollection *collection, CompactMode mode)
+PerformCompactOperation(MongoCollection *collection, CompactMode mode)
 {
 	Assert(collection != NULL && collection->relationId != InvalidOid);
 
-	const char *vacuumQuery = mode == COMPACT_MODE_FULL ?
-							  FormatSqlQuery("VACUUM FULL %s.documents_%ld",
-											 ApiDataSchemaName,
-											 collection->collectionId) :
-							  FormatSqlQuery("VACUUM %s.documents_%ld",
-											 ApiDataSchemaName,
-											 collection->collectionId);
+	const char *maintenanceQuery;
+	if (mode == COMPACT_MODE_UPDATE_STATS)
+	{
+		maintenanceQuery = FormatSqlQuery("ANALYZE %s.documents_%ld",
+										  ApiDataSchemaName,
+										  collection->collectionId);
+	}
+	else
+	{
+		maintenanceQuery = mode == COMPACT_MODE_FULL ?
+						   FormatSqlQuery("VACUUM FULL %s.documents_%ld",
+										  ApiDataSchemaName,
+										  collection->collectionId) :
+						   FormatSqlQuery("VACUUM %s.documents_%ld",
+										  ApiDataSchemaName,
+										  collection->collectionId);
+	}
 
 	/* VACUUM needs to be performed at the top level */
 	bool useSerialExecution = false;
 	Oid userOid = GetUserId();
-	ExtensionExecuteQueryAsUserOnLocalhostViaLibPQ((char *) vacuumQuery, userOid,
+	ExtensionExecuteQueryAsUserOnLocalhostViaLibPQ((char *) maintenanceQuery, userOid,
 												   useSerialExecution);
 }
 
@@ -413,20 +446,24 @@ ParseCompactCommandSpec(pgbson *compactSpec, CompactArgs *args)
 			const char *modeStr = element.bsonValue.value.v_utf8.str;
 			if (strcmp(modeStr, "full") == 0)
 			{
-				args->mode = COMPACT_MODE_FULL;
+				SelectCompactMode(args, COMPACT_MODE_FULL);
+			}
+			else if (strcmp(modeStr, "updateStats") == 0)
+			{
+				SelectCompactMode(args, COMPACT_MODE_UPDATE_STATS);
 			}
 			else if (strcmp(modeStr, "standard") == 0)
 			{
-				args->mode = COMPACT_MODE_STANDARD;
+				SelectCompactMode(args, COMPACT_MODE_STANDARD);
 			}
 			else
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
 								errmsg(
-									"Invalid compact mode '%s'. Supported values are 'full' and 'standard'.",
+									"Invalid compact mode '%s'. Supported values are 'full', 'standard', and 'updateStats'.",
 									modeStr),
 								errdetail_log(
-									"Invalid compact mode '%s'. Supported values are 'full' and 'standard'.",
+									"Invalid compact mode '%s'. Supported values are 'full', 'standard', and 'updateStats'.",
 									modeStr)));
 			}
 		}
@@ -441,4 +478,18 @@ ParseCompactCommandSpec(pgbson *compactSpec, CompactArgs *args)
 								element.path)));
 		}
 	}
+}
+
+
+static void
+SelectCompactMode(CompactArgs *args, CompactMode mode)
+{
+	if (args->mode != COMPACT_MODE_UNSPECIFIED && args->mode != mode)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg(
+							"conflicting compact mode values are mutually exclusive")));
+	}
+
+	args->mode = mode;
 }

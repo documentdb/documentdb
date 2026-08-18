@@ -9,6 +9,9 @@
 # ignore DEBUG1 messages that Postgres generates
 /^DEBUG:  rehashing catalog cache id .*$/d
 
+# Normalize the temporary database role used by local and pipeline test clusters.
+s/(via connection to "[^"]* user=)[^ ]+/\1REGRESSION_USER/g
+
 s/^-[+-]{2,}$/---------------------------------------------------------------------/g
 s/^\s+/ /g
 s/\s+$//g

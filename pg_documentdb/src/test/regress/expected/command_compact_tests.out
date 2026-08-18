@@ -34,9 +34,15 @@ ERROR:  The BSON field 'dryRun' has an incorrect type 'string'; it should be of 
 SELECT documentdb_api.compact('{"compact": "compact_coll", "force": false}');
 ERROR:  command compact option force:false is not supported
 SELECT documentdb_api.compact('{"compact": "compact_coll", "mode": "invalid"}');
-ERROR:  Invalid compact mode 'invalid'. Supported values are 'full' and 'standard'.
+ERROR:  Invalid compact mode 'invalid'. Supported values are 'full', 'standard', and 'updateStats'.
 SELECT documentdb_api.compact('{"compact": "compact_coll", "mode": 1}');
 ERROR:  The BSON field 'mode' has an incorrect type 'int'; it should be of type 'string'.
+SELECT documentdb_api.compact('{"compact": "compact_coll", "dryRun": true, "mode": "updateStats"}');
+ERROR:  compact option dryRun:true cannot be combined with mode 'updateStats'
+SELECT documentdb_api.compact('{"compact": "compact_coll", "mode": "updateStats", "mode": "full"}');
+ERROR:  conflicting compact mode values are mutually exclusive
+SELECT documentdb_api.compact('{"compact": "compact_coll", "mode": "full", "mode": "standard"}');
+ERROR:  conflicting compact mode values are mutually exclusive
 -- Default mode is "standard", which is NOT gated by the GUC and runs even with GUC off
 SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db"}');
                                     compact                                     
@@ -65,6 +71,29 @@ SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", 
  { "ok" : { "$numberDouble" : "1.0" }, "estimatedBytesFreed" : { "$numberLong" : "0" } }
 (1 row)
 
+SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", "dryRun": true, "mode": "standard"}');
+                                         compact                                         
+-----------------------------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" }, "estimatedBytesFreed" : { "$numberLong" : "0" } }
+(1 row)
+
+SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", "mode": "full", "dryRun": true}');
+                                         compact                                         
+-----------------------------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" }, "estimatedBytesFreed" : { "$numberLong" : "0" } }
+(1 row)
+
+-- mode updateStats runs ANALYZE instead of VACUUM and is not gated by the vacuum full GUC
+SET client_min_messages TO DEBUG1;
+SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", "mode": "updateStats"}');
+LOG:  Updating statistics for collection compact_db.compact_coll
+DEBUG:  executing "ANALYZE documentdb_data.documents_25709001" via connection to "host=localhost port=58050 user=REGRESSION_USER dbname=regression application_name='documentdb-Internal'"
+                                    compact                                     
+--------------------------------------------------------------------------------
+ { "ok" : { "$numberDouble" : "1.0" }, "bytesFreed" : { "$numberLong" : "0" } }
+(1 row)
+
+RESET client_min_messages;
 -- Enable the GUC and run compact (with vacuum full)
 SET documentdb.enableCompactVacuumFull TO on;
 -- Insert data to have something to compact

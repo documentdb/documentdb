@@ -19,6 +19,9 @@ SELECT documentdb_api.compact('{"compact": "compact_coll", "dryRun": "invalid"}'
 SELECT documentdb_api.compact('{"compact": "compact_coll", "force": false}');
 SELECT documentdb_api.compact('{"compact": "compact_coll", "mode": "invalid"}');
 SELECT documentdb_api.compact('{"compact": "compact_coll", "mode": 1}');
+SELECT documentdb_api.compact('{"compact": "compact_coll", "dryRun": true, "mode": "updateStats"}');
+SELECT documentdb_api.compact('{"compact": "compact_coll", "mode": "updateStats", "mode": "full"}');
+SELECT documentdb_api.compact('{"compact": "compact_coll", "mode": "full", "mode": "standard"}');
 
 -- Default mode is "standard", which is NOT gated by the GUC and runs even with GUC off
 SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db"}');
@@ -31,6 +34,13 @@ SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", 
 
 -- dryRun with GUC off should return estimatedBytesFreed: 0
 SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", "dryRun": true}');
+SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", "dryRun": true, "mode": "standard"}');
+SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", "mode": "full", "dryRun": true}');
+
+-- mode updateStats runs ANALYZE instead of VACUUM and is not gated by the vacuum full GUC
+SET client_min_messages TO DEBUG1;
+SELECT documentdb_api.compact('{"compact": "compact_coll", "$db": "compact_db", "mode": "updateStats"}');
+RESET client_min_messages;
 
 -- Enable the GUC and run compact (with vacuum full)
 SET documentdb.enableCompactVacuumFull TO on;
