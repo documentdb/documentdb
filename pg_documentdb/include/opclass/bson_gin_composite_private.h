@@ -82,6 +82,8 @@ typedef struct CompositeIndexBoundsSet
 
 typedef struct CompositeRowBounds
 {
+	/* Cached only when the complete non-wildcard row term can be reused. */
+	bytea *serializedTerm;
 	CompositeSingleBound bounds[INDEX_MAX_KEYS];
 } CompositeRowBounds;
 

@@ -214,17 +214,6 @@ BuildLowerBoundTermFromIndexBounds(CompositeQueryRunData *runData,
 			runData->indexBounds[i].isEqualityBound = true;
 		}
 
-		/* If there's a min/max bounds honor that first */
-		if (minBounds != NULL)
-		{
-			if (minBounds->bounds[i].serializedTerm != NULL)
-			{
-				lowerBoundDatums[i] = minBounds->bounds[i].serializedTerm;
-				*hasInequalityMatch = true;
-				continue;
-			}
-		}
-
 		if (runData->indexBounds[i].isEqualityBound)
 		{
 			lowerBoundDatums[i] = runData->indexBounds[i].lowerBound.serializedTerm;
@@ -273,10 +262,57 @@ BuildLowerBoundTermFromIndexBounds(CompositeQueryRunData *runData,
 		}
 	}
 
+	bytea *termToFree = NULL;
+	bytea *termToReturn = NULL;
 	BsonIndexTermSerialized ser = SerializeCompositeBsonIndexTerm(lowerBoundDatums,
 																  runData->metaInfo->
 																  numIndexPaths);
-	return ser.indexTermVal;
+	termToReturn = ser.indexTermVal;
+	if (minBounds != NULL)
+	{
+		BsonIndexTermSerialized minSer = { 0 };
+		bytea *minTerm = minBounds->serializedTerm;
+		if (minTerm == NULL)
+		{
+			bytea *minBoundDatums[INDEX_MAX_KEYS] = { 0 };
+			for (int i = 0; i < runData->metaInfo->numIndexPaths; i++)
+			{
+				minBoundDatums[i] = minBounds->bounds[i].serializedTerm != NULL ?
+									minBounds->bounds[i].serializedTerm :
+									lowerBoundDatums[i];
+			}
+
+			minSer = SerializeCompositeBsonIndexTerm(
+				minBoundDatums, runData->metaInfo->numIndexPaths);
+			minTerm = minSer.indexTermVal;
+		}
+
+		bool isComparisonValidIgnore = false;
+		int cmp = CompareSerializedBsonIndexTerms(minTerm, ser.indexTermVal,
+												  runData->metaInfo->collation,
+												  &isComparisonValidIgnore);
+		bool minBoundIsLater = runData->metaInfo->isBackwardScan ? cmp < 0 : cmp > 0;
+
+		*hasInequalityMatch = true;
+		if (minBoundIsLater)
+		{
+			termToFree = ser.indexTermVal;
+			termToReturn = minTerm;
+		}
+		else
+		{
+			termToFree = minSer.indexTermVal;
+			termToReturn = ser.indexTermVal;
+		}
+	}
+
+	/* We only free for indexPaths > 1 since for == 1 it reuses the term in the output. */
+	if (termToFree != NULL && runData->metaInfo->numIndexPaths > 1)
+	{
+		pfree(termToFree);
+	}
+
+	return termToReturn;
 }
 
 
@@ -2969,8 +3005,8 @@ AddMultiBoundaryForDollarType(int32_t indexAttribute, const char *wildcardPath,
 
 
 static void
-CreateMinOrMaxBounds(int32_t indexAttribute, const char *wildcardPath,
-					 bson_value_t *indexKey, bool isBoundInclusive,
+CreateMinOrMaxBounds(int32_t indexAttribute, bson_value_t *indexKey, bool
+					 isBoundInclusive,
 					 CompositeRowBounds *lowerBounds)
 {
 	if (indexAttribute != 0)
@@ -3008,13 +3044,14 @@ CreateMinOrMaxBounds(int32_t indexAttribute, const char *wildcardPath,
 	for (int32_t i = 0; i < numTerms; i++)
 	{
 		InitializeBsonIndexTermIfNeeded(&terms[i]);
-		if (terms[i].term.element.bsonValue.value_type != BSON_TYPE_EOD)
-		{
-			lowerBounds->bounds[i].serializedTerm = terms[i].serializedTerm;
-			lowerBounds->bounds[i].bound = terms[i].term.element.bsonValue;
-			lowerBounds->bounds[i].isBoundInclusive = isBoundInclusive;
-		}
+		lowerBounds->bounds[i].serializedTerm = terms[i].serializedTerm;
+		lowerBounds->bounds[i].bound = terms[i].term.element.bsonValue;
+		lowerBounds->bounds[i].isBoundInclusive = isBoundInclusive;
 	}
+
+	lowerBounds->serializedTerm = palloc(indexKey->value.v_binary.data_len);
+	memcpy(lowerBounds->serializedTerm, indexTerm,
+		   indexKey->value.v_binary.data_len);
 }
 
 
@@ -3071,8 +3108,7 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 
 		bool isBoundInclusive = true;
 		indexBounds->minBounds = palloc0(sizeof(CompositeRowBounds));
-		CreateMinOrMaxBounds(indexAttribute, wildcardPath,
-							 &params->minOrMaxIndexKey,
+		CreateMinOrMaxBounds(indexAttribute, &params->minOrMaxIndexKey,
 							 isBoundInclusive,
 							 indexBounds->minBounds);
 
