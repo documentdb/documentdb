@@ -165,6 +165,7 @@ BsonIndexAmEntry RumIndexAmEntry = {
 	.get_unique_path_op_family_oid = BsonRumUniquePathOperatorFamily,
 	.get_hashed_path_op_family_oid = BsonRumHashPathOperatorFamily,
 	.add_explain_output = NULL, /* No explain output for RUM */
+	.get_stats = NULL,
 	.am_name = "rum",
 	.get_opclass_catalog_schema = GetRumCatalogSchema,
 	.get_opclass_internal_catalog_schema = GetRumInternalSchemaV2,
@@ -209,6 +210,7 @@ typedef enum RumFunctionCatalog
 	RumFunction_RumOrderedCostEstimate,
 	RumFunction_GetCurrentIndexKey,
 	RumFunction_SkipTidsForCurrentEntry,
+	RumFunction_GetStats,
 	RumFunction_Max,
 } RumFunctionCatalog;
 
@@ -231,6 +233,7 @@ static const char *RumFunctionArray[RumFunction_Max] =
 	[RumFunction_RumOrderedCostEstimate] = "RumOrderedCostEstimate",
 	[RumFunction_GetCurrentIndexKey] = "documentdb_rum_get_current_index_key",
 	[RumFunction_SkipTidsForCurrentEntry] = "documentdb_rum_skip_tids_on_current_entry",
+	[RumFunction_GetStats] = "documentdb_rum_get_index_stats",
 };
 
 
@@ -253,6 +256,7 @@ static const char *DocumentDBRumFunctionArray[RumFunction_Max] =
 	[RumFunction_RumOrderedCostEstimate] = "DocumentDBRumOrderedCostEstimate",
 	[RumFunction_GetCurrentIndexKey] = "documentdb_rum_get_current_index_key",
 	[RumFunction_SkipTidsForCurrentEntry] = "documentdb_rum_skip_tids_on_current_entry",
+	[RumFunction_GetStats] = "documentdb_rum_get_index_stats",
 };
 
 
@@ -580,6 +584,16 @@ LoadRumRoutine(void)
 	if (costEstimateFunc != NULL)
 	{
 		RumOrderedCostEstimate = costEstimateFunc;
+	}
+
+	PGFunction getStatsFunc =
+		load_external_function(rumLibPath,
+							   functionCatalog[RumFunction_GetStats],
+							   !missingOk,
+							   ignoreLibFileHandle);
+	if (getStatsFunc != NULL)
+	{
+		RumIndexAmEntry.get_stats = getStatsFunc;
 	}
 
 	void (*setRumUnredactedLogEmitHookFunc)(format_log_hook hook) = NULL;

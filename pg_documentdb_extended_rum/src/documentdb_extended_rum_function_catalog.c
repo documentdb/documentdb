@@ -35,6 +35,7 @@ extern PGDLLIMPORT Datum documentdb_rum_repair_revive_all_pages_and_tuples(
 	PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum documentdb_rum_test_set_incomplete_split_on_page(
 	PG_FUNCTION_ARGS);
+extern PGDLLIMPORT Datum documentdb_rum_get_index_stats(PG_FUNCTION_ARGS);
 
 /* Built-in rmgr function catalog */
 extern PGDLLIMPORT Datum builtin_rmgr_try_explain_documentdb_rum_index(PG_FUNCTION_ARGS);
@@ -61,6 +62,7 @@ extern PGDLLIMPORT Datum builtin_rmgr_documentdb_rum_repair_revive_all_pages_and
 	PG_FUNCTION_ARGS);
 extern PGDLLIMPORT Datum builtin_rmgr_documentdb_rum_test_set_incomplete_split_on_page(
 	PG_FUNCTION_ARGS);
+extern PGDLLIMPORT Datum builtin_rmgr_documentdb_rum_get_index_stats(PG_FUNCTION_ARGS);
 
 CoreFunctionCatalog
 GetCoreFunctionCatalog(void)
@@ -86,7 +88,8 @@ GetCoreFunctionCatalog(void)
 			   .documentdb_rum_repair_revive_all_pages_and_tuples =
 				   documentdb_rum_repair_revive_all_pages_and_tuples,
 			   .documentdb_rum_test_set_incomplete_split_on_page =
-				   documentdb_rum_test_set_incomplete_split_on_page
+				   documentdb_rum_test_set_incomplete_split_on_page,
+			   .documentdb_rum_get_stats = documentdb_rum_get_index_stats,
 	};
 }
 
@@ -123,6 +126,7 @@ GetBuiltInRmgrFunctionCatalog(void)
 			   .documentdb_rum_repair_revive_all_pages_and_tuples =
 				   builtin_rmgr_documentdb_rum_repair_revive_all_pages_and_tuples,
 			   .documentdb_rum_test_set_incomplete_split_on_page =
-				   builtin_rmgr_documentdb_rum_test_set_incomplete_split_on_page
+				   builtin_rmgr_documentdb_rum_test_set_incomplete_split_on_page,
+			   .documentdb_rum_get_stats = builtin_rmgr_documentdb_rum_get_index_stats,
 	};
 }

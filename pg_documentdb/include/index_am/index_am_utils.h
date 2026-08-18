@@ -116,6 +116,7 @@ void TryExplainByIndexAm(struct IndexScanDescData *scan, ExplainWriterFuncs *wri
 
 PGFunction GetIndexKeyCurrentKeyFunc(Oid relam, Oid opFamily);
 PGFunction GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily);
+PGFunction GetIndexStatsFunc(Oid relam);
 
 bool GetCompositeOpClassPropsByOid(Oid relAm, Oid opFamilyOid,
 								   bool *supportsOrderedOperatorScans,
@@ -136,5 +137,15 @@ CompositeOpClassMetadataReadResult TryGetCompositeOpClassMetadataInfo(Oid indexO
 																	  LOCKMODE lockmode,
 																	  CompositeOpClassMetadataInfo
 																	  *info);
+
+
+CompositeOpClassMetadataReadResult TryGetCompositeOpClassMetadataInfoWithStats(Oid
+																			   indexOid,
+																			   LOCKMODE
+																			   lockmode,
+																			   CompositeOpClassMetadataInfo
+																			   *info,
+																			   List **
+																			   indexStats);
 
 #endif

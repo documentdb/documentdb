@@ -33,6 +33,7 @@ typedef struct CoreFunctionCatalog
 	PGFunction documentdb_rum_page_get_data_items;
 	PGFunction documentdb_rum_repair_revive_all_pages_and_tuples;
 	PGFunction documentdb_rum_test_set_incomplete_split_on_page;
+	PGFunction documentdb_rum_get_stats;
 } CoreFunctionCatalog;
 
 

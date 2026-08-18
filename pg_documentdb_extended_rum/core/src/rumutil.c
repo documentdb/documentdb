@@ -19,6 +19,7 @@
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
+#include "nodes/makefuncs.h"
 #include "storage/indexfsm.h"
 #include "storage/lmgr.h"
 #include "utils/builtins.h"
@@ -36,6 +37,7 @@
 static relopt_kind rum_relopt_kind;
 
 RMGR_PG_FUNCTION_INFO_V1(documentdb_rumhandler);
+RMGR_PG_FUNCTION_INFO_V1(documentdb_rum_get_index_stats);
 static char * rumbuildphasename(int64 phasenum);
 
 
@@ -1421,4 +1423,28 @@ documentdb_rumoptions(Datum reloptions, bool validate)
 
 	return (bytea *) build_reloptions(reloptions, validate, rum_relopt_kind,
 									  sizeof(RumOptions), tab, lengthof(tab));
+}
+
+
+RMGR_PG_FUNCTION_DEF(documentdb_rum_get_index_stats)
+{
+	Relation indexRel = (Relation) PG_GETARG_POINTER(0);
+	RumStatsData stats = { 0 };
+	rumGetStats(indexRel, &stats);
+
+	List *indexStats = NIL;
+
+	indexStats = lappend(indexStats, makeString("nEntries"));
+	indexStats = lappend(indexStats,
+						 makeConst(INT8OID, -1, InvalidOid, sizeof(int64),
+								   Int64GetDatum(stats.nEntries), false, true));
+	indexStats = lappend(indexStats, makeString("nEntryPages"));
+	indexStats = lappend(indexStats,
+						 makeConst(INT8OID, -1, InvalidOid, sizeof(int64),
+								   Int64GetDatum(stats.nEntryPages), false, true));
+	indexStats = lappend(indexStats, makeString("nDataPages"));
+	indexStats = lappend(indexStats,
+						 makeConst(INT8OID, -1, InvalidOid, sizeof(int64),
+								   Int64GetDatum(stats.nDataPages), false, true));
+	PG_RETURN_POINTER(indexStats);
 }

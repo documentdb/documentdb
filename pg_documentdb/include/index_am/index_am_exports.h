@@ -52,6 +52,9 @@ typedef struct
 	/* optional func to add explain output */
 	PGFunction add_explain_output;
 
+	/* Optional function to get index statistics */
+	PGFunction get_stats;
+
 	/* The am name for create indexes */
 	const char *am_name;
 

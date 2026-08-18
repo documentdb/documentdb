@@ -58,6 +58,8 @@ static bool documentdb_rum_get_truncation_status(Relation indexRelation);
 static bool documentdb_rum_is_path_key_summarization_scan(void);
 static bool documentdb_rum_get_reduced_terms_status(Relation indexRelation);
 
+static Datum documentdb_rum_get_stats(PG_FUNCTION_ARGS);
+
 
 /* Static Globals */
 static DocumentDBRumOidCacheData Cache = { 0 };
@@ -122,6 +124,7 @@ InitializeDocumentDBRum(void)
 		.get_unique_path_op_family_oid = DocumentDbExtendedRumUniquePathOperatorFamilyOid,
 		.get_hashed_path_op_family_oid = DocumentdbExtendedRumHashedPathOpsFamilyOid,
 		.add_explain_output = NULL, /* added below */
+		.get_stats = documentdb_rum_get_stats,
 		.am_name = "extended_rum",
 		.get_opclass_catalog_schema = GetDocumentDBCatalogSchema,
 		.get_opclass_internal_catalog_schema = GetDocumentDBCatalogSchema,
@@ -470,4 +473,12 @@ InitializeDocumentDBAdapterGUCs(void)
 		DEFAULT_RUM_USE_BUILTIN_RMGR_MODULES,
 		PGC_POSTMASTER, 0,
 		NULL, NULL, NULL);
+}
+
+
+static Datum
+documentdb_rum_get_stats(PG_FUNCTION_ARGS)
+{
+	EnsureDocumentDBExtendedRumLib();
+	return core_function_catalog.documentdb_rum_get_stats(fcinfo);
 }

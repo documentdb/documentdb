@@ -23,21 +23,9 @@
 #include "opclass/bson_gin_index_mgmt.h"
 
 
-/*
- * Reads composite-index opclass metadata. Returns Full with *info fully
- * populated when the metadata blob is available, Partial with only
- * info->isMultiKey set as a fallback, or None if neither can be read.
- */
-CompositeOpClassMetadataReadResult
-TryGetCompositeOpClassMetadataInfo(Oid indexOid, LOCKMODE lockmode,
-								   CompositeOpClassMetadataInfo *info)
+static CompositeOpClassMetadataReadResult
+ReadCompositeOpClassMetadata(Relation indexRel, CompositeOpClassMetadataInfo *info)
 {
-	Relation indexRel = try_relation_open(indexOid, lockmode);
-	if (indexRel == NULL)
-	{
-		return CompositeOpClassMetadataReadResult_None;
-	}
-
 	CompositeOpClassMetadataReadResult result = CompositeOpClassMetadataReadResult_None;
 
 	bool supportsOrderedOperatorScans = false;
@@ -97,6 +85,55 @@ TryGetCompositeOpClassMetadataInfo(Oid indexOid, LOCKMODE lockmode,
 			result = CompositeOpClassMetadataReadResult_Partial;
 		}
 	}
+
+	return result;
+}
+
+
+CompositeOpClassMetadataReadResult
+TryGetCompositeOpClassMetadataInfoWithStats(Oid indexOid, LOCKMODE lockmode,
+											CompositeOpClassMetadataInfo *info,
+											List **indexStats)
+{
+	Relation indexRel = try_relation_open(indexOid, lockmode);
+	*indexStats = NIL;
+	if (indexRel == NULL)
+	{
+		return CompositeOpClassMetadataReadResult_None;
+	}
+
+	CompositeOpClassMetadataReadResult result =
+		ReadCompositeOpClassMetadata(indexRel, info);
+
+	PGFunction getStatsFunc = GetIndexStatsFunc(indexRel->rd_rel->relam);
+	if (getStatsFunc != NULL)
+	{
+		*indexStats = (List *) DatumGetPointer(
+			DirectFunctionCall1(getStatsFunc, PointerGetDatum(indexRel)));
+	}
+
+	relation_close(indexRel, lockmode);
+	return result;
+}
+
+
+/*
+ * Reads composite-index opclass metadata. Returns Full with *info fully
+ * populated when the metadata blob is available, Partial with only
+ * info->isMultiKey set as a fallback, or None if neither can be read.
+ */
+CompositeOpClassMetadataReadResult
+TryGetCompositeOpClassMetadataInfo(Oid indexOid, LOCKMODE lockmode,
+								   CompositeOpClassMetadataInfo *info)
+{
+	Relation indexRel = try_relation_open(indexOid, lockmode);
+	if (indexRel == NULL)
+	{
+		return CompositeOpClassMetadataReadResult_None;
+	}
+
+	CompositeOpClassMetadataReadResult result =
+		ReadCompositeOpClassMetadata(indexRel, info);
 
 	relation_close(indexRel, lockmode);
 	return result;

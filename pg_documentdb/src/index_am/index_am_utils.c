@@ -577,6 +577,14 @@ GetSkipTidsOnCurrentEntryFunc(Oid relam, Oid opFamily)
 }
 
 
+PGFunction
+GetIndexStatsFunc(Oid relam)
+{
+	const BsonIndexAmEntry *amEntry = GetBsonIndexAmEntryByIndexOid(relam);
+	return amEntry == NULL ? NULL : amEntry->get_stats;
+}
+
+
 bool
 GetCompositeOpClassPropsByOid(Oid relAm, Oid opFamilyOid,
 							  bool *supportsOrderedOperatorScans,

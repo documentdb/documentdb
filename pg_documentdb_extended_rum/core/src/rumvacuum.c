@@ -2388,6 +2388,10 @@ rumvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 		else if (RumPageIsData(page))
 		{
 			idxStat.nDataPages++;
+			if (RumDataPageMaxOff(page) == 0)
+			{
+				vacStats.numEmptyPostingTreePages++;
+			}
 		}
 		else if (RumPageIsDeleted(page) && !RumPageIsLeaf(page))
 		{
@@ -2418,6 +2422,9 @@ rumvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 
 			if (RumPageIsLeaf(page))
 			{
+				OffsetNumber maxoff = PageGetMaxOffsetNumber(page);
+				idxStat.nEntries += maxoff;
+
 				if (gvs.inlineVacuumBulkDelDataPages &&
 					!RumVacuumSkipPrunePostingTreePages)
 				{
@@ -2434,8 +2441,19 @@ rumvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 					releaseBuffer = false;
 					TraverseAndPrunePostingTrees(&gvs, page, buffer, blkno, &vacStats);
 				}
-
-				idxStat.nEntries += PageGetMaxOffsetNumber(page);
+				else if (maxoff == 1)
+				{
+					/*
+					 * An entry page with only a high key and no postings is empty.
+					 */
+					IndexTuple itup = (IndexTuple) PageGetItem(page,
+															   PageGetItemId(page,
+																			 FirstOffsetNumber));
+					if (!RumIsPostingTree(itup) && RumGetNPosting(itup) == 0)
+					{
+						vacStats.numEmptyPages++;
+					}
+				}
 			}
 		}
 
@@ -3166,6 +3184,11 @@ TraverseAndPrunePostingTrees(RumVacuumState *gvs, Page page, Buffer buffer,
 		}
 	}
 
+
+	if (isEmptyPage)
+	{
+		vacStats->numEmptyPages++;
+	}
 
 	/* If we found a truly empty page, now handle this here */
 	if (isEmptyPage && RumPruneEmptyPages)
