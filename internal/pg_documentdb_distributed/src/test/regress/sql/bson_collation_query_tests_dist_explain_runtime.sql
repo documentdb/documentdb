@@ -30,3 +30,10 @@ SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_q_runtime_dist_explain_db', '{ "aggregate": "coll_simple_d", "pipeline": [ { "$match": { "a": "DOG" } }, { "$sort": { "_id": 1 } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
 END;
+
+-- count command with collation fans out and scans each shard
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_count('coll_q_runtime_dist_explain_db', '{ "count": "coll_simple_d", "query": { "a": "CAT" }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
+END;

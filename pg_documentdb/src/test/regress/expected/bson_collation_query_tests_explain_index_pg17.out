@@ -3968,7 +3968,7 @@ SELECT documentdb_api.drop_collection('coll_q_db','coll_merge_dst');
 -- ======================================================================
 -- SECTION: collation-aware index usage on `_id` and compound keys
 -- ======================================================================
--- Exercises a collation-aware ordered index on `_id` and a compound
+-- Exercises a collation-aware ordered index led by `_id` and a compound
 -- {country, _id} index. These collections hold only scalar values, so the
 -- ordered index answers the equality/range predicates directly and a covered
 -- $count reads from the same index. seqscan is off (top of file) and bitmap
@@ -4033,7 +4033,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
--- coll_id_ios: scalar string `_id` values with a collation-aware index keyed on `_id`.
+-- coll_id_ios: scalar string `_id` values with a collation-aware index led by `_id`.
 SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "cat", "v": 1 }');
 psql:sql/bson_collation_query_tests_explain_index.sql:1052: NOTICE:  creating collection
                               insert_one                              
@@ -4073,7 +4073,7 @@ SELECT documentdb_api.insert_one('coll_q_db', 'coll_id_ios', '{ "_id": "goat", "
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
   '{ "createIndexes": "coll_id_ios",
-     "indexes": [{ "key": {"_id": 1}, "name": "idx_id_en_s1",
+     "indexes": [{ "key": {"_id": 1, "v": 1}, "name": "idx_id_v_en_s1",
                    "collation": {"locale": "en", "strength": 1} }] }', TRUE);
                                                                                                    create_indexes_non_concurrently                                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -4088,6 +4088,25 @@ $cmd$);
 ------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: bson_repath_and_build('n'::text, documentdb_api_internal.bsoncount(1))
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: coll_q_db.coll_ios
+         indexName: idx_country_id_en_s1
+         indexKey: {"country": 1,"_id": 1}
+         indexCollation: en-u-ks-level1
+         isMultiKey: false
+         indexBounds: ["country": ["USA", "USA"], "_id": (MinKey, MaxKey)]
+         ->  Index Scan using idx_country_id_en_s1 on documentdb_data.documents_8816 collection
+               Index Cond: (collection.document @= '{ "country" : "USA", "collation" : "en-u-ks-level1" }'::bson)
+(11 rows)
+
+-- Count command on the leading `country` field uses the compound collation index.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_count('coll_q_db', '{ "count": "coll_ios", "query": { "country": "USA" }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                               run_explain_and_trim                                               
+------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: documentdb_api_internal.bsoncommandcount(1)
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
          namespaceName: coll_q_db.coll_ios
          indexName: idx_country_id_en_s1
@@ -4147,7 +4166,7 @@ $cmd$);
    Filter: ((collection.document #= '{ "country" : "usa", "collation" : "en-u-ks-level1" }'::bsonquery) AND (collection.document #= '{ "_id" : { "$numberInt" : "2" }, "collation" : "en-u-ks-level1" }'::bsonquery))
 (4 rows)
 
--- Covered $count served by the collation-aware index keyed on `_id`.
+-- Covered $count served by the collation-aware index led by `_id`.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_id_ios", "pipeline": [ { "$match": { "_id": "dog" } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
@@ -4157,16 +4176,35 @@ $cmd$);
    Output: bson_repath_and_build('n'::text, documentdb_api_internal.bsoncount(1))
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
          namespaceName: coll_q_db.coll_id_ios
-         indexName: idx_id_en_s1
-         indexKey: {"_id": 1}
+         indexName: idx_id_v_en_s1
+         indexKey: {"_id": 1,"v": 1}
          indexCollation: en-u-ks-level1
          isMultiKey: false
-         indexBounds: ["_id": ["dog", "dog"]]
-         ->  Index Scan using idx_id_en_s1 on documentdb_data.documents_8817 collection
+         indexBounds: ["_id": ["dog", "dog"], "v": (MinKey, MaxKey)]
+         ->  Index Scan using idx_id_v_en_s1 on documentdb_data.documents_8817 collection
                Index Cond: (collection.document @= '{ "_id" : "dog", "collation" : "en-u-ks-level1" }'::bson)
 (11 rows)
 
--- find on `_id` under collation uses the collation-aware _id index (the byte-wise
+-- Count command uses the collation-aware index led by `_id`.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_count('coll_q_db', '{ "count": "coll_id_ios", "query": { "_id": "dog" }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+                                             run_explain_and_trim                                             
+--------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: documentdb_api_internal.bsoncommandcount(1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan)
+         namespaceName: coll_q_db.coll_id_ios
+         indexName: idx_id_v_en_s1
+         indexKey: {"_id": 1,"v": 1}
+         indexCollation: en-u-ks-level1
+         isMultiKey: false
+         indexBounds: ["_id": ["dog", "dog"], "v": (MinKey, MaxKey)]
+         ->  Index Scan using idx_id_v_en_s1 on documentdb_data.documents_8817 collection
+               Index Cond: (collection.document @= '{ "_id" : "dog", "collation" : "en-u-ks-level1" }'::bson)
+(11 rows)
+
+-- find on `_id` under collation uses the collation-aware compound index (the byte-wise
 -- _id_ index cannot answer a collation predicate).
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_id_ios", "filter": { "_id": "cat" }, "sort": { "v": 1 }, "collation": { "locale": "en", "strength": 1 } }')
@@ -4179,12 +4217,12 @@ $cmd$);
    ->  Custom Scan (DocumentDBApiExplainQueryScan)
          Output: document, documentdb_api_internal.bson_orderby_index(document, '{ "v" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
          namespaceName: coll_q_db.coll_id_ios
-         indexName: idx_id_en_s1
-         indexKey: {"_id": 1}
+         indexName: idx_id_v_en_s1
+         indexKey: {"_id": 1,"v": 1}
          indexCollation: en-u-ks-level1
          isMultiKey: false
-         indexBounds: ["_id": ["cat", "cat"]]
-         ->  Index Scan using idx_id_en_s1 on documentdb_data.documents_8817 collection
+         indexBounds: ["_id": ["cat", "cat"], "v": (MinKey, MaxKey)]
+         ->  Index Scan using idx_id_v_en_s1 on documentdb_data.documents_8817 collection
                Output: document
                Index Cond: (collection.document @= '{ "_id" : "cat", "collation" : "en-u-ks-level1" }'::bson)
 (14 rows)
@@ -4206,7 +4244,7 @@ SELECT documentdb_api.drop_collection('coll_q_db', 'coll_id_ios');
 -- SECTION: $max/$min/$maxN/$minN
 -- ======================================================================
 SELECT documentdb_api.insert_one('coll_q_db','coll_minmax_idx', '{ "_id": 1, "grp": "r", "vals": ["apple", "Banana"] }', NULL);
-psql:sql/bson_collation_query_tests_explain_index.sql:1103: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_explain_index.sql:1113: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

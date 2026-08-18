@@ -7512,7 +7512,7 @@ $cmd$);
 RESET documentdb.enableNewWithExprAccumulators;
 -- ============================================================
 -- Section 30: index-only scan under collation on collation-aware
--- ordered indexes keyed on _id and on a compound (country, _id).
+-- ordered indexes led by _id and by country.
 -- A covered $count needs only indexed columns, so it resolves to
 -- an Index Only Scan even under collation; a find that returns the
 -- document needs the heap, so it stays an Index Scan.
@@ -7556,8 +7556,9 @@ SELECT documentdb_api.insert_one('ord_coll_ios_db', 'ios_coll', '{ "_id": "bird"
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
--- collation-aware ordered index keyed on _id (strength 1 => case-insensitive)
-SELECT documentdb_api_internal.create_indexes_non_concurrently('ord_coll_ios_db', '{ "createIndexes": "ios_coll", "indexes": [ { "key": { "_id": 1 }, "storageEngine": { "enableOrderedIndex": true }, "collation": { "locale": "en", "strength": 1 }, "name": "ios_id_en_s1" }] }', true);
+-- A trailing key keeps this as an explicitly creatable compound index while
+-- preserving collation-aware bounds on the leading _id key.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('ord_coll_ios_db', '{ "createIndexes": "ios_coll", "indexes": [ { "key": { "_id": 1, "seq": 1 }, "storageEngine": { "enableOrderedIndex": true }, "collation": { "locale": "en", "strength": 1 }, "name": "ios_id_seq_en_s1" }] }', true);
                                                                                                    create_indexes_non_concurrently                                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
@@ -7570,21 +7571,21 @@ VACUUM (ANALYZE ON, FREEZE ON) documentdb_data.documents_8129;
 SET enable_bitmapscan TO off;
 -- covered $count with equality on _id under collation => Index Only Scan
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "_id": "cat" } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
-                                                run_explain_and_trim                                                 
----------------------------------------------------------------------------------------------------------------------
+                                                  run_explain_and_trim                                                   
+-------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, documentdb_api_internal.bsoncount(1))
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: ord_coll_ios_db.ios_coll
-         indexName: ios_id_en_s1
-         indexKey: {"_id": 1}
+         indexName: ios_id_seq_en_s1
+         indexKey: {"_id": 1,"seq": 1}
          indexCollation: en-u-ks-level1
          isMultiKey: false
-         indexBounds: ["_id": ["cat", "cat"]]
-         innerScanLoops: 2 loops
+         indexBounds: ["_id": ["cat", "cat"], "seq": (MinKey, MaxKey)]
+         innerScanLoops: 4 loops
          scanType: ordered
-         scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 3)]
-         ->  Index Only Scan using ios_id_en_s1 on documentdb_data.documents_8129 collection (actual rows=3 loops=1)
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+         ->  Index Only Scan using ios_id_seq_en_s1 on documentdb_data.documents_8129 collection (actual rows=3 loops=1)
                Index Cond: (collection.document @= '{ "_id" : "cat", "collation" : "en-u-ks-level1" }'::bson)
                Heap Fetches: xxx
 (15 rows)
@@ -7595,23 +7596,50 @@ SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate"
  { "count" : { "$numberInt" : "3" } }
 (1 row)
 
+-- count command with equality on _id under collation => Index Only Scan
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_count('ord_coll_ios_db', '{ "count": "ios_coll", "query": { "_id": "cat" }, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+                                                  run_explain_and_trim                                                   
+-------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   Output: documentdb_api_internal.bsoncommandcount(1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+         namespaceName: ord_coll_ios_db.ios_coll
+         indexName: ios_id_seq_en_s1
+         indexKey: {"_id": 1,"seq": 1}
+         indexCollation: en-u-ks-level1
+         isMultiKey: false
+         indexBounds: ["_id": ["cat", "cat"], "seq": (MinKey, MaxKey)]
+         innerScanLoops: 4 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+         ->  Index Only Scan using ios_id_seq_en_s1 on documentdb_data.documents_8129 collection (actual rows=3 loops=1)
+               Index Cond: (collection.document @= '{ "_id" : "cat", "collation" : "en-u-ks-level1" }'::bson)
+               Heap Fetches: xxx
+(15 rows)
+
+SELECT document FROM bson_aggregation_count('ord_coll_ios_db', '{ "count": "ios_coll", "query": { "_id": "cat" }, "collation": { "locale": "en", "strength": 1 } }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "3" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
 -- covered $count with a range on _id under collation => Index Only Scan
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "_id": { "$gte": "cat" } } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
-                                                run_explain_and_trim                                                 
----------------------------------------------------------------------------------------------------------------------
+                                                  run_explain_and_trim                                                   
+-------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, documentdb_api_internal.bsoncount(1))
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          namespaceName: ord_coll_ios_db.ios_coll
-         indexName: ios_id_en_s1
-         indexKey: {"_id": 1}
+         indexName: ios_id_seq_en_s1
+         indexKey: {"_id": 1,"seq": 1}
          indexCollation: en-u-ks-level1
          isMultiKey: false
-         indexBounds: ["_id": ["cat", { })]
-         innerScanLoops: 2 loops
+         indexBounds: ["_id": ["cat", { }), "seq": (MinKey, MaxKey)]
+         innerScanLoops: 5 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
-         ->  Index Only Scan using ios_id_en_s1 on documentdb_data.documents_8129 collection (actual rows=5 loops=1)
+         ->  Index Only Scan using ios_id_seq_en_s1 on documentdb_data.documents_8129 collection (actual rows=5 loops=1)
                Index Cond: (collection.document @>= '{ "_id" : "cat", "collation" : "en-u-ks-level1" }'::bson)
                Heap Fetches: xxx
 (15 rows)
@@ -7622,22 +7650,49 @@ SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate"
  { "count" : { "$numberInt" : "5" } }
 (1 row)
 
+-- count command with a range on _id under collation => Index Only Scan
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_count('ord_coll_ios_db', '{ "count": "ios_coll", "query": { "_id": { "$gte": "cat" } }, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+                                                  run_explain_and_trim                                                   
+-------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   Output: documentdb_api_internal.bsoncommandcount(1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
+         namespaceName: ord_coll_ios_db.ios_coll
+         indexName: ios_id_seq_en_s1
+         indexKey: {"_id": 1,"seq": 1}
+         indexCollation: en-u-ks-level1
+         isMultiKey: false
+         indexBounds: ["_id": ["cat", { }), "seq": (MinKey, MaxKey)]
+         innerScanLoops: 5 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
+         ->  Index Only Scan using ios_id_seq_en_s1 on documentdb_data.documents_8129 collection (actual rows=5 loops=1)
+               Index Cond: (collection.document @>= '{ "_id" : "cat", "collation" : "en-u-ks-level1" }'::bson)
+               Heap Fetches: xxx
+(15 rows)
+
+SELECT document FROM bson_aggregation_count('ord_coll_ios_db', '{ "count": "ios_coll", "query": { "_id": { "$gte": "cat" } }, "collation": { "locale": "en", "strength": 1 } }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "5" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
 -- returning the document needs the heap, so it stays an Index Scan (not IOS)
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_coll", "filter": { "_id": "dog" }, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
-                                           run_explain_and_trim                                           
-----------------------------------------------------------------------------------------------------------
+                                             run_explain_and_trim                                             
+--------------------------------------------------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=2 loops=1)
    Output: document
    namespaceName: ord_coll_ios_db.ios_coll
-   indexName: ios_id_en_s1
-   indexKey: {"_id": 1}
+   indexName: ios_id_seq_en_s1
+   indexKey: {"_id": 1,"seq": 1}
    indexCollation: en-u-ks-level1
    isMultiKey: false
-   indexBounds: ["_id": ["dog", "dog"]]
+   indexBounds: ["_id": ["dog", "dog"], "seq": (MinKey, MaxKey)]
    innerScanLoops: 2 loops
-   scanType: regular
-   scanKeyDetails: key 1: [(isInequality: false, estimatedEntryCount: 2)]
-   ->  Index Scan using ios_id_en_s1 on documentdb_data.documents_8129 collection (actual rows=2 loops=1)
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 2)]
+   ->  Index Scan using ios_id_seq_en_s1 on documentdb_data.documents_8129 collection (actual rows=2 loops=1)
          Output: document
          Index Cond: (collection.document @= '{ "_id" : "dog", "collation" : "en-u-ks-level1" }'::bson)
 (14 rows)
@@ -7652,21 +7707,21 @@ SELECT document FROM bson_aggregation_find('ord_coll_ios_db', '{ "find": "ios_co
 -- the index-only scan honors enable_indexonlyscan
 SET enable_indexonlyscan TO off;
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "_id": { "$gte": "cat" } } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
-                                              run_explain_and_trim                                              
-----------------------------------------------------------------------------------------------------------------
+                                                run_explain_and_trim                                                
+--------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, documentdb_api_internal.bsoncount(1))
    ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=5 loops=1)
          namespaceName: ord_coll_ios_db.ios_coll
-         indexName: ios_id_en_s1
-         indexKey: {"_id": 1}
+         indexName: ios_id_seq_en_s1
+         indexKey: {"_id": 1,"seq": 1}
          indexCollation: en-u-ks-level1
          isMultiKey: false
-         indexBounds: ["_id": ["cat", { })]
-         innerScanLoops: 2 loops
+         indexBounds: ["_id": ["cat", { }), "seq": (MinKey, MaxKey)]
+         innerScanLoops: 5 loops
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
-         ->  Index Scan using ios_id_en_s1 on documentdb_data.documents_8129 collection (actual rows=5 loops=1)
+         ->  Index Scan using ios_id_seq_en_s1 on documentdb_data.documents_8129 collection (actual rows=5 loops=1)
                Index Cond: (collection.document @>= '{ "_id" : "cat", "collation" : "en-u-ks-level1" }'::bson)
 (14 rows)
 
@@ -7704,6 +7759,33 @@ SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate"
                document               
 --------------------------------------
  { "count" : { "$numberInt" : "3" } }
+(1 row)
+
+-- count command on the leading compound key under collation => Index Only Scan
+SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_count('ord_coll_ios_db', '{ "count": "ios_coll", "query": { "country": "usa" }, "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);
+                                                    run_explain_and_trim                                                     
+-----------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   Output: documentdb_api_internal.bsoncommandcount(1)
+   ->  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=3 loops=1)
+         namespaceName: ord_coll_ios_db.ios_coll
+         indexName: ios_country_id_en_s1
+         indexKey: {"country": 1,"_id": 1}
+         indexCollation: en-u-ks-level1
+         isMultiKey: false
+         indexBounds: ["country": ["usa", "usa"], "_id": (MinKey, MaxKey)]
+         innerScanLoops: 1 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
+         ->  Index Only Scan using ios_country_id_en_s1 on documentdb_data.documents_8129 collection (actual rows=3 loops=1)
+               Index Cond: (collection.document @= '{ "country" : "usa", "collation" : "en-u-ks-level1" }'::bson)
+               Heap Fetches: xxx
+(15 rows)
+
+SELECT document FROM bson_aggregation_count('ord_coll_ios_db', '{ "count": "ios_coll", "query": { "country": "usa" }, "collation": { "locale": "en", "strength": 1 } }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "3" }, "ok" : { "$numberDouble" : "1.0" } }
 (1 row)
 
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('ord_coll_ios_db', '{ "aggregate": "ios_coll", "pipeline": [ { "$match": { "country": { "$gte": "brazil" } } }, { "$count": "count" } ], "collation": { "locale": "en", "strength": 1 } }') $$, p_ignore_heap_fetches => true);

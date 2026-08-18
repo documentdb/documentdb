@@ -85,10 +85,10 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
      "indexes": [{ "key": {"country": 1, "_id": 1}, "name": "idx_country_id_en_s1",
                    "collation": {"locale": "en", "strength": 1} }] }', TRUE);
 
--- Section 21 coll_id_ios: collation-aware ordered index keyed on `_id`.
+-- Section 21 coll_id_ios: collation-aware ordered index led by `_id`.
 SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
   '{ "createIndexes": "coll_id_ios",
-     "indexes": [{ "key": {"_id": 1}, "name": "idx_id_en_s1",
+     "indexes": [{ "key": {"_id": 1, "v": 1}, "name": "idx_id_v_en_s1",
                    "collation": {"locale": "en", "strength": 1} }] }', TRUE);
 
 -- Section 22 coll_minmax_idx: collated index on the "grp" match field so the

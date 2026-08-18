@@ -4,6 +4,7 @@
 * Prevent index-only scans on collated indexes for all field-consuming projection and aggregation targets, while preserving them for constant-only targets such as `$count`. *[Bugfix]*
 * Apply collation to the symbol BSON type, so symbols compare and hash like the equivalent string under the active collation. *[Feature]*
 * Fix collation-aware hashing and index term generation for code with scope. *[Bugfix]*
+* Support collation with `count` command *[Feature]*
 
 ### documentdb v0.117-0 (Unreleased) ###
 * Reject embedded null characters in command namespaces when `documentdb.enable_null_collection_validation` is enabled. *[Bugfix]*

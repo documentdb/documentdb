@@ -2794,7 +2794,13 @@ GenerateCountQuery(text *databaseDatum, pgbson *countSpec, bool setStatementTime
 		else if (StringViewEqualsCString(&keyView, "collation"))
 		{
 			ReportFeatureUsage(FEATURE_COLLATION);
-			if (!SkipFailOnCollation)
+			if (EnableCollation)
+			{
+				EnsureTopLevelFieldType("collation", &countIterator,
+										BSON_TYPE_DOCUMENT);
+				ParseAndGetCollationString(value, context.collationString);
+			}
+			else if (!SkipFailOnCollation)
 			{
 				ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 								errmsg(
@@ -5680,22 +5686,19 @@ HandleCountCore(const bson_value_t *existingValue, Query *query,
 							"The count field is not allowed to contain '.'.")));
 	}
 
-	/* if it is command count query we can just use BSONCOMMANDCOUNT and avoid the bson repath and build. */
-	bool useCommandCount = isCountCommand;
-
 	/* Count requires the existing query to move to subquery */
 	query = MigrateQueryToSubQuery(query, context);
 
 	/* The first projector is the document */
 	TargetEntry *firstEntry = linitial(query->targetList);
 
-
 	ParseState *parseState = make_parsestate(NULL);
 	parseState->p_expr_kind = EXPR_KIND_SELECT_TARGET;
 	parseState->p_next_resno = firstEntry->resno + 1;
 
+	/* if it is command count query we can just use BSONCOMMANDCOUNT and avoid the bson repath and build. */
 	Aggref *aggref = NULL;
-	Oid aggFuncId = useCommandCount ? BsonCommandCountAggregateFunctionOid()
+	Oid aggFuncId = isCountCommand ? BsonCommandCountAggregateFunctionOid()
 					: BsonCountAggregateFunctionOid();
 
 	Expr *constValue = (Expr *) makeConst(INT4OID, -1, InvalidOid, 4, Int32GetDatum(
@@ -5706,7 +5709,7 @@ HandleCountCore(const bson_value_t *existingValue, Query *query,
 	firstEntry->expr = (Expr *) aggref;
 
 	/* We wrap the count in a bson_repath_and_build */
-	if (!useCommandCount)
+	if (!isCountCommand)
 	{
 		Const *countFieldText = MakeTextConst(countField.string, countField.length);
 

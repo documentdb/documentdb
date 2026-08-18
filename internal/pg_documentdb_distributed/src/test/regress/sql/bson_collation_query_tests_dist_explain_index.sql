@@ -67,6 +67,17 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_q_idx_d
 $cmd$);
 END;
 
+-- Count command fans out and uses the matching collation index on each shard.
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_count('coll_q_idx_dist_explain_db', '{ "count": "coll_agg_d", "query": { "a": "CAT" }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$);
+END;
+
 -- Numeric shard key value with collation: not collation-aware, single shard
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;

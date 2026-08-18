@@ -239,6 +239,17 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
     '{ "aggregate": "coll_id_d", "pipeline": [ { "$match": { "_id": "cat" } }, { "$count": "c" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
 END;
 
+-- count command on a string _id honors collation across shards
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_count('coll_q_dist_db',
+    '{ "count": "coll_id_d", "query": { "_id": "cat" }, "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_count('coll_q_dist_db',
+    '{ "count": "coll_id_d", "query": { "_id": { "$gte": "cat" } }, "collation": { "locale": "en", "strength": 1 } }');
+END;
+
 -- ======================================================================
 -- SECTION: $max/$min/$maxN/$minN expression honors collation across shards
 -- ======================================================================

@@ -635,11 +635,31 @@ SELECT document FROM bson_aggregation_pipeline('coll_q_dist_db',
 (1 row)
 
 END;
+-- count command on a string _id honors collation across shards
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET LOCAL enable_seqscan TO OFF;
+SELECT document FROM bson_aggregation_count('coll_q_dist_db',
+    '{ "count": "coll_id_d", "query": { "_id": "cat" }, "collation": { "locale": "en", "strength": 1 } }');
+                               document                               
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "3" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_count('coll_q_dist_db',
+    '{ "count": "coll_id_d", "query": { "_id": { "$gte": "cat" } }, "collation": { "locale": "en", "strength": 1 } }');
+                               document                               
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "5" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+END;
 -- ======================================================================
 -- SECTION: $max/$min/$maxN/$minN expression honors collation across shards
 -- ======================================================================
 SELECT documentdb_api.insert_one('coll_q_dist_db', 'coll_minmax_d', '{ "_id": 1, "vals": ["a", "A", "á", "b"] }');
-psql:sql/bson_collation_query_tests_dist_core.sql:246: NOTICE:  creating collection
+psql:sql/bson_collation_query_tests_dist_core.sql:257: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

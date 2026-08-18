@@ -31,6 +31,13 @@ SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_q_runtime_explain_db', '{ "aggregate": "coll_simple", "pipeline": [ { "$match": { "a": "CAT" } }, { "$count": "n" } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
 END;
 
+-- count command without a matching collated index -> runtime filter
+BEGIN;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL documentdb.enableExtendedExplainPlans TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_count('coll_q_runtime_explain_db', '{ "count": "coll_simple", "query": { "a": "CAT" }, "collation": { "locale": "en", "strength": 1 } }') $cmd$);
+END;
+
 -- equality on a string _id under collation without an index -> sequential scan
 SELECT documentdb_api.insert_one('coll_q_runtime_explain_db', 'coll_id_simple', '{ "_id": "cat" }');
 SELECT documentdb_api.insert_one('coll_q_runtime_explain_db', 'coll_id_simple', '{ "_id": "Cat" }');
