@@ -21,6 +21,9 @@
 # merge_shared_preload_libraries additionally requires HAS_EXTENDED_RUM to be
 # set before it is called: "true" when pg_documentdb_extended_rum must be added
 # to shared_preload_libraries, "false" otherwise.
+# documentdb_resolve_toast_compression sets TOAST_COMPRESSION in the sourcing
+# script: the value to write for default_toast_compression, or "" to leave the
+# setting alone.
 # die / log_verbose / create_temp_in_dir remain per-tool because the logging
 # idiom and temp-file/cleanup infrastructure are still being unified separately.
 
@@ -396,6 +399,155 @@ documentdb_detect_extended_rum() {
     else
         HAS_EXTENDED_RUM=false
     fi
+}
+
+# documentdb_tune_fragment_path <major> <cluster>: echo the per-cluster
+# fragment documentdb-tune writes on Debian split layouts (picked up by the
+# createcluster.d hook's include_if_exists). Shared so documentdb-setup can
+# track the same file for its restart decision.
+documentdb_tune_fragment_path() {
+    printf '/etc/postgresql-common/documentdb/%s/%s/documentdb.conf\n' "$1" "$2"
+}
+
+# Compression the tools write for default_toast_compression when the
+# administrator does not choose one. lz4 decompresses substantially faster than
+# pglz for a modest ratio tradeoff. The method is recorded per stored value, so
+# only new writes are affected and existing pglz values stay readable, which
+# makes this safe to adopt on an existing cluster.
+DOCUMENTDB_DEFAULT_TOAST_COMPRESSION="lz4"
+
+# documentdb_probe_lz4_support <major>: set LZ4_SUPPORT to "yes", "no", or
+# "unknown" for the PostgreSQL build serving <major>.
+#
+# A build without lz4 rejects default_toast_compression = 'lz4' and refuses to
+# start, so lz4 must never be written unverified. pg_config --configure is the
+# only offline signal (the server may be down), and only autoconf builds
+# populate it:
+#   --with-lz4 present           -> yes
+#   non-empty, no --with-lz4     -> no (pre-lz4 builds land here too)
+#   empty / no usable pg_config  -> unknown (meson compiles CONFIGURE_ARGS in
+#                                   empty, so offline proof is impossible)
+# shellcheck disable=SC2034  # LZ4_SUPPORT is read by the sourcing script
+documentdb_probe_lz4_support() {
+    local major="${1:-}"
+    local bindir="" pg_config_bin="" configure_args="" found=false
+
+    LZ4_SUPPORT="unknown"
+
+    if [[ -n "${major}" ]]; then
+        while IFS= read -r bindir; do
+            pg_config_bin="${bindir}/pg_config"
+            if [[ -x "${pg_config_bin}" ]]; then
+                # Assignment-in-if: exact status without tripping callers'
+                # set -e. A failed pg_config's output is discarded so a partial
+                # --with-lz4 print cannot authorize lz4. Empty stays "unknown".
+                if ! configure_args="$("${pg_config_bin}" --configure 2>/dev/null)"; then
+                    configure_args=""
+                fi
+                found=true
+                break
+            fi
+        done < <(documentdb_pg_bindir_candidates "${major}")
+    fi
+
+    # PATH fallback for builds with no per-major pg_config (source builds,
+    # unusual layouts). Trusted only when its major matches the target: a
+    # foreign build's --with-lz4 could approve a value the target server
+    # rejects. A failed --version or a mismatch stays "unknown", which is safe
+    # because callers then write nothing or defer to a runtime probe. With no
+    # major given, PATH is the best answer available. Statuses are captured via
+    # assignment-in-if because tune and setup run set -euo pipefail and a bare
+    # pipeline here once aborted them.
+    if [[ "${found}" != "true" ]] && command -v pg_config >/dev/null 2>&1; then
+        local path_version="" path_major="" path_ok=false
+        if path_version="$(pg_config --version 2>/dev/null)"; then
+            path_major="${path_version#* }"       # "PostgreSQL 17.2 ..." -> "17.2 ..."
+            path_major="${path_major%%[!0-9]*}"   # "17.2" / "18devel" -> "17" / "18"
+            if [[ -z "${major}" || "${path_major}" == "${major}" ]]; then
+                path_ok=true
+            fi
+        fi
+        if [[ "${path_ok}" == "true" ]]; then
+            if ! configure_args="$(pg_config --configure 2>/dev/null)"; then
+                configure_args=""
+            fi
+            found=true
+        fi
+    fi
+
+    [[ "${found}" == "true" ]] || return 0
+    if [[ -z "$(trim_whitespace "${configure_args}")" ]]; then
+        return 0
+    fi
+    if [[ "${configure_args}" == *"--with-lz4"* ]]; then
+        LZ4_SUPPORT="yes"
+    else
+        LZ4_SUPPORT="no"
+    fi
+}
+
+# documentdb_resolve_toast_compression <requested> [major]: set
+# TOAST_COMPRESSION to the value the caller should write for
+# default_toast_compression, or "" to leave the setting alone.
+#
+# <requested> is the administrator's explicit choice; "" takes the DocumentDB
+# default. Resolution order: <requested>, DOCUMENTDB_TOAST_COMPRESSION,
+# DOCUMENTDB_DEFAULT_TOAST_COMPRESSION. Accepted values:
+#   lz4     - write default_toast_compression = 'lz4'
+#   pglz    - write default_toast_compression = 'pglz'
+#   default - write nothing, the escape hatch for administrators who manage
+#             this setting themselves
+#
+# An explicit lz4 request on a "no" or "unknown" build is a hard error, because
+# a silent downgrade would hide that the choice was not applied. The lz4
+# DEFAULT on those builds degrades to writing nothing.
+# shellcheck disable=SC2034  # TOAST_COMPRESSION is read by the sourcing script, per the contract above
+documentdb_resolve_toast_compression() {
+    local requested="${1:-}"
+    local major="${2:-}"
+    local explicit=true
+
+    if [[ -z "${requested}" ]]; then
+        requested="${DOCUMENTDB_TOAST_COMPRESSION:-}"
+    fi
+    if [[ -z "${requested}" ]]; then
+        requested="${DOCUMENTDB_DEFAULT_TOAST_COMPRESSION}"
+        explicit=false
+    fi
+
+    case "${requested}" in
+        default)
+            TOAST_COMPRESSION=""
+            return 0 ;;
+        pglz)
+            TOAST_COMPRESSION="pglz"
+            return 0 ;;
+        lz4) ;;
+        *)
+            die "Invalid TOAST compression '${requested}'. Valid values are 'lz4', 'pglz', and 'default' (leave the server's own setting alone)." ;;
+    esac
+
+    documentdb_probe_lz4_support "${major}"
+    case "${LZ4_SUPPORT}" in
+        yes)
+            TOAST_COMPRESSION="lz4"
+            return 0 ;;
+        no)
+            if [[ "${explicit}" == "true" ]]; then
+                die "This PostgreSQL build has no lz4 support (pg_config --configure reports no --with-lz4), so default_toast_compression = 'lz4' would stop the server from starting. Re-run with 'pglz', or with 'default' to leave the setting alone."
+            fi
+            # Plain stderr, not log_verbose: silently downgrading a documented
+            # default is something the operator should see at default
+            # verbosity, and log_warn is not part of every host's contract.
+            echo "Warning: PostgreSQL was not built with lz4 support; leaving default_toast_compression unset." >&2
+            TOAST_COMPRESSION="" ;;
+        *)
+            if [[ "${explicit}" == "true" ]]; then
+                die "Cannot verify lz4 support for this PostgreSQL build (pg_config reports no configure flags - meson builds never do), and writing an unsupported value would stop the server from starting. If you know the build has lz4, set default_toast_compression = 'lz4' in your own configuration; otherwise re-run with 'pglz' or 'default'."
+            fi
+            echo "Warning: cannot verify lz4 support for this PostgreSQL build (no configure flags reported); leaving default_toast_compression unset. Set it manually if the build has lz4." >&2
+            TOAST_COMPRESSION="" ;;
+    esac
 }
 
 # documentdb_validate_gateway_username <username> [setup_configuration_json]

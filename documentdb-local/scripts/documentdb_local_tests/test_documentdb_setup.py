@@ -270,7 +270,7 @@ class DocumentDBSetupTests(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k != "PG_VERSION"}
         status = subprocess.run(
             ["bash", str(SETUP_SCRIPT), "--status"],
-            capture_output=True, text=True, timeout=30, env=env,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30, env=env,
         )
         self.assertIn(status.returncode, (0, 1), status.stderr)
         self.assertTrue(
@@ -280,7 +280,7 @@ class DocumentDBSetupTests(unittest.TestCase):
         )
         print_config = subprocess.run(
             ["bash", str(SETUP_SCRIPT), "--print-config"],
-            capture_output=True, text=True, timeout=30, env=env,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30, env=env,
         )
         self.assertEqual(print_config.returncode, 0, print_config.stderr)
         self.assertTrue(print_config.stdout.strip(),
@@ -320,7 +320,7 @@ class DocumentDBSetupTests(unittest.TestCase):
             ["bash", str(SETUP_SCRIPT), "--use-new-postgres-instance",
              "--target-postgres-instance", "18/main",
              "--admin-user", "admin", "--yes"],
-            capture_output=True, text=True, timeout=30,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("mutually exclusive", result.stderr)
@@ -332,7 +332,7 @@ class DocumentDBSetupTests(unittest.TestCase):
         result = subprocess.run(
             ["bash", str(SETUP_SCRIPT), "--tls-auto-generate", "false",
              "--admin-user", "admin", "--yes"],
-            capture_output=True, text=True, timeout=30,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
@@ -537,7 +537,7 @@ class DocumentDBTuneTests(unittest.TestCase):
         """--print should output all required GUC settings."""
         result = subprocess.run(
             ["bash", str(TUNE_SCRIPT), "--pg-version", "17", "--print"],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         output = result.stdout
@@ -558,7 +558,7 @@ class DocumentDBTuneTests(unittest.TestCase):
         # blocker (thread 34895xxx / iteration-16 socket routing).
         result = subprocess.run(
             ["bash", str(TUNE_SCRIPT), "--pg-version", "17", "--print"],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertRegex(
@@ -573,7 +573,7 @@ class DocumentDBTuneTests(unittest.TestCase):
             ["bash", str(TUNE_SCRIPT), "--pg-version", "17",
              "--socket-dir", "/run/documentdb-local/17/postgresql",
              "--port", "9999", "--print"],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(
@@ -601,7 +601,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                 f.write("port = 2222\nunix_socket_directories = '/sock/auto'\n")
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--print"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn(
@@ -612,7 +612,7 @@ class DocumentDBTuneTests(unittest.TestCase):
     def test_port_override_rejects_non_numeric(self):
         r = subprocess.run(
             ["bash", str(TUNE_SCRIPT), "--pg-version", "17", "--port", "abc", "--print"],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("--port must be a positive integer", r.stderr)
@@ -625,7 +625,7 @@ class DocumentDBTuneTests(unittest.TestCase):
         for bad in ("/x'y", "/x\\y", "/x y"):
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pg-version", "17", "--socket-dir", bad, "--print"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
             self.assertNotEqual(r.returncode, 0, f"should reject {bad!r}")
             self.assertIn(
@@ -636,7 +636,7 @@ class DocumentDBTuneTests(unittest.TestCase):
         r = subprocess.run(
             ["bash", str(TUNE_SCRIPT), "--pg-version", "17",
              "--socket-dir", '/x"y', "--port", "5432", "--print"],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn(
@@ -661,7 +661,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                 f.write("unix_socket_directories = ''\nport = 5440\n")
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--print"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("Unix sockets are disabled", r.stderr)
@@ -687,7 +687,7 @@ class DocumentDBTuneTests(unittest.TestCase):
             # First apply writes the managed block (operator libs + docdb libs).
             r1 = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--yes"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
             self.assertEqual(r1.returncode, 0, r1.stderr)
             after_apply = Path(conf).read_text(encoding="utf-8")
@@ -710,7 +710,7 @@ class DocumentDBTuneTests(unittest.TestCase):
             # Re-print recomputes the block from the operator's now-reduced value.
             r2 = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--print"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
             self.assertEqual(r2.returncode, 0, r2.stderr)
             spl_line = next(
@@ -735,7 +735,7 @@ class DocumentDBTuneTests(unittest.TestCase):
             # stale pg_stat_statements would remain and this would fail.
             r3 = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--yes"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
             self.assertEqual(r3.returncode, 0, r3.stderr)
             final = Path(conf).read_text(encoding="utf-8")
@@ -766,7 +766,7 @@ class DocumentDBTuneTests(unittest.TestCase):
             # Write a real, balanced managed block first.
             r1 = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--yes"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
             self.assertEqual(r1.returncode, 0, r1.stderr)
             # Tear the block: drop its end-marker line(s) (the only lines with
@@ -784,7 +784,7 @@ class DocumentDBTuneTests(unittest.TestCase):
             for mode in ("--print", "--yes"):
                 r = subprocess.run(
                     ["bash", str(TUNE_SCRIPT), "--pgdata", td, mode],
-                    capture_output=True, text=True, timeout=10,
+                    stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
                 )
                 self.assertNotEqual(
                     r.returncode, 0, f"{mode} must fail closed on a torn managed block"
@@ -799,7 +799,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                 f.write("unix_socket_directories = ''\nport = 5440\n")
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--yes"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("Unix sockets are disabled", r.stderr)
@@ -813,7 +813,7 @@ class DocumentDBTuneTests(unittest.TestCase):
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td,
                  "--socket-dir", "/var/run/postgresql", "--print"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("Unix sockets are disabled", r.stderr)
@@ -834,7 +834,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                 f.write("unix_socket_directories = ''\n")
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--yes"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("Unix sockets are disabled", r.stderr)
@@ -850,7 +850,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                 f.write("unix_socket_directories = '/tmp/fromauto'\n")
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--print"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("Unix sockets are disabled", r.stderr)
@@ -871,7 +871,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                 f.write("#unix_socket_directories = '/run/postgresql'\nport = 5445\n")
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--print"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("Unix sockets are disabled", r.stderr)
@@ -891,7 +891,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                 f.write("Port = 5434\nUNIX_SOCKET_DIRECTORIES = '/tmp/upper'\n")
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--print"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn(
@@ -908,7 +908,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                 f.write("port 5435\nunix_socket_directories '/tmp/noeq'\n")
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--print"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn(
@@ -926,7 +926,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                 f.write("portfoo 9999\nunix_socket_directories '/tmp/pfx'\n")
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--print"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("port=5432'", r.stdout)
@@ -941,7 +941,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                     f.write(content + "port = 5440\n")
                 r = subprocess.run(
                     ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--yes"],
-                    capture_output=True, text=True, timeout=10,
+                    stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
                 )
             self.assertNotEqual(r.returncode, 0, f"should die for: {content!r}")
             self.assertIn("Unix sockets are disabled", r.stderr)
@@ -955,7 +955,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                 f.write("UNIX_SOCKET_DIRECTORIES = '/tmp/ok'\nport = 5442\n")
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--print"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("Unix sockets are disabled", r.stderr)
@@ -976,7 +976,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                 f.write("unix_socket_directories = ''\n")
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--yes"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("include/include_if_exists/include_dir", r.stderr)
@@ -987,7 +987,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                 f.write("include_if_exists = 'maybe.conf'\nport = 5432\n")
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--print"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("include", r.stderr)
@@ -1002,7 +1002,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                 f.write("include_dir = 'conf.d'\nport = 5432\n")
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--yes"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("include/include_if_exists/include_dir", r.stderr)
@@ -1042,7 +1042,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                     "else echo OK; fi\n"
                 )
                 r = subprocess.run(
-                    ["bash", "-c", script], capture_output=True, text=True, timeout=10,
+                    ["bash", "-c", script], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
                 )
                 self.assertEqual(r.returncode, 0, r.stderr)
                 return r.stdout.strip()
@@ -1096,7 +1096,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                     "else echo OK; fi\n"
                 )
                 r = subprocess.run(
-                    ["bash", "-c", script], capture_output=True, text=True, timeout=10,
+                    ["bash", "-c", script], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
                 )
                 self.assertEqual(r.returncode, 0, r.stderr)
                 return r.stdout.strip()
@@ -1158,7 +1158,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                     "then echo FLAGGED; else echo OK; fi\n"
                 )
                 r = subprocess.run(
-                    ["bash", "-c", script], capture_output=True, text=True, timeout=10,
+                    ["bash", "-c", script], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
                 )
                 self.assertEqual(r.returncode, 0, r.stderr)
                 return r.stdout.strip()
@@ -1241,7 +1241,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                     "if ( enforce_config_includes_resolved die ); then echo PASS; else echo DIE; fi\n"
                 )
                 r = subprocess.run(
-                    ["bash", "-c", script], capture_output=True, text=True, timeout=10,
+                    ["bash", "-c", script], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
                 )
                 return r.stdout.strip(), r.stderr
 
@@ -1307,7 +1307,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                     "else echo OK; fi\n"
                 )
                 r = subprocess.run(
-                    ["bash", "-c", script], capture_output=True, text=True, timeout=10,
+                    ["bash", "-c", script], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
                 )
                 self.assertEqual(r.returncode, 0, r.stderr)
                 return r.stdout.strip()
@@ -1368,7 +1368,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                     f"enforce_localhost_conn_safe {mode}; echo \"RC=$?\"\n"
                 )
                 return subprocess.run(
-                    ["bash", "-c", script], capture_output=True, text=True, timeout=10,
+                    ["bash", "-c", script], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
                 )
 
             # Space in the resolved socket dir -> die on apply; message points at
@@ -1410,7 +1410,7 @@ class DocumentDBTuneTests(unittest.TestCase):
         # can act on the guidance those guards print.
         r = subprocess.run(
             ["bash", str(TUNE_SCRIPT), "--help"],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("--socket-dir", r.stdout)
@@ -1450,7 +1450,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                     "else echo OK; fi\n"
                 )
                 r = subprocess.run(
-                    ["bash", "-c", script], capture_output=True, text=True, timeout=10,
+                    ["bash", "-c", script], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
                 )
                 self.assertEqual(r.returncode, 0, r.stderr)
                 return r.stdout.strip()
@@ -1475,7 +1475,7 @@ class DocumentDBTuneTests(unittest.TestCase):
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td,
                  "--socket-dir", "/run/documentdb", "--port", "7000", "--print"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("include", r.stderr)
@@ -1491,7 +1491,7 @@ class DocumentDBTuneTests(unittest.TestCase):
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pg-version", "17",
                  "--port", bad, "--print"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
             self.assertNotEqual(r.returncode, 0, f"--port {bad} should be rejected")
             self.assertIn("between 1 and 65535", r.stderr)
@@ -1501,7 +1501,7 @@ class DocumentDBTuneTests(unittest.TestCase):
         r = subprocess.run(
             ["bash", str(TUNE_SCRIPT), "--pg-version", "17",
              "--port", "0080", "--print"],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertRegex(
@@ -1516,7 +1516,7 @@ class DocumentDBTuneTests(unittest.TestCase):
         ):
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pg-version", "17", *args, "--print"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
             self.assertNotEqual(r.returncode, 0)
             self.assertIn(needle, r.stderr)
@@ -1525,7 +1525,7 @@ class DocumentDBTuneTests(unittest.TestCase):
         """--print should wrap output in managed block markers."""
         result = subprocess.run(
             ["bash", str(TUNE_SCRIPT), "--pg-version", "17", "--print"],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("# >>> documentdb-setup managed configuration >>>", result.stdout)
@@ -1674,7 +1674,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                 f"{shlex.quote(str(hba))} "
                 "'# >>> t >>>' '# <<< t <<<' 'local all docdbadmin peer'; then echo applied; fi\n"
             )
-            r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=10)
+            r = subprocess.run(["bash", "-c", script], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
             self.assertNotEqual(r.returncode, 0,
                                 "prepend must fail closed when chown --reference fails")
             self.assertNotIn("applied", r.stdout,
@@ -1706,7 +1706,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                     f"prepend_with_managed_block {shlex.quote(str(hba))} "
                     "'# >>> t >>>' '# <<< t <<<' 'local all docdbadmin peer'\n"
                 )
-                r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=10)
+                r = subprocess.run(["bash", "-c", script], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
                 return r.returncode, r.stderr, hba.read_bytes()
 
         # (a) A CRLF-encoded existing block is replaced (exactly one block, the
@@ -1779,7 +1779,7 @@ class DocumentDBTuneTests(unittest.TestCase):
                     )
                     result = subprocess.run(
                         ["bash", "-c", script],
-                        capture_output=True, text=True, timeout=10,
+                        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
                     parsed, merged = result.stdout.splitlines()
@@ -1800,7 +1800,7 @@ class DocumentDBTuneTests(unittest.TestCase):
         )
         result = subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         merged = result.stdout.strip()
@@ -1815,7 +1815,7 @@ class DocumentDBTuneTests(unittest.TestCase):
         )
         result = subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "ok")
@@ -1828,7 +1828,7 @@ class DocumentDBTuneTests(unittest.TestCase):
         )
         result = subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("HAS_EXTENDED_RUM", result.stderr)
@@ -1841,7 +1841,7 @@ class DocumentDBTuneTests(unittest.TestCase):
         )
         result = subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("merge_shared_preload_libraries requires HAS_EXTENDED_RUM", result.stderr)
@@ -1863,7 +1863,7 @@ class DocumentDBTuneTests(unittest.TestCase):
 
             result = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", tmpdir, "--yes"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -1890,7 +1890,7 @@ class DocumentDBTuneTests(unittest.TestCase):
             # Apply
             result = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", tmpdir, "--yes"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             applied = conf.read_text()
@@ -1900,7 +1900,7 @@ class DocumentDBTuneTests(unittest.TestCase):
             # Restore
             result = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", tmpdir, "--restore"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             restored = conf.read_text().rstrip("\n") + "\n"
@@ -1914,13 +1914,13 @@ class DocumentDBTuneTests(unittest.TestCase):
 
             subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", tmpdir, "--yes"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
             first_content = conf.read_text()
 
             result = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", tmpdir, "--yes"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
             self.assertEqual(result.returncode, 0)
             self.assertIn("already up to date", result.stdout)
@@ -1934,7 +1934,7 @@ class DocumentDBTuneTests(unittest.TestCase):
 
             result = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", tmpdir, "--dry-run"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
             self.assertEqual(result.returncode, 0)
             self.assertEqual(conf.read_text(), "# original\n")
@@ -1943,7 +1943,7 @@ class DocumentDBTuneTests(unittest.TestCase):
         """Missing --pg-version (without --pgdata) should fail."""
         result = subprocess.run(
             ["bash", str(TUNE_SCRIPT), "--yes"],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--pg-version is required", result.stderr)
@@ -1952,7 +1952,7 @@ class DocumentDBTuneTests(unittest.TestCase):
         """--help should succeed and show usage."""
         result = subprocess.run(
             ["bash", str(TUNE_SCRIPT), "--help"],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn("documentdb-tune", result.stdout)
@@ -2042,7 +2042,7 @@ class GatewayPgMajorGateTests(unittest.TestCase):
                 f"{snippet}\n"
             )
             return subprocess.run(
-                ["bash", "-c", harness], capture_output=True, text=True, timeout=30,
+                ["bash", "-c", harness], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
             )
 
     def test_ident_block_always_emits_group_membership(self):
@@ -2294,7 +2294,7 @@ class DebianAutoconfOverrideTests(unittest.TestCase):
                 "enforce_autoconf_preload_not_overriding die\n"
             )
             return subprocess.run(
-                ["bash", "-c", harness], capture_output=True, text=True, timeout=30)
+                ["bash", "-c", harness], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
 
     def test_override_missing_required_libs_fails(self):
         r = self._run_enforce("shared_preload_libraries = 'pg_stat_statements'")
@@ -2381,7 +2381,7 @@ class DebianAutoconfDataDirTests(unittest.TestCase):
                 "enforce_autoconf_preload_not_overriding die\n"
             )
             return subprocess.run(
-                ["bash", "-c", harness], capture_output=True, text=True, timeout=30)
+                ["bash", "-c", harness], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
 
     def test_autoconf_resolved_via_declared_data_directory(self):
         # auto.conf under the DECLARED data_directory overrides away the docdb
@@ -2447,7 +2447,7 @@ class PackagingPgMajorBoundaryTests(unittest.TestCase):
         # PG<16 itself (defense in depth), not rely on the orchestrator.
         r = subprocess.run(
             ["bash", str(STANDALONE_BUILD_SCRIPT), "--version", "0.1.0", "--pg-version", "15"],
-            capture_output=True, text=True, timeout=30)
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
         self.assertNotEqual(r.returncode, 0, "build-standalone-deb.sh must reject --pg-version 15")
         self.assertIn("16", r.stdout + r.stderr)
 
@@ -2456,7 +2456,7 @@ class PackagingPgMajorBoundaryTests(unittest.TestCase):
         # be PG16+ (it depends on the gateway-wrapping stand-alone).
         r = subprocess.run(
             ["bash", str(META_BUILD_SCRIPT), "--version", "0.1.0", "--default-pg-major", "15"],
-            capture_output=True, text=True, timeout=30)
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
         self.assertNotEqual(r.returncode, 0, "build-meta-deb.sh must reject --default-pg-major 15")
         self.assertIn("16", r.stdout + r.stderr)
 
@@ -2466,7 +2466,7 @@ class PackagingPgMajorBoundaryTests(unittest.TestCase):
         r = subprocess.run(
             ["bash", str(BUILD_EXTRA_PACKAGES), "--type", "deb", "--pg", "18",
              "--version", "0.1.0", "--default-pg-major", "15"],
-            capture_output=True, text=True, timeout=30)
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
         self.assertNotEqual(r.returncode, 0, "build_extra_packages.sh must reject --default-pg-major 15")
         self.assertIn("16", r.stdout + r.stderr)
 
@@ -2544,7 +2544,7 @@ class ExtraPackagesBuildDepsPreflightTests(unittest.TestCase):
             r = subprocess.run(
                 ["bash", str(BUILD_EXTRA_PACKAGES), "--type", "banana", "--pg", "18",
                  "--version", "0.1.0", "--output-dir", td, "--check-build-deps-only"],
-                capture_output=True, text=True, timeout=30)
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
         self.assertNotEqual(r.returncode, 0,
                             "--check-build-deps-only must reject an unknown --type")
         self.assertIn("Unknown --type", r.stdout + r.stderr)
@@ -2601,7 +2601,7 @@ class ExtraPackagesBuildDepsPreflightTests(unittest.TestCase):
             r = subprocess.run(
                 ["bash", str(BUILD_EXTRA_PACKAGES), "--type", "deb", "--pg", "18",
                  "--version", "0.1.0", "--output-dir", td, "--check-build-deps-only"],
-                capture_output=True, text=True, timeout=30)
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("DEB extra-package build dependencies are satisfied",
                       r.stdout + r.stderr)
@@ -2627,12 +2627,12 @@ class DebPackagingPortabilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             r = subprocess.run(
                 ["bash", str(COMMON_BUILD_SCRIPT), "--version", "0.1.0", "--output-dir", td],
-                capture_output=True, text=True, timeout=120)
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             debs = list(Path(td).glob("documentdb-common_*.deb"))
             self.assertTrue(debs, "common .deb not built")
             members = subprocess.run(["ar", "t", str(debs[0])],
-                                     capture_output=True, text=True, timeout=30).stdout
+                                     stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30).stdout
         self.assertIn("control.tar.xz", members)
         self.assertIn("data.tar.xz", members)
         self.assertNotIn(".zst", members)
@@ -2666,7 +2666,7 @@ class Iteration16HarnessFixesTests(unittest.TestCase):
         # to run it.
         try:
             r = subprocess.run(["git", "ls-files", "-s", oss_relpath],
-                               cwd=str(OSS_ROOT), capture_output=True,
+                               cwd=str(OSS_ROOT), stdin=subprocess.DEVNULL, capture_output=True,
                                text=True, timeout=30)
         except (FileNotFoundError, subprocess.SubprocessError):
             return None
@@ -2831,7 +2831,7 @@ class DocumentDBSetupwizardFlagsTests(unittest.TestCase):
     def _help_output(self):
         result = subprocess.run(
             ["bash", str(SETUP_SCRIPT), "--help"],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
@@ -2842,7 +2842,7 @@ class DocumentDBSetupwizardFlagsTests(unittest.TestCase):
              "--admin-user", "admin",
              "--password-file", "/dev/null",
              "--dry-run", *extra_args],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0,
                          f"dry-run with args {extra_args!r} failed: {result.stderr}")
@@ -2908,7 +2908,7 @@ class DocumentDBSetupwizardFlagsTests(unittest.TestCase):
                  "--admin-user", "admin",
                  "--password-file", "/dev/null",
                  "--dry-run", "--pg-version", "18"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             # require_root would have failed the run if dry-run hadn't
@@ -2985,7 +2985,7 @@ class DocumentDBSetupwizardFlagsTests(unittest.TestCase):
              "--admin-user", "admin",
              "--password-file", "/dev/null",
              "--dry-run", "--pg-version", "18"],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         out = result.stdout
@@ -3235,11 +3235,25 @@ class Phase11wizardCorrectnessTests(unittest.TestCase):
         """Issue 7: documentdb-tune must write the per-instance fragment
         as documentdb.conf (matching the createcluster.d hook and the
         design's .sample naming), NOT postgresql.conf."""
-        tune_path = OSS_ROOT / "documentdb-local" / "scripts" / "documentdb-tune.sh"
-        tune = tune_path.read_text(encoding="utf-8")
+        tune = TUNE_SCRIPT.read_text(encoding="utf-8")
+        # The path is single-sourced in documentdb-tools-lib.sh (shared with
+        # documentdb-setup, which tracks the same file for its restart
+        # decision): assert tune consumes the helper, then assert the
+        # helper's behaviour rather than pinning the path literal again.
         self.assertIn(
-            'CONFIG_TARGET="${cluster_dir}/documentdb.conf"',
+            'CONFIG_TARGET="$(documentdb_tune_fragment_path '
+            '"${PG_VERSION}" "${CLUSTER_NAME}")"',
             tune,
+        )
+        resolved = subprocess.run(
+            ["bash", "-c",
+             f'source "{TOOLS_LIB}" && documentdb_tune_fragment_path 17 main'],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(resolved.returncode, 0, resolved.stderr)
+        self.assertEqual(
+            resolved.stdout.strip(),
+            "/etc/postgresql-common/documentdb/17/main/documentdb.conf",
             "tune must write to /etc/postgresql-common/documentdb/N/C/documentdb.conf",
         )
         # The createcluster.d hook must point at the same filename.
@@ -3297,7 +3311,7 @@ class Phase12DesignParityAndOpsTests(unittest.TestCase):
     def _run(self, *args):
         return subprocess.run(
             ["bash", str(SETUP_SCRIPT), *args],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
 
     def test_print_config_emits_expected_keys(self):
@@ -3403,7 +3417,7 @@ class Phase12DesignParityAndOpsTests(unittest.TestCase):
 
         r = subprocess.run(
             ["bash", str(SETUP_SCRIPT), "--help"],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(r.returncode, 0, r.stderr)
         help_text = r.stdout
@@ -4656,7 +4670,7 @@ class GatewayAdminUsageSurfaceTests(unittest.TestCase):
     def test_gateway_admin_help_uses_packaged_cli_name(self):
         result = subprocess.run(
             ["bash", str(GATEWAY_ADMIN_SCRIPT), "--help"],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Usage: documentdb-gateway-admin <command> [OPTIONS]", result.stdout)
@@ -4664,7 +4678,7 @@ class GatewayAdminUsageSurfaceTests(unittest.TestCase):
     def test_gateway_admin_help_mentions_target_db(self):
         result = subprocess.run(
             ["bash", str(GATEWAY_ADMIN_SCRIPT), "--help"],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--target-db NAME", result.stdout)
@@ -5122,7 +5136,7 @@ class RpmSpecMacroConventionTests(unittest.TestCase):
             for spec in specs_to_check:
                 result = subprocess.run(
                     ["rpmspec", "--parse", str(spec)],
-                    capture_output=True, text=True, timeout=30,
+                    stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertNotIn("Macro expanded in comment", result.stderr)
@@ -5617,7 +5631,7 @@ class RegisterGatewayAdminBootstrapContractTests(unittest.TestCase):
     def test_register_gateway_help_marks_admin_bootstrap_optional(self):
         result = subprocess.run(
             ["bash", str(GATEWAY_SETUP_SCRIPT), "--help"],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Bootstrap the first admin user (optional;", result.stdout)
@@ -6138,9 +6152,14 @@ class BrownfieldRestartGuardTests(unittest.TestCase):
         )
         self.assertIsNotNone(match)
         body = match.group("body")
-        self.assertIn(
-            'sudo documentdb-setup --target-postgres-instance',
+        # The command carries an optional `DOCUMENTDB_TOAST_COMPRESSION=<v> `
+        # prefix between sudo and the binary (sudo strips the environment, so
+        # an explicit request has to be repeated), hence the regex rather than
+        # a literal.
+        self.assertRegex(
             body,
+            r"sudo \$\(build_rerun_env_prefix\)documentdb-setup "
+            r"--target-postgres-instance",
             "Brownfield restart-required path must give a concrete rerun command",
         )
 
@@ -7002,7 +7021,7 @@ class RegisterGatewayPreserveLogicFunctionalTests(unittest.TestCase):
             result = subprocess.run(
                 ["bash", "-c",
                  f"grep -Ev '{managed_re}' '{path}' | grep -E '^[A-Za-z_][A-Za-z0-9_]*='"],
-                capture_output=True, text=True,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True,
             )
             self.assertEqual(result.returncode, 0)
             preserved_lines = result.stdout.strip().split("\n")
@@ -7034,7 +7053,7 @@ class RegisterGatewayPreserveLogicFunctionalTests(unittest.TestCase):
             result = subprocess.run(
                 ["bash", "-c",
                  f"grep -Ev '{managed_re}' '{path}' 2>/dev/null | grep -E '^[A-Za-z_][A-Za-z0-9_]*=' || true"],
-                capture_output=True, text=True,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True,
             )
             self.assertEqual(result.stdout, "", "Empty input should produce empty output")
         finally:
@@ -7058,7 +7077,7 @@ class RegisterGatewayPreserveLogicFunctionalTests(unittest.TestCase):
             result = subprocess.run(
                 ["bash", "-c",
                  f"grep -Ev '{managed_re}' '{path}' | grep -E '^[A-Za-z_][A-Za-z0-9_]*='"],
-                capture_output=True, text=True,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True,
             )
             self.assertEqual(result.returncode, 0)
             preserved = result.stdout.strip().split("\n")
@@ -7257,7 +7276,7 @@ class GatewayListenerPidSafetyTests(unittest.TestCase):
                 )
                 result = subprocess.run(
                     ["bash", "-c", script],
-                    capture_output=True, text=True, timeout=10,
+                    stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(
@@ -7404,7 +7423,7 @@ class GatewayListenerPidSafetyTests(unittest.TestCase):
                 f"sleep 0.1; "
                 f"done"
             )
-            subprocess.run([shell, "-lc", cmd_a], capture_output=True,
+            subprocess.run([shell, "-lc", cmd_a], stdin=subprocess.DEVNULL, capture_output=True,
                            text=True, timeout=20)
             with open(pidfile, encoding="utf-8") as fh:
                 pid = fh.read().strip()
@@ -7423,7 +7442,7 @@ class GatewayListenerPidSafetyTests(unittest.TestCase):
                     f"daemon — the launch lost its brace grouping: {cmdline!r}",
                 )
             finally:
-                subprocess.run(["kill", pid], capture_output=True)
+                subprocess.run(["kill", pid], stdin=subprocess.DEVNULL, capture_output=True)
 
             # (b) unwritable target — shipped GROUPING shape with NOTHING
             # appended, so returncode and stderr are exactly what the shipped
@@ -7437,7 +7456,7 @@ class GatewayListenerPidSafetyTests(unittest.TestCase):
             # Plain -c, not -lc: the property under test (grouped, silent
             # redirect failure) is shell-profile-independent, and a host whose
             # profile.d writes to stderr must not fail the assertion below.
-            result_b = subprocess.run([shell, "-c", cmd_b], capture_output=True,
+            result_b = subprocess.run([shell, "-c", cmd_b], stdin=subprocess.DEVNULL, capture_output=True,
                                       text=True, timeout=20)
             self.assertEqual(
                 result_b.returncode, 0,
@@ -7607,7 +7626,7 @@ class GatewayListenerPidSafetyTests(unittest.TestCase):
         def run(snippet):
             return subprocess.run(
                 [shell, "-c", "set -uo pipefail\n" + helpers + snippet],
-                capture_output=True, text=True, timeout=20)
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20)
 
         for family in ("v4", "v6"):
             with self.subTest(family=family):
@@ -7654,7 +7673,7 @@ class GatewayListenerPidSafetyTests(unittest.TestCase):
         try:
             r = subprocess.run(
                 [shell, "-c", harness + f"find_listener_pid {port}"],
-                capture_output=True, text=True, timeout=30)
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
             self.assertEqual(
                 r.stdout.strip(), str(owner.pid),
                 "the /proc fallback must name the true owner, not the "
@@ -7663,7 +7682,7 @@ class GatewayListenerPidSafetyTests(unittest.TestCase):
             owner.kill(); owner.wait()
         r = subprocess.run(
             [shell, "-c", harness + f"find_listener_pid {port}"],
-            capture_output=True, text=True, timeout=30)
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
         self.assertEqual(r.stdout.strip(), "",
                          f"no listener must print nothing: {r.stdout!r}")
 
@@ -7683,7 +7702,7 @@ class GatewayListenerPidSafetyTests(unittest.TestCase):
             with self.subTest(comm=comm):
                 line = f"1234 {comm} {tail}"
                 r = subprocess.run([shell, "-c", f"printf %s {shlex.quote(line)} | {awk}"],
-                                   capture_output=True, text=True, timeout=10)
+                                   stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
                 self.assertEqual(r.stdout.strip(), "987654",
                                  f"starttime misparsed for comm={comm!r}: "
                                  f"{r.stdout!r} {r.stderr!r}")
@@ -7708,7 +7727,7 @@ class GatewayListenerPidSafetyTests(unittest.TestCase):
             + f"\nout=$(nohup_gateway_pid_for_port {port}); rc=$?\n"
             'printf "rc=%s out=%s\\n" "${rc}" "${out}"\n'
         )
-        return subprocess.run([shell, "-c", script], capture_output=True,
+        return subprocess.run([shell, "-c", script], stdin=subprocess.DEVNULL, capture_output=True,
                               text=True, timeout=20)
 
     def test_reader_starttime_and_boot_guards_behaviourally(self):
@@ -7727,7 +7746,7 @@ class GatewayListenerPidSafetyTests(unittest.TestCase):
             probe = subprocess.run(
                 [shell, "-c", self._reader_bundle()
                  + f'printf "%s %s" "$(proc_starttime {pid})" "$(current_boot_id)"'],
-                capture_output=True, text=True, timeout=10)
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
             true_start, true_boot = probe.stdout.split()
             with tempfile.TemporaryDirectory() as tmp:
                 rec = os.path.join(tmp, "gateway-55001.pid")
@@ -7787,7 +7806,7 @@ class GatewayListenerPidSafetyTests(unittest.TestCase):
                     'printf "rc=%s out=%s\\n" "${rc}" "${out}"\n'
                 )
                 r = subprocess.run([shell, "-c", script],
-                                   capture_output=True, text=True, timeout=20)
+                                   stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20)
                 self.assertEqual(r.stdout.strip(), "rc=1 out=",
                                  f"must reject with EMPTY stdout: {r.stdout!r}")
                 self.assertIn("does not hold the port", r.stderr,
@@ -7846,7 +7865,7 @@ class GatewayListenerPidSafetyTests(unittest.TestCase):
                         'printf "rc=%s\\n" "${rc}"\n'
                     )
                     result = subprocess.run([shell, "-c", script],
-                                            capture_output=True, text=True,
+                                            stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                             timeout=20)
                     self.assertEqual(
                         result.stdout.strip(), f"rc={want_rc}",
@@ -7913,7 +7932,7 @@ class GatewayListenerPidSafetyTests(unittest.TestCase):
                         'printf "rc=%s out=%s\\n" "${rc}" "${out}"\n'
                     )
                     result = subprocess.run([shell, "-c", script],
-                                            capture_output=True, text=True,
+                                            stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                             timeout=20)
                     # FULL-LINE equality, not assertIn: with want_out="" the
                     # substring form is a prefix match ('rc=1 out=' matches
@@ -7984,7 +8003,7 @@ class GatewayListenerPidSafetyTests(unittest.TestCase):
                         'printf "rc=%s\\n" "${rc}"\n'
                     )
                     result = subprocess.run([shell, "-c", script],
-                                            capture_output=True, text=True,
+                                            stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                             timeout=20)
                     # Full-line equality: assertIn("rc=1") would also match
                     # an "rc=127: command not found" harness failure.
@@ -8015,7 +8034,7 @@ class GatewayListenerPidSafetyTests(unittest.TestCase):
                         'printf "rc=%s\\n" "${rc}"\n'
                     )
                     result = subprocess.run([shell, "-c", script],
-                                            capture_output=True, text=True,
+                                            stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                             timeout=20)
                     self.assertEqual(
                         result.stdout.strip(), "rc=1",
@@ -8069,7 +8088,7 @@ class GatewayListenerPidSafetyTests(unittest.TestCase):
                     'printf "rc=%s out=%s\\n" "${rc}" "${out}"\n'
                 )
                 result = subprocess.run([shell, "-c", script],
-                                        capture_output=True, text=True, timeout=20)
+                                        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20)
                 # The helper is a pure computation: rc is always 0; the DECISION
                 # is on stdout. Full-line equality so an empty want cannot be a
                 # prefix of a leaked pid.
@@ -8580,7 +8599,7 @@ class StandalonePurgeRevertsTuneOnBrownfieldTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             postrm = Path(tmpdir) / "postrm"
             postrm.write_text(self._deb_postrm_body(), encoding="utf-8")
-            result = subprocess.run(["bash", "-n", str(postrm)], capture_output=True, text=True)
+            result = subprocess.run(["bash", "-n", str(postrm)], stdin=subprocess.DEVNULL, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_rpm_postun_reverts_tune_for_debian_brownfield(self):
@@ -8622,7 +8641,7 @@ class GatewayConnectHintEndpointTests(unittest.TestCase):
         env = dict(os.environ, GATEWAY_LISTEN_ADDR=listen_addr)
         out = subprocess.run(
             ["bash", "-c", harness],
-            capture_output=True, text=True, timeout=10, env=env,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10, env=env,
         )
         self.assertEqual(out.returncode, 0, out.stderr)
         return out.stdout.strip()
@@ -8921,4 +8940,386 @@ class UxReviewRound5Tests(unittest.TestCase):
             "%posttrans check",
             text,
             "gateway.spec %post note must name %posttrans as the viable suppression path",
+        )
+
+
+class ToastCompressionTests(unittest.TestCase):
+    """documentdb-tune writes default_toast_compression = 'lz4' by default,
+    lets the administrator choose otherwise, and never writes a value the
+    PostgreSQL build would reject at startup."""
+
+    SAMPLE_CONF = OSS_ROOT / "packaging" / "postgresql-tools" / "documentdb.conf.sample"
+
+    LZ4_BUILD = "'--with-openssl' '--with-lz4' '--with-zstd'"
+    NO_LZ4_BUILD = "'--with-openssl' '--with-zstd'"
+    # meson builds compile CONFIGURE_ARGS in as an empty string, so their
+    # pg_config --configure output is EMPTY - support is unverifiable offline.
+    MESON_EMPTY_BUILD = ""
+
+    def _tune_print(self, configure_args, *args, env_extra=None,
+                    version_output="PostgreSQL 999.1",
+                    configure_exit=0, version_exit=0):
+        """Run `documentdb-tune --print` against a throwaway data dir whose
+        major has no packaged bin directory, so the lz4 probe falls through to
+        a stub pg_config reporting `configure_args`. That keeps every assertion
+        independent of whether the host's own PostgreSQL was built --with-lz4.
+        The stub reports `version_output` for --version: the probe's PATH
+        fallback only trusts a pg_config whose major matches the target
+        cluster's (999 here), so a different version simulates a foreign
+        build on PATH. configure_exit/version_exit simulate a pg_config that
+        fails (possibly after printing) for the respective flag.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            data_dir = Path(td) / "data"
+            data_dir.mkdir()
+            # 999 has no /usr/lib/postgresql/999/bin or /usr/pgsql-999/bin.
+            (data_dir / "PG_VERSION").write_text("999\n", encoding="utf-8")
+            (data_dir / "postgresql.conf").write_text("port = 5555\n", encoding="utf-8")
+
+            stub_dir = Path(td) / "bin"
+            stub_dir.mkdir()
+            stub = stub_dir / "pg_config"
+            stub.write_text(
+                "#!/bin/sh\n"
+                'if [ "$1" = "--configure" ]; then\n'
+                f'  echo "{configure_args}"\n'
+                f"  exit {configure_exit}\n"
+                "fi\n"
+                'if [ "$1" = "--version" ]; then\n'
+                f'  echo "{version_output}"\n'
+                f"  exit {version_exit}\n"
+                "fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            stub.chmod(0o755)
+
+            env = dict(os.environ)
+            env.pop("DOCUMENTDB_TOAST_COMPRESSION", None)
+            env["PATH"] = f"{stub_dir}{os.pathsep}{env['PATH']}"
+            if env_extra:
+                env.update(env_extra)
+
+            return subprocess.run(
+                ["bash", str(TUNE_SCRIPT), "--pgdata", str(data_dir), *args, "--print"],
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10, env=env,
+            )
+
+    def test_default_is_lz4(self):
+        r = self._tune_print(self.LZ4_BUILD)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("default_toast_compression = 'lz4'", r.stdout)
+
+    def test_foreign_major_on_path_is_not_trusted(self):
+        # The PATH fallback answers for whatever build PATH points at, which
+        # may not be the build serving the target cluster. A pg_config whose
+        # major differs from the cluster's must be ignored — its --with-lz4
+        # could approve a value the actual server rejects at startup — so
+        # support stays unverifiable and the default degrades to writing
+        # nothing.
+        r = self._tune_print(self.LZ4_BUILD, version_output="PostgreSQL 16.4")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("default_toast_compression", r.stdout)
+
+    def test_explicit_lz4_fails_on_foreign_major_path_pg_config(self):
+        # Same provenance guard, explicit request: must fail as unverifiable
+        # (not silently degrade, and not claim the build lacks lz4).
+        r = self._tune_print(
+            self.LZ4_BUILD, "--toast-compression", "lz4",
+            version_output="PostgreSQL 16.4",
+        )
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Cannot verify lz4 support", r.stderr)
+        self.assertNotIn("has no lz4 support", r.stderr)
+
+    def test_failing_pg_config_version_does_not_abort(self):
+        # tune runs under `set -euo pipefail`: a pg_config that fails on
+        # --version must degrade the probe to "unknown", not abort the whole
+        # script with pg_config's exit code (regression: the version was
+        # once read through a bare pipeline, which did exactly that).
+        r = self._tune_print(self.LZ4_BUILD, version_exit=1)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("default_toast_compression", r.stdout)
+
+    def test_failing_pg_config_configure_is_not_trusted(self):
+        # Output printed by a FAILING pg_config --configure must be
+        # discarded: a partial print containing --with-lz4 must not
+        # authorize a value the server could reject at startup.
+        r = self._tune_print(self.LZ4_BUILD, configure_exit=1)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("default_toast_compression", r.stdout)
+
+    def test_empty_configure_output_degrades_the_default(self):
+        # meson builds report an EMPTY --configure string, so lz4 support is
+        # unverifiable offline; the default must degrade to writing nothing
+        # rather than write a value the server might reject at startup.
+        r = self._tune_print(self.MESON_EMPTY_BUILD)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("default_toast_compression", r.stdout)
+        # Downgrading the DOCUMENTED default must be visible at default
+        # verbosity (stderr), not hidden behind -v: the operator was
+        # promised lz4 and is getting the server default.
+        self.assertIn("Warning: cannot verify lz4 support", r.stderr)
+
+    def test_explicit_lz4_fails_accurately_when_unverifiable(self):
+        # The failure message must blame the verification gap, not falsely
+        # claim the build lacks lz4 (meson builds with lz4 hit this path).
+        r = self._tune_print(self.MESON_EMPTY_BUILD, "--toast-compression", "lz4")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Cannot verify lz4 support", r.stderr)
+        self.assertNotIn("has no lz4 support", r.stderr)
+
+    def test_setting_omitted_when_build_has_no_lz4(self):
+        # PostgreSQL rejects an unsupported compression method at startup, so
+        # the default must degrade to writing nothing rather than to a config
+        # the server refuses to load.
+        r = self._tune_print(self.NO_LZ4_BUILD)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("default_toast_compression", r.stdout)
+        # Visible at default verbosity (stderr), not gated behind -v.
+        self.assertIn(
+            "Warning: PostgreSQL was not built with lz4 support", r.stderr
+        )
+
+    def test_explicit_lz4_fails_when_build_has_no_lz4(self):
+        # An explicit choice must fail loudly rather than be downgraded behind
+        # the administrator's back.
+        r = self._tune_print(self.NO_LZ4_BUILD, "--toast-compression", "lz4")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no lz4 support", r.stderr)
+
+    def test_pglz_is_honored(self):
+        r = self._tune_print(self.LZ4_BUILD, "--toast-compression", "pglz")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("default_toast_compression = 'pglz'", r.stdout)
+
+    def test_default_keyword_leaves_server_setting_alone(self):
+        r = self._tune_print(self.LZ4_BUILD, "--toast-compression", "default")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("default_toast_compression", r.stdout)
+
+    def test_invalid_value_is_rejected(self):
+        r = self._tune_print(self.LZ4_BUILD, "--toast-compression", "zstd")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("must be 'lz4', 'pglz', or 'default'", r.stderr)
+
+    def test_environment_override(self):
+        r = self._tune_print(
+            self.LZ4_BUILD, env_extra={"DOCUMENTDB_TOAST_COMPRESSION": "pglz"},
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("default_toast_compression = 'pglz'", r.stdout)
+
+    def test_invalid_environment_override_is_rejected(self):
+        r = self._tune_print(
+            self.LZ4_BUILD, env_extra={"DOCUMENTDB_TOAST_COMPRESSION": "snappy"},
+        )
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Invalid TOAST compression", r.stderr)
+
+    def test_flag_beats_environment(self):
+        r = self._tune_print(
+            self.LZ4_BUILD, "--toast-compression", "lz4",
+            env_extra={"DOCUMENTDB_TOAST_COMPRESSION": "pglz"},
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("default_toast_compression = 'lz4'", r.stdout)
+
+    def test_restore_ignores_toast_compression(self):
+        # --restore only strips the managed block, so it must not resolve (or
+        # reject) a compression value on the way through.
+        env = dict(os.environ)
+        env["DOCUMENTDB_TOAST_COMPRESSION"] = "bogus"
+        with tempfile.TemporaryDirectory() as td:
+            r = subprocess.run(
+                ["bash", str(TUNE_SCRIPT), "--pgdata",
+                 os.path.join(td, "no-such-cluster"), "--restore"],
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10, env=env,
+            )
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_usage_documents_the_flag(self):
+        r = subprocess.run(
+            ["bash", str(TUNE_SCRIPT), "--help"],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--toast-compression", r.stdout)
+
+    def test_setup_rerun_command_preserves_an_explicit_request(self):
+        # sudo strips the environment, and a command-scoped
+        # `sudo VAR=x documentdb-setup ...` assignment does not survive into a
+        # copied re-run. Without the prefix, an operator who asked for pglz got
+        # the lz4 default on the second run, which rewrites the fragment and
+        # demands another restart.
+        setup = SETUP_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("build_rerun_env_prefix", setup)
+        # Every printed re-run command must carry the prefix, not just one.
+        rerun_lines = [
+            line for line in setup.splitlines()
+            if "documentdb-setup --target-postgres-instance" in line
+            and "log_warn" in line
+        ]
+        self.assertTrue(rerun_lines, "no printed re-run command found")
+        for line in rerun_lines:
+            self.assertIn("build_rerun_env_prefix", line, line.strip())
+
+    def test_setup_rerun_prefix_omits_the_implicit_default(self):
+        # Echoing the built-in default would turn a quiet degrade on builds
+        # that cannot verify lz4 into a hard failure on the second run.
+        setup = SETUP_SCRIPT.read_text(encoding="utf-8")
+        body = setup.split("build_rerun_env_prefix() {", 1)[1].split("\n}", 1)[0]
+        self.assertIn('[[ -n "${DOCUMENTDB_TOAST_COMPRESSION:-}" ]] || return 0', body)
+
+    def test_setup_usage_documents_the_instance_wide_scope(self):
+        # The setting is instance-wide, so brownfield adoption changes the
+        # default for every database in the adopted cluster. tune's help says
+        # so; setup's must too, since setup is the brownfield entry point.
+        r = subprocess.run(
+            ["bash", str(SETUP_SCRIPT), "--help"],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("DOCUMENTDB_TOAST_COMPRESSION", r.stdout)
+        self.assertIn("EVERY database", r.stdout)
+
+    def test_brownfield_prompt_discloses_toast_scope_and_irreversibility(self):
+        # The adoption prompt is the consent gate. default_toast_compression is
+        # the one managed setting that is instance-wide and that --restore
+        # cannot fully undo, so the prompt (not just --help) must say so.
+        script = SETUP_SCRIPT.read_text(encoding="utf-8")
+        match = re.search(
+            r"prepare_brownfield_instance\(\)\s*\{(?P<body>.*?)^\}",
+            script,
+            flags=re.DOTALL | re.MULTILINE,
+        )
+        self.assertIsNotNone(match)
+        body = match.group("body")
+        self.assertIn("INSTANCE-WIDE", body)
+        self.assertIn("EVERY database", body)
+        self.assertIn("does not rewrite", body)
+        # Only when something is actually written: with "default" the resolver
+        # writes nothing and neither claim would be true.
+        self.assertIn('if [[ -n "${TOAST_COMPRESSION:-}" ]]; then', body)
+
+    def test_setup_inline_fallback_does_not_drift(self):
+        # documentdb-setup's inline fallback (used when the tools package is
+        # not on PATH) must write the same setting through the same shared
+        # resolver as documentdb-tune.
+        setup = SETUP_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("documentdb_resolve_toast_compression", setup)
+        self.assertIn("default_toast_compression = '${TOAST_COMPRESSION}'", setup)
+
+    def test_setup_validates_toast_compression_in_preflight(self):
+        # An invalid DOCUMENTDB_TOAST_COMPRESSION (or an explicit lz4 that
+        # cannot be verified for the build) must die inside
+        # preflight_validation -- before the wizard starts writing
+        # configuration -- not mid-apply inside the documentdb-tune
+        # delegation, which would leave the install half-applied. Structural:
+        # the resolver call must live in preflight_validation's body.
+        setup = SETUP_SCRIPT.read_text(encoding="utf-8")
+        m = re.search(
+            r"^preflight_validation\(\)\s*\{(.*?)^\}", setup, re.S | re.M
+        )
+        self.assertIsNotNone(m, "preflight_validation() body not found")
+        body = m.group(1)
+        # A call STATEMENT, not a mention in a comment.
+        call = re.search(
+            r"^\s*documentdb_resolve_toast_compression\b", body, re.M
+        )
+        self.assertIsNotNone(call, "resolver is not invoked in preflight")
+        # Order: before the extension-state refresh, i.e. in the pure
+        # up-front stretch of preflight rather than tacked on at the end.
+        self.assertLess(call.start(), body.index("refresh_extension_state"))
+
+    def test_read_only_modes_ignore_bad_toast_compression_env(self):
+        # --status and --print-config exit before preflight_validation, so a
+        # stale or typo'd DOCUMENTDB_TOAST_COMPRESSION in the environment
+        # must not fail read-only invocations (false-positive guard for the
+        # preflight validation above).
+        env = {k: v for k, v in os.environ.items() if k != "PG_VERSION"}
+        env["DOCUMENTDB_TOAST_COMPRESSION"] = "bogus-value"
+        for flag, ok_codes in (("--status", (0, 1)), ("--print-config", (0,))):
+            with self.subTest(flag=flag):
+                r = subprocess.run(
+                    ["bash", str(SETUP_SCRIPT), flag],
+                    stdin=subprocess.DEVNULL, capture_output=True,
+                    text=True, timeout=30, env=env,
+                )
+                self.assertIn(r.returncode, ok_codes, r.stdout + r.stderr)
+                self.assertNotIn(
+                    "Invalid TOAST compression", r.stdout + r.stderr
+                )
+
+    def test_sample_conf_documents_the_default(self):
+        sample = self.SAMPLE_CONF.read_text(encoding="utf-8")
+        self.assertIn("default_toast_compression = 'lz4'", sample)
+        self.assertIn("--toast-compression", sample)
+
+    def test_container_entrypoint_shares_the_same_default(self):
+        # The documentdb-local image runs start_oss_server.sh, never
+        # documentdb-tune, so the image applies this setting from its own
+        # entrypoint. It is deliberately NOT applied in the shared
+        # scripts/utils.sh, because that file also configures the pg_regress,
+        # gateway and functional test servers. Pin the entrypoint to the same
+        # default and build-support probe as the packaged tools so the image
+        # and the packages cannot drift.
+        lib = TOOLS_LIB.read_text(encoding="utf-8")
+        self.assertIn('DOCUMENTDB_DEFAULT_TOAST_COMPRESSION="lz4"', lib)
+
+        entrypoint = (
+            OSS_ROOT / "documentdb-local" / "scripts" / "emulator_entrypoint.sh"
+        ).read_text(encoding="utf-8")
+        # The env var is captured raw first (failure branches gate on what
+        # was actually requested), then defaulted to lz4 — the same default
+        # the packaged tools resolve to.
+        self.assertIn('toast_requested="${DOCUMENTDB_TOAST_COMPRESSION:-}"', entrypoint)
+        self.assertIn('toast_compression="${toast_requested:-lz4}"', entrypoint)
+        self.assertIn("--with-lz4", entrypoint)
+
+        # The shared dev/test server config must stay untouched.
+        utils = (OSS_ROOT / "scripts" / "utils.sh").read_text(encoding="utf-8")
+        self.assertNotIn(
+            "default_toast_compression",
+            utils,
+            "scripts/utils.sh also configures the regress/gateway/functional "
+            "test servers; keep the image-only setting in the entrypoint",
+        )
+
+    def test_delegated_tune_path_tracks_fragment_changes(self):
+        # On Debian brownfield the wizard delegates to documentdb-tune with
+        # --pg-version/--cluster, which writes the per-cluster FRAGMENT
+        # (/etc/postgresql-common/documentdb/<V>/<C>/documentdb.conf), not
+        # the live postgresql.conf whose mtime the wizard tracks. A
+        # fragment-only change — exactly what this PR delivers to an
+        # existing install via package upgrade — must still flip
+        # PG_CONFIG_CHANGED, or the wizard neither restarts PostgreSQL nor
+        # tells the operator to, and the running server silently keeps its
+        # previous settings. Both tools derive the fragment path from the
+        # same shared helper so they cannot drift, and the wizard compares
+        # content hashes (mtime granularity misses same-second rewrites).
+        helper = "documentdb_tune_fragment_path"
+        lib = TOOLS_LIB.read_text(encoding="utf-8")
+        self.assertIn(f"{helper}()", lib)
+        self.assertIn(
+            "/etc/postgresql-common/documentdb/%s/%s/documentdb.conf", lib
+        )
+
+        setup = SETUP_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn(f'tune_fragment="$({helper} ', setup)
+        self.assertIn("prev_fragment_hash", setup)
+        self.assertIn("new_fragment_hash", setup)
+        # The delegated path's ${config_file} tracking uses content hashes
+        # for the same reason (same-second rewrites are invisible to
+        # second-granularity mtimes).
+        self.assertIn("prev_conf_hash", setup)
+        self.assertIn("new_conf_hash", setup)
+
+        tune = TUNE_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn(f'CONFIG_TARGET="$({helper} ', tune)
+        self.assertNotIn(
+            "/etc/postgresql-common/documentdb/${PG_VERSION}",
+            tune,
+            "tune must derive the Debian fragment path from the shared "
+            "helper, not construct it inline",
         )

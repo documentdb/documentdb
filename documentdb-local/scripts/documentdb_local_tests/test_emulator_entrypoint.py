@@ -2,6 +2,7 @@ import json
 import os
 import re
 import secrets
+import stat
 import subprocess
 import tempfile
 import textwrap
@@ -12,6 +13,10 @@ from pathlib import Path
 # Test-only password, generated at runtime so no credential literal lives in
 # source (the entrypoint tests assert on return codes / config, never the value).
 _TEST_PW = secrets.token_hex(8) + "Aa1!"
+
+# Emitted when an explicit TOAST compression request cannot be applied because
+# this container is not the one starting PostgreSQL.
+_TOAST_IGNORED_MARKER = "is ignored because this container is not starting PostgreSQL"
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ENTRYPOINT = REPO_ROOT / "documentdb-local" / "scripts" / "emulator_entrypoint.sh"
@@ -71,6 +76,25 @@ exec "$@"
         )
         self._write_exec(self.bin_dir / "nc", "#!/bin/sh\nexit 0\n")
         self._write_exec(self.bin_dir / "tail", "#!/bin/sh\nexit 0\n")
+        # Deterministic pg_config for the TOAST lz4 probe. Without a stub,
+        # any test that starts the (stubbed) server consults whatever
+        # pg_config the HOST has -- PG_VERSION_USED=999 only bypasses the
+        # versioned bindirs, not the PATH fallback -- so the code path taken
+        # would vary with the runner's PostgreSQL installation. Reports major
+        # 999 (matching PG_VERSION_USED, so the entrypoint's foreign-binary
+        # gate trusts it) and --with-lz4, like the shipped image's build.
+        self._write_exec(
+            self.bin_dir / "pg_config",
+            """#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "PostgreSQL 999.0"
+fi
+if [ "$1" = "--configure" ]; then
+  echo "'--with-openssl' '--with-lz4'"
+fi
+exit 0
+""",
+        )
         # Default readiness probe reports "ready" immediately so the admin-user
         # wait (CREATE_USER=true path) does not block; individual tests override
         # this to exercise the timeout path.
@@ -193,6 +217,13 @@ json.dump(data, sys.stdout)
                 "GATEWAY_HOME": str(self.gateway_home),
                 "DOCUMENTDB_LOG_DIR": str(self.logs_dir),
                 "SYSTEM_POSTGRES_LOG": str(self.root / "postgres-system.log"),
+                # The lz4 probe checks /usr/lib/postgresql/<V>/bin and
+                # /usr/pgsql-<V>/bin BEFORE PATH (provenance: that is where
+                # start_oss_server launches the postmaster from). Pin a major
+                # that has no packaged bindir so the probe always falls
+                # through to the PATH stubs, keeping these tests independent
+                # of any PostgreSQL installed on the host.
+                "PG_VERSION_USED": "999",
                 "START_POSTGRESQL": "false",
                 "SKIP_INIT_DATA": "true",
                 "CREATE_USER": "false",
@@ -214,6 +245,12 @@ json.dump(data, sys.stdout)
             text=True,
             capture_output=True,
             timeout=30,
+            # Deterministic EOF stdin, modelling how Docker runs the real
+            # entrypoint (no -i => /dev/null). Without this the suite's
+            # behavior depends on the RUNNER's stdin: the stub psql drains
+            # stdin, and a held-open pipe (Azure DevOps agents) never EOFs,
+            # hanging every test whose scenario reaches a psql call.
+            stdin=subprocess.DEVNULL,
         )
 
     def _read_config(self):
@@ -221,8 +258,1374 @@ json.dump(data, sys.stdout)
         with config_path.open("r", encoding="utf-8") as file:
             return json.load(file)
 
+    def _configure_toast_stubs(self, lz4_supported=True, lz4_runtime="t"):
+        """Stub start_oss_server.sh so it records the arguments it was given,
+        and pg_config so the entrypoint's lz4 build probe is deterministic
+        regardless of how the host's PostgreSQL was compiled. lz4_runtime is
+        what the psql stub answers to the entrypoint's post-start pg_settings
+        enumvals probe: "t" (a capable build, the realistic default), "f",
+        or None for an EMPTY answer (the stub psql exits 0 printing
+        nothing -- the unanswered-probe outcome; a genuinely FAILING psql
+        is modelled only in test_toast_probe_is_retried_when_psql_fails).
+        The pg_config stub reports
+        major 999 to match PG_VERSION_USED so the foreign-binary gate
+        trusts it."""
+        args_capture = self.root / "start-oss-server-args"
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        # The entrypoint refuses to fabricate a postgresql.conf (a data dir
+        # without one is not a server it booted), so give the stubbed server
+        # the minimal conf initdb would have left behind. Tests that need
+        # specific pre-existing contents write the file BEFORE calling this.
+        pg_conf = self.data_dir / "postgresql.conf"
+        if not pg_conf.exists():
+            pg_conf.write_text("port = 9712\n", encoding="utf-8")
+            pg_conf.chmod(0o600)
+        self._write_exec(
+            self.gateway_scripts / "start_oss_server.sh",
+            f"""#!/bin/sh
+printf '%s\\n' "$@" > "{args_capture}"
+touch "{self.data_dir / 'postmaster.pid'}" "{self.data_dir / 'pglog.log'}"
+echo oss-server-stub-started
+""",
+        )
+        configure_line = (
+            "'--with-openssl' '--with-lz4'" if lz4_supported else "'--with-openssl'"
+        )
+        self._write_exec(
+            self.bin_dir / "pg_config",
+            f"""#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "PostgreSQL 999.0"
+fi
+if [ "$1" = "--configure" ]; then
+  echo "{configure_line}"
+fi
+exit 0
+""",
+        )
+        self.toast_psql_args = self.root / "toast-psql-args"
+        runtime_answer = "" if lz4_runtime is None else lz4_runtime
+        self._write_exec(
+            self.bin_dir / "psql",
+            f"""#!/bin/sh
+printf '%s\\n' "$@" >> "{self.toast_psql_args}"
+case "$*" in
+  *enumvals*) printf '%s\\n' "{runtime_answer}" ;;
+esac
+cat > /dev/null
+exit 0
+""",
+        )
+        return args_capture
+
+    def _stub_empty_pg_config(self):
+        """Overwrite the pg_config stub with one reporting NO configure flags,
+        the way meson builds do (CONFIGURE_ARGS is compiled in empty). Still
+        reports major 999 so the gate consults it -- what is under test is
+        the empty --configure answer, not the foreign-binary rejection."""
+        self._write_exec(
+            self.bin_dir / "pg_config",
+            """#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "PostgreSQL 999.0"
+fi
+if [ "$1" = "--configure" ]; then
+  echo ""
+fi
+exit 0
+""",
+        )
+
+    def _run_with_toast(self, lz4_supported=True, extra_env=None, extra_args=()):
+        args_capture = self._configure_toast_stubs(lz4_supported=lz4_supported)
+        conf = self.root / "toast.conf"
+        env = {"START_POSTGRESQL": "true", "TOAST_COMPRESSION_CONF": str(conf)}
+        if extra_env:
+            env.update(extra_env)
+        result = self._run_entrypoint(*extra_args, extra_env=env)
+        return result, conf, args_capture
+
+    def test_toast_compression_defaults_to_lz4(self):
+        result, conf, args_capture = self._run_with_toast()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn(
+            "default_toast_compression = 'lz4'", conf.read_text(encoding="utf-8")
+        )
+        # Registered as include_if_exists appended AFTER the server is up —
+        # never as a hard include via start_oss_server -f, which would record
+        # a fatal dependency on the /tmp fragment in the persistent volume
+        # (an older image that never writes the fragment could not boot it).
+        args = args_capture.read_text(encoding="utf-8").splitlines()
+        self.assertNotIn("-f", args)
+        pg_conf = (self.data_dir / "postgresql.conf").read_text(encoding="utf-8")
+        self.assertIn(f"include_if_exists = '{conf}'", pg_conf)
+        self.assertNotIn(f"include '{conf}'", pg_conf)
+        # The boot that first adds the include must reload the config so the
+        # fragment applies immediately (default_toast_compression is not
+        # startup-only).
+        self.assertIn(
+            "SELECT pg_reload_conf()",
+            self.toast_psql_args.read_text(encoding="utf-8"),
+        )
+
+    def test_toast_compression_can_be_set_to_pglz(self):
+        result, conf, _ = self._run_with_toast(
+            extra_env={"DOCUMENTDB_TOAST_COMPRESSION": "pglz"}
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn(
+            "default_toast_compression = 'pglz'", conf.read_text(encoding="utf-8")
+        )
+
+    def test_toast_compression_default_leaves_server_setting_alone(self):
+        result, conf, _ = self._run_with_toast(
+            extra_env={"DOCUMENTDB_TOAST_COMPRESSION": "default"}
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn(
+            "default_toast_compression = ", conf.read_text(encoding="utf-8")
+        )
+
+    def test_toast_compression_rejects_invalid_value(self):
+        result, _, _ = self._run_with_toast(
+            extra_env={"DOCUMENTDB_TOAST_COMPRESSION": "zstd"}
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "Invalid TOAST compression value 'zstd'",
+            result.stdout + result.stderr,
+        )
+
+    def test_toast_compression_flag_sets_method(self):
+        # The CLI flag mirrors the environment variable, matching every other
+        # knob in usage() (e.g. --tlsMode / TLS_MODE).
+        result, conf, _ = self._run_with_toast(
+            extra_args=("--toast-compression", "pglz")
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn(
+            "default_toast_compression = 'pglz'", conf.read_text(encoding="utf-8")
+        )
+
+    def test_toast_compression_flag_beats_environment(self):
+        result, conf, _ = self._run_with_toast(
+            extra_args=("--toast-compression", "lz4"),
+            extra_env={"DOCUMENTDB_TOAST_COMPRESSION": "pglz"},
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn(
+            "default_toast_compression = 'lz4'", conf.read_text(encoding="utf-8")
+        )
+
+    def test_toast_compression_flag_rejects_invalid_value(self):
+        result, _, _ = self._run_with_toast(
+            extra_args=("--toast-compression", "snappy")
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "Invalid TOAST compression value 'snappy'",
+            result.stdout + result.stderr,
+        )
+
+    def test_toast_compression_flag_requires_a_value(self):
+        # A trailing flag with no value must fail loudly: an empty value
+        # would read as "no explicit choice" and silently take the
+        # quiet-degradation path reserved for the built-in default.
+        result, _, _ = self._run_with_toast(extra_args=("--toast-compression",))
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--toast-compression requires a value", result.stderr)
+
+    def test_toast_compression_flag_rejects_empty_value(self):
+        # Same hazard as the missing value: --toast-compression "" would
+        # otherwise silently become the implicit default.
+        result, _, _ = self._run_with_toast(
+            extra_args=("--toast-compression", "")
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--toast-compression requires a value", result.stderr)
+
+    # The knob only takes effect when this container starts PostgreSQL, but
+    # "does not take effect" must never mean "is not even looked at": a bad
+    # value used to be accepted silently here while being fatal in the
+    # default mode, and an honored-looking request used to vanish without a
+    # word. START_POSTGRESQL="false" is the harness default, so these run in
+    # the caller-managed-PostgreSQL mode.
+    def test_toast_compression_flag_rejects_invalid_value_with_external_postgres(self):
+        result = self._run_entrypoint("--toast-compression", "snappy")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "Invalid TOAST compression value 'snappy'",
+            result.stdout + result.stderr,
+        )
+
+    def test_toast_compression_env_rejects_invalid_value_with_external_postgres(self):
+        result = self._run_entrypoint(
+            extra_env={"DOCUMENTDB_TOAST_COMPRESSION": "snappy"}
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "Invalid TOAST compression value 'snappy'",
+            result.stdout + result.stderr,
+        )
+
+    def test_toast_compression_explicit_request_warns_with_external_postgres(self):
+        result = self._run_entrypoint("--toast-compression", "pglz")
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn(_TOAST_IGNORED_MARKER, result.stderr)
+        self.assertIn("pglz", result.stderr)
+
+    def test_toast_compression_explicit_lz4_warns_with_external_postgres(self):
+        # Explicitly naming the built-in default still warns: what matters is
+        # that the operator ASKED, not whether the value happens to match the
+        # value this container would have chosen for a server it owns.
+        result = self._run_entrypoint(
+            extra_env={"DOCUMENTDB_TOAST_COMPRESSION": "lz4"}
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn(_TOAST_IGNORED_MARKER, result.stderr)
+
+    def test_toast_compression_explicit_default_is_silent_with_external_postgres(self):
+        # "default" means leave the server's own setting alone, which is
+        # precisely what happens here, so there is nothing to warn about.
+        result = self._run_entrypoint("--toast-compression", "default")
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn(_TOAST_IGNORED_MARKER, result.stdout + result.stderr)
+
+    def test_toast_compression_implicit_default_is_silent_with_external_postgres(self):
+        # The overwhelmingly common case: nobody asked for anything. Warning
+        # here would put a permanent scary line in every such boot's log.
+        result = self._run_entrypoint()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn(_TOAST_IGNORED_MARKER, result.stdout + result.stderr)
+
+    def test_toast_compression_conf_rejects_relative_path(self):
+        # The entrypoint writes the fragment relative to its own CWD while
+        # PostgreSQL resolves a relative include against the data directory,
+        # so a relative path would silently never apply.
+        self._configure_toast_stubs()
+        result = self._run_entrypoint(
+            extra_env={
+                "START_POSTGRESQL": "true",
+                "TOAST_COMPRESSION_CONF": "toast.conf",
+            }
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must be an absolute path", result.stderr)
+
+    def test_toast_compression_conf_rejects_data_dir_path(self):
+        # A fragment inside the data volume outlives the container: it
+        # defeats the rollback-safety design (older images would keep
+        # applying it) and a stale persistent fragment behind a dangling
+        # include from an earlier path can shadow the current boot's choice.
+        self._configure_toast_stubs()
+        result = self._run_entrypoint(
+            extra_env={
+                "START_POSTGRESQL": "true",
+                "TOAST_COMPRESSION_CONF": str(self.data_dir / "toast.conf"),
+            }
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must not point inside the data directory", result.stderr)
+
+    def test_toast_compression_conf_rejects_data_dir_path_with_trailing_slash(self):
+        # DATA_PATH is operator-settable and never normalized, so a trailing
+        # slash made the containment pattern "/data//*", which matches nothing:
+        # the guard silently passed and the fragment was persisted inside the
+        # data volume, defeating the rollback design.
+        self._configure_toast_stubs()
+        result = self._run_entrypoint(
+            extra_env={
+                "START_POSTGRESQL": "true",
+                "DATA_PATH": f"{self.data_dir}/",
+                "TOAST_COMPRESSION_CONF": str(self.data_dir / "toast.conf"),
+            }
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must not point inside the data directory", result.stderr)
+
+    def test_toast_compression_conf_rejects_data_dir_path_via_dotdot(self):
+        # A purely lexical compare is also defeated by ".." in DATA_PATH:
+        # "<data>/../<data>" makes the pattern miss, and the fragment lands
+        # inside the data volume. Canonical paths are compared too.
+        self._configure_toast_stubs()
+        result = self._run_entrypoint(
+            extra_env={
+                "START_POSTGRESQL": "true",
+                "DATA_PATH": f"{self.data_dir}/../{self.data_dir.name}",
+                "TOAST_COMPRESSION_CONF": str(self.data_dir / "toast.conf"),
+            }
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must not point inside the data directory", result.stderr)
+
+    def test_toast_compression_conf_rejects_data_dir_reached_by_symlink(self):
+        # Same hole via a symlinked DATA_PATH: the lexical forms differ while
+        # both resolve to the same directory.
+        self._configure_toast_stubs()
+        link = self.root / "data-link"
+        link.symlink_to(self.data_dir)
+        result = self._run_entrypoint(
+            extra_env={
+                "START_POSTGRESQL": "true",
+                "DATA_PATH": str(link),
+                "TOAST_COMPRESSION_CONF": str(self.data_dir / "toast.conf"),
+            }
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must not point inside the data directory", result.stderr)
+
+    def test_toast_compression_conf_rejects_the_data_dir_itself(self):
+        # Containment checked descendants but not equality, so CONF == DATA_PATH
+        # passed. That is the worst shape: `mv tmp "$DATA_PATH"` SUCCEEDS
+        # against a directory by moving the temp file into it, so the write
+        # reported success while stranding the fragment in the persistent
+        # volume and registering an include pointing at a directory.
+        self._configure_toast_stubs()
+        result = self._run_entrypoint(
+            extra_env={
+                "START_POSTGRESQL": "true",
+                "TOAST_COMPRESSION_CONF": str(self.data_dir),
+            }
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must not point inside the data directory", result.stderr)
+        # Nothing may be left behind in the volume by the rejected run.
+        self.assertEqual(
+            [p.name for p in self.data_dir.glob("*documentdb-tmp*")], []
+        )
+
+    def test_toast_compression_conf_rejects_a_directory_outside_the_data_dir(self):
+        # Same mv-into-a-directory hazard, just not in the data volume.
+        self._configure_toast_stubs()
+        target = self.root / "somedir"
+        target.mkdir()
+        result = self._run_entrypoint(
+            extra_env={
+                "START_POSTGRESQL": "true",
+                "TOAST_COMPRESSION_CONF": str(target),
+            }
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must name a file", result.stderr)
+        self.assertEqual([p.name for p in target.iterdir()], [])
+
+    def test_toast_compression_conf_allows_sibling_of_data_dir(self):
+        # Guards against over-correcting the trailing-slash fix into a plain
+        # prefix match: "<data_dir>-sibling" starts with the data dir's text
+        # but is not inside it.
+        self._configure_toast_stubs()
+        conf = Path(f"{self.data_dir}-sibling") / "toast.conf"
+        conf.parent.mkdir(parents=True, exist_ok=True)
+        result = self._run_entrypoint(
+            extra_env={
+                "START_POSTGRESQL": "true",
+                "DATA_PATH": f"{self.data_dir}/",
+                "TOAST_COMPRESSION_CONF": str(conf),
+            }
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn(
+            "default_toast_compression = 'lz4'", conf.read_text(encoding="utf-8")
+        )
+
+    def test_toast_compression_conf_rejects_single_quote(self):
+        # The path is embedded in a single-quoted include line; a quote in
+        # it would produce a malformed postgresql.conf.
+        self._configure_toast_stubs()
+        result = self._run_entrypoint(
+            extra_env={
+                "START_POSTGRESQL": "true",
+                "TOAST_COMPRESSION_CONF": str(self.root / "to'ast.conf"),
+            }
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must not contain single quotes", result.stderr)
+
+    def test_toast_compression_conf_rejects_backslash(self):
+        # A trailing backslash would escape the include line's closing quote.
+        self._configure_toast_stubs()
+        result = self._run_entrypoint(
+            extra_env={
+                "START_POSTGRESQL": "true",
+                "TOAST_COMPRESSION_CONF": str(self.root / "toast\\.conf"),
+            }
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must not contain single quotes", result.stderr)
+
+    def test_toast_compression_probe_prefers_versioned_bindir(self):
+        # Provenance pin: start_oss_server launches the postmaster from the
+        # versioned bindir (GetPostgresPath in utils.sh), never from PATH, so
+        # the lz4 probe must consult those binaries first and use PATH only
+        # as a fallback — a foreign pg_config earlier on PATH must not answer
+        # for the server's build.
+        entrypoint = ENTRYPOINT.read_text(encoding="utf-8")
+        versioned = entrypoint.index('/usr/lib/postgresql/${PG_VERSION_USED:-17}/bin')
+        self.assertIn('/usr/pgsql-${PG_VERSION_USED:-17}/bin', entrypoint)
+        path_fallback = entrypoint.index("command -v pg_config")
+        self.assertLess(versioned, path_fallback)
+
+    def test_toast_compression_fragment_write_failure_degrades_default(self):
+        # The BUILT-IN default is a performance optimization: when its
+        # fragment cannot be written (and no stale fragment is left behind --
+        # the failed write removes it, so the include_if_exists dangles and
+        # the server default applies), the boot must continue with a warning
+        # rather than turn a previously bootable volume into a failed boot.
+        self._configure_toast_stubs()
+        conf = self.root / "no-such-dir" / "toast.conf"
+        result = self._run_entrypoint(
+            extra_env={
+                "START_POSTGRESQL": "true",
+                "TOAST_COMPRESSION_CONF": str(conf),
+            }
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn(
+            "Warning: could not write the TOAST compression fragment",
+            result.stderr,
+        )
+        self.assertNotIn(
+            "Error: could not write the TOAST compression fragment",
+            result.stderr,
+        )
+        self.assertFalse(conf.exists())
+
+    def test_toast_compression_fragment_write_failure_fails_explicit(self):
+        # An EXPLICIT choice that cannot be honored must fail loudly
+        # (documentdb-tune contract) -- silent degradation would hide that
+        # the requested compression is not in effect. Parametrized over both
+        # explicit values because they abort in DIFFERENT branches: pglz is
+        # written pre-start (bare exit), lz4 is deferred and its write
+        # failure surfaces in the post-start upgrade (through cleanup).
+        for value in ("pglz", "lz4"):
+            with self.subTest(value=value):
+                self._configure_toast_stubs()
+                conf = self.root / "no-such-dir" / "toast.conf"
+                result = self._run_entrypoint(
+                    extra_env={
+                        "START_POSTGRESQL": "true",
+                        "TOAST_COMPRESSION_CONF": str(conf),
+                        "DOCUMENTDB_TOAST_COMPRESSION": value,
+                    }
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "Error: could not write the TOAST compression fragment",
+                    result.stderr,
+                )
+
+    @unittest.skipIf(
+        hasattr(os, "geteuid") and os.geteuid() == 0,
+        "chmod-based read-only dir is a no-op for root",
+    )
+    def test_toast_compression_stale_fragment_that_cannot_be_replaced_aborts(self):
+        # The one write-failure case that must ALWAYS abort: a previous
+        # boot's fragment exists, the rewrite fails, and the stale file
+        # cannot be removed either -- continuing would leave the include
+        # applying a value this boot did not choose. Simulated by making the
+        # fragment's directory read-only (the file survives rm -f).
+        self._configure_toast_stubs()
+        frag_dir = self.root / "toast-frag-dir"
+        frag_dir.mkdir()
+        conf = frag_dir / "toast.conf"
+        conf.write_text("default_toast_compression = 'pglz'\n", encoding="utf-8")
+        frag_dir.chmod(0o555)
+        try:
+            result = self._run_entrypoint(
+                extra_env={
+                    "START_POSTGRESQL": "true",
+                    "TOAST_COMPRESSION_CONF": str(conf),
+                }
+            )
+        finally:
+            frag_dir.chmod(0o755)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("possibly stale default_toast_compression", result.stderr)
+        # The stale value must still be on disk untouched (nothing worse
+        # happened), which is exactly why the boot had to stop.
+        self.assertIn("pglz", conf.read_text(encoding="utf-8"))
+
+    def test_toast_path_pg_config_major_mismatch_defers_to_runtime_probe(self):
+        # A pg_config on PATH speaking for a DIFFERENT major must not
+        # authorize lz4 offline: its --with-lz4 says nothing about the server
+        # this entrypoint starts. The verdict must fall through to the
+        # runtime probe. Discriminating setup (mutation-tested): the server
+        # DENIES lz4, so a gate-respecting implementation lands in the
+        # offline-unknown denial path ("was not built with lz4 support")
+        # while a gate-less one would have taken the offline "yes" at face
+        # value and reported the wrong-offline-verdict message instead.
+        self._configure_toast_stubs(lz4_runtime="f")
+        self._write_exec(
+            self.bin_dir / "pg_config",
+            """#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "PostgreSQL 16.4"
+fi
+if [ "$1" = "--configure" ]; then
+  echo "'--with-openssl' '--with-lz4'"
+fi
+exit 0
+""",
+        )
+        result, conf, _ = self._run_with_toast_existing_stubs()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn(
+            "default_toast_compression = ", conf.read_text(encoding="utf-8")
+        )
+        self.assertIn(
+            "was not built with lz4 support", result.stdout + result.stderr
+        )
+        self.assertNotIn(
+            "offline pg_config verdict was wrong", result.stdout + result.stderr
+        )
+
+    def test_toast_offline_yes_but_server_denies_stays_inert(self):
+        # THE crash-loop guard: pg_config approved lz4 offline, but the live
+        # server has no lz4 enum entry (repackaged image, wrong binary). lz4
+        # must never reach the fragment -- with the include registered in
+        # the persistent volume, an unaccepted value would be FATAL at every
+        # later boot.
+        self._configure_toast_stubs(lz4_runtime="f")
+        result, conf, _ = self._run_with_toast_existing_stubs()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn(
+            "default_toast_compression = ", conf.read_text(encoding="utf-8")
+        )
+        self.assertIn(
+            "offline pg_config verdict was wrong",
+            result.stdout + result.stderr,
+        )
+
+    def test_toast_offline_yes_but_server_denies_fails_explicit(self):
+        self._configure_toast_stubs(lz4_runtime="f")
+        result, conf, _ = self._run_with_toast_existing_stubs(
+            extra_env={"DOCUMENTDB_TOAST_COMPRESSION": "lz4"}
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("was requested, but", result.stderr)
+        # Post-start failure: must exit through cleanup(), not a bare exit.
+        self.assertIn("Shutting down DocumentDB components", result.stdout)
+        # lz4 must never have reached the fragment, so the volume boots
+        # cleanly once the operator fixes the request.
+        self.assertNotIn(
+            "default_toast_compression = ", conf.read_text(encoding="utf-8")
+        )
+
+    def test_toast_offline_yes_unconfirmed_by_server_stays_inert(self):
+        # Probe failure with the server ACCEPTING connections (the stubbed
+        # pg_isready gate passes): the offline "yes" stays UNCONFIRMED, so
+        # lz4 must not reach the fragment this boot; the built-in default
+        # keeps the container running and retries at the next start.
+        self._configure_toast_stubs(lz4_runtime=None)
+        result, conf, _ = self._run_with_toast_existing_stubs()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn(
+            "default_toast_compression = ", conf.read_text(encoding="utf-8")
+        )
+        self.assertIn(
+            "could not confirm lz4 support", result.stdout + result.stderr
+        )
+
+    def test_toast_offline_yes_unconfirmed_by_server_fails_explicit(self):
+        # Same probe failure, but with an EXPLICIT lz4 request: the server
+        # accepts connections yet the probe query failed -- a genuine
+        # anomaly, and the explicit contract is uniform: the value either
+        # verifiably applies or the boot fails saying why (through cleanup;
+        # the server is running).
+        self._configure_toast_stubs(lz4_runtime=None)
+        result, conf, _ = self._run_with_toast_existing_stubs(
+            extra_env={"DOCUMENTDB_TOAST_COMPRESSION": "lz4"}
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("could not confirm lz4 support", result.stderr)
+        self.assertIn("Shutting down DocumentDB components", result.stdout)
+        self.assertNotIn(
+            "default_toast_compression = ", conf.read_text(encoding="utf-8")
+        )
+
+    def test_toast_commented_out_include_is_respected_not_silently(self):
+        # A commented-out copy of the include is an operator's deliberate
+        # disable: the entrypoint must not re-add an active line over it --
+        # but never silently. The built-in default warns and continues; an
+        # explicit non-default request fails loudly, because it can never
+        # take effect on any boot while the include is disabled.
+        expected_conf = self.root / "toast.conf"
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        (self.data_dir / "postgresql.conf").write_text(
+            f"port = 9712\n# include_if_exists = '{expected_conf}'\n",
+            encoding="utf-8",
+        )
+
+        with self.subTest(mode="default"):
+            result, conf, _ = self._run_with_toast()
+            self.assertEqual(
+                result.returncode, 0, msg=result.stdout + result.stderr
+            )
+            pg_conf = (self.data_dir / "postgresql.conf").read_text(
+                encoding="utf-8"
+            )
+            self.assertNotIn(f"\ninclude_if_exists = '{conf}'", pg_conf)
+            self.assertIn(
+                "commented-out form", result.stdout + result.stderr
+            )
+
+        with self.subTest(mode="explicit"):
+            result, conf, _ = self._run_with_toast(
+                extra_env={"DOCUMENTDB_TOAST_COMPRESSION": "pglz"}
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("cannot take effect", result.stderr)
+            self.assertIn("commented-out form", result.stdout + result.stderr)
+            pg_conf = (self.data_dir / "postgresql.conf").read_text(
+                encoding="utf-8"
+            )
+            self.assertNotIn(f"\ninclude_if_exists = '{conf}'", pg_conf)
+
+    def test_post_start_readiness_gate_precedes_lz4_probe(self):
+        # postmaster.pid appears before crash recovery finishes; the boot
+        # must wait for the server to ACCEPT connections (pg_isready) before
+        # the lz4 probe and the getParameter stub run, or slow-recovering
+        # volumes read as probe anomalies. Structural ordering pin (the
+        # behavioral half lives in test_unready_server_stays_inert_and_boots).
+        entrypoint = ENTRYPOINT.read_text(encoding="utf-8")
+        pid_wait = entrypoint.index('while [ ! -f "$DATA_PATH/postmaster.pid" ]')
+        gate = entrypoint.index("pg_isready -h localhost", pid_wait)
+        probe = entrypoint.index("ANY(enumvals)", pid_wait)
+        stub = entrypoint.index(
+            "documentdb_install_getparameter_stub.sh", pid_wait
+        )
+        self.assertLess(gate, probe)
+        self.assertLess(gate, stub)
+
+    def test_unready_server_stays_inert_and_boots(self):
+        # Behavioral half of the readiness gate: pg_isready never reports
+        # ready (WAL recovery that outlasts the bounded gate), the probe
+        # gets no answer -- the boot must NOT fail on that weak evidence,
+        # for the default and for an explicit request alike: warn, leave
+        # the fragment inert, and retry at the next start. The gate honors
+        # DOCUMENTDB_PG_READY_TIMEOUT, which also keeps this test fast.
+        for env, expected in (
+            ({}, "leaving the server default in effect"),
+            (
+                {"DOCUMENTDB_TOAST_COMPRESSION": "lz4"},
+                "NOT in effect this boot",
+            ),
+        ):
+            with self.subTest(env=env):
+                self._configure_toast_stubs(lz4_runtime=None)
+                self._write_exec(self.bin_dir / "pg_isready", "#!/bin/sh\nexit 1\n")
+                run_env = {
+                    "DOCUMENTDB_PG_READY_TIMEOUT": "2",
+                    "DOCUMENTDB_PG_READY_INTERVAL": "1",
+                }
+                run_env.update(env)
+                result, conf, _ = self._run_with_toast_existing_stubs(
+                    extra_env=run_env
+                )
+
+                self.assertEqual(
+                    result.returncode, 0, msg=result.stdout + result.stderr
+                )
+                self.assertNotIn(
+                    "default_toast_compression = ",
+                    conf.read_text(encoding="utf-8"),
+                )
+                self.assertIn(
+                    "readiness could not be confirmed",
+                    result.stdout + result.stderr,
+                )
+                self.assertIn(expected, result.stdout + result.stderr)
+
+    def test_readiness_gate_handles_zero_padded_interval(self):
+        # sanitize_uint passes "08"/"09" through; the gate's elapsed-time
+        # arithmetic must normalize to base 10 first or $(( )) aborts with
+        # "value too great for base" -- with no set -e that abandons the
+        # whole post-start block (probe, stub install, reload) while still
+        # exiting 0: a silent skip. Mirrors the admin-wait pin
+        # (test_admin_user_wait_handles_zero_padded_interval); the instant
+        # sleep stub keeps the 8-second interval from slowing the test.
+        self._configure_toast_stubs()
+        self._write_exec(self.bin_dir / "pg_isready", "#!/bin/sh\nexit 1\n")
+        self._write_exec(self.bin_dir / "sleep", "#!/bin/sh\nexit 0\n")
+        result, conf, _ = self._run_with_toast_existing_stubs(
+            extra_env={
+                "DOCUMENTDB_PG_READY_INTERVAL": "08",
+                "DOCUMENTDB_PG_READY_TIMEOUT": "2",
+            }
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn(
+            "value too great for base", result.stdout + result.stderr
+        )
+        # The post-start block must actually have run: the gate timed out
+        # (bounded), the unanswered probe stayed lenient, and registration
+        # still happened.
+        self.assertIn(
+            "not accepting connections after", result.stdout + result.stderr
+        )
+        pg_conf = (self.data_dir / "postgresql.conf").read_text(encoding="utf-8")
+        self.assertIn(f"include_if_exists = '{conf}'", pg_conf)
+
+    def test_missing_pg_isready_is_no_evidence_for_the_gate(self):
+        # With pg_isready absent, the gate's verdict must be "unknown" --
+        # which the severity selection treats EXACTLY like not-accepting
+        # (lenient), never like confirmed-accepting: no hard failure may be
+        # built on the absence of a probe binary. A behavioral test cannot
+        # portably remove pg_isready (the host's own copy sits later on
+        # PATH), so pin the two halves structurally: the unknown default
+        # before the command -v guard, and the severity condition that
+        # groups unknown with not-accepting.
+        entrypoint = ENTRYPOINT.read_text(encoding="utf-8")
+        unknown = entrypoint.index("toast_pg_accepting=unknown")
+        guard = entrypoint.index("command -v pg_isready", unknown)
+        self.assertLess(unknown, guard)
+        self.assertIn('[ "$toast_pg_accepting" != "true" ]', entrypoint)
+
+    def test_toast_registration_skipped_when_postgresql_conf_missing(self):
+        # The entrypoint must never fabricate a postgresql.conf consisting
+        # only of its include line (wrong ownership story, wrong mode, and a
+        # data dir without a conf is not a server it booted).
+        self._configure_toast_stubs()
+        (self.data_dir / "postgresql.conf").unlink()
+        result, conf, _ = self._run_with_toast_existing_stubs()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertFalse((self.data_dir / "postgresql.conf").exists())
+        self.assertIn(
+            "cannot register the TOAST compression fragment",
+            result.stdout + result.stderr,
+        )
+
+    def test_toast_registration_follows_postgresql_conf_symlink(self):
+        # Split layouts symlink postgresql.conf out of the data directory.
+        # The maintenance must FOLLOW the link and rewrite the TARGET (the
+        # parent's plain `>>` did so implicitly) -- an atomic temp+mv on the
+        # link path would replace the link with a regular file, silently
+        # detaching the operator's layout.
+        self._configure_toast_stubs()
+        real_conf = self.root / "real-postgresql.conf"
+        real_conf.write_text("port = 9712\n", encoding="utf-8")
+        (self.data_dir / "postgresql.conf").unlink()
+        os.symlink(real_conf, self.data_dir / "postgresql.conf")
+        result, conf, _ = self._run_with_toast_existing_stubs()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertTrue((self.data_dir / "postgresql.conf").is_symlink())
+        self.assertIn(
+            f"include_if_exists = '{conf}'",
+            real_conf.read_text(encoding="utf-8"),
+        )
+
+    def test_toast_registration_skipped_when_conf_symlink_is_dangling(self):
+        # A link that cannot be resolved is skipped with a warning rather
+        # than replaced or fabricated.
+        self._configure_toast_stubs()
+        (self.data_dir / "postgresql.conf").unlink()
+        os.symlink(self.root / "no-such-target.conf", self.data_dir / "postgresql.conf")
+        result, conf, _ = self._run_with_toast_existing_stubs()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertTrue((self.data_dir / "postgresql.conf").is_symlink())
+        self.assertFalse((self.root / "no-such-target.conf").exists())
+        self.assertIn(
+            "symlink that cannot be resolved", result.stdout + result.stderr
+        )
+
+    def test_toast_registration_newline_terminates_unterminated_conf(self):
+        # A postgresql.conf whose last line has NO trailing newline must not
+        # swallow the appended include into that line (`port = 9712include_
+        # if_exists = ...` is a syntax error in the persistent volume). The
+        # rewrite normalizes the final newline (awk '1') before appending.
+        self._configure_toast_stubs()
+        (self.data_dir / "postgresql.conf").write_text(
+            "port = 9712", encoding="utf-8"
+        )
+        result, conf, _ = self._run_with_toast_existing_stubs()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        lines = (
+            (self.data_dir / "postgresql.conf")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertEqual(lines[0], "port = 9712")
+        self.assertIn(f"include_if_exists = '{conf}'", lines)
+
+    def test_toast_probe_is_retried_when_psql_fails(self):
+        # The enumvals probe retries briefly (bounded) when psql itself
+        # FAILS -- pin the budget: too few retries loses the tolerance, too
+        # many risks the boot stalling. The stub fails every PROBE attempt
+        # (other psql uses, e.g. the getParameter stub install, keep
+        # succeeding so the boot itself completes) and records each one.
+        self._configure_toast_stubs()
+        psql_args = self.root / "failing-psql-args"
+        self._write_exec(
+            self.bin_dir / "psql",
+            f"""#!/bin/sh
+case "$*" in
+  *enumvals*)
+    printf '%s\\n' "$*" >> "{psql_args}"
+    cat > /dev/null
+    exit 1
+    ;;
+esac
+cat > /dev/null
+exit 0
+""",
+        )
+        result, conf, _ = self._run_with_toast_existing_stubs()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        attempts = [
+            line
+            for line in psql_args.read_text(encoding="utf-8").splitlines()
+            if "enumvals" in line
+        ]
+        self.assertEqual(len(attempts), 5, msg="\n".join(attempts))
+        self.assertIn(
+            "could not confirm lz4 support", result.stdout + result.stderr
+        )
+
+    def test_toast_registration_failure_leaves_conf_untouched(self):
+        # The registration rewrite must be atomic and non-destructive: when
+        # it cannot complete, postgresql.conf must be byte-identical to what
+        # it was -- a plain `>>` append (the parent's approach) can leave a
+        # truncated include line in the persistent volume on a short write.
+        # Failure injection: the temp path the rewrite must create already
+        # exists as a DIRECTORY, so the redirection fails for root and
+        # non-root alike; a `>>`-style implementation would not touch the
+        # temp path and would mutate the conf, failing this test.
+        self._configure_toast_stubs()
+        original = "port = 9712\n"
+        (self.data_dir / "postgresql.conf").write_text(original, encoding="utf-8")
+        (self.data_dir / "postgresql.conf.documentdb-tmp").mkdir()
+        result, conf, _ = self._run_with_toast_existing_stubs()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertEqual(
+            (self.data_dir / "postgresql.conf").read_text(encoding="utf-8"),
+            original,
+        )
+        self.assertIn(
+            "Warning: could not register the TOAST compression fragment",
+            result.stdout + result.stderr,
+        )
+
+    def test_toast_registration_failure_fails_explicit_request(self):
+        # Uniform contract: an explicit non-default request whose include
+        # cannot be put in place can never take effect, on any boot -- that
+        # must be a loud post-start failure through cleanup(), not an exit-0
+        # boot that silently runs with the server default.
+        self._configure_toast_stubs()
+        (self.data_dir / "postgresql.conf").unlink()
+        result, conf, _ = self._run_with_toast_existing_stubs(
+            extra_env={"DOCUMENTDB_TOAST_COMPRESSION": "pglz"}
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cannot take effect", result.stderr)
+        self.assertIn("Shutting down DocumentDB components", result.stdout)
+
+    def _psql_stdin_offenders(self, path):
+        """psql commands in `path` that would inherit the caller's stdin."""
+        return self._psql_stdin_offenders_in_text(
+            path.read_text(encoding="utf-8")
+        )
+
+    @classmethod
+    def _psql_stdin_offenders_in_text(cls, text):
+        """psql commands in shell source that would inherit stdin.
+
+        Joins backslash continuations, blanks out quoted spans and trailing
+        comments (so SQL containing ||, |, ; or the word psql cannot skew
+        the split -- redirections never live inside quotes), then splits
+        every line into its individual commands (on |, ||, &&, ;) so one
+        redirected psql cannot whitelist a sibling on the same line. A
+        command is stdin-controlled when it redirects from /dev/null, feeds
+        a heredoc (<<), or is the consumer of a pipe."""
+        joined = text.replace("\\\n", " ")
+        offenders = []
+        for line in joined.splitlines():
+            if line.strip().startswith("#"):
+                continue
+            masked = cls._mask_shell_strings(line)
+            comment = masked.find(" #")
+            if comment != -1:
+                masked = masked[:comment]
+            parts = re.split(r"(\|\||&&|;|\|)", masked)
+            for k in range(0, len(parts), 2):
+                part = parts[k]
+                if not re.search(r"\bpsql\b", part):
+                    continue
+                piped_in = k > 0 and parts[k - 1] == "|"
+                if not (
+                    "< /dev/null" in part
+                    or "</dev/null" in part
+                    or "<<" in part
+                    or piped_in
+                ):
+                    offenders.append(part.strip())
+        return offenders
+
+    @staticmethod
+    def _mask_shell_strings(line):
+        """Blank string-literal characters in a line of bash (length kept).
+
+        Unlike a flat quote regex, this follows bash semantics for the one
+        nesting that matters here: $( ... ) inside double quotes is CODE
+        again, so v="$(psql -p "$VAR" ...)" keeps its psql word and its
+        redirections visible while the -c "SQL" payload (where |, ;, || and
+        stray psql mentions can legally appear) is blanked."""
+        out = []
+        mode = ["code"]
+        i = 0
+        while i < len(line):
+            c = line[i]
+            top = mode[-1]
+            if top == "squote":
+                if c == "'":
+                    mode.pop()
+                    out.append(c)
+                else:
+                    out.append("x")
+            elif top == "dquote":
+                if c == '"':
+                    mode.pop()
+                    out.append(c)
+                elif line.startswith("$(", i):
+                    mode.append("code")
+                    out.append("$(")
+                    i += 1
+                else:
+                    out.append("x")
+            else:
+                if c == "'":
+                    mode.append("squote")
+                    out.append(c)
+                elif c == '"':
+                    mode.append("dquote")
+                    out.append(c)
+                elif line.startswith("$(", i):
+                    mode.append("code")
+                    out.append("$(")
+                    i += 1
+                elif c == ")" and len(mode) > 1:
+                    mode.pop()
+                    out.append(c)
+                else:
+                    out.append(c)
+            i += 1
+        return "".join(out)
+
+    def test_psql_stdin_pin_sees_command_substitution_invocations(self):
+        # Self-test for the REAL detector (not a re-implementation, which
+        # drifted once already): the enumvals-probe SHAPE -- psql inside
+        # $( ... ) with nested double quotes -- must stay visible (a flat
+        # quote-pairing mask mis-pairs and swallows it), quoted mentions,
+        # SQL operators, and trailing comments must stay hidden, and an
+        # uncontrolled substitution psql must be flagged.
+        flagged = 'v="$(psql -p "$PORT" -c "SELECT 1")"'
+        controlled = flagged.replace(
+            '"SELECT 1")"', '"SELECT a || b" < /dev/null)"'
+        )
+        fixture = "\n".join(
+            [
+                flagged,
+                controlled,
+                'echo "waiting for psql to answer"',
+                'true  # psql without stdin control, but in a comment',
+                "printf 'x' | psql -X",
+            ]
+        )
+        offenders = self._psql_stdin_offenders_in_text(fixture)
+        # Offenders are reported in masked form (string payloads blanked);
+        # assert the shape, not the raw text.
+        self.assertEqual(len(offenders), 1, msg=offenders)
+        self.assertTrue(offenders[0].startswith('v="$(psql'), msg=offenders)
+        # And the whitelist genuinely gates: the same fixture minus the
+        # redirect must flag the controlled line too.
+        offenders = self._psql_stdin_offenders_in_text(
+            fixture.replace(" < /dev/null", "")
+        )
+        self.assertEqual(len(offenders), 2, msg=offenders)
+
+    def test_entrypoint_psql_invocations_control_stdin(self):
+        # Every psql the entrypoint (or a script it drives) runs must feed
+        # SQL via a pipe/heredoc or redirect stdin from /dev/null. A psql
+        # inheriting the container's stdin leaks fd 0 to a child that never
+        # needs it -- and hangs the stub psql these tests use on any runner
+        # whose stdin never EOFs (the exact CI failure that motivated this
+        # pin).
+        for script in (
+            ENTRYPOINT,
+            ENTRYPOINT.parent / "documentdb_install_getparameter_stub.sh",
+        ):
+            with self.subTest(script=script.name):
+                offenders = self._psql_stdin_offenders(script)
+                self.assertEqual(offenders, [], msg="\n".join(offenders))
+
+    def test_usage_documents_toast_compression(self):
+        result = self._run_entrypoint("--help")
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("--toast-compression", result.stdout)
+        self.assertIn("DOCUMENTDB_TOAST_COMPRESSION", result.stdout)
+        # The knob is scoped to the PostgreSQL this container starts; saying so
+        # is what keeps the ignored-with-a-warning behavior from reading like a
+        # bug to anyone running a caller-managed server.
+        self.assertIn("--start-pg false", result.stdout)
+
+    def test_usage_documents_the_external_postgres_mode(self):
+        # --start-pg false silently changes two contracts (no server
+        # configuration is written, and no compatibility stub is installed
+        # into a database this entrypoint does not own). Undocumented, it
+        # invites users to build on behavior that was never intended to be
+        # supported.
+        result = self._run_entrypoint("--help")
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        usage = result.stdout
+        self.assertIn("--start-pg", usage)
+        self.assertIn("Advanced/test use only", usage)
+        self.assertIn("listening", usage)
+        self.assertIn("getParameter", usage)
+
+    def test_toast_compression_omitted_when_build_lacks_lz4(self):
+        # PostgreSQL refuses to start when the value names a method the build
+        # does not have, so the default must degrade to writing nothing.
+        result, conf, _ = self._run_with_toast(lz4_supported=False)
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn(
+            "default_toast_compression = ", conf.read_text(encoding="utf-8")
+        )
+        self.assertIn(
+            "was not built with lz4 support", result.stdout + result.stderr
+        )
+
+    def test_toast_compression_empty_configure_output_degrades_default(self):
+        # meson builds compile CONFIGURE_ARGS in as an EMPTY string (verified
+        # against PostgreSQL 17/master meson.build), so lz4 support cannot be
+        # verified offline for them. When the runtime probe cannot answer
+        # either, the built-in default must degrade to writing nothing -
+        # never write unverified lz4, which would be fatal at the next
+        # restart once the fragment is included.
+        self._configure_toast_stubs(lz4_runtime=None)
+        self._stub_empty_pg_config()
+        result, conf, _ = self._run_with_toast_existing_stubs()
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn(
+            "default_toast_compression = ", conf.read_text(encoding="utf-8")
+        )
+        self.assertIn(
+            "Cannot verify lz4 support", result.stdout + result.stderr
+        )
+
+    def test_toast_compression_explicit_lz4_fails_when_unverifiable(self):
+        # An explicit choice must fail loudly - with a message blaming the
+        # verification gap, not the build - instead of being silently
+        # downgraded (matching the documentdb-tune contract).
+        self._configure_toast_stubs(lz4_runtime=None)
+        self._stub_empty_pg_config()
+        conf = self.root / "toast.conf"
+        result = self._run_entrypoint(
+            extra_env={
+                "START_POSTGRESQL": "true",
+                "TOAST_COMPRESSION_CONF": str(conf),
+                "DOCUMENTDB_TOAST_COMPRESSION": "lz4",
+            }
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cannot be verified", result.stderr)
+
+    def test_toast_compression_failing_pg_config_is_not_trusted(self):
+        # Output printed by a FAILING pg_config must be discarded: a partial
+        # --with-lz4 print from a dying command must not authorize lz4. The
+        # probe then treats support as unverifiable and (with no runtime
+        # answer either) the default degrades to writing nothing.
+        self._configure_toast_stubs(lz4_runtime=None)
+        # Reports a MATCHING major (999) so the gate consults it -- what is
+        # under test is that a failing --configure's output is discarded,
+        # which requires getting past the foreign-binary gate first.
+        self._write_exec(
+            self.bin_dir / "pg_config",
+            """#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "PostgreSQL 999.0"
+fi
+if [ "$1" = "--configure" ]; then
+  echo "'--with-openssl' '--with-lz4'"
+  exit 1
+fi
+exit 0
+""",
+        )
+        result, conf, _ = self._run_with_toast_existing_stubs()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn(
+            "default_toast_compression = ", conf.read_text(encoding="utf-8")
+        )
+        self.assertIn(
+            "Cannot verify lz4 support", result.stdout + result.stderr
+        )
+
+    def test_toast_compression_runtime_probe_promotes_unknown_to_lz4(self):
+        # meson builds leave the offline probe at "unknown", but the live
+        # server can answer authoritatively: pg_settings lists lz4 among
+        # default_toast_compression's enum values exactly when the build has
+        # lz4 (USE_LZ4). Verdict t -> the default applies after all, and the
+        # config is reloaded so the upgraded fragment takes effect now.
+        self._configure_toast_stubs(lz4_runtime="t")
+        self._stub_empty_pg_config()
+        result, conf, _ = self._run_with_toast_existing_stubs()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn(
+            "default_toast_compression = 'lz4'", conf.read_text(encoding="utf-8")
+        )
+        self.assertIn(
+            "SELECT pg_reload_conf()",
+            self.toast_psql_args.read_text(encoding="utf-8"),
+        )
+
+    def test_toast_compression_runtime_probe_allows_explicit_lz4(self):
+        # The whole point of the runtime probe: an explicit lz4 request on a
+        # capable meson build must succeed, not die on the offline
+        # verification gap.
+        self._configure_toast_stubs(lz4_runtime="t")
+        self._stub_empty_pg_config()
+        result, conf, _ = self._run_with_toast_existing_stubs(
+            extra_env={"DOCUMENTDB_TOAST_COMPRESSION": "lz4"}
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn(
+            "default_toast_compression = 'lz4'", conf.read_text(encoding="utf-8")
+        )
+
+    def test_toast_compression_runtime_probe_definitive_no_degrades_default(self):
+        self._configure_toast_stubs(lz4_runtime="f")
+        self._stub_empty_pg_config()
+        result, conf, _ = self._run_with_toast_existing_stubs()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn(
+            "default_toast_compression = ", conf.read_text(encoding="utf-8")
+        )
+        self.assertIn(
+            "was not built with lz4 support", result.stdout + result.stderr
+        )
+
+    def test_toast_compression_runtime_probe_definitive_no_fails_explicit(self):
+        self._configure_toast_stubs(lz4_runtime="f")
+        self._stub_empty_pg_config()
+        result, _, _ = self._run_with_toast_existing_stubs(
+            extra_env={"DOCUMENTDB_TOAST_COMPRESSION": "lz4"}
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("has no lz4 support", result.stderr)
+        # The failure happens AFTER PostgreSQL is up, so it must exit through
+        # cleanup() — a bare exit would fire only the EXIT trap
+        # (cleanup_temp_config), leaving the daemonized postmaster to be
+        # SIGKILLed with PID 1 and forcing WAL recovery on the next boot.
+        self.assertIn("Shutting down DocumentDB components", result.stdout)
+
+    def test_toast_compression_explicit_lz4_fails_on_build_without_lz4(self):
+        self._configure_toast_stubs(lz4_supported=False)
+        conf = self.root / "toast.conf"
+        result = self._run_entrypoint(
+            extra_env={
+                "START_POSTGRESQL": "true",
+                "TOAST_COMPRESSION_CONF": str(conf),
+                "DOCUMENTDB_TOAST_COMPRESSION": "lz4",
+            }
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("has no lz4 support", result.stderr)
+
+    def test_toast_compression_repairs_legacy_hard_include(self):
+        # An earlier iteration registered the fragment as a HARD include via
+        # start_oss_server -f; a hard include of a missing file is fatal at
+        # startup, so such a volume could not boot on an older image
+        # (rollback) or after the fragment path changed. The entrypoint must
+        # convert it to the tolerant form.
+        conf = self.root / "toast.conf"
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        (self.data_dir / "postgresql.conf").write_text(
+            f"port = 9712\ninclude '{conf}'\n", encoding="utf-8"
+        )
+        # initdb creates postgresql.conf 0600; the rewrite must not widen it
+        # to the boot umask (the grep > tmp; mv tmp pattern otherwise would).
+        (self.data_dir / "postgresql.conf").chmod(0o600)
+
+        result, conf, _ = self._run_with_toast()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        pg_conf = (self.data_dir / "postgresql.conf").read_text(encoding="utf-8")
+        self.assertNotIn(f"include '{conf}'\n", pg_conf)
+        self.assertEqual(pg_conf.count(f"include_if_exists = '{conf}'"), 1)
+        # The entrypoint's own recursive data-dir chmod normalizes the file
+        # to 0750 BEFORE the repair runs, so 0750 is what the rewrite must
+        # preserve today (0600 accepted so this pin survives a future
+        # narrowing of that blanket chmod). The failure modes this catches:
+        # a temp left at the boot umask (0644 — world-readable) or the
+        # chmod --reference fallback misfiring.
+        self.assertIn(
+            stat.S_IMODE((self.data_dir / "postgresql.conf").stat().st_mode),
+            (0o600, 0o750),
+        )
+
+    def test_toast_compression_repairs_old_path_hard_include_before_start(self):
+        # A stale hard include may name the legacy iteration's DEFAULT
+        # fragment location while TOAST_COMPRESSION_CONF now points
+        # elsewhere; /tmp is fresh in a new container, so PostgreSQL would
+        # refuse to boot on it. The repair must therefore run BEFORE the
+        # server starts and must match the old path, not just the current
+        # one. The start stub simulates PostgreSQL's fatal hard-include
+        # behavior by refusing to start while any hard include remains.
+        legacy_conf = "/tmp/documentdb_toast_compression.conf"
+        self._configure_toast_stubs()
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        pg_conf_path = self.data_dir / "postgresql.conf"
+        pg_conf_path.write_text(
+            f"port = 9712\ninclude '{legacy_conf}'\n", encoding="utf-8"
+        )
+        self._write_exec(
+            self.gateway_scripts / "start_oss_server.sh",
+            f"""#!/bin/sh
+if grep -q "^include '" "{pg_conf_path}"; then
+  echo "postgres: could not open configuration file" >&2
+  exit 1
+fi
+touch "{self.data_dir / 'postmaster.pid'}" "{self.data_dir / 'pglog.log'}"
+echo oss-server-stub-started
+""",
+        )
+
+        conf = self.root / "toast.conf"
+        result = self._run_entrypoint(
+            extra_env={
+                "START_POSTGRESQL": "true",
+                "TOAST_COMPRESSION_CONF": str(conf),
+            }
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        pg_conf = pg_conf_path.read_text(encoding="utf-8")
+        self.assertNotIn(f"include '{legacy_conf}'", pg_conf)
+        self.assertEqual(pg_conf.count(f"include_if_exists = '{conf}'"), 1)
+
+    def test_toast_compression_fragment_defaults_under_gateway_home(self):
+        # The fragment must not default to a fixed path in world-writable
+        # /tmp: the volume's include_if_exists line outlives the container,
+        # so another uid in a later container could pre-create the /tmp path
+        # and inject arbitrary GUCs. GATEWAY_HOME is owned by the
+        # entrypoint's user and still image-ephemeral (rollback stays safe).
+        self._configure_toast_stubs()
+        result = self._run_entrypoint(extra_env={"START_POSTGRESQL": "true"})
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        fragment = self.gateway_home / "documentdb_toast_compression.conf"
+        self.assertTrue(fragment.exists(), msg=result.stdout + result.stderr)
+        self.assertIn(
+            "default_toast_compression = 'lz4'",
+            fragment.read_text(encoding="utf-8"),
+        )
+        pg_conf = (self.data_dir / "postgresql.conf").read_text(encoding="utf-8")
+        self.assertIn(f"include_if_exists = '{fragment}'", pg_conf)
+
+    def test_toast_compression_removes_stale_tmp_soft_include(self):
+        # A volume stamped with include_if_exists for the old /tmp default
+        # would keep reading a world-writable location on every future boot;
+        # the entrypoint must drop that line once the fragment lives
+        # elsewhere.
+        legacy_line = "include_if_exists = '/tmp/documentdb_toast_compression.conf'"
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        (self.data_dir / "postgresql.conf").write_text(
+            f"port = 9712\n{legacy_line}\n", encoding="utf-8"
+        )
+
+        result, conf, _ = self._run_with_toast()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        pg_conf = (self.data_dir / "postgresql.conf").read_text(encoding="utf-8")
+        self.assertNotIn(legacy_line, pg_conf)
+        self.assertEqual(pg_conf.count(f"include_if_exists = '{conf}'"), 1)
+
+    def _run_with_toast_existing_stubs(self, extra_env=None):
+        conf = self.root / "toast.conf"
+        env = {"START_POSTGRESQL": "true", "TOAST_COMPRESSION_CONF": str(conf)}
+        if extra_env:
+            env.update(extra_env)
+        result = self._run_entrypoint(extra_env=env)
+        return result, conf, None
+
+    def test_toast_compression_include_is_not_duplicated_on_restart(self):
+        # The entrypoint appends the include_if_exists line only when it is
+        # not already present, so a restarted container must not accumulate
+        # duplicates.
+        conf = self.root / "toast.conf"
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        (self.data_dir / "postgresql.conf").write_text(
+            f"port = 9712\ninclude_if_exists = '{conf}'\n", encoding="utf-8"
+        )
+
+        result, conf, _ = self._run_with_toast()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        pg_conf = (self.data_dir / "postgresql.conf").read_text(encoding="utf-8")
+        self.assertEqual(
+            pg_conf.count(f"include_if_exists = '{conf}'"),
+            1,
+            msg=pg_conf,
+        )
+        # The fragment is still refreshed so the value stays in effect.
+        self.assertIn(
+            "default_toast_compression = 'lz4'", conf.read_text(encoding="utf-8")
+        )
+
     def _configure_postgres_stubs(self, psql_exit_code=0):
         sql_capture = self.root / "psql-input.sql"
+        # Append, never truncate: any earlier psql call the entrypoint makes
+        # (e.g. TOAST maintenance) must not wipe the SQL a later call piped
+        # in, or the assertions below would depend on invocation order.
+        sql_capture.write_text("", encoding="utf-8")
         self._write_exec(
             self.gateway_scripts / "start_oss_server.sh",
             f"""#!/bin/sh
@@ -233,7 +1636,7 @@ echo oss-server-stub-started
         self._write_exec(
             self.bin_dir / "psql",
             f"""#!/bin/sh
-cat > "{sql_capture}"
+cat >> "{sql_capture}"
 exit {psql_exit_code}
 """,
         )
@@ -1088,6 +2491,7 @@ class InitDataAttemptMarkerTests(unittest.TestCase):
             text=True,
             capture_output=True,
             timeout=30,
+            stdin=subprocess.DEVNULL,
         )
 
     def test_marker_write_failure_aborts_before_running_scripts(self):
@@ -1231,7 +2635,10 @@ raise SystemExit('Unsupported jq expression: ' + expr)
             args.append(str(config))
         if gateway_home is not None:
             env["GATEWAY_HOME"] = str(gateway_home)
-        return subprocess.run(args, capture_output=True, text=True, env=env)
+        return subprocess.run(
+            args, capture_output=True, text=True, env=env,
+            timeout=30, stdin=subprocess.DEVNULL,
+        )
 
     def _reserved_role_names(self):
         # Source the file and read the array, so we get exactly its entries and
@@ -1245,6 +2652,8 @@ raise SystemExit('Unsupported jq expression: ' + expr)
             ],
             capture_output=True,
             text=True,
+            timeout=30,
+            stdin=subprocess.DEVNULL,
         )
         return [line for line in result.stdout.splitlines() if line]
 

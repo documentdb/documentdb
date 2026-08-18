@@ -1,41 +1,32 @@
-# DocumentDB administrator-tunable PostgreSQL settings (sample).
+# DocumentDB PostgreSQL configuration sample.
 #
-# This file is shipped at /usr/share/doc/documentdb-postgresql-tools/examples/
-# as documentation of the configuration documentdb-tune writes. The
-# recommended way to enable these settings is:
-#
+# Recommended:
 #   sudo documentdb-tune --pg-version N --cluster C --yes
 #
-# which writes the live fragment at
-# /etc/postgresql-common/documentdb/N/C/documentdb.conf and updates the
-# instance's include path. Administrators who prefer to edit
-# postgresql.conf directly can copy this sample into their PostgreSQL
-# instance's existing conf.d/ drop-in directory and rename it (any name
-# ending in .conf is acceptable, e.g. 99-documentdb.conf), then reload
-# or restart PostgreSQL.
-#
-# The block markers below match those written by documentdb-tune; they
-# allow the package's postrm/--restore flow to strip the block cleanly
-# without disturbing administrator-authored lines on either side.
-#
-# Notes on individual settings:
-#   - shared_preload_libraries: pg_cron, pg_documentdb_core, and
-#     pg_documentdb must all be loaded for DocumentDB to function.
-#     If you already preload other extensions, MERGE the value rather
-#     than replace it (documentdb-tune does this automatically).
-#   - cron.database_name: the database that pg_cron stores its job
-#     metadata in. Must exist before the server starts with this setting.
-#   - documentdb.enableBackgroundWorker / enableBackgroundWorkerJobs:
-#     enables the DocumentDB background worker pool for asynchronous
-#     tasks (e.g., TTL purges, statistics refresh).
-#   - documentdb.indexBuildsScheduledOnBgWorker: when false, index
-#     builds run inline in the client session rather than being
-#     scheduled on a background worker. Track 1 defaults to false.
+# Manual setup:
+#   1. Copy this file to an existing PostgreSQL include directory and give it a
+#      .conf filename.
+#   2. Review the settings below for the target cluster.
+#   3. Restart PostgreSQL.
 
 # >>> documentdb-setup managed configuration >>>
+
+# Required libraries. PostgreSQL loads these at startup. Preserve existing
+# entries when applying this manually.
 shared_preload_libraries = 'pg_cron, pg_documentdb_core, pg_documentdb'
+
+# Scheduled and background work.
+# Store pg_cron job metadata in the postgres database.
 cron.database_name = 'postgres'
+# Enable DocumentDB background workers and their jobs.
 documentdb.enableBackgroundWorker = true
 documentdb.enableBackgroundWorkerJobs = true
+# Keep index builds off the DocumentDB background-worker queue.
 documentdb.indexBuildsScheduledOnBgWorker = false
+
+# Compression for newly written TOAST values. lz4 requires an lz4-enabled
+# PostgreSQL build and applies instance-wide. On a shared cluster, omit this
+# line or pass --toast-compression default to documentdb-tune.
+default_toast_compression = 'lz4'
+
 # <<< documentdb-setup managed configuration <<<

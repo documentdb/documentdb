@@ -147,6 +147,29 @@ Authentication (one of the following; interactive prompt is the default):
                          --admin-password-file or --admin-password-stdin).
   (interactive prompt)   Default when running on a TTY without the above.
 
+TOAST compression (environment variable):
+  DOCUMENTDB_TOAST_COMPRESSION
+                         Compression for out-of-line (TOAST) values written
+                         by the managed PostgreSQL configuration: "lz4"
+                         (default, faster decompression for large documents),
+                         "pglz", or "default" to leave the server's own
+                         setting alone. Applies to newly written values only.
+                         Instance-wide: when adopting an existing cluster
+                         (--target-postgres-instance) this changes the
+                         default for EVERY database in that instance, not
+                         just DocumentDB's; use "default" there if other
+                         workloads must keep the server's own setting.
+                         sudo strips environment variables by
+                         default, so pass it THROUGH sudo:
+                           sudo DOCUMENTDB_TOAST_COMPRESSION=default \
+                             documentdb-setup ...
+                         Apply runs validate it up front: an invalid value,
+                         or an lz4 request the build cannot be verified for,
+                         fails before any configuration is written (argument
+                         validation, including TLS file ownership fixes,
+                         runs first). --dry-run does not validate it. Same
+                         knob as documentdb-tune --toast-compression.
+
 TLS for the gateway listener (all three are pass-through to the per-major
 gateway env file; design §4.3 is the source of truth on precedence):
   --tls-cert <FILE>      PEM certificate file; must be paired with --tls-key.
@@ -1563,6 +1586,12 @@ EOF
     postgres_conf_block+=$'\n'"documentdb.enableBackgroundWorkerJobs = true"
     postgres_conf_block+=$'\n'"documentdb.indexBuildsScheduledOnBgWorker = false"
 
+    # Kept in step with documentdb-tune's block: empty means the operator asked
+    # to leave the setting alone, or the build has no lz4 support.
+    if [[ -n "${TOAST_COMPRESSION:-}" ]]; then
+        postgres_conf_block+=$'\n'"default_toast_compression = '${TOAST_COMPRESSION}'"
+    fi
+
     if [[ "${HAS_EXTENDED_RUM}" == "true" ]]; then
         postgres_conf_block+=$'\n'"documentdb.rum_library_load_option = 'require_documentdb_extended_rum'"
         postgres_conf_block+=$'\n'"documentdb.alternate_index_handler_name = 'extended_rum'"
@@ -1607,10 +1636,21 @@ apply_managed_postgres_settings() {
     # uses identical managed-block markers so the two paths are
     # interchangeable from a postrm-cleanup standpoint.
     if command_exists documentdb-tune; then
-        local prev_mtime=""
+        # Change tracking by content hash, not mtime: second-granularity
+        # mtimes miss same-second rewrites (back-to-back scripted runs), and
+        # hashes ignore content-identical touches.
+        local prev_conf_hash=""
         if [[ -f "${config_file}" ]]; then
-            prev_mtime="$(stat -c %Y "${config_file}" 2>/dev/null || echo 0)"
+            prev_conf_hash="$(sha256sum "${config_file}" 2>/dev/null | awk '{print $1}')"
         fi
+        # On Debian brownfield tune writes the per-cluster FRAGMENT (path set
+        # below), not ${config_file}, which only ever gains the include line
+        # once. A fragment-only change must still flip PG_CONFIG_CHANGED, or
+        # the wizard neither restarts PostgreSQL nor says to, and the running
+        # server silently keeps its old settings. Loop-safe: tune skips an
+        # up-to-date fragment, so the post-restart re-run sees no change.
+        local tune_fragment=""
+        local prev_fragment_hash=""
         log_verbose "Delegating postgresql.conf tuning to documentdb-tune."
 
         # On Debian brownfield,
@@ -1626,6 +1666,12 @@ apply_managed_postgres_settings() {
         local -a tune_args=()
         if [[ -n "${TARGET_CLUSTER}" && -d "/etc/postgresql/${PG_VERSION}/${TARGET_CLUSTER#*/}" ]]; then
             tune_args+=(--pg-version "${PG_VERSION}" --cluster "${TARGET_CLUSTER#*/}")
+            # tune's CONFIG_TARGET for the --pg-version/--cluster form, via
+            # the shared helper so the two tools cannot drift.
+            tune_fragment="$(documentdb_tune_fragment_path "${PG_VERSION}" "${TARGET_CLUSTER#*/}")"
+            if [[ -f "${tune_fragment}" ]]; then
+                prev_fragment_hash="$(sha256sum "${tune_fragment}" 2>/dev/null | awk '{print $1}')"
+            fi
             # Forward the wizard-verified socket dir + port. In brownfield
             # PG_SOCKET_DIR was overridden to the adopted instance's distro
             # socket (prepare_brownfield_instance) and PG_PORT to the port we
@@ -1668,12 +1714,21 @@ apply_managed_postgres_settings() {
                 documentdb-tune "${tune_args[@]}" >/dev/null; then
             die "documentdb-tune failed; see above for details."
         fi
-        local new_mtime=""
+        local new_conf_hash=""
         if [[ -f "${config_file}" ]]; then
-            new_mtime="$(stat -c %Y "${config_file}" 2>/dev/null || echo 0)"
+            new_conf_hash="$(sha256sum "${config_file}" 2>/dev/null | awk '{print $1}')"
         fi
-        if [[ "${prev_mtime}" != "${new_mtime}" ]]; then
+        if [[ "${prev_conf_hash}" != "${new_conf_hash}" ]]; then
             PG_CONFIG_CHANGED=true
+        fi
+        if [[ -n "${tune_fragment}" ]]; then
+            local new_fragment_hash=""
+            if [[ -f "${tune_fragment}" ]]; then
+                new_fragment_hash="$(sha256sum "${tune_fragment}" 2>/dev/null | awk '{print $1}')"
+            fi
+            if [[ "${prev_fragment_hash}" != "${new_fragment_hash}" ]]; then
+                PG_CONFIG_CHANGED=true
+            fi
         fi
 
         # Per-instance isolation settings (port, socket dir, listen
@@ -1726,6 +1781,9 @@ EOF
                 "${wizard_listen_block}"
         fi
     else
+        # Resolve before the command substitution below, so a bad value reports
+        # from the main shell rather than dying inside a subshell.
+        documentdb_resolve_toast_compression "" "${PG_VERSION}"
         postgres_conf_block="$(build_postgres_conf_block "${merged_preload}" "${ssl_setting}")"
         existing_postgres_conf_block="$(extract_managed_block_content "${config_file}" "${POSTGRES_CONF_BLOCK_START}" "${POSTGRES_CONF_BLOCK_END}")"
         if [[ "${existing_postgres_conf_block}" != "${postgres_conf_block}" ]]; then
@@ -2008,6 +2066,15 @@ preflight_validation() {
     # path is rejected on the authoritative major before any mutation.
     enforce_gateway_pg_major_supported "${PG_VERSION}"
     resolve_runtime_paths
+
+    # An invalid value, or an explicit lz4 request the build cannot be verified
+    # for, must die HERE, before the wizard writes any configuration. The same
+    # resolution runs again later (inline fallback or the tune delegation, which
+    # are mutually exclusive), but by then dying would leave a half-applied
+    # install. Resolution is pure, so running it twice is safe; the only cost is
+    # the degrade warning printing twice on unverifiable builds, accepted in
+    # favor of visibility.
+    documentdb_resolve_toast_compression "" "${PG_VERSION}"
 
     # Greenfield over brownfield: refuse BEFORE any mutation. The same
     # check in persist_self_managed_postgres_state fires only after
@@ -2690,8 +2757,18 @@ prepare_brownfield_instance() {
         log_warn "Adopting an existing PostgreSQL instance owned by OS user '${live_owner:-uid ${live_owner_uid}}' (data_directory ${LIVE_DATA_DIR})."
         log_warn "  This wizard will write managed blocks to that instance's postgresql.conf, pg_hba.conf, and pg_ident.conf,"
         log_warn "  create the documentdb-gateway PG role, and install a systemd drop-in that ties documentdb-gateway-local@${PG_VERSION}.service"
-        log_warn "  to the adopted PG service. All changes are reversible via 'documentdb-setup --restore' or 'apt purge documentdb-${PG_VERSION}'."
+        log_warn "  to the adopted PG service. All configuration changes are reversible via 'documentdb-setup --restore' or 'apt purge documentdb-${PG_VERSION}'."
         log_warn "  Existing PostgreSQL data, users, and application schemas are preserved; only managed-block edits and a few new role grants are added."
+        # default_toast_compression is the one managed setting whose blast
+        # radius is the whole instance rather than DocumentDB's own objects,
+        # and the one whose effect --restore cannot fully undo, so the consent
+        # prompt has to say both. Skipped when the resolver chose to write
+        # nothing, which is exactly when neither statement would be true.
+        if [[ -n "${TOAST_COMPRESSION:-}" ]]; then
+            log_warn "  It also sets default_toast_compression = '${TOAST_COMPRESSION}', which is INSTANCE-WIDE: newly written out-of-line (TOAST)"
+            log_warn "  values in EVERY database on this instance use it, not just DocumentDB's. '--restore' removes the setting but does not rewrite"
+            log_warn "  values already stored with it. Re-run with DOCUMENTDB_TOAST_COMPRESSION=default to leave that setting untouched."
+        fi
         if [[ "${YES}" != "true" ]]; then
             local reply=""
             printf 'Adopt this PostgreSQL instance and continue? [y/N] ' >&2
@@ -2840,6 +2917,19 @@ wait_for_postgres() {
 # re-run silently reset the gateway port and TLS material (now also
 # defended in default_gateway_settings_from_persisted_state, but the
 # printed command should still reflect what the operator asked for).
+# build_rerun_env_prefix: environment assignments the printed re-run command
+# must repeat. sudo strips the caller's environment by default, and a
+# command-scoped `sudo VAR=x documentdb-setup ...` assignment does not survive
+# into a copied re-run, so an operator who asked for a specific TOAST
+# compression would silently get the built-in default on the second run, which
+# rewrites the fragment and demands yet another restart. Only an EXPLICIT
+# request is echoed: repeating the default would also convert a quiet degrade
+# on builds that cannot verify lz4 into a hard failure.
+build_rerun_env_prefix() {
+    [[ -n "${DOCUMENTDB_TOAST_COMPRESSION:-}" ]] || return 0
+    printf 'DOCUMENTDB_TOAST_COMPRESSION=%q ' "${DOCUMENTDB_TOAST_COMPRESSION}"
+}
+
 build_rerun_suffix() {
     local suffix=""
     [[ -n "${USERNAME}" ]] && suffix+=" --admin-user ${USERNAME}"
@@ -2896,7 +2986,7 @@ start_or_restart_postgres() {
             # use a value check, not ${YES:+...}.
             local rerun_suffix=""
             rerun_suffix="$(build_rerun_suffix)"
-            log_warn "  2. sudo documentdb-setup --target-postgres-instance ${TARGET_CLUSTER}${rerun_suffix}"
+            log_warn "  2. sudo $(build_rerun_env_prefix)documentdb-setup --target-postgres-instance ${TARGET_CLUSTER}${rerun_suffix}"
             if [[ "${PASSWORD_FROM_STDIN}" == "true" ]]; then
                 log_warn "     (pipe the admin password to step 2 again, e.g.: printf %s \"\$PW\" | sudo documentdb-setup ...)"
             fi
@@ -2937,7 +3027,7 @@ start_or_restart_postgres() {
                 local rerun_suffix=""
                 rerun_suffix="$(build_rerun_suffix)"
                 log_warn "  1. ${reload_hint}"
-                log_warn "  2. sudo documentdb-setup --target-postgres-instance ${TARGET_CLUSTER}${rerun_suffix}"
+                log_warn "  2. sudo $(build_rerun_env_prefix)documentdb-setup --target-postgres-instance ${TARGET_CLUSTER}${rerun_suffix}"
                 if [[ "${PASSWORD_FROM_STDIN}" == "true" ]]; then
                     log_warn "     (pipe the admin password to step 2 again, e.g.: printf %s \"\$PW\" | sudo documentdb-setup ...)"
                 fi

@@ -57,7 +57,7 @@ class TunePgdataValidationTests(unittest.TestCase):
     def _run(self, *args):
         return subprocess.run(
             ["bash", str(TUNE_SCRIPT), *args],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
 
     def test_apply_rejects_nonexistent_pgdata(self):
@@ -129,7 +129,7 @@ class SharedPreloadParserFormsTests(unittest.TestCase):
                 f"read_shared_preload_libraries_from_file {shlex.quote(str(conf))}\n"
             )
             r = subprocess.run(["bash", "-c", script],
-                               capture_output=True, text=True, timeout=10)
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
             self.assertEqual(r.returncode, 0, r.stderr)
             return r.stdout
 
@@ -160,7 +160,7 @@ class SharedPreloadParserFormsTests(unittest.TestCase):
                 "Shared_Preload_Libraries 'something_else'\n", encoding="utf-8")
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--yes"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("missing required documentdb libraries", r.stderr)
@@ -190,7 +190,7 @@ class TuneExtendedRumDerivationTests(unittest.TestCase):
             (Path(td) / "PG_VERSION").write_text("17\n", encoding="utf-8")
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--print", "--verbose"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("Derived PostgreSQL major 17", r.stderr)
@@ -201,7 +201,7 @@ class TuneExtendedRumDerivationTests(unittest.TestCase):
             (Path(td) / "postgresql.conf").write_text("port = 5433\n", encoding="utf-8")
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td, "--print"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("extended-RUM detection is skipped", r.stderr)
@@ -213,7 +213,7 @@ class TuneExtendedRumDerivationTests(unittest.TestCase):
             r = subprocess.run(
                 ["bash", str(TUNE_SCRIPT), "--pgdata", td,
                  "--pg-version", "18", "--print", "--verbose"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("Derived PostgreSQL major", r.stderr)
@@ -247,7 +247,7 @@ class TuneDebianIncludeLineAnchoringTests(unittest.TestCase):
                 "else echo MISSING; fi\n"
             )
             r = subprocess.run(["bash", "-c", script],
-                               capture_output=True, text=True, timeout=10)
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
             self.assertEqual(r.returncode, 0, r.stderr)
             return r.stdout.strip()
 
@@ -416,7 +416,7 @@ class RegisterGatewayTlsAutoGenerateValidationTests(unittest.TestCase):
             r = subprocess.run(
                 ["bash", str(GATEWAY_SETUP_SCRIPT), "--pgdata", td,
                  "--tls-auto-generate", "false", "--dry-run", "--yes"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         self.assertNotEqual(r.returncode, 0)
         self.assertIn(self.ERROR_SNIPPET, r.stderr)
@@ -434,7 +434,7 @@ class RegisterGatewayTlsAutoGenerateValidationTests(unittest.TestCase):
                  "--tls-auto-generate", "false",
                  "--tls-cert", str(cert), "--tls-key", str(key),
                  "--dry-run", "--yes"],
-                capture_output=True, text=True, timeout=10,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
             )
         # The run may stop later for unrelated environmental reasons; the
         # contract under test is only that this validation does not fire.
@@ -444,7 +444,7 @@ class RegisterGatewayTlsAutoGenerateValidationTests(unittest.TestCase):
         r = subprocess.run(
             ["bash", str(GATEWAY_SETUP_SCRIPT), "--restore", "--dry-run",
              "--pg-version", "99", "--tls-auto-generate", "false"],
-            capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertNotIn(self.ERROR_SNIPPET, r.stderr)
 
@@ -621,7 +621,7 @@ class EntrypointAdminPasswordHardeningTests(unittest.TestCase):
             r = subprocess.run(
                 ["bash", str(ENTRYPOINT)],
                 cwd=str(OSS_ROOT), env=env, text=True,
-                capture_output=True, timeout=30,
+                stdin=subprocess.DEVNULL, capture_output=True, timeout=30,
             )
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             # The hardened shadow ran (not the stock utils.sh path).
@@ -673,7 +673,7 @@ class EntrypointAdminPasswordHardeningTests(unittest.TestCase):
             r = subprocess.run(
                 ["bash", str(ENTRYPOINT)],
                 cwd=str(OSS_ROOT), env=env, text=True,
-                capture_output=True, timeout=30,
+                stdin=subprocess.DEVNULL, capture_output=True, timeout=30,
             )
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             self.assertIn("stub-user-created", r.stdout)

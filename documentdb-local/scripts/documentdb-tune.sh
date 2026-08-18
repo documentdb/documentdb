@@ -31,6 +31,8 @@ ACTION="apply"      # apply | restore | print
 DRY_RUN=false
 YES=false
 VERBOSE=false
+TOAST_COMPRESSION_REQUESTED=""  # explicit --toast-compression choice
+TOAST_COMPRESSION=""            # resolved value; "" leaves the setting alone
 
 # Resolved at runtime
 CONFIG_TARGET=""
@@ -104,6 +106,15 @@ Options:
                     backslashes.
   --port PORT       Port used to route the extension's internal connections
                     (1-65535); overrides the value read from the cluster config.
+  --toast-compression MODE
+                    Compression used for out-of-line (TOAST) values:
+                    "lz4" (default, faster decompression for large documents),
+                    "pglz", or "default" to leave the server's own setting
+                    alone. Applies to newly written values only. Also settable
+                    via the DOCUMENTDB_TOAST_COMPRESSION environment variable.
+                    Instance-wide: on a shared cluster this changes the
+                    default for EVERY database, not just DocumentDB's; use
+                    "default" there if others must keep the server's setting.
   --yes             Apply changes without prompting
   --dry-run         Show what would change without writing
   --restore         Remove the managed config block
@@ -162,6 +173,12 @@ build_config_block() {
     block+=$'\n'"documentdb.enableBackgroundWorkerJobs = true"
     block+=$'\n'"documentdb.indexBuildsScheduledOnBgWorker = false"
     block+=$'\n'"documentdb.localhost_connection_string = '$(resolve_localhost_connection)'"
+
+    # Empty means the operator asked us to leave the server's own setting alone,
+    # or the build has no lz4 support.
+    if [[ -n "${TOAST_COMPRESSION}" ]]; then
+        block+=$'\n'"default_toast_compression = '${TOAST_COMPRESSION}'"
+    fi
 
     if [[ "${HAS_EXTENDED_RUM}" == "true" ]]; then
         block+=$'\n'"documentdb.rum_library_load_option = 'require_documentdb_extended_rum'"
@@ -222,8 +239,7 @@ resolve_config_target() {
         # via include_dir; the .sample example in
         # /usr/share/doc/documentdb-postgresql-tools/examples/ follows the
         # PostgreSQL .sample convention). Per packaging-design.md §4.2.
-        local cluster_dir="/etc/postgresql-common/documentdb/${PG_VERSION}/${CLUSTER_NAME}"
-        CONFIG_TARGET="${cluster_dir}/documentdb.conf"
+        CONFIG_TARGET="$(documentdb_tune_fragment_path "${PG_VERSION}" "${CLUSTER_NAME}")"
         # Track the live instance's postgresql.conf so that, on existing
         # clusters that pre-date the hook, we can add the include line
         # ourselves; otherwise the fragment would be silently unused.
@@ -1203,6 +1219,13 @@ parse_arguments() {
                     die "--port must be between 1 and 65535 (got '$2')."
                 fi
                 PG_PORT_OVERRIDE="$2"; shift 2 ;;
+            --toast-compression)
+                [[ $# -ge 2 ]] || die "--toast-compression requires a value."
+                case "$2" in
+                    lz4|pglz|default) ;;
+                    *) die "--toast-compression must be 'lz4', 'pglz', or 'default' (got '$2')." ;;
+                esac
+                TOAST_COMPRESSION_REQUESTED="$2"; shift 2 ;;
             --yes) YES=true; shift ;;
             --dry-run) DRY_RUN=true; shift ;;
             --restore) ACTION="restore"; shift ;;
@@ -1272,6 +1295,11 @@ main() {
     if [[ -n "${PG_VERSION}" ]]; then
         resolve_pg_sharedir
         documentdb_detect_extended_rum "${PG_SHAREDIR}"
+    fi
+
+    # --restore only strips the managed block, so it never needs a value here.
+    if [[ "${ACTION}" != "restore" ]]; then
+        documentdb_resolve_toast_compression "${TOAST_COMPRESSION_REQUESTED}" "${PG_VERSION}"
     fi
 
     case "${ACTION}" in
