@@ -2842,4 +2842,43 @@ mod tests {
 
         assert_eq!(error.error_code(), crate::error::ErrorCode::BadValue);
     }
+
+    #[test]
+    fn parses_pg18_fractional_actual_rows() {
+        let pg18_explain = serde_json::json!([
+            {
+                "Plan": {
+                    "Node Type": "Nested Loop",
+                    "Actual Rows": 7.0,
+                    "Actual Loops": 1,
+                    "Plans": [
+                        {
+                            "Node Type": "Index Only Scan",
+                            "Index Name": "in2_k_idx",
+                            "Actual Rows": 2.33,
+                            "Actual Loops": 3,
+                            "Rows Removed by Filter": 1.67,
+                            "Heap Fetches": 0.5,
+                            "Shared Hit Blocks": 4.5
+                        }
+                    ]
+                },
+                "Planning Time": 0.1,
+                "Execution Time": 0.2
+            }
+        ]);
+
+        let parsed: Result<Vec<super::model::PostgresExplain>, _> =
+            serde_json::from_value(pg18_explain);
+
+        let plans = parsed.expect("PG18 fractional row counts must deserialize");
+        let root = &plans[0].plan;
+        assert_eq!(root.actual_rows, Some(7));
+        let inner = &root.inner_plans.as_ref().expect("inner plan")[0];
+        // 2.33 rounds to 2, 1.67 rounds to 2.
+        assert_eq!(inner.actual_rows, Some(2));
+        assert_eq!(inner.rows_removed_by_filter, Some(2));
+        assert_eq!(inner.heap_fetches, Some(1));
+        assert_eq!(inner.shared_hit_blocks, Some(5));
+    }
 }
