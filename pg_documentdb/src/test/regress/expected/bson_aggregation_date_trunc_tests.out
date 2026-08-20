@@ -1,0 +1,893 @@
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog;
+SET documentdb.next_collection_id TO 25850100;
+SET documentdb.next_collection_index_id TO 25850100;
+-- $dateTrunc behavioral coverage. Each SELECT is a complete, independent case.
+-- Proleptic Gregorian calendar behavior.
+SELECT 'calendar_1500_day' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-14826628800000"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+      case_id      |                        bson_dollar_project                         
+-------------------+--------------------------------------------------------------------
+ calendar_1500_day | { "result" : { "$date" : { "$numberLong" : "-14826672000000" } } }
+(1 row)
+
+SELECT 'calendar_1500_month' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-14826628800000"}},"unit":"month","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+       case_id       |                        bson_dollar_project                         
+---------------------+--------------------------------------------------------------------
+ calendar_1500_month | { "result" : { "$date" : { "$numberLong" : "-14826672000000" } } }
+(1 row)
+
+SELECT 'calendar_1500_quarter' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-14826628800000"}},"unit":"quarter","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+        case_id        |                        bson_dollar_project                         
+-----------------------+--------------------------------------------------------------------
+ calendar_1500_quarter | { "result" : { "$date" : { "$numberLong" : "-14831769600000" } } }
+(1 row)
+
+SELECT 'calendar_1500_week' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-14826628800000"}},"unit":"week","binSize":{"$numberLong":"1"},"timezone":"UTC","startOfWeek":"sunday"}}}');
+      case_id       |                        bson_dollar_project                         
+--------------------+--------------------------------------------------------------------
+ calendar_1500_week | { "result" : { "$date" : { "$numberLong" : "-14827017600000" } } }
+(1 row)
+
+SELECT 'calendar_1500_year' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-14826628800000"}},"unit":"year","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+      case_id       |                        bson_dollar_project                         
+--------------------+--------------------------------------------------------------------
+ calendar_1500_year | { "result" : { "$date" : { "$numberLong" : "-14831769600000" } } }
+(1 row)
+
+SELECT 'calendar_1600_leap_day' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-11670955200000"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+        case_id         |                        bson_dollar_project                         
+------------------------+--------------------------------------------------------------------
+ calendar_1600_leap_day | { "result" : { "$date" : { "$numberLong" : "-11670998400000" } } }
+(1 row)
+
+SELECT 'calendar_1600_leap_month' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-11670955200000"}},"unit":"month","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+         case_id          |                        bson_dollar_project                         
+--------------------------+--------------------------------------------------------------------
+ calendar_1600_leap_month | { "result" : { "$date" : { "$numberLong" : "-11673417600000" } } }
+(1 row)
+
+SELECT 'calendar_1600_leap_year' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-11670955200000"}},"unit":"year","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+         case_id         |                        bson_dollar_project                         
+-------------------------+--------------------------------------------------------------------
+ calendar_1600_leap_year | { "result" : { "$date" : { "$numberLong" : "-11676096000000" } } }
+(1 row)
+
+-- ISO year 0000 is 1 BCE, and ISO year -000001 is 2 BCE.
+SELECT 'calendar_year_zero_month' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-62152831503211"}},"unit":"month","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+         case_id          |                        bson_dollar_project                         
+--------------------------+--------------------------------------------------------------------
+ calendar_year_zero_month | { "result" : { "$date" : { "$numberLong" : "-62154086400000" } } }
+(1 row)
+
+SELECT 'calendar_year_zero_quarter' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-62152831503211"}},"unit":"quarter","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+          case_id           |                        bson_dollar_project                         
+----------------------------+--------------------------------------------------------------------
+ calendar_year_zero_quarter | { "result" : { "$date" : { "$numberLong" : "-62159356800000" } } }
+(1 row)
+
+SELECT 'calendar_year_zero_year' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-62152831503211"}},"unit":"year","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+         case_id         |                        bson_dollar_project                         
+-------------------------+--------------------------------------------------------------------
+ calendar_year_zero_year | { "result" : { "$date" : { "$numberLong" : "-62167219200000" } } }
+(1 row)
+
+SELECT 'calendar_year_minus_one_month' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-62184453903211"}},"unit":"month","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+            case_id            |                        bson_dollar_project                         
+-------------------------------+--------------------------------------------------------------------
+ calendar_year_minus_one_month | { "result" : { "$date" : { "$numberLong" : "-62185708800000" } } }
+(1 row)
+
+SELECT 'calendar_year_minus_one_quarter' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-62184453903211"}},"unit":"quarter","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+             case_id             |                        bson_dollar_project                         
+---------------------------------+--------------------------------------------------------------------
+ calendar_year_minus_one_quarter | { "result" : { "$date" : { "$numberLong" : "-62190979200000" } } }
+(1 row)
+
+SELECT 'calendar_year_minus_one_year' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"-62184453903211"}},"unit":"year","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+           case_id            |                        bson_dollar_project                         
+------------------------------+--------------------------------------------------------------------
+ calendar_year_minus_one_year | { "result" : { "$date" : { "$numberLong" : "-62198755200000" } } }
+(1 row)
+
+-- Expression evaluation with default optional arguments: literal and field-path parity.
+SELECT 'constant_day_default' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1716049038987"}},"unit":"day"}}}');
+       case_id        |                       bson_dollar_project                        
+----------------------+------------------------------------------------------------------
+ constant_day_default | { "result" : { "$date" : { "$numberLong" : "1715990400000" } } }
+(1 row)
+
+SELECT 'expression_day_default' AS case_id, * FROM bson_dollar_project('{"input":{"$date":{"$numberLong":"1716049038987"}}}', '{"result":{"$dateTrunc":{"date":"$input","unit":"day"}}}');
+        case_id         |                       bson_dollar_project                        
+------------------------+------------------------------------------------------------------
+ expression_day_default | { "result" : { "$date" : { "$numberLong" : "1715990400000" } } }
+(1 row)
+
+SELECT 'constant_hour_default' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1716049038987"}},"unit":"hour"}}}');
+        case_id        |                       bson_dollar_project                        
+-----------------------+------------------------------------------------------------------
+ constant_hour_default | { "result" : { "$date" : { "$numberLong" : "1716048000000" } } }
+(1 row)
+
+SELECT 'expression_hour_default' AS case_id, * FROM bson_dollar_project('{"input":{"$date":{"$numberLong":"1716049038987"}}}', '{"result":{"$dateTrunc":{"date":"$input","unit":"hour"}}}');
+         case_id         |                       bson_dollar_project                        
+-------------------------+------------------------------------------------------------------
+ expression_hour_default | { "result" : { "$date" : { "$numberLong" : "1716048000000" } } }
+(1 row)
+
+SELECT 'constant_minute_default' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1716049038987"}},"unit":"minute"}}}');
+         case_id         |                       bson_dollar_project                        
+-------------------------+------------------------------------------------------------------
+ constant_minute_default | { "result" : { "$date" : { "$numberLong" : "1716049020000" } } }
+(1 row)
+
+SELECT 'expression_minute_default' AS case_id, * FROM bson_dollar_project('{"input":{"$date":{"$numberLong":"1716049038987"}}}', '{"result":{"$dateTrunc":{"date":"$input","unit":"minute"}}}');
+          case_id          |                       bson_dollar_project                        
+---------------------------+------------------------------------------------------------------
+ expression_minute_default | { "result" : { "$date" : { "$numberLong" : "1716049020000" } } }
+(1 row)
+
+SELECT 'constant_month_default' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1716049038987"}},"unit":"month"}}}');
+        case_id         |                       bson_dollar_project                        
+------------------------+------------------------------------------------------------------
+ constant_month_default | { "result" : { "$date" : { "$numberLong" : "1714521600000" } } }
+(1 row)
+
+SELECT 'expression_month_default' AS case_id, * FROM bson_dollar_project('{"input":{"$date":{"$numberLong":"1716049038987"}}}', '{"result":{"$dateTrunc":{"date":"$input","unit":"month"}}}');
+         case_id          |                       bson_dollar_project                        
+--------------------------+------------------------------------------------------------------
+ expression_month_default | { "result" : { "$date" : { "$numberLong" : "1714521600000" } } }
+(1 row)
+
+SELECT 'constant_quarter_default' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1716049038987"}},"unit":"quarter"}}}');
+         case_id          |                       bson_dollar_project                        
+--------------------------+------------------------------------------------------------------
+ constant_quarter_default | { "result" : { "$date" : { "$numberLong" : "1711929600000" } } }
+(1 row)
+
+SELECT 'expression_quarter_default' AS case_id, * FROM bson_dollar_project('{"input":{"$date":{"$numberLong":"1716049038987"}}}', '{"result":{"$dateTrunc":{"date":"$input","unit":"quarter"}}}');
+          case_id           |                       bson_dollar_project                        
+----------------------------+------------------------------------------------------------------
+ expression_quarter_default | { "result" : { "$date" : { "$numberLong" : "1711929600000" } } }
+(1 row)
+
+SELECT 'constant_second_default' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1716049038987"}},"unit":"second"}}}');
+         case_id         |                       bson_dollar_project                        
+-------------------------+------------------------------------------------------------------
+ constant_second_default | { "result" : { "$date" : { "$numberLong" : "1716049038000" } } }
+(1 row)
+
+SELECT 'expression_second_default' AS case_id, * FROM bson_dollar_project('{"input":{"$date":{"$numberLong":"1716049038987"}}}', '{"result":{"$dateTrunc":{"date":"$input","unit":"second"}}}');
+          case_id          |                       bson_dollar_project                        
+---------------------------+------------------------------------------------------------------
+ expression_second_default | { "result" : { "$date" : { "$numberLong" : "1716049038000" } } }
+(1 row)
+
+SELECT 'constant_week_default' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1716049038987"}},"unit":"week"}}}');
+        case_id        |                       bson_dollar_project                        
+-----------------------+------------------------------------------------------------------
+ constant_week_default | { "result" : { "$date" : { "$numberLong" : "1715472000000" } } }
+(1 row)
+
+SELECT 'expression_week_default' AS case_id, * FROM bson_dollar_project('{"input":{"$date":{"$numberLong":"1716049038987"}}}', '{"result":{"$dateTrunc":{"date":"$input","unit":"week"}}}');
+         case_id         |                       bson_dollar_project                        
+-------------------------+------------------------------------------------------------------
+ expression_week_default | { "result" : { "$date" : { "$numberLong" : "1715472000000" } } }
+(1 row)
+
+SELECT 'constant_year_default' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1716049038987"}},"unit":"year"}}}');
+        case_id        |                       bson_dollar_project                        
+-----------------------+------------------------------------------------------------------
+ constant_year_default | { "result" : { "$date" : { "$numberLong" : "1704067200000" } } }
+(1 row)
+
+SELECT 'expression_year_default' AS case_id, * FROM bson_dollar_project('{"input":{"$date":{"$numberLong":"1716049038987"}}}', '{"result":{"$dateTrunc":{"date":"$input","unit":"year"}}}');
+         case_id         |                       bson_dollar_project                        
+-------------------------+------------------------------------------------------------------
+ expression_year_default | { "result" : { "$date" : { "$numberLong" : "1704067200000" } } }
+(1 row)
+
+-- Day truncation, including leap years, multi-day and large 64-bit bins, offsets, and DST.
+SELECT 'day_1999_december' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946643696789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+      case_id      |                       bson_dollar_project                       
+-------------------+-----------------------------------------------------------------
+ day_1999_december | { "result" : { "$date" : { "$numberLong" : "946598400000" } } }
+(1 row)
+
+SELECT 'day_1999_february' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"919082096789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+      case_id      |                       bson_dollar_project                       
+-------------------+-----------------------------------------------------------------
+ day_1999_february | { "result" : { "$date" : { "$numberLong" : "919036800000" } } }
+(1 row)
+
+SELECT 'day_1999_january' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"916403696789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+     case_id      |                       bson_dollar_project                       
+------------------+-----------------------------------------------------------------
+ day_1999_january | { "result" : { "$date" : { "$numberLong" : "916358400000" } } }
+(1 row)
+
+SELECT 'day_2000_dec_31' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"978266096789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+     case_id     |                       bson_dollar_project                       
+-----------------+-----------------------------------------------------------------
+ day_2000_dec_31 | { "result" : { "$date" : { "$numberLong" : "978220800000" } } }
+(1 row)
+
+SELECT 'day_2000_feb_28' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"951741296789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+     case_id     |                       bson_dollar_project                       
+-----------------+-----------------------------------------------------------------
+ day_2000_feb_28 | { "result" : { "$date" : { "$numberLong" : "951696000000" } } }
+(1 row)
+
+SELECT 'day_2000_feb_29' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"951827696789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+     case_id     |                       bson_dollar_project                       
+-----------------+-----------------------------------------------------------------
+ day_2000_feb_29 | { "result" : { "$date" : { "$numberLong" : "951782400000" } } }
+(1 row)
+
+SELECT 'day_2000_mar_01' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"951914096789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+     case_id     |                       bson_dollar_project                       
+-----------------+-----------------------------------------------------------------
+ day_2000_mar_01 | { "result" : { "$date" : { "$numberLong" : "951868800000" } } }
+(1 row)
+
+SELECT 'day_2001_feb_01' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"981030896789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+     case_id     |                       bson_dollar_project                       
+-----------------+-----------------------------------------------------------------
+ day_2001_feb_01 | { "result" : { "$date" : { "$numberLong" : "980985600000" } } }
+(1 row)
+
+SELECT 'day_2001_jan_01' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"978307260000"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+     case_id     |                       bson_dollar_project                       
+-----------------+-----------------------------------------------------------------
+ day_2001_jan_01 | { "result" : { "$date" : { "$numberLong" : "978307200000" } } }
+(1 row)
+
+SELECT 'day_2001_jan_02' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"978393660000"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+     case_id     |                       bson_dollar_project                       
+-----------------+-----------------------------------------------------------------
+ day_2001_jan_02 | { "result" : { "$date" : { "$numberLong" : "978393600000" } } }
+(1 row)
+
+SELECT 'day_2001_mar_01' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"983450096789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+     case_id     |                       bson_dollar_project                       
+-----------------+-----------------------------------------------------------------
+ day_2001_mar_01 | { "result" : { "$date" : { "$numberLong" : "983404800000" } } }
+(1 row)
+
+SELECT 'day_2024_leap' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1709210096789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+    case_id    |                       bson_dollar_project                        
+---------------+------------------------------------------------------------------
+ day_2024_leap | { "result" : { "$date" : { "$numberLong" : "1709164800000" } } }
+(1 row)
+
+SELECT 'day_2026_01' AS case_id, * FROM bson_dollar_project('{"input":{"$date":{"$numberLong":"1768480496789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC","startOfWeek":"sunday"}', '{"result":{"$dateTrunc":{"date":"$input","unit":"$unit","binSize":"$binSize","timezone":"$timezone","startOfWeek":"$startOfWeek"}}}');
+   case_id   |                       bson_dollar_project                        
+-------------+------------------------------------------------------------------
+ day_2026_01 | { "result" : { "$date" : { "$numberLong" : "1768435200000" } } }
+(1 row)
+
+SELECT 'day_2026_02' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1771158896789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+   case_id   |                       bson_dollar_project                        
+-------------+------------------------------------------------------------------
+ day_2026_02 | { "result" : { "$date" : { "$numberLong" : "1771113600000" } } }
+(1 row)
+
+SELECT 'day_2026_03' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1773578096789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+   case_id   |                       bson_dollar_project                        
+-------------+------------------------------------------------------------------
+ day_2026_03 | { "result" : { "$date" : { "$numberLong" : "1773532800000" } } }
+(1 row)
+
+SELECT 'day_2026_04' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1776256496789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+   case_id   |                       bson_dollar_project                        
+-------------+------------------------------------------------------------------
+ day_2026_04 | { "result" : { "$date" : { "$numberLong" : "1776211200000" } } }
+(1 row)
+
+SELECT 'day_2026_05' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1778848496789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+   case_id   |                       bson_dollar_project                        
+-------------+------------------------------------------------------------------
+ day_2026_05 | { "result" : { "$date" : { "$numberLong" : "1778803200000" } } }
+(1 row)
+
+SELECT 'day_2026_06' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1781526896789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+   case_id   |                       bson_dollar_project                        
+-------------+------------------------------------------------------------------
+ day_2026_06 | { "result" : { "$date" : { "$numberLong" : "1781481600000" } } }
+(1 row)
+
+SELECT 'day_2026_07' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1784118896789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+   case_id   |                       bson_dollar_project                        
+-------------+------------------------------------------------------------------
+ day_2026_07 | { "result" : { "$date" : { "$numberLong" : "1784073600000" } } }
+(1 row)
+
+SELECT 'day_2026_08' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1786797296789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+   case_id   |                       bson_dollar_project                        
+-------------+------------------------------------------------------------------
+ day_2026_08 | { "result" : { "$date" : { "$numberLong" : "1786752000000" } } }
+(1 row)
+
+SELECT 'day_2026_09' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1789475696789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+   case_id   |                       bson_dollar_project                        
+-------------+------------------------------------------------------------------
+ day_2026_09 | { "result" : { "$date" : { "$numberLong" : "1789430400000" } } }
+(1 row)
+
+SELECT 'day_2026_10' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1792067696789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+   case_id   |                       bson_dollar_project                        
+-------------+------------------------------------------------------------------
+ day_2026_10 | { "result" : { "$date" : { "$numberLong" : "1792022400000" } } }
+(1 row)
+
+SELECT 'day_2026_11' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1794746096789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+   case_id   |                       bson_dollar_project                        
+-------------+------------------------------------------------------------------
+ day_2026_11 | { "result" : { "$date" : { "$numberLong" : "1794700800000" } } }
+(1 row)
+
+SELECT 'day_2026_12' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1797338096789"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+   case_id   |                       bson_dollar_project                        
+-------------+------------------------------------------------------------------
+ day_2026_12 | { "result" : { "$date" : { "$numberLong" : "1797292800000" } } }
+(1 row)
+
+SELECT 'day_dst_fall' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1636266600000"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"America/New_York"}}}');
+   case_id    |                       bson_dollar_project                        
+--------------+------------------------------------------------------------------
+ day_dst_fall | { "result" : { "$date" : { "$numberLong" : "1636257600000" } } }
+(1 row)
+
+SELECT 'day_dst_spring' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1615707000000"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"America/New_York"}}}');
+    case_id     |                       bson_dollar_project                        
+----------------+------------------------------------------------------------------
+ day_dst_spring | { "result" : { "$date" : { "$numberLong" : "1615698000000" } } }
+(1 row)
+
+SELECT 'day_offset_east' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1704139200000"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"+04:45"}}}');
+     case_id     |                       bson_dollar_project                        
+-----------------+------------------------------------------------------------------
+ day_offset_east | { "result" : { "$date" : { "$numberLong" : "1704136500000" } } }
+(1 row)
+
+SELECT 'day_offset_west' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1704081600000"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"-0530"}}}');
+     case_id     |                       bson_dollar_project                        
+-----------------+------------------------------------------------------------------
+ day_offset_west | { "result" : { "$date" : { "$numberLong" : "1704000600000" } } }
+(1 row)
+
+SELECT 'day_ref_before' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684799999"}},"unit":"day","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+    case_id     |                       bson_dollar_project                       
+----------------+-----------------------------------------------------------------
+ day_ref_before | { "result" : { "$date" : { "$numberLong" : "946512000000" } } }
+(1 row)
+
+SELECT 'day_ref_bin_end' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946857599999"}},"unit":"day","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+     case_id     |                       bson_dollar_project                       
+-----------------+-----------------------------------------------------------------
+ day_ref_bin_end | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'day_ref_exact' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684800000"}},"unit":"day","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+    case_id    |                       bson_dollar_project                       
+---------------+-----------------------------------------------------------------
+ day_ref_exact | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'day_large_bin_after_ref' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1784118896789"}},"unit":"day","binSize":{"$numberLong":"2147483648"},"timezone":"UTC"}}}');
+         case_id         |                       bson_dollar_project                       
+-------------------------+-----------------------------------------------------------------
+ day_large_bin_after_ref | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'day_large_bin_ref_exact' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684800000"}},"unit":"day","binSize":{"$numberLong":"2147483648"},"timezone":"UTC"}}}');
+         case_id         |                       bson_dollar_project                       
+-------------------------+-----------------------------------------------------------------
+ day_large_bin_ref_exact | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'day_ref_next' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946857600000"}},"unit":"day","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+   case_id    |                       bson_dollar_project                       
+--------------+-----------------------------------------------------------------
+ day_ref_next | { "result" : { "$date" : { "$numberLong" : "946857600000" } } }
+(1 row)
+
+SELECT 'day_timezone_previous' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1704079800000"}},"unit":"day","binSize":{"$numberLong":"1"},"timezone":"America/New_York"}}}');
+        case_id        |                       bson_dollar_project                        
+-----------------------+------------------------------------------------------------------
+ day_timezone_previous | { "result" : { "$date" : { "$numberLong" : "1703998800000" } } }
+(1 row)
+
+-- Hour truncation, including a fully dynamic case, offsets, and DST.
+SELECT 'hour_bin_1' AS case_id, * FROM bson_dollar_project('{"input":{"$date":{"$numberLong":"1707113755381"}},"unit":"hour","binSize":{"$numberLong":"1"},"timezone":"UTC","startOfWeek":"sunday"}', '{"result":{"$dateTrunc":{"date":"$input","unit":"$unit","binSize":"$binSize","timezone":"$timezone","startOfWeek":"$startOfWeek"}}}');
+  case_id   |                       bson_dollar_project                        
+------------+------------------------------------------------------------------
+ hour_bin_1 | { "result" : { "$date" : { "$numberLong" : "1707112800000" } } }
+(1 row)
+
+SELECT 'hour_bin_2' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1616239805000"}},"unit":"hour","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+  case_id   |                       bson_dollar_project                        
+------------+------------------------------------------------------------------
+ hour_bin_2 | { "result" : { "$date" : { "$numberLong" : "1616234400000" } } }
+(1 row)
+
+SELECT 'hour_bin_24' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1707113755381"}},"unit":"hour","binSize":{"$numberLong":"24"},"timezone":"UTC"}}}');
+   case_id   |                       bson_dollar_project                        
+-------------+------------------------------------------------------------------
+ hour_bin_24 | { "result" : { "$date" : { "$numberLong" : "1707091200000" } } }
+(1 row)
+
+SELECT 'hour_dst_fall_first' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1636263000000"}},"unit":"hour","binSize":{"$numberLong":"1"},"timezone":"America/New_York"}}}');
+       case_id       |                       bson_dollar_project                        
+---------------------+------------------------------------------------------------------
+ hour_dst_fall_first | { "result" : { "$date" : { "$numberLong" : "1636261200000" } } }
+(1 row)
+
+SELECT 'hour_dst_fall_second' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1636266600000"}},"unit":"hour","binSize":{"$numberLong":"1"},"timezone":"America/New_York"}}}');
+       case_id        |                       bson_dollar_project                        
+----------------------+------------------------------------------------------------------
+ hour_dst_fall_second | { "result" : { "$date" : { "$numberLong" : "1636264800000" } } }
+(1 row)
+
+SELECT 'hour_dst_spring' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1615707000000"}},"unit":"hour","binSize":{"$numberLong":"1"},"timezone":"America/New_York"}}}');
+     case_id     |                       bson_dollar_project                        
+-----------------+------------------------------------------------------------------
+ hour_dst_spring | { "result" : { "$date" : { "$numberLong" : "1615705200000" } } }
+(1 row)
+
+SELECT 'hour_offset_colon' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1704112496000"}},"unit":"hour","binSize":{"$numberLong":"1"},"timezone":"+04:45"}}}');
+      case_id      |                       bson_dollar_project                        
+-------------------+------------------------------------------------------------------
+ hour_offset_colon | { "result" : { "$date" : { "$numberLong" : "1704111300000" } } }
+(1 row)
+
+SELECT 'hour_offset_compact' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1704112496000"}},"unit":"hour","binSize":{"$numberLong":"1"},"timezone":"-0530"}}}');
+       case_id       |                       bson_dollar_project                        
+---------------------+------------------------------------------------------------------
+ hour_offset_compact | { "result" : { "$date" : { "$numberLong" : "1704112200000" } } }
+(1 row)
+
+SELECT 'hour_offset_hour' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1704112496000"}},"unit":"hour","binSize":{"$numberLong":"1"},"timezone":"+03"}}}');
+     case_id      |                       bson_dollar_project                        
+------------------+------------------------------------------------------------------
+ hour_offset_hour | { "result" : { "$date" : { "$numberLong" : "1704110400000" } } }
+(1 row)
+
+SELECT 'hour_ref_before' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684799999"}},"unit":"hour","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+     case_id     |                       bson_dollar_project                       
+-----------------+-----------------------------------------------------------------
+ hour_ref_before | { "result" : { "$date" : { "$numberLong" : "946677600000" } } }
+(1 row)
+
+SELECT 'hour_ref_bin_end' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946691999999"}},"unit":"hour","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+     case_id      |                       bson_dollar_project                       
+------------------+-----------------------------------------------------------------
+ hour_ref_bin_end | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'hour_ref_exact' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684800000"}},"unit":"hour","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+    case_id     |                       bson_dollar_project                       
+----------------+-----------------------------------------------------------------
+ hour_ref_exact | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'hour_ref_next' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946692000000"}},"unit":"hour","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+    case_id    |                       bson_dollar_project                       
+---------------+-----------------------------------------------------------------
+ hour_ref_next | { "result" : { "$date" : { "$numberLong" : "946692000000" } } }
+(1 row)
+
+-- Accepted BSON date input representations.
+SELECT 'input_date' AS case_id, * FROM bson_dollar_project('{"input":{"$date":{"$numberLong":"1709208000000"}}}', '{"result":{"$dateTrunc":{"date":"$input","unit":"day"}}}');
+  case_id   |                       bson_dollar_project                        
+------------+------------------------------------------------------------------
+ input_date | { "result" : { "$date" : { "$numberLong" : "1709164800000" } } }
+(1 row)
+
+SELECT 'input_object_id' AS case_id, * FROM bson_dollar_project('{"input":{"$oid":"65e071c00000000000000000"}}', '{"result":{"$dateTrunc":{"date":"$input","unit":"day"}}}');
+     case_id     |                       bson_dollar_project                        
+-----------------+------------------------------------------------------------------
+ input_object_id | { "result" : { "$date" : { "$numberLong" : "1709164800000" } } }
+(1 row)
+
+SELECT 'input_timestamp' AS case_id, * FROM bson_dollar_project('{"input":{"$timestamp":{"t":1709208000,"i":42}}}', '{"result":{"$dateTrunc":{"date":"$input","unit":"day"}}}');
+     case_id     |                       bson_dollar_project                        
+-----------------+------------------------------------------------------------------
+ input_timestamp | { "result" : { "$date" : { "$numberLong" : "1709164800000" } } }
+(1 row)
+
+-- Minute truncation, including a fully dynamic case and fixed offsets.
+SELECT 'minute_bin_1' AS case_id, * FROM bson_dollar_project('{"input":{"$date":{"$numberLong":"1707113755381"}},"unit":"minute","binSize":{"$numberLong":"1"},"timezone":"UTC","startOfWeek":"sunday"}', '{"result":{"$dateTrunc":{"date":"$input","unit":"$unit","binSize":"$binSize","timezone":"$timezone","startOfWeek":"$startOfWeek"}}}');
+   case_id    |                       bson_dollar_project                        
+--------------+------------------------------------------------------------------
+ minute_bin_1 | { "result" : { "$date" : { "$numberLong" : "1707113700000" } } }
+(1 row)
+
+SELECT 'minute_bin_15' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1707113755381"}},"unit":"minute","binSize":{"$numberLong":"15"},"timezone":"UTC"}}}');
+    case_id    |                       bson_dollar_project                        
+---------------+------------------------------------------------------------------
+ minute_bin_15 | { "result" : { "$date" : { "$numberLong" : "1707113700000" } } }
+(1 row)
+
+SELECT 'minute_bin_90_offset' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1704112496000"}},"unit":"minute","binSize":{"$numberLong":"90"},"timezone":"+04:45"}}}');
+       case_id        |                       bson_dollar_project                        
+----------------------+------------------------------------------------------------------
+ minute_bin_90_offset | { "result" : { "$date" : { "$numberLong" : "1704109500000" } } }
+(1 row)
+
+SELECT 'minute_ref_before' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684799999"}},"unit":"minute","binSize":{"$numberLong":"15"},"timezone":"UTC"}}}');
+      case_id      |                       bson_dollar_project                       
+-------------------+-----------------------------------------------------------------
+ minute_ref_before | { "result" : { "$date" : { "$numberLong" : "946683900000" } } }
+(1 row)
+
+SELECT 'minute_ref_bin_end' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946685699999"}},"unit":"minute","binSize":{"$numberLong":"15"},"timezone":"UTC"}}}');
+      case_id       |                       bson_dollar_project                       
+--------------------+-----------------------------------------------------------------
+ minute_ref_bin_end | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'minute_ref_exact' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684800000"}},"unit":"minute","binSize":{"$numberLong":"15"},"timezone":"UTC"}}}');
+     case_id      |                       bson_dollar_project                       
+------------------+-----------------------------------------------------------------
+ minute_ref_exact | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'minute_ref_next' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946685700000"}},"unit":"minute","binSize":{"$numberLong":"15"},"timezone":"UTC"}}}');
+     case_id     |                       bson_dollar_project                       
+-----------------+-----------------------------------------------------------------
+ minute_ref_next | { "result" : { "$date" : { "$numberLong" : "946685700000" } } }
+(1 row)
+
+-- Month truncation, including a fully dynamic case and timezone boundaries.
+SELECT 'month_bin_1' AS case_id, * FROM bson_dollar_project('{"input":{"$date":{"$numberLong":"1709210096000"}},"unit":"month","binSize":{"$numberLong":"1"},"timezone":"UTC","startOfWeek":"sunday"}', '{"result":{"$dateTrunc":{"date":"$input","unit":"$unit","binSize":"$binSize","timezone":"$timezone","startOfWeek":"$startOfWeek"}}}');
+   case_id   |                       bson_dollar_project                        
+-------------+------------------------------------------------------------------
+ month_bin_1 | { "result" : { "$date" : { "$numberLong" : "1706745600000" } } }
+(1 row)
+
+SELECT 'month_bin_2' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1709210096000"}},"unit":"month","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+   case_id   |                       bson_dollar_project                        
+-------------+------------------------------------------------------------------
+ month_bin_2 | { "result" : { "$date" : { "$numberLong" : "1704067200000" } } }
+(1 row)
+
+SELECT 'month_bin_6' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1589811030000"}},"unit":"month","binSize":{"$numberLong":"6"},"timezone":"UTC"}}}');
+   case_id   |                       bson_dollar_project                        
+-------------+------------------------------------------------------------------
+ month_bin_6 | { "result" : { "$date" : { "$numberLong" : "1577836800000" } } }
+(1 row)
+
+SELECT 'month_ref_before' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684799999"}},"unit":"month","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+     case_id      |                       bson_dollar_project                       
+------------------+-----------------------------------------------------------------
+ month_ref_before | { "result" : { "$date" : { "$numberLong" : "941414400000" } } }
+(1 row)
+
+SELECT 'month_ref_bin_end' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"951868799999"}},"unit":"month","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+      case_id      |                       bson_dollar_project                       
+-------------------+-----------------------------------------------------------------
+ month_ref_bin_end | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'month_ref_exact' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684800000"}},"unit":"month","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+     case_id     |                       bson_dollar_project                       
+-----------------+-----------------------------------------------------------------
+ month_ref_exact | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'month_ref_next' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"951868800000"}},"unit":"month","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+    case_id     |                       bson_dollar_project                       
+----------------+-----------------------------------------------------------------
+ month_ref_next | { "result" : { "$date" : { "$numberLong" : "951868800000" } } }
+(1 row)
+
+SELECT 'month_timezone_east' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1709236800000"}},"unit":"month","binSize":{"$numberLong":"1"},"timezone":"Asia/Kolkata"}}}');
+       case_id       |                       bson_dollar_project                        
+---------------------+------------------------------------------------------------------
+ month_timezone_east | { "result" : { "$date" : { "$numberLong" : "1709231400000" } } }
+(1 row)
+
+SELECT 'month_timezone_west' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1709263800000"}},"unit":"month","binSize":{"$numberLong":"1"},"timezone":"America/New_York"}}}');
+       case_id       |                       bson_dollar_project                        
+---------------------+------------------------------------------------------------------
+ month_timezone_west | { "result" : { "$date" : { "$numberLong" : "1706763600000" } } }
+(1 row)
+
+SELECT 'month_variable_2001' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"986083199999"}},"unit":"month","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+       case_id       |                       bson_dollar_project                       
+---------------------+-----------------------------------------------------------------
+ month_variable_2001 | { "result" : { "$date" : { "$numberLong" : "983404800000" } } }
+(1 row)
+
+-- Quarter truncation, including a fully dynamic case and timezone boundaries.
+SELECT 'quarter_2026_q1' AS case_id, * FROM bson_dollar_project('{"input":{"$date":{"$numberLong":"1771158896000"}},"unit":"quarter","binSize":{"$numberLong":"1"},"timezone":"UTC","startOfWeek":"sunday"}', '{"result":{"$dateTrunc":{"date":"$input","unit":"$unit","binSize":"$binSize","timezone":"$timezone","startOfWeek":"$startOfWeek"}}}');
+     case_id     |                       bson_dollar_project                        
+-----------------+------------------------------------------------------------------
+ quarter_2026_q1 | { "result" : { "$date" : { "$numberLong" : "1767225600000" } } }
+(1 row)
+
+SELECT 'quarter_2026_q2' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1778848496000"}},"unit":"quarter","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+     case_id     |                       bson_dollar_project                        
+-----------------+------------------------------------------------------------------
+ quarter_2026_q2 | { "result" : { "$date" : { "$numberLong" : "1775001600000" } } }
+(1 row)
+
+SELECT 'quarter_2026_q3' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1786797296000"}},"unit":"quarter","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+     case_id     |                       bson_dollar_project                        
+-----------------+------------------------------------------------------------------
+ quarter_2026_q3 | { "result" : { "$date" : { "$numberLong" : "1782864000000" } } }
+(1 row)
+
+SELECT 'quarter_2026_q4' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1794746096000"}},"unit":"quarter","binSize":{"$numberLong":"1"},"timezone":"UTC"}}}');
+     case_id     |                       bson_dollar_project                        
+-----------------+------------------------------------------------------------------
+ quarter_2026_q4 | { "result" : { "$date" : { "$numberLong" : "1790812800000" } } }
+(1 row)
+
+SELECT 'quarter_bin_2' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1794746096000"}},"unit":"quarter","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+    case_id    |                       bson_dollar_project                        
+---------------+------------------------------------------------------------------
+ quarter_bin_2 | { "result" : { "$date" : { "$numberLong" : "1782864000000" } } }
+(1 row)
+
+SELECT 'quarter_ref_before' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684799999"}},"unit":"quarter","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+      case_id       |                       bson_dollar_project                       
+--------------------+-----------------------------------------------------------------
+ quarter_ref_before | { "result" : { "$date" : { "$numberLong" : "930787200000" } } }
+(1 row)
+
+SELECT 'quarter_ref_bin_end' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"962409599999"}},"unit":"quarter","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+       case_id       |                       bson_dollar_project                       
+---------------------+-----------------------------------------------------------------
+ quarter_ref_bin_end | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'quarter_ref_exact' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684800000"}},"unit":"quarter","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+      case_id      |                       bson_dollar_project                       
+-------------------+-----------------------------------------------------------------
+ quarter_ref_exact | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'quarter_ref_next' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"962409600000"}},"unit":"quarter","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+     case_id      |                       bson_dollar_project                       
+------------------+-----------------------------------------------------------------
+ quarter_ref_next | { "result" : { "$date" : { "$numberLong" : "962409600000" } } }
+(1 row)
+
+SELECT 'quarter_timezone_west' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1711942200000"}},"unit":"quarter","binSize":{"$numberLong":"1"},"timezone":"America/New_York"}}}');
+        case_id        |                       bson_dollar_project                        
+-----------------------+------------------------------------------------------------------
+ quarter_timezone_west | { "result" : { "$date" : { "$numberLong" : "1704085200000" } } }
+(1 row)
+
+-- Second truncation, including a fully dynamic case and reference boundaries.
+SELECT 'second_bin_1' AS case_id, * FROM bson_dollar_project('{"input":{"$date":{"$numberLong":"1707113755381"}},"unit":"second","binSize":{"$numberLong":"1"},"timezone":"UTC","startOfWeek":"sunday"}', '{"result":{"$dateTrunc":{"date":"$input","unit":"$unit","binSize":"$binSize","timezone":"$timezone","startOfWeek":"$startOfWeek"}}}');
+   case_id    |                       bson_dollar_project                        
+--------------+------------------------------------------------------------------
+ second_bin_1 | { "result" : { "$date" : { "$numberLong" : "1707113755000" } } }
+(1 row)
+
+SELECT 'second_bin_10' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1707113755381"}},"unit":"second","binSize":{"$numberLong":"10"},"timezone":"UTC"}}}');
+    case_id    |                       bson_dollar_project                        
+---------------+------------------------------------------------------------------
+ second_bin_10 | { "result" : { "$date" : { "$numberLong" : "1707113750000" } } }
+(1 row)
+
+SELECT 'second_bin_90' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1707113755381"}},"unit":"second","binSize":{"$numberLong":"90"},"timezone":"UTC"}}}');
+    case_id    |                       bson_dollar_project                        
+---------------+------------------------------------------------------------------
+ second_bin_90 | { "result" : { "$date" : { "$numberLong" : "1707113700000" } } }
+(1 row)
+
+SELECT 'second_ref_before' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684799999"}},"unit":"second","binSize":{"$numberLong":"10"},"timezone":"UTC"}}}');
+      case_id      |                       bson_dollar_project                       
+-------------------+-----------------------------------------------------------------
+ second_ref_before | { "result" : { "$date" : { "$numberLong" : "946684790000" } } }
+(1 row)
+
+SELECT 'second_ref_bin_end' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684809999"}},"unit":"second","binSize":{"$numberLong":"10"},"timezone":"UTC"}}}');
+      case_id       |                       bson_dollar_project                       
+--------------------+-----------------------------------------------------------------
+ second_ref_bin_end | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'second_ref_exact' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684800000"}},"unit":"second","binSize":{"$numberLong":"10"},"timezone":"UTC"}}}');
+     case_id      |                       bson_dollar_project                       
+------------------+-----------------------------------------------------------------
+ second_ref_exact | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'second_ref_next' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684810000"}},"unit":"second","binSize":{"$numberLong":"10"},"timezone":"UTC"}}}');
+     case_id     |                       bson_dollar_project                       
+-----------------+-----------------------------------------------------------------
+ second_ref_next | { "result" : { "$date" : { "$numberLong" : "946684810000" } } }
+(1 row)
+
+-- Week truncation, including defaults, anchors, large 64-bit bins, abbreviations, and timezones.
+SELECT 'week_default_sunday' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1707309296000"}},"unit":"week"}}}');
+       case_id       |                       bson_dollar_project                        
+---------------------+------------------------------------------------------------------
+ week_default_sunday | { "result" : { "$date" : { "$numberLong" : "1707004800000" } } }
+(1 row)
+
+SELECT 'week_ref_before' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946857599999"}},"unit":"week","binSize":{"$numberLong":"2"},"timezone":"UTC","startOfWeek":"monday"}}}');
+     case_id     |                       bson_dollar_project                       
+-----------------+-----------------------------------------------------------------
+ week_ref_before | { "result" : { "$date" : { "$numberLong" : "945648000000" } } }
+(1 row)
+
+SELECT 'week_ref_bin_end' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"948067199999"}},"unit":"week","binSize":{"$numberLong":"2"},"timezone":"UTC","startOfWeek":"monday"}}}');
+     case_id      |                       bson_dollar_project                       
+------------------+-----------------------------------------------------------------
+ week_ref_bin_end | { "result" : { "$date" : { "$numberLong" : "946857600000" } } }
+(1 row)
+
+SELECT 'week_ref_exact' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946857600000"}},"unit":"week","binSize":{"$numberLong":"2"},"timezone":"UTC","startOfWeek":"monday"}}}');
+    case_id     |                       bson_dollar_project                       
+----------------+-----------------------------------------------------------------
+ week_ref_exact | { "result" : { "$date" : { "$numberLong" : "946857600000" } } }
+(1 row)
+
+SELECT 'week_large_bin_after_ref' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1784118896789"}},"unit":"week","binSize":{"$numberLong":"2147483648"},"timezone":"UTC","startOfWeek":"saturday"}}}');
+         case_id          |                       bson_dollar_project                       
+--------------------------+-----------------------------------------------------------------
+ week_large_bin_after_ref | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'week_large_bin_ref_exact' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684800000"}},"unit":"week","binSize":{"$numberLong":"2147483648"},"timezone":"UTC","startOfWeek":"saturday"}}}');
+         case_id          |                       bson_dollar_project                       
+--------------------------+-----------------------------------------------------------------
+ week_large_bin_ref_exact | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'week_ref_next' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"948067200000"}},"unit":"week","binSize":{"$numberLong":"2"},"timezone":"UTC","startOfWeek":"monday"}}}');
+    case_id    |                       bson_dollar_project                       
+---------------+-----------------------------------------------------------------
+ week_ref_next | { "result" : { "$date" : { "$numberLong" : "948067200000" } } }
+(1 row)
+
+SELECT 'week_start_fri_abbr' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1707309296000"}},"unit":"week","binSize":{"$numberLong":"1"},"timezone":"UTC","startOfWeek":"fri"}}}');
+       case_id       |                       bson_dollar_project                        
+---------------------+------------------------------------------------------------------
+ week_start_fri_abbr | { "result" : { "$date" : { "$numberLong" : "1706832000000" } } }
+(1 row)
+
+SELECT 'week_start_friday' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1707309296000"}},"unit":"week","binSize":{"$numberLong":"1"},"timezone":"UTC","startOfWeek":"friday"}}}');
+      case_id      |                       bson_dollar_project                        
+-------------------+------------------------------------------------------------------
+ week_start_friday | { "result" : { "$date" : { "$numberLong" : "1706832000000" } } }
+(1 row)
+
+SELECT 'week_start_mon_abbr' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1707309296000"}},"unit":"week","binSize":{"$numberLong":"1"},"timezone":"UTC","startOfWeek":"mon"}}}');
+       case_id       |                       bson_dollar_project                        
+---------------------+------------------------------------------------------------------
+ week_start_mon_abbr | { "result" : { "$date" : { "$numberLong" : "1707091200000" } } }
+(1 row)
+
+SELECT 'week_start_monday' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1707309296000"}},"unit":"week","binSize":{"$numberLong":"1"},"timezone":"UTC","startOfWeek":"monday"}}}');
+      case_id      |                       bson_dollar_project                        
+-------------------+------------------------------------------------------------------
+ week_start_monday | { "result" : { "$date" : { "$numberLong" : "1707091200000" } } }
+(1 row)
+
+SELECT 'week_start_saturday' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1707309296000"}},"unit":"week","binSize":{"$numberLong":"1"},"timezone":"UTC","startOfWeek":"saturday"}}}');
+       case_id       |                       bson_dollar_project                        
+---------------------+------------------------------------------------------------------
+ week_start_saturday | { "result" : { "$date" : { "$numberLong" : "1706918400000" } } }
+(1 row)
+
+SELECT 'week_start_sunday' AS case_id, * FROM bson_dollar_project('{"input":{"$date":{"$numberLong":"1707309296000"}},"unit":"week","binSize":{"$numberLong":"1"},"timezone":"UTC","startOfWeek":"sunday"}', '{"result":{"$dateTrunc":{"date":"$input","unit":"$unit","binSize":"$binSize","timezone":"$timezone","startOfWeek":"$startOfWeek"}}}');
+      case_id      |                       bson_dollar_project                        
+-------------------+------------------------------------------------------------------
+ week_start_sunday | { "result" : { "$date" : { "$numberLong" : "1707004800000" } } }
+(1 row)
+
+SELECT 'week_start_thursday' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1707309296000"}},"unit":"week","binSize":{"$numberLong":"1"},"timezone":"UTC","startOfWeek":"thursday"}}}');
+       case_id       |                       bson_dollar_project                        
+---------------------+------------------------------------------------------------------
+ week_start_thursday | { "result" : { "$date" : { "$numberLong" : "1706745600000" } } }
+(1 row)
+
+SELECT 'week_start_tuesday' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1707309296000"}},"unit":"week","binSize":{"$numberLong":"1"},"timezone":"UTC","startOfWeek":"tuesday"}}}');
+      case_id       |                       bson_dollar_project                        
+--------------------+------------------------------------------------------------------
+ week_start_tuesday | { "result" : { "$date" : { "$numberLong" : "1707177600000" } } }
+(1 row)
+
+SELECT 'week_start_wed_abbr' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1707309296000"}},"unit":"week","binSize":{"$numberLong":"1"},"timezone":"UTC","startOfWeek":"WED"}}}');
+       case_id       |                       bson_dollar_project                        
+---------------------+------------------------------------------------------------------
+ week_start_wed_abbr | { "result" : { "$date" : { "$numberLong" : "1707264000000" } } }
+(1 row)
+
+SELECT 'week_start_wednesday' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1707309296000"}},"unit":"week","binSize":{"$numberLong":"1"},"timezone":"UTC","startOfWeek":"wednesday"}}}');
+       case_id        |                       bson_dollar_project                        
+----------------------+------------------------------------------------------------------
+ week_start_wednesday | { "result" : { "$date" : { "$numberLong" : "1707264000000" } } }
+(1 row)
+
+SELECT 'week_timezone_example_0' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1589811030000"}},"unit":"week","binSize":{"$numberLong":"2"},"timezone":"America/Los_Angeles","startOfWeek":"monday"}}}');
+         case_id         |                       bson_dollar_project                        
+-------------------------+------------------------------------------------------------------
+ week_timezone_example_0 | { "result" : { "$date" : { "$numberLong" : "1589180400000" } } }
+(1 row)
+
+SELECT 'week_timezone_example_1' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1616239805000"}},"unit":"week","binSize":{"$numberLong":"2"},"timezone":"America/Los_Angeles","startOfWeek":"monday"}}}');
+         case_id         |                       bson_dollar_project                        
+-------------------------+------------------------------------------------------------------
+ week_timezone_example_1 | { "result" : { "$date" : { "$numberLong" : "1615791600000" } } }
+(1 row)
+
+SELECT 'week_timezone_example_2' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1610346675000"}},"unit":"week","binSize":{"$numberLong":"2"},"timezone":"America/Los_Angeles","startOfWeek":"monday"}}}');
+         case_id         |                       bson_dollar_project                        
+-------------------------+------------------------------------------------------------------
+ week_timezone_example_2 | { "result" : { "$date" : { "$numberLong" : "1609747200000" } } }
+(1 row)
+
+SELECT 'week_timezone_example_3' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1581167603000"}},"unit":"week","binSize":{"$numberLong":"2"},"timezone":"America/Los_Angeles","startOfWeek":"monday"}}}');
+         case_id         |                       bson_dollar_project                        
+-------------------------+------------------------------------------------------------------
+ week_timezone_example_3 | { "result" : { "$date" : { "$numberLong" : "1580716800000" } } }
+(1 row)
+
+SELECT 'week_timezone_example_4' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1558195741000"}},"unit":"week","binSize":{"$numberLong":"2"},"timezone":"America/Los_Angeles","startOfWeek":"monday"}}}');
+         case_id         |                       bson_dollar_project                        
+-------------------------+------------------------------------------------------------------
+ week_timezone_example_4 | { "result" : { "$date" : { "$numberLong" : "1557730800000" } } }
+(1 row)
+
+SELECT 'week_timezone_example_5' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1546927923000"}},"unit":"week","binSize":{"$numberLong":"2"},"timezone":"America/Los_Angeles","startOfWeek":"monday"}}}');
+         case_id         |                       bson_dollar_project                        
+-------------------------+------------------------------------------------------------------
+ week_timezone_example_5 | { "result" : { "$date" : { "$numberLong" : "1546848000000" } } }
+(1 row)
+
+-- Year truncation, including a fully dynamic case and timezone boundaries.
+SELECT 'year_bin_1' AS case_id, * FROM bson_dollar_project('{"input":{"$date":{"$numberLong":"1784118896000"}},"unit":"year","binSize":{"$numberLong":"1"},"timezone":"UTC","startOfWeek":"sunday"}', '{"result":{"$dateTrunc":{"date":"$input","unit":"$unit","binSize":"$binSize","timezone":"$timezone","startOfWeek":"$startOfWeek"}}}');
+  case_id   |                       bson_dollar_project                        
+------------+------------------------------------------------------------------
+ year_bin_1 | { "result" : { "$date" : { "$numberLong" : "1767225600000" } } }
+(1 row)
+
+SELECT 'year_bin_10' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1784118896000"}},"unit":"year","binSize":{"$numberLong":"10"},"timezone":"UTC"}}}');
+   case_id   |                       bson_dollar_project                        
+-------------+------------------------------------------------------------------
+ year_bin_10 | { "result" : { "$date" : { "$numberLong" : "1577836800000" } } }
+(1 row)
+
+SELECT 'year_bin_2' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1784118896000"}},"unit":"year","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+  case_id   |                       bson_dollar_project                        
+------------+------------------------------------------------------------------
+ year_bin_2 | { "result" : { "$date" : { "$numberLong" : "1767225600000" } } }
+(1 row)
+
+SELECT 'year_ref_before' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684799999"}},"unit":"year","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+     case_id     |                       bson_dollar_project                       
+-----------------+-----------------------------------------------------------------
+ year_ref_before | { "result" : { "$date" : { "$numberLong" : "883612800000" } } }
+(1 row)
+
+SELECT 'year_ref_bin_end' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1009843199999"}},"unit":"year","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+     case_id      |                       bson_dollar_project                       
+------------------+-----------------------------------------------------------------
+ year_ref_bin_end | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'year_ref_exact' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"946684800000"}},"unit":"year","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+    case_id     |                       bson_dollar_project                       
+----------------+-----------------------------------------------------------------
+ year_ref_exact | { "result" : { "$date" : { "$numberLong" : "946684800000" } } }
+(1 row)
+
+SELECT 'year_ref_next' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1009843200000"}},"unit":"year","binSize":{"$numberLong":"2"},"timezone":"UTC"}}}');
+    case_id    |                       bson_dollar_project                        
+---------------+------------------------------------------------------------------
+ year_ref_next | { "result" : { "$date" : { "$numberLong" : "1009843200000" } } }
+(1 row)
+
+SELECT 'year_timezone_west' AS case_id, * FROM bson_dollar_project('{}', '{"result":{"$dateTrunc":{"date":{"$date":{"$numberLong":"1704079800000"}},"unit":"year","binSize":{"$numberLong":"1"},"timezone":"America/New_York"}}}');
+      case_id       |                       bson_dollar_project                        
+--------------------+------------------------------------------------------------------
+ year_timezone_west | { "result" : { "$date" : { "$numberLong" : "1672549200000" } } }
+(1 row)
+
+-- End of $dateTrunc behavioral coverage.
