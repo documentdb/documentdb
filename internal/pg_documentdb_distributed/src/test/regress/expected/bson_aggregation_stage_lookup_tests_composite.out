@@ -757,12 +757,12 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
 (1 row)
 
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('compdb', '{ "listIndexes": "establishments" }') ORDER BY 1;
-                                                                                                                                                                                        bson_dollar_unwind                                                                                                                                                                                        
+                                                                                                                                                              bson_dollar_unwind                                                                                                                                                               
 ---------------------------------------------------------------------
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "compdb.establishments", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "compdb.establishments", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "establishment_name" : { "$numberInt" : "1" } }, "name" : "idx_establishments_establishment_name", "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "compdb.establishments", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "establishment_name" : { "$numberInt" : "1" }, "order_quantity" : { "$numberInt" : "1" } }, "name" : "idx_establishments_establishment_name_order_quantity", "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "compdb.establishments", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "order_quantity" : { "$numberInt" : "1" } }, "name" : "idx_establishments_order_quantity", "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "compdb.establishments", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "establishment_name" : { "$numberInt" : "1" } }, "name" : "idx_establishments_establishment_name" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "compdb.establishments", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "establishment_name" : { "$numberInt" : "1" }, "order_quantity" : { "$numberInt" : "1" } }, "name" : "idx_establishments_establishment_name_order_quantity" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "compdb.establishments", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "order_quantity" : { "$numberInt" : "1" } }, "name" : "idx_establishments_order_quantity" } }, "ok" : { "$numberDouble" : "1.0" } }
 (4 rows)
 
 -- (B).3.a Index usage
