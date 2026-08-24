@@ -43,8 +43,9 @@ The proposed release pattern is:
 * Breaking changes in DocumentDB require a new major version. Breaking changes
   are also allowed in the development (`main`) branch on minor versions.
 * When a new major version is released it will be supported with
-  bugfixes and security patches until the next version is released, after which
-  there will be a 3 month grace period before it is deprecated.
+  security patches until the next version is released. Bug fixes may be
+  backported on a case-by-case basis. After the next version is released, there
+  will be a 3 month grace period before the previous version is deprecated.
 * CVE fixes may be applied to older versions as decided on a case-by-case basis.
 
 ## Detailed Design
@@ -55,7 +56,8 @@ The proposed release pattern is:
 
 The unreleased next major version will be developed on the `main` branch. Development
 on the current and previous releases will be done on a `release/v#` branch.
-Those releases get LTS patch fixes. A third `release/v#` branch will be created
+Security fixes are backported to supported release branches, while bug fixes are
+backported on a case-by-case basis. A third `release/v#` branch will be created
 for the purposes of generating release candidates before the n-2 version is deprecated.
 
 We will use tags to mark the minor and patch versions in git, with `vMajor.Minor.Patch`
@@ -116,9 +118,9 @@ older minor releases.
 Support for a release means:
 
 * Issues can be tracked and triaged against that release line.
-* Bug fixes are backported.
-* Security fixes are prioritized. Critical vulnerabilities may trigger an
-  expedited patch release.
+* Security fixes are backported and prioritized. Critical vulnerabilities may
+  trigger an expedited patch release.
+* Bug fixes are backported on a case-by-case basis.
 * Security advisories are published for critical vulnerabilities when applicable.
 * Package builds will be tested for correctness.
 
