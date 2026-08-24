@@ -41,9 +41,11 @@ The proposed release pattern is:
 
 * DocumentDB will publish one new major version every calendar year.
 * Breaking changes in DocumentDB require a new major version. Breaking changes
-  are also allowed in the development branch on minor versions.
-* When a new major version is released, it will be supported with
-  bugfixes and security patches for 2 years before being deprecated.
+  are also allowed in the development (`main`) branch on minor versions.
+* When a new major version is released it will be supported with
+  bugfixes and security patches until the next version is released, after which
+  there will be a 3 month grace period before it is deprecated.
+* CVE fixes may be applied to older versions as decided on a case-by-case basis.
 
 ## Detailed Design
 
@@ -63,21 +65,18 @@ tag suffix for creating release candidates before releasing a new version.
 For example, if we are about to release v3, we would start with these branches and
 tags:
 
-* `release/v1` with tag `v1.0-8`
 * `release/v2` with tag `v2.0-4`
 * `main` with tag `v2.8-0`, contains development for `v3`
 
 Next we would put up a release candidate for `v3` in a new branch based off of main:
 
-* `release/v1` with tag `v1.0-8`
 * `release/v2` with tag `v2.0-4`
 * `release/v3` with tag `v3.0-rc0`
 * `main` tagged `v2.8-0`, identical to `release/v3`
 
-Then, when we do the full release `release/v1` would be abandoned, and `release/v3`
-would be tagged with a regular version. Version 4 would then be able to be
-developed on the `main` branch. The `release/v2` branch would continue to be supported
-for another year.
+Then, when we do the full release, `release/v3` would be tagged with a regular version.
+Major version 4 would then be able to be developed on the `main` branch. The `release/v2`
+branch would continue to be supported for another 3 months.
 
 * `release/v2` with tag `v2.0-4`
 * `release/v3` with tag `v3.0-0`
@@ -86,20 +85,18 @@ for another year.
 #### Semantic Versioning
 
 The major version is incremented once per year when starting the next
-development line. That new major may include breaking changes from the previous
-major version. Examples include:
-
-* Deprecated API removals
-* Dependency updates which break old versions
-* Removal of support for old PostgreSQL version
+development line. That new major may include breaking changes from the development
+version. This will pull in all minor version updates from the development line
 
 Minor changes will only be added to the current development line, not backported
 to LTS release lines. Minor changes include:
 
 * New features
 * Refactors
-* Downstream Syncs
 * Backward-compatible dependency or bundled component updates
+* Deprecated API removals
+* Dependency updates which break old versions
+* Removal of support for old PostgreSQL versions
 
 Patch changes may be released for the latest current minor release and for any
 supported LTS release line. Patch changes can include:
